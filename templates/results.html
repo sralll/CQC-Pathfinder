@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<head>
+    <title>CQC Pathfinder</title>
+    <meta charset="UTF-8">
+    <style>
+        tbody {
+            text-align: right;
+        }
+
+        th {
+            text-align: left;
+        }
+
+        td, th {
+            border: none;
+            padding-left: 10px;
+            padding-right: 10px;
+        }
+
+        table {
+            border: none;
+        }
+
+        #tablenames {
+            text-align: left;
+        }
+
+        #checkbox {
+            padding-left: 0px;
+            padding-right: 0px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Resultate</h1>
+    <select id="jsonDropdown">
+        <option value="" disabled selected>auswählen...</option>
+    </select>
+    <table id="completionTable" border="1">
+        <thead id ="resultTableHead">
+          <tr>
+            <th></th>
+            <th>Name</th>
+            <th>Entscheidungen</th>
+            <th>Routen</th>
+            <th>Rückstand</th>
+        </tr>
+        </thead>
+        <tbody id="userTableBody"></tbody>
+      </table>
+
+    <script>
+        filesfetched = false; // Flag to check if files have been fetched
+        document.getElementById('jsonDropdown').addEventListener('click', function () {
+            if (filesfetched) return; // Prevent multiple fetches
+            filesfetched = true; // Set the flag to true after the first fetch
+            fetch('/published-files/')
+            .then(response => response.json())
+            .then(files => {
+                const dropdown = document.getElementById('jsonDropdown');
+                files.forEach(filename => {
+                const option = document.createElement('option');
+                option.value = filename;
+                option.textContent = filename.replace('.json', '');
+                dropdown.appendChild(option);
+                });
+            });
+        });
+
+        document.getElementById('jsonDropdown').addEventListener('change', function () {
+            const selectedFilename = this.value;
+            fetch(`/get_user_summary/?filename=${selectedFilename}`)
+            .then(response => response.json())
+            .then(data => {
+                const tableBody = document.getElementById('userTableBody');
+                tableBody.innerHTML = ''; // Clear existing rows
+
+                data.users.forEach(user => {
+                const row = document.createElement('tr');
+
+                row.innerHTML = `
+                    <td id="checkbox"><input type="checkbox" id="myCheckbox"></td>
+                    <td id="tablenames">${user.name}</td>
+                    <td>${formatTime(user.choice_time)}</td>
+                    <td>${formatTime(user.route_diff)}</td>
+                    <td>${formatTime(user.total)}</td>`;
+
+                tableBody.appendChild(row);
+                });
+            });
+        });
+
+        function formatTime(seconds) {
+            const mins = Math.floor(seconds / 60);
+            const secs = Math.round(seconds % 60);
+            return `${mins}:${secs.toString().padStart(2, '0')}`;
+        }
+    </script>
+
+</body>
+</html>

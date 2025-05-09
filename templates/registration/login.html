@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block content %}
+  <div id="login-box">
+    <div>
+      <form method="post">
+        {% csrf_token %}
+        
+        <div>
+          <label for="{{ form.username.id_for_label }}"></label>
+          {{ form.username }}
+          {% if form.username.errors %}
+            <ul class="errors">
+              {% for error in form.username.errors %}
+                <li>{{ error }}</li>
+              {% endfor %}
+            </ul>
+          {% endif %}
+        </div>
+      
+        <div>
+          <label for="{{ form.password.id_for_label }}"></label>
+          {{ form.password }}
+          {% if form.password.errors %}
+            <ul class="errors">
+              {% for error in form.password.errors %}
+                <li>{{ error }}</li>
+              {% endfor %}
+            </ul>
+          {% endif %}
+        </div>
+      
+        <div>
+          <button type="submit">Log in</button>
+        </div>
+      </form>
+      
+
+      <button href="{% url 'password_change' %}">Reset password</button>
+      {% if form.errors %}
+        <p style="color:red;">Invalid login credentials. Please try again.</p>
+      {% endif %}
+    </div>
+  </div>
+{% endblock %}
