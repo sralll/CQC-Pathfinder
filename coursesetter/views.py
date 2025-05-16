@@ -143,6 +143,7 @@ def delete_file(request, filename):
         print({'message': f'Error deleting the file: {str(e)}'})
         return JsonResponse({'message': 'Error deleting the file'}, status=500)
 
+
 @group_required('Trainer')
 @login_required
 def upload_map(request):
