@@ -4,48 +4,59 @@ import os
 import json
 from django.conf import settings
 from django.http import JsonResponse, HttpResponseNotFound, HttpResponseBadRequest, HttpResponse, FileResponse, Http404, HttpResponseNotAllowed
-from django.views.decorators.http import require_GET
+from django.views.decorators.http import require_GET, require_POST
 from django.contrib.auth.decorators import login_required
 import datetime
 from django.utils.timezone import now
+from django.contrib.auth.decorators import user_passes_test
+from .models import publishedFile
 
+def group_required(group_name):
+    def in_group(u):
+        return u.is_authenticated and u.groups.filter(name=group_name).exists()
+    return user_passes_test(in_group)
+
+
+@group_required('Trainer')
 @login_required
 def index(request):
     return render(request, 'coursesetter.html')
 
+@group_required('Trainer')
 @require_GET
 def get_files(request):
-    FILES_DIR = os.path.join(settings.BASE_DIR, 'jsonfiles')
+    json_dir = os.path.join(settings.BASE_DIR, 'jsonfiles')
+    files = []
 
-    try:
-        files = os.listdir(FILES_DIR)
-        print("Files found:", files)
-    except Exception as e:
-        print("Error reading directory:", e)
-        return JsonResponse({'message': 'Error reading files', 'error': str(e)}, status=500)
-
-    metadata = []
-    for filename in files:
-        if not filename.endswith('.json'):
-            continue
-        file_path = os.path.join(FILES_DIR, filename)
-        try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
+    for filename in os.listdir(json_dir):
+        if filename.endswith('.json'):
+            file_path = os.path.join(json_dir, filename)
+            modified = os.path.getmtime(file_path) * 1000  # Convert to milliseconds
+            # Load file content to count control points (cP)
+            try:
+                with open(file_path, 'r') as f:
+                    data = json.load(f)
                 cp_count = len(data.get('cP', []))
-            modified_time = datetime.datetime.fromtimestamp(os.path.getmtime(file_path)).isoformat()
-            metadata.append({
+            except:
+                cp_count = 0
+
+            # Get DB publish state (default False)
+            try:
+                gamefile = publishedFile.objects.get(filename=filename)
+                published = gamefile.published
+            except publishedFile.DoesNotExist:
+                published = False
+
+            files.append({
                 'filename': filename,
-                'modified': modified_time,
+                'modified': modified,
                 'cPCount': cp_count,
-                'published': data.get('published', False)  # Assuming 'published' is a key in your JSON
+                'published': published,
             })
-        except Exception as e:
-            print(f"Error reading {filename}:", e)
 
-    return JsonResponse(metadata, safe=False)
+    return JsonResponse(files, safe=False)
 
-
+@group_required('Trainer')
 def load_file(request, filename):
     # Define the directory where the files are stored
     files_dir = os.path.join(settings.BASE_DIR, 'jsonfiles')  # Ensure 'jsonfiles' is the correct folder
@@ -64,18 +75,24 @@ def load_file(request, filename):
             return JsonResponse(file_data)  # Return the JSON data
     except Exception as e:
         return JsonResponse({'message': 'Error loading file', 'error': str(e)}, status=500)
-    
+
+@group_required('Trainer')
+@login_required
 def serve_map_image(request, filename):
     image_path = os.path.join(settings.BASE_DIR, 'maps', filename)
     if os.path.exists(image_path):
         return FileResponse(open(image_path, 'rb'), content_type='image/jpeg')  # or image/png
     else:
         raise Http404("Image not found")
-    
+
+@group_required('Trainer')
+@login_required    
 def check_file_exists(request, filename):
     file_path = os.path.join(settings.FILES_DIR, filename)
     return JsonResponse({'exists': os.path.exists(file_path)})
 
+@group_required('Trainer')
+@login_required
 def save_file(request):
     if request.method == 'POST':
         try:
@@ -102,6 +119,8 @@ def save_file(request):
 
     return HttpResponseBadRequest('Only POST requests are allowed.')
 
+@group_required('Trainer')
+@login_required
 def delete_file(request, filename):
     if request.method != 'DELETE':
         return JsonResponse({'message': 'Method not allowed'}, status=405)
@@ -113,18 +132,27 @@ def delete_file(request, filename):
 
     try:
         os.remove(file_path)
+
+        try:
+            publishedFile.objects.filter(filename=filename).delete()
+        except Exception as e:
+            print(f"Error deleting DB entry for {filename}: {e}")
+
         return JsonResponse({'message': 'File deleted successfully!'})
     except Exception as e:
-        print({'message': f'Error deleting the file: {str(e)}'}, status=500)
+        print({'message': f'Error deleting the file: {str(e)}'})
+        return JsonResponse({'message': 'Error deleting the file'}, status=500)
 
+@group_required('Trainer')
+@login_required
 def upload_map(request):
     if request.method == 'POST' and request.FILES.get('file'):
         file = request.FILES['file']
         allowed_types = ['image/png', 'image/jpeg']
 
         if file.content_type not in allowed_types:
-            print({'success': False, 'message': 'Unsupported file type'}, status=400)
-
+            return JsonResponse({'success': False, 'message': 'Unsupported file type'}, status=400)
+        
         # Generate timestamped filename
         timestamp = now().strftime('%Y%m%d_%H%M%S')
         ext = os.path.splitext(file.name)[1]
@@ -148,20 +176,20 @@ def upload_map(request):
 
     return JsonResponse({'success': False, 'message': 'Invalid request'}, status=400)
 
+@require_POST
+@group_required('Trainer')
+@login_required
 def toggle_publish(request, filename):
-    if request.method == 'POST':
-        filepath = os.path.join(settings.FILES_DIR, filename)
-        
-        if not os.path.exists(filepath):
-            return JsonResponse({'error': 'File not found'}, status=404)
+    if not filename.endswith('.json'):
+        filename += '.json'
 
-        with open(filepath, 'r+') as f:
-            data = json.load(f)
-            data['published'] = not data.get('published', False)
-            f.seek(0)
-            f.truncate()
-            json.dump(data, f, indent=4)
+    json_path = os.path.join(settings.BASE_DIR, 'jsonfiles', filename)
+    if not os.path.exists(json_path):
+        return JsonResponse({'error': 'File not found'}, status=404)
 
-        return JsonResponse({'success': True, 'published': data['published']})
-    
-    return JsonResponse({'error': 'Invalid request'}, status=400)
+    # Toggle the published state in the database
+    gamefile, created = publishedFile.objects.get_or_create(filename=filename)
+    gamefile.published = not gamefile.published
+    gamefile.save()
+
+    return JsonResponse({'success': True, 'published': gamefile.published})

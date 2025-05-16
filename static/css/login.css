@@ -1,0 +1,97 @@
+#login-box {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+    margin: 0;
+    padding: 0;
+    background-image: url("/static/img/logo.svg");
+    background-repeat: no-repeat;
+    background-position: center center;
+    background-size: contain;
+    background-attachment: fixed;
+}
+
+#login-form {
+    display: flex;
+    flex-direction: column;
+    width: 250px;
+    gap: 10px;
+}
+
+
+.form-row {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 10px;
+}
+
+.form-row input[type="password"] {
+    flex: 2;
+}
+
+.form-row input[type="text"] {
+    flex: 3;
+}
+
+#login-form input {
+    background-color: rgb(0, 0, 0);
+    color: white;
+    border-radius: 6px;
+    padding: 12px;
+    font-size: 1rem;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.form-content {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    flex-grow: 1;
+    gap: 10px;
+}
+
+.reset-link {
+    color: #ccc;
+    text-decoration: none;
+    font-size: 0.9em;
+    margin-right: 10px;
+}
+
+.reset-link:hover {
+    text-decoration: underline;
+}
+
+#form-errors {
+    color: rgb(179, 0, 0);
+    font-size: 10px;
+    font-size: large;
+    margin: 0;
+}
+
+#loginButton {
+    flex-shrink: 0;
+    background-color: rgb(255, 153, 1);
+    color: rgb(0, 0, 0);
+    border-radius: 6px;
+    font-size: 1rem;
+    cursor: pointer;
+    padding: 6px;
+    outline: none;
+    box-shadow: none;
+    height: 100%;
+    line-height: 1;
+    height: auto;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+#form-footer {
+    display: flex;
+    justify-content: left;
+    margin: 5px;
+    width: 20%;
+}

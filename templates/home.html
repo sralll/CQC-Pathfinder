@@ -1,18 +1,23 @@
-<!DOCTYPE html>
-<head>
-    <title>Welcome</title>
-</head>
-<body>
-    <h1>Welcome to CQC Pathfinder</h1>
-  
+{% extends "base.html" %}
+{% load static %}
+
+
+{% block content %}
+<div class="home-container">
+
+    <div id="logoContainer">
+          <img id="titleLogo" src="{% static 'img/logo.svg' %}">
+    </div>
     {% if is_trainer %}
-        <p><a href="/coursesetter/">Erstellen</a></p>
+        <a class="home-button full-width" href="/coursesetter/">Erstellen</a>
     {% endif %}
-    
-    <p><a href="/play/">Play</a></p>
+    <a id="playButton" class="home-button full-width" href="/play/">Play</a>
 
-    <p><a href="/results/">Resultate</a></p>
+    <div class="half-button-row">
+        <a class="home-button half-width" href="/results/">Resultate</a>
+        <a class="home-button half-width" href="/statistik/">Statistiken</a>
+    </div>
 
-    <p><a href="/account/">Account</a></p>
-</body>
-</html>
+    <a class="password-link" href="/password_change/">Passwort ändern</a>
+</div>
+{% endblock %}

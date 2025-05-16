@@ -1,0 +1,104 @@
+.home-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 15px;
+    overflow: auto;
+}
+
+body.mobile .home-container {
+    gap: 30px;
+}
+
+.home-button {
+    display: inline-block;
+    background-color: #a1a1a1;
+    color: black;
+    text-align: center;
+    text-decoration: none;
+    padding: 15px 0;
+    font-size: 1.5rem;
+    border-radius: 6px;
+    font-weight: normal;
+    transition: background-color 0.2s ease;
+}
+
+body.mobile .home-button {
+    font-size: 4rem;
+    border-radius: 15px;
+    padding: 30px 0;
+}
+
+.home-button:hover {
+    background-color: #797979;
+}
+
+.full-width {
+    width: 90vw;
+}
+
+body.desktop .full-width {
+    max-width: 400px;
+}
+
+.half-button-row {
+    display: flex;
+    justify-content: center;
+    gap: 15px;
+    width: 90vw;
+}
+
+body.mobile .half-button-row {
+    gap: 30px;
+}
+
+body.desktop .half-button-row {
+    max-width: 400px;
+
+}
+
+.half-width {
+    flex: 1;
+    text-align: center;
+}
+
+.password-link {
+    font-size: 0.9rem;
+    color: #ccc;
+    text-decoration: none;
+}
+
+body.mobile .password-link {
+    font-size: 2rem;
+}
+
+.password-link:hover {
+    text-decoration: underline;
+}
+
+#logoContainer {
+    width: 90vw;
+    margin-bottom: 0;
+}
+
+body.desktop #logoContainer {
+    max-width: 400px;
+}
+
+#titleLogo {
+    width: 90vw;
+    height: auto;
+}
+
+body.desktop #titleLogo {
+    max-width: 400px;
+}
+
+#playButton {
+    background-color: #ff9900;
+    font-weight: bold;
+}
+
+#playButton:hover {
+    background-color: #cc7a00;
+}

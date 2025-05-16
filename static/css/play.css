@@ -1,0 +1,166 @@
+#gameCanvas {
+    position: relative;
+    border: 1px solid black;
+    display: block;
+    z-index: 0;
+}
+
+#answerWrapper {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+#modalP {
+    display: none;
+}
+
+#projectTableDiv {
+    position: relative;
+    padding: 5px;
+    max-height: 600px;
+    overflow: auto;
+}
+
+body.mobile #projectTableDiv {
+    margin-top: 50px;
+}
+
+#fileTable {
+    display: block;
+    width: 100%;
+    position: relative;
+    border-collapse: collapse;
+    max-height: 600px;
+    overflow: auto;
+    text-align: left;
+}
+
+body.mobile #fileTable {
+    font-size: 2.5rem;
+}
+
+body.mobile #fileTable td{
+    padding: 20px 0;
+}
+
+#fileTable th, td {
+    padding-left: 10px;
+    padding-right: 10px;
+}
+
+.tableHeadProjects {
+    padding: 5px;
+    text-align: left;
+    border: none;
+    border-bottom: 1px solid #000;
+    position: sticky;
+    top: 0;
+    background-color: #f2f2f2;
+}
+
+#routeButtonTable thead tr th, thead tr td {
+    text-align: center;
+}
+
+table {
+    font-family: Arial, sans-serif;
+}
+
+#resultBoxWrapper {
+    display: flex;
+    font-weight: bold;
+    align-items: center;
+    justify-content: space-between;
+    background-color: white;
+}
+
+#resultBox {
+    font-family: Arial, Helvetica, sans-serif;
+    flex-grow: 1;
+    text-align: left;
+    margin-left: 5px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 80%;
+}
+
+#routeButtonContainer {
+    text-align: center;
+}
+
+#startButtonContainer {
+    display: flex;
+    justify-content: center;
+    width: 100%;
+}
+
+#gameContainer {
+    margin: 0;
+    padding: 0;
+    height: 100vh;
+    width: 100vw;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-end;
+}
+
+#nextButton {
+    border-radius: 6px;
+    border: none;
+    cursor: pointer;
+    transition: background-color 0.3s;
+    white-space: nowrap;
+    display: none;
+    text-align: center;
+    padding: 5px;
+    justify-content: center;
+    align-items: center;
+    padding: 0 10px;
+}
+
+#nextButton:hover {
+    background-color: #afafaf;
+}
+
+#openButton {
+    top: 0px;
+    left: 0px;
+}
+
+body.mobile #openButton {
+    font-size: 2.5rem;
+}
+
+#startButton {
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background-color 0.3s;
+    white-space: nowrap;
+    text-align: center;
+    justify-content: center;
+    align-items: center;
+    padding: 0 10px;
+}
+#startButton:hover {
+    background-color: #afafaf;
+}
+
+.buttonMain {
+    border: 2px solid black;
+    padding: 8px;
+    font-weight: bold;
+    text-align: center;
+    background-color: white;
+    cursor: pointer;
+    border-radius: 5px;
+    padding: 3px;
+    background-color: #f2f2f2;
+    position: absolute;
+    margin: 5px;
+    z-index: 1;
+}

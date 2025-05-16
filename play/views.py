@@ -5,44 +5,56 @@ import json
 from django.conf import settings
 from django.http import JsonResponse, HttpResponseNotFound, HttpResponseBadRequest, HttpResponse, FileResponse, Http404, HttpResponseNotAllowed
 from django.views.decorators.http import require_GET
-from django.views.decorators.csrf import csrf_exempt
 from django.contrib.auth.decorators import login_required
 from django.utils.decorators import method_decorator
 import datetime
 from django.utils.timezone import now
 from .models import UserResult
+from coursesetter.models import publishedFile
 
 @login_required
 def index(request):
     return render(request, 'play.html')
 
 @require_GET
+@login_required
 def get_files(request):
     FILES_DIR = os.path.join(settings.BASE_DIR, 'jsonfiles')
+    user = request.user
 
-    try:
-        files = os.listdir(FILES_DIR)
-        print("Files found:", files)
-    except Exception as e:
-        print("Error reading directory:", e)
-        return JsonResponse({'message': 'Error reading files', 'error': str(e)}, status=500)
+    published_files = publishedFile.objects.filter(published=True)
 
     metadata = []
-    for filename in files:
+    for pub in published_files:
+        filename = pub.filename
         if not filename.endswith('.json'):
             continue
+
         file_path = os.path.join(FILES_DIR, filename)
+        if not os.path.exists(file_path):
+            continue
+
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
                 cp_count = len(data.get('cP', []))
-            modified_time = datetime.datetime.fromtimestamp(os.path.getmtime(file_path)).isoformat()
-            metadata.append({
-                'filename': filename,
-                'modified': modified_time,
-                'cPCount': cp_count,
-                'published': data.get('published', False)  # Assuming 'published' is a key in your JSON
-            })
+                file_base = filename.replace('.json', '')
+
+                user_entry_count = UserResult.objects.filter(
+                    user=user,
+                    filename=file_base
+                ).count()
+
+                modified_time = datetime.datetime.fromtimestamp(os.path.getmtime(file_path)).isoformat()
+
+                metadata.append({
+                    'filename': filename,
+                    'modified': modified_time,
+                    'cPCount': cp_count,
+                    'userEntryCount': user_entry_count,
+                    'published': True  # Always true, since we filtered on published=True
+                })
+
         except Exception as e:
             print(f"Error reading {filename}:", e)
 

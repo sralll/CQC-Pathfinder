@@ -1,44 +1,74 @@
 {% extends "base.html" %}
-{% block content %}
-  <div id="login-box">
-    <div>
-      <form method="post">
-        {% csrf_token %}
-        
-        <div>
-          <label for="{{ form.username.id_for_label }}"></label>
-          {{ form.username }}
-          {% if form.username.errors %}
-            <ul class="errors">
-              {% for error in form.username.errors %}
-                <li>{{ error }}</li>
-              {% endfor %}
-            </ul>
-          {% endif %}
-        </div>
-      
-        <div>
-          <label for="{{ form.password.id_for_label }}"></label>
-          {{ form.password }}
-          {% if form.password.errors %}
-            <ul class="errors">
-              {% for error in form.password.errors %}
-                <li>{{ error }}</li>
-              {% endfor %}
-            </ul>
-          {% endif %}
-        </div>
-      
-        <div>
-          <button type="submit">Log in</button>
-        </div>
-      </form>
-      
+{% load static %}
 
-      <button href="{% url 'password_change' %}">Reset password</button>
-      {% if form.errors %}
-        <p style="color:red;">Invalid login credentials. Please try again.</p>
-      {% endif %}
+{% block content %}
+<div id="login-box">
+  <form id="login-form" method="post">
+    {% csrf_token %}
+
+    <div class="form-row">
+      {{ form.username }}
     </div>
-  </div>
+
+    <div class="form-row">
+      {{ form.password }}
+      <button id="loginButton" type="submit">
+          <img src="{% static 'img/login.svg' %}" alt="Login" height="30">
+      </button>
+    </div>
+  </form>
+</div>
+
+<div id="form-footer">
+  <a href="{% url 'password_reset' %}" class="reset-link">Passwort vergessen?</a>
+</div>
+
+
+  {% if form.errors %}
+    <div id="form-errors">
+      <p>Falsche Benutzerdaten</p>
+    </div>
+
+    <script>
+
+      function positionFormError() {
+        const loginBox = document.getElementById('login-form');
+        const formError = document.getElementById('form-errors');
+        
+        if (loginBox && formError) {
+          const rect = loginBox.getBoundingClientRect();
+          const offsetTop = window.scrollY + rect.top - 50; // 20px spacing below
+
+          formError.style.position = 'absolute';
+          formError.style.top = `${offsetTop}px`;
+          formError.style.left = `${rect.left+5}px`;
+          formError.style.width = `${rect.width}px`;
+        }
+      }
+
+      window.addEventListener('DOMContentLoaded', positionFormError);
+      window.addEventListener('resize', positionFormError);
+    </script>
+{% endif %}
+
+
+<script>
+
+  function positionFormFooter() {
+        const loginBox = document.getElementById('login-form');
+        const formFooter = document.getElementById('form-footer');
+
+        if (loginBox && formFooter) {
+            const rect = loginBox.getBoundingClientRect();
+            const offsetTop = window.scrollY + rect.bottom + 5; // 20px spacing below
+
+            formFooter.style.position = 'absolute';
+            formFooter.style.top = `${offsetTop}px`;
+            formFooter.style.left = `${rect.left}px`;
+            formFooter.style.width = `${rect.width}px`;
+        }
+    }
+    window.addEventListener('DOMContentLoaded', positionFormFooter);
+    window.addEventListener('resize', positionFormFooter);
+</script>
 {% endblock %}

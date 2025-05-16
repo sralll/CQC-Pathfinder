@@ -1,0 +1,143 @@
+#modalP {
+    display: none;
+}
+
+#modalM {
+    display: none;
+}
+
+.reset-form * {
+    all: revert;
+}
+
+.publish-button {
+    padding: 4px 8px;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+#routeCanvas {
+    position: absolute;
+    top:0px;
+    left:0px;
+    display: block;
+    margin: 0 auto;
+    z-index: 0;
+}
+
+.divMain{
+    position: absolute;
+    margin: 5px;
+    z-index: 1;
+}
+
+#divC{
+    left: 0px;
+    top: 0px;
+}
+
+#divR {
+    right: 0px;
+    top: 0px;
+}
+
+#divP {
+    right: 0px;
+    bottom: 0px;
+}
+
+#divM {
+    left: 0px;
+    bottom: 0px;
+}
+
+#tableC {
+    overflow-x: hidden;
+    overflow-y: scroll;
+    direction: rtl;
+}
+
+#controlPairsTable {
+    direction: ltr; /* Restores normal text direction */
+}
+
+.tableHeadMain {
+    border: 2px solid black;
+    padding: 8px;
+    text-align: center;
+    background-color: white;
+    cursor: pointer;
+    border-radius: 5px;
+    padding: 3px;
+    background-color: #f2f2f2;
+}
+
+.tableRowMain, .tableCellMain {
+    border: 2px solid black;
+    padding: 8px;
+    text-align: center;
+    /*background-color: white;*/
+    cursor: pointer;
+    border-radius: 5px;
+    padding: 3px;
+}
+
+
+.tableCellMain:hover, .tableHeadMain:hover {
+    background: var(--td-background-color);
+}
+
+#projectTableDiv {
+    position: relative;
+    padding: 5px;
+    max-height: 800px;
+    overflow: auto;
+}
+
+#fileTable {
+    display: block;
+    table-layout:fixed;
+    width: 100%;
+    position: relative;
+    border-collapse: collapse;
+    max-height: 800px;
+    overflow: auto;
+}
+
+.elevationinput {
+    width: 30px;
+    text-align: center;;
+}
+
+.tableHeadProjects {
+    padding: 5px;
+    text-align: left;
+    border: none;
+    border-bottom: 1px solid #000;
+    position: sticky;
+    top: 0;
+    background-color: #f2f2f2;
+}
+
+.tableCellProjects {
+    cursor: pointer;
+    border-bottom: 1px solid #ddd;
+}
+
+#inputDiv {
+    margin-bottom: 10px;
+}
+
+#scalingInfo {
+    display: none;
+    flex-direction: column;
+    align-items: flex-start;
+}
+
+#scaleInputDiv {
+    display: none;
+}
+
+#buttonScale {
+    left: 0px;
+}

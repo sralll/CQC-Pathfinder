@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+
+{% load static %}
+{% block content %}
+  <script>
+    const isTrainer = "{{ is_trainer|yesno:'true,false' }}" === "true";
+  </script>
+
+  <div id="statsContainer">
+    {% if is_trainer %}
+      <div id="dropdownWrapper">
+        <select id="userSelect">
+          <option value="clear">Athlet ...</option>
+        </select>
+      </div>
+    {% endif %}
+
+
+    <div id="chartsWrapper">
+      <canvas id="doughnutChart"></canvas>
+      <canvas id="barChart"></canvas>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="{% static 'js/stats.js' %}"></script>
+
+{% endblock %}
