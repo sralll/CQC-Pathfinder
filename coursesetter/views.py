@@ -10,6 +10,8 @@ import datetime
 from django.utils.timezone import now
 from django.contrib.auth.decorators import user_passes_test
 from .models import publishedFile
+from django.core.files.storage import default_storage
+from django.core.files.base import ContentFile
 
 def group_required(group_name):
     def in_group(u):
@@ -103,17 +105,16 @@ def save_file(request):
             if not filename.endswith('.json'):
                 return HttpResponseBadRequest('Invalid file extension.')
 
-            file_path = os.path.join(settings.FILES_DIR, filename)
+            # Convert JSON data to string
+            json_content = json.dumps(data, ensure_ascii=False, indent=2)
 
-            # Ensure directory exists
-            os.makedirs(settings.FILES_DIR, exist_ok=True)
+            # Save to S3 using default_storage
+            file_path = f"jsonfiles/{filename}"  # folder prefix inside your S3 bucket
+            content_file = ContentFile(json_content.encode('utf-8'))
+            default_storage.save(file_path, content_file)
 
-            with open(file_path, 'w', encoding='utf-8') as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-
-            return JsonResponse({'message': 'File saved successfully'})
+            return JsonResponse({'message': 'File saved successfully to S3'})
         except Exception as e:
-            # Print to console for debugging
             print("Save error:", e)
             return JsonResponse({'message': 'Error saving file', 'error': str(e)}, status=500)
 
@@ -157,21 +158,15 @@ def upload_map(request):
         # Generate timestamped filename
         timestamp = now().strftime('%Y%m%d_%H%M%S')
         ext = os.path.splitext(file.name)[1]
-        filename = f"{timestamp}{ext}"
+        filename = f"maps/{timestamp}{ext}"  # Save in "maps/" folder in S3
 
-        # Save the file
-        maps_dir = os.path.join(settings.BASE_DIR, 'maps')
-        os.makedirs(maps_dir, exist_ok=True)
-        file_path = os.path.join(maps_dir, filename)
+        # Save file using default storage (S3)
+        saved_path = default_storage.save(filename, ContentFile(file.read()))
+        file_url = default_storage.url(saved_path)
 
-        with open(file_path, 'wb+') as destination:
-            for chunk in file.chunks():
-                destination.write(chunk)
-
-        map_url = f"/maps/{filename}"
         return JsonResponse({
             'success': True,
-            'mapFile': map_url,
+            'mapFile': file_url,
             'scaled': False
         })
 
