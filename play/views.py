@@ -11,6 +11,8 @@ import datetime
 from django.utils.timezone import now
 from .models import UserResult
 from coursesetter.models import publishedFile
+from django.core.files.storage import default_storage
+from django.core.files.base import ContentFile
 
 @login_required
 def index(request):
@@ -19,23 +21,27 @@ def index(request):
 @require_GET
 @login_required
 def get_files(request):
-    FILES_DIR = os.path.join(settings.BASE_DIR, 'jsonfiles')
     user = request.user
 
     published_files = publishedFile.objects.filter(published=True)
 
     metadata = []
+
     for pub in published_files:
         filename = pub.filename
         if not filename.endswith('.json'):
             continue
 
-        file_path = os.path.join(FILES_DIR, filename)
-        if not os.path.exists(file_path):
+        file_path = f"jsonfiles/{filename}"
+        print("Checking file in S3:", file_path)
+        print("Exists?", default_storage.exists(file_path))
+        # Check if file exists in S3
+        if not default_storage.exists(file_path):
             continue
 
         try:
-            with open(file_path, 'r', encoding='utf-8') as f:
+            with default_storage.open(file_path, 'r') as f:
+                # f is a file-like object from S3
                 data = json.load(f)
                 cp_count = len(data.get('cP', []))
                 file_base = filename.replace('.json', '')
@@ -45,38 +51,43 @@ def get_files(request):
                     filename=file_base
                 ).count()
 
-                modified_time = datetime.datetime.fromtimestamp(os.path.getmtime(file_path)).isoformat()
+                # Get last modified time from S3 metadata
+                modified_time = None
+                try:
+                    modified_dt = default_storage.connection.meta.client.head_object(
+                        Bucket=settings.AWS_STORAGE_BUCKET_NAME,
+                        Key=file_path
+                    )['LastModified']
+                    # convert to ISO format string
+                    modified_time = modified_dt.isoformat()
+                except Exception:
+                    # fallback: no modified time available
+                    modified_time = ''
 
                 metadata.append({
                     'filename': filename,
                     'modified': modified_time,
                     'cPCount': cp_count,
                     'userEntryCount': user_entry_count,
-                    'published': True  # Always true, since we filtered on published=True
+                    'published': True  # Always true, filtered before
                 })
 
         except Exception as e:
-            print(f"Error reading {filename}:", e)
+            print(f"Error reading {filename} from S3:", e)
 
     return JsonResponse(metadata, safe=False)
 
-
+@login_required
 def load_file(request, filename):
-    # Define the directory where the files are stored
-    files_dir = os.path.join(settings.BASE_DIR, 'jsonfiles')  # Ensure 'jsonfiles' is the correct folder
+    file_path = f"jsonfiles/{filename}"  # S3 key path inside the bucket
 
-    # Build the full file path
-    file_path = os.path.join(files_dir, filename)
-
-    # Check if the file exists
-    if not os.path.exists(file_path):
+    if not default_storage.exists(file_path):
         return HttpResponseNotFound(f"File {filename} not found")
 
-    # Try to open and read the file
     try:
-        with open(file_path, 'r', encoding='utf-8') as file:
-            file_data = json.load(file)  # Assuming the file content is JSON
-            return JsonResponse(file_data)  # Return the JSON data
+        with default_storage.open(file_path, 'r') as file:
+            file_data = json.load(file)  # Read JSON content from S3
+            return JsonResponse(file_data)
     except Exception as e:
         return JsonResponse({'message': 'Error loading file', 'error': str(e)}, status=500)
     

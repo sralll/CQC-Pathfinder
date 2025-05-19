@@ -315,8 +315,10 @@ submitSaveButton.addEventListener('click', async () => {
     }
 
     try {
+        const encodedFilename = encodeURIComponent(filename); // "WC%20Final%20Tartu%202017.json"
+        const url = `/coursesetter/file-exists/${encodedFilename}/`;
         // First fetch: Check if file exists
-        const response = await fetch(`/coursesetter/file-exists/${filename}.json`);
+        const response = await fetch(url);
         if (!response.ok) {
             throw new Error('Failed to check file existence');
         }
@@ -543,7 +545,10 @@ function publishProject(filename, button) {
 
 // Function to load a file when the "Load" button is clicked
 function loadFile(filename) {
-fetch(`/coursesetter/load-file/${filename}`)
+    const encodedFilename = encodeURIComponent(filename); // "WC%20Final%20Tartu%202017.json"
+    const url = `/coursesetter/load-file/${encodedFilename}/`;
+
+    fetch(url)
     .then(response => response.json())
     .then(fileData => {
         console.log('File data loaded:', fileData);

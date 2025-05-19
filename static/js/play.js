@@ -170,7 +170,9 @@ function loadFileList() {
 }
 
 function loadGameData(filename) {
-    fetch(`/play/load-file/${filename}`)
+    const encodedFilename = encodeURIComponent(filename);
+    const url = `/play/load-file/${encodedFilename}`; 
+    fetch(url)
         .then(response => response.json())
         .then(fileData => {
             cqc = fileData;
@@ -245,7 +247,7 @@ function makePreview() {
     startButton.id = "startButton";
     startButton.textContent = "Start"
     startButton.style.height = (answerWrapperHeight/4-10) + "px";
-    startButton.style.fontSize = (answerWrapperHeight/4-30) + "px";
+    startButton.style.fontSize = (answerWrapperHeight/4-20) + "px";
     startButton.onclick = startGame;
 
     resultBox.appendChild(startButton);
@@ -752,7 +754,7 @@ function submitChoice(index, routeOrder, reducedColorMap) {
             nextButton.innerHTML = "Ende";
         }
         nextButton.style.display = "inline-flex";
-        adjustFontSizeToFit(resultBox);
+        //adjustFontSizeToFit(resultBox);
 
         tbody.appendChild(newRow);
         choiceMade = true;
