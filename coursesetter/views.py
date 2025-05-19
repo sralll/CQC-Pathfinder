@@ -154,17 +154,18 @@ def upload_map(request):
 
         if file.content_type not in allowed_types:
             return JsonResponse({'success': False, 'message': 'Unsupported file type'}, status=400)
-        
+
         # Generate timestamped filename
         timestamp = now().strftime('%Y%m%d_%H%M%S')
         ext = os.path.splitext(file.name)[1]
-        filename = f"{timestamp}{ext}"
+        filename = f"maps/{timestamp}{ext}"  # Prefix with 'maps/' if you want to keep folder structure on S3
 
-        # Save to S3
-        file_path = f"maps/{filename}"
-        default_storage.save(file_path, file)
+        # Save the file using Django's default storage (S3 in your case)
+        file_path = default_storage.save(filename, file)
 
-        map_url = default_storage.url(file_path)  # This gives you the S3 URL or your storage URL
+        # Get the URL to access the file (will be S3 URL if configured)
+        map_url = default_storage.url(file_path)
+
         return JsonResponse({
             'success': True,
             'mapFile': map_url,
