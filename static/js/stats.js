@@ -4,6 +4,7 @@ function getBackgroundColor() {
     return document.getElementById("statsContainer").backgroundColor;
 }
 
+let isMobile = null;
 const screenWidth = window.innerWidth;
 
 const doughnutChart = document.getElementById('doughnutChart');
@@ -12,14 +13,20 @@ const barChart = document.getElementById('barChart');
 let doughnutChartInstance = null;
 let barChartInstance = null;
 
-const isMobile = document.body.classList.contains('mobile');
-const canvasWidth = isMobile ? screenWidth * 0.9 : screenWidth * 0.4;
+document.addEventListener('DOMContentLoaded', function () {
+    isMobile = document.body.classList.contains('mobile');
 
-doughnutChart.width = canvasWidth;
-doughnutChart.height = canvasWidth;
-barChart.width = canvasWidth;
-barChart.height = canvasWidth;
+    const canvasWidth = isMobile ? screenWidth * 0.9 : screenWidth * 0.4;
 
+    doughnutChart.width = canvasWidth;
+    doughnutChart.height = canvasWidth;
+    barChart.width = canvasWidth;
+    barChart.height = canvasWidth;
+
+    if (!isTrainer) {
+        updateStats();
+    }
+});
 
 if (isTrainer) {
     document.addEventListener('DOMContentLoaded', () => {
@@ -44,7 +51,6 @@ if (isTrainer) {
         const userId = userSelect.value; // empty string if none selected
 
         if (userId === "clear") {
-            console.log("Clearing stats");
             doughnutChartInstance.destroy();
             barChartInstance.destroy();
             return;
@@ -65,10 +71,6 @@ if (isTrainer) {
         });
     });
 }
-else {
-    updateStats()
-}
-
 
 function updateStats(userId) {
     const url = userId ? `/stats/${userId}/` : '/stats/';
@@ -140,14 +142,16 @@ function updateStats(userId) {
                 const centerY = (chartArea.top + chartArea.bottom) / 2;
 
                 ctx.save();
-                ctx.font = options.font || '50px Arial';
-                ctx.fillStyle = options.color || 'black';
+                ctx.font = isMobile ? '100px Arial': '50px Arial';
+                ctx.fillStyle = 'black';
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'middle';
-                ctx.fillText(data.total_entries || '', centerX, centerY-20);
+                let ncP_pos = isMobile ? -40 : -20;
+                ctx.fillText(data.total_entries || '', centerX, centerY+ncP_pos);
 
-                ctx.font = options.font || '25px Arial';
-                ctx.fillText('Posten' || '', centerX, centerY+20);
+                ctx.font = isMobile ? '50px Arial' : '25px Arial';
+                let tcP_pos = isMobile ? 40 : 20;
+                ctx.fillText('Posten' || '', centerX, centerY+tcP_pos);
                 ctx.restore();
             }
         };
@@ -161,7 +165,7 @@ function updateStats(userId) {
                     labels: {
                         color: 'black',
                         font: {
-                            size: 12,
+                            size: isMobile ? 36 : 12
                         },
                     },
                     title: {
@@ -169,7 +173,7 @@ function updateStats(userId) {
                         text: 'Routenwahl',
                         color: 'black',
                         font: {
-                            size: 16,
+                            size: isMobile ? 60 : 16,
                             weight: 'bold',
                         },
                     },
@@ -223,7 +227,12 @@ function updateStats(userId) {
                 responsive: false,
                 plugins: {
                     legend: {
-                    display: true,
+                        display: true,
+                        labels: {
+                            font: {
+                                size: isMobile ? 36 : 12
+                            },
+                        }
                     },
                 },
                 scales: {
@@ -233,11 +242,21 @@ function updateStats(userId) {
                         },
                         stacked: true,
                         barPercentage: 0.4,
-                        categoryPercentage: 0.6     // Default is 0.8 (smaller = more spacing between groups)
+                        categoryPercentage: 0.6,
+                        ticks: {
+                            font: {
+                                size: isMobile ? 36 : 12
+                            },
+                        }
                     },
                     y: {
                         grid: {
                             display: true,
+                        },
+                        ticks: {
+                            font: {
+                                size: isMobile ? 36 : 12
+                            },
                         },
                     }
                 }

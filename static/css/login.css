@@ -2,29 +2,64 @@
     display: flex;
     justify-content: center;
     align-items: center;
+    flex-direction: column;
     height: 100vh;
+    width: 100vw;
     margin: 0;
     padding: 0;
+}
+
+body.desktop #login-box {
     background-image: url("/static/img/logo.svg");
     background-repeat: no-repeat;
-    background-position: center center;
     background-size: contain;
-    background-attachment: fixed;
+    background-attachment: fixed;}
+
+
+body.desktop #login-logo {
+    display: none;
+}
+
+body.mobile #login-logo {
+    width: 90vw;
+    margin: 0;
+    margin-bottom: 20px;
+}
+
+body.mobile #login-logo img {
+    width: 90vw;
+}
+
+body.desktop #login-box {
+    background-position: center center;
+}
+
+body.mobile #login-box {
+    background-position: center top;
 }
 
 #login-form {
     display: flex;
     flex-direction: column;
-    width: 250px;
+}
+
+body.desktop #login-form {
+    max-width: 300px;
     gap: 10px;
 }
 
+body.mobile #login-form {
+    display: flex;
+    flex-direction: column;
+    width: 90vw;
+    gap: 20px;
+}
 
 .form-row {
     display: flex;
     flex-direction: row;
     align-items: center;
-    gap: 10px;
+    gap: 0;
 }
 
 .form-row input[type="password"] {
@@ -38,11 +73,18 @@
 #login-form input {
     background-color: rgb(0, 0, 0);
     color: white;
-    border-radius: 6px;
-    padding: 12px;
-    font-size: 1rem;
+    border-radius: 6px 0 0 6px;
     width: 100%;
     box-sizing: border-box;
+}
+body.desktop #login-form input {
+    padding: 12px;
+    font-size: 1rem;
+}
+
+body.mobile #login-form input {
+    padding: 20px;
+    font-size: 3rem;
 }
 
 .form-content {
@@ -60,6 +102,18 @@
     margin-right: 10px;
 }
 
+body.mobile .reset-link {
+    font-size: 2em;
+}
+
+body.desktop #reset-mobile {
+    display: none;
+}
+
+body.mobile #reset-desktop {
+    display: none;
+}
+
 .reset-link:hover {
     text-decoration: underline;
 }
@@ -75,7 +129,7 @@
     flex-shrink: 0;
     background-color: rgb(255, 153, 1);
     color: rgb(0, 0, 0);
-    border-radius: 6px;
+    border-radius: 0 6px 6px 0;
     font-size: 1rem;
     cursor: pointer;
     padding: 6px;
@@ -89,9 +143,24 @@
     align-items: center;
 }
 
-#form-footer {
+body.mobile #loginButton {
+    padding: 18px;
+}
+
+body.mobile #loginButton img {
+    height: 60px;
+}
+
+#reset-desktop {
     display: flex;
     justify-content: left;
     margin: 5px;
     width: 20%;
+}
+
+#reset-mobile {
+    display: flex;
+    justify-content: left;
+    margin-top: 20px;
+    width: 90vw;
 }

@@ -49,11 +49,11 @@ resultBoxWrapper.style.width = canvasWidth + "px";
 resultBoxWrapper.style.marginBottom = (answerWrapperHeight/12) + "px" ;
 
 const resultBox = document.getElementById("resultBox");
-resultBox.style.fontSize = (answerWrapperHeight/4-20) + "px";
+resultBox.style.fontSize = (answerWrapperHeight/4-40) + "px";
 
 const nextButton = document.getElementById("nextButton");
 nextButton.style.height = (answerWrapperHeight/4-10) + "px";
-nextButton.style.fontSize = (answerWrapperHeight/5) + "px";
+nextButton.style.fontSize = (answerWrapperHeight/4 - 40) + "px";
 nextButton.style.marginRight = "5px";
 
 const routeButtonContainer = document.getElementById("routeButtonContainer");
