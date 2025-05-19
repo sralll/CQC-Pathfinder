@@ -35,7 +35,7 @@ body.mobile #completionTable {
 }
 
 #completionTable th {
-    /*border-bottom: 1px solid #ccc;*/
+    border-bottom: 1px solid #ccc;
 }
 
 #completionTable .tableName {
