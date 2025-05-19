@@ -162,10 +162,10 @@ def upload_map(request):
 
         # Save the file using Django's default storage (S3 in your case)
         file_path = default_storage.save(filename, file)
-
+        print(f"File saved to: {file_path}")
         # Get the URL to access the file (will be S3 URL if configured)
         map_url = default_storage.url(file_path)
-
+        print(f"File URL: {map_url}")
         return JsonResponse({
             'success': True,
             'mapFile': map_url,
