@@ -158,15 +158,16 @@ def upload_map(request):
         # Generate timestamped filename
         timestamp = now().strftime('%Y%m%d_%H%M%S')
         ext = os.path.splitext(file.name)[1]
-        filename = f"maps/{timestamp}{ext}"  # Save in "maps/" folder in S3
+        filename = f"{timestamp}{ext}"
 
-        # Save file using default storage (S3)
-        saved_path = default_storage.save(filename, ContentFile(file.read()))
-        file_url = default_storage.url(saved_path)
+        # Save to S3
+        file_path = f"maps/{filename}"
+        default_storage.save(file_path, file)
 
+        map_url = default_storage.url(file_path)  # This gives you the S3 URL or your storage URL
         return JsonResponse({
             'success': True,
-            'mapFile': file_url,
+            'mapFile': map_url,
             'scaled': False
         })
 
