@@ -49,11 +49,23 @@ resultBoxWrapper.style.width = canvasWidth + "px";
 resultBoxWrapper.style.marginBottom = (answerWrapperHeight/12) + "px" ;
 
 const resultBox = document.getElementById("resultBox");
-resultBox.style.fontSize = (answerWrapperHeight/4-40) + "px";
+resultBox.style.padding = 0;
+resultBox.style.height = (answerWrapperHeight/4) + "px";
+
+
+document.addEventListener("DOMContentLoaded", function () {
+  const isMobile = document.body.classList.contains("mobile");
+
+  if (isMobile) {
+    resultBox.style.fontSize = (resultBox.offsetHeight - 30) + "px";
+  } else {
+    resultBox.style.fontSize = (resultBox.offsetHeight - 10) + "px";
+  }
+});
 
 const nextButton = document.getElementById("nextButton");
-nextButton.style.height = (answerWrapperHeight/4-10) + "px";
-nextButton.style.fontSize = (answerWrapperHeight/4 - 40) + "px";
+nextButton.style.height = resultBoxWrapper.offsetHeight-10 + "px";
+nextButton.style.fontSize = resultBoxWrapper.offsetHeight-10 + "px";
 nextButton.style.marginRight = "5px";
 
 const routeButtonContainer = document.getElementById("routeButtonContainer");
@@ -66,8 +78,6 @@ modalP.style.display = "block";
 modalcP.style.display = "block";
 loadFileList();
 const closeModal = document.getElementById("closeProjects");
-
-window.addEventListener("load", () => adjustFontSizeToFit(resultBox));
 
 function getCSRFToken() {
     return document.querySelector('meta[name="csrf-token"]').getAttribute('content');
@@ -754,21 +764,10 @@ function submitChoice(index, routeOrder, reducedColorMap) {
             nextButton.innerHTML = "Ende";
         }
         nextButton.style.display = "inline-flex";
-        //adjustFontSizeToFit(resultBox);
 
         tbody.appendChild(newRow);
         choiceMade = true;
     });
-}
-
-function adjustFontSizeToFit(element, minFontSize = 10) {
-    let fontSize = answerWrapperHeight/5;
-
-    // Keep shrinking font size until it fits or reaches minFontSize
-    while (element.scrollWidth > element.clientWidth && fontSize > minFontSize) {
-        fontSize--;
-        element.style.fontSize = fontSize + "px";
-    }
 }
 
 // Function to record time difference between presses
