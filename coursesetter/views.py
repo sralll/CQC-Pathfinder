@@ -28,7 +28,6 @@ def index(request):
     return render(request, 'coursesetter.html')
 
 @login_required
-@group_required('Trainer')
 def get_map_file(request, filename):
     s3 = boto3.client(
         's3',

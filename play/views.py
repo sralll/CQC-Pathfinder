@@ -76,6 +76,7 @@ def get_files(request):
 
     return JsonResponse(metadata, safe=False)
 
+@login_required
 def load_file(request, filename):
     file_path = f"jsonfiles/{filename}"  # S3 key path inside the bucket
 
