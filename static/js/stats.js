@@ -142,15 +142,15 @@ function updateStats(userId) {
                 const centerY = (chartArea.top + chartArea.bottom) / 2;
 
                 ctx.save();
-                ctx.font = isMobile ? '100px Arial': '50px Arial';
+                ctx.font = '50px Arial';
                 ctx.fillStyle = 'black';
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'middle';
-                let ncP_pos = isMobile ? -40 : -20;
+                let ncP_pos = -20;
                 ctx.fillText(data.total_entries || '', centerX, centerY+ncP_pos);
 
-                ctx.font = isMobile ? '50px Arial' : '25px Arial';
-                let tcP_pos = isMobile ? 40 : 20;
+                ctx.font = '25px Arial';
+                let tcP_pos = 20;
                 ctx.fillText('Posten' || '', centerX, centerY+tcP_pos);
                 ctx.restore();
             }
@@ -165,7 +165,7 @@ function updateStats(userId) {
                     labels: {
                         color: 'black',
                         font: {
-                            size: isMobile ? 36 : 12
+                            size: isMobile ? 20 : 12
                         },
                     },
                     title: {
@@ -173,7 +173,7 @@ function updateStats(userId) {
                         text: 'Routenwahl',
                         color: 'black',
                         font: {
-                            size: isMobile ? 60 : 16,
+                            size: isMobile ? 30 : 16,
                             weight: 'bold',
                         },
                     },
@@ -230,7 +230,7 @@ function updateStats(userId) {
                         display: true,
                         labels: {
                             font: {
-                                size: isMobile ? 36 : 12
+                                size: isMobile ? 20 : 12
                             },
                         }
                     },
@@ -245,7 +245,7 @@ function updateStats(userId) {
                         categoryPercentage: 0.6,
                         ticks: {
                             font: {
-                                size: isMobile ? 36 : 12
+                                size: isMobile ? 20 : 12
                             },
                         }
                     },
@@ -255,7 +255,7 @@ function updateStats(userId) {
                         },
                         ticks: {
                             font: {
-                                size: isMobile ? 36 : 12
+                                size: isMobile ? 20 : 12
                             },
                         },
                     }

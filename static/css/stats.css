@@ -37,6 +37,7 @@ body.mobile #userSelect {
     flex-direction: column;
     gap: 1vh;
     overflow-y: auto;
+    width: 90vw;
 }
 
 body.desktop #chartsWrapper {
@@ -44,5 +45,15 @@ body.desktop #chartsWrapper {
 }
 
 body.mobile .canvaschart {
-    width: 90vw;
+    width: 100%;
+}
+
+#doughnutChart {
+  width: 100%;
+  height: auto;
+}
+
+#barChart {
+  width: 100%;
+  height: auto;
 }
