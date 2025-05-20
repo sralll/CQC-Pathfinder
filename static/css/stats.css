@@ -9,7 +9,8 @@
     box-sizing: border-box;
     padding: 2vh;
     gap: 3vh;
-    overflow: auto;
+    overflow-y: auto;
+    overflow-x: hidden;
 }
 
 #dropdownWrapper {
@@ -56,4 +57,8 @@ body.mobile #doughnutChart {
 body.mobile #barChart {
   width: 90vw;        /* Responsive width */
   display: block;     /* Remove inline spacing */
+}
+
+body.mobile #placeholder {
+    height: 30vh;
 }
