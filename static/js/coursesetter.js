@@ -1072,89 +1072,70 @@ function makeZiel(event) {
 }
 
 function calcLength() {
-    // Iterate over each control pair
-    cqc.cP.forEach((pair, indexC) => {
-        // Iterate over each route within the control pair
-        pair.route.forEach((route, indexR) => {
-            let routeLength = 0;
+    let route = cqc.cP[ncP].route[nR];
 
-            // Iterate through each pair of consecutive points in the route
-            for (let i = 1; i < route.rP.length; i++) {
-                // Calculate the distance between the current and previous points
-                const deltaX = route.rP[i].x - route.rP[i - 1].x;
-                const deltaY = route.rP[i].y - route.rP[i - 1].y;
-                const segmentLength = Math.sqrt(deltaX * deltaX + deltaY * deltaY)*0.48;
+    let routeLength = 0;
 
-                // Add the segment length to the total length
-                routeLength += segmentLength;
-            }
+    // Iterate through each pair of consecutive points in the route
+    for (let i = 1; i < route.rP.length; i++) {
+        // Calculate the distance between the current and previous points
+        const deltaX = route.rP[i].x - route.rP[i - 1].x;
+        const deltaY = route.rP[i].y - route.rP[i - 1].y;
+        const segmentLength = Math.sqrt(deltaX * deltaX + deltaY * deltaY)*0.48;
 
-            // Round the total length and assign it to the appropriate data structure
-            routeLength = Math.round(routeLength);
-            // Assign the calculated length to your data structure (for example, rData)
-            cqc.cP[indexC].route[indexR].length = routeLength;
-        });
-    });
+        // Add the segment length to the total length
+        routeLength += segmentLength;
+    }
+
+    // Round the total length and assign it to the appropriate data structure
+    routeLength = Math.round(routeLength);
+    // Assign the calculated length to your data structure (for example, rData)
+    cqc.cP[ncP].route[nR].length = routeLength;
 }
 
 function calcDir() {
-    // Iterate over each control pair
-    cqc.cP.forEach((pair, indexC) => {
-        // Iterate over each route within the control pair
-        pair.route.forEach((route, indexR) => {
-            
-            // Initialize sharp angle counter
-            let sharpAngle = 0;
-            // Iterate through each pair of consecutive segments in the route
-            for (let i = 1; i < route.rP.length - 1; i++) {
-                // Calculate the vectors for the current and previous segments
-                const prevVector = [
-                    route.rP[i].x - route.rP[i - 1].x,
-                    route.rP[i].y - route.rP[i - 1].y
-                ];
-                const currentVector = [
-                    route.rP[i + 1].x - route.rP[i].x,
-                    route.rP[i + 1].y - route.rP[i].y
-                ];
+    let route = cqc.cP[ncP].route[nR];
+    // Initialize sharp angle counter
+    let sharpAngle = 0;
+    // Iterate through each pair of consecutive segments in the route
+    for (let i = 1; i < route.rP.length - 1; i++) {
+        // Calculate the vectors for the current and previous segments
+        const prevVector = [
+            route.rP[i].x - route.rP[i - 1].x,
+            route.rP[i].y - route.rP[i - 1].y
+        ];
+        const currentVector = [
+            route.rP[i + 1].x - route.rP[i].x,
+            route.rP[i + 1].y - route.rP[i].y
+        ];
 
-                // Calculate the dot product between the current and previous vectors
-                const dotProduct = prevVector[0] * currentVector[0] + prevVector[1] * currentVector[1];
+        // Calculate the dot product between the current and previous vectors
+        const dotProduct = prevVector[0] * currentVector[0] + prevVector[1] * currentVector[1];
 
-                // Calculate the magnitudes of the vectors
-                const prevMagnitude = Math.sqrt(prevVector[0] * prevVector[0] + prevVector[1] * prevVector[1]);
-                const currentMagnitude = Math.sqrt(currentVector[0] * currentVector[0] + currentVector[1] * currentVector[1]);
+        // Calculate the magnitudes of the vectors
+        const prevMagnitude = Math.sqrt(prevVector[0] * prevVector[0] + prevVector[1] * prevVector[1]);
+        const currentMagnitude = Math.sqrt(currentVector[0] * currentVector[0] + currentVector[1] * currentVector[1]);
 
-                // Calculate the cosine of the angle between the vectors
-                const cosTheta = dotProduct / (prevMagnitude * currentMagnitude);
+        // Calculate the cosine of the angle between the vectors
+        const cosTheta = dotProduct / (prevMagnitude * currentMagnitude);
 
-                // Calculate the angle in radians
-                const theta = Math.acos(cosTheta);
+        // Calculate the angle in radians
+        const theta = Math.acos(cosTheta);
 
-                // Convert the angle to degrees
-                const chAngle = theta * (180 / Math.PI);
+        // Convert the angle to degrees
+        const chAngle = theta * (180 / Math.PI);
 
-                // Check if the angle is sharp (greater than 60 degrees) and increment the sharp angle counter
-                if (chAngle > 60) {
-                    sharpAngle += 1;
-                }
-            }
-            // Store the sharp angle count for the current route in the appropriate data structure
-            cqc.cP[indexC].route[indexR].noA = sharpAngle;
-        });
-    });
+        // Check if the angle is sharp (greater than 60 degrees) and increment the sharp angle counter
+        if (chAngle > 60) {
+            sharpAngle += 1;
+        }
+    }
+    // Store the sharp angle count for the current route in the appropriate data structure
+    cqc.cP[ncP].route[nR].noA = sharpAngle;
 }
 
 function calcSide() {
-    console.log("Calc");
     cqc.cP[ncP].route[nR].pos = sideWeightOfRoute(cqc.cP[ncP], cqc.cP[ncP].route[nR]);
-
-    //remove again
-    cqc.cP.forEach((pair, indexC) => {
-        // Iterate over each route within the control pair
-        pair.route.forEach((route, indexR) => {
-            cqc.cP[indexC].route[indexR].pos = sideWeightOfRoute(pair, route);
-        });
-    });
 }
 
 function sideWeightOfRoute(pair, route) {
