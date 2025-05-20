@@ -398,7 +398,7 @@ modalM.style.display = 'block';
 });
 
 function loadFileList() {
-fetch('/coursesetter/get-files')
+fetch('/coursesetter/get-files/')
     .then(response => response.json())
     .then(files => {
         // Sort files by modified date (latest first)
