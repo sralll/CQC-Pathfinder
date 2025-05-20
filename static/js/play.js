@@ -189,6 +189,8 @@ function loadGameData(filename) {
     // Start spinner
     loading = true;
     animateCanvasSpinner();
+    modalP.style.display = 'none';
+
 
     fetch(url)
         .then(response => response.json())
@@ -203,7 +205,6 @@ function loadGameData(filename) {
 
             image.onload = () => {
                 loading = false; // Stop spinner
-                modalP.style.display = 'none';
                 makePreview(); // Draw full game UI
             };
 
@@ -823,7 +824,7 @@ function animateCanvasSpinner() {
     ctx.fillStyle = "#333";
     ctx.font = "18px Arial";
     ctx.textAlign = "center";
-    ctx.fillText("Loading map...", centerX, centerY + 50);
+    ctx.fillText("Karte laden...", centerX, centerY + 50);
 
     spinnerAngle += 0.1;
     requestAnimationFrame(animateCanvasSpinner);
