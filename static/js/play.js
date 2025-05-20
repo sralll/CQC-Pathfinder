@@ -7,6 +7,9 @@ let choiceMade = false;
 
 let game_file = null;
 
+let loading = false;
+let spinnerAngle = 0;
+
 let startTransform = null; // To store the starting transformation matrix
 let targetTransform = null; // To store the target transformation matrix
 let animationDuration = 1000; // Duration of the animation in milliseconds (1 second)
@@ -181,19 +184,36 @@ function loadFileList() {
 
 function loadGameData(filename) {
     const encodedFilename = encodeURIComponent(filename);
-    const url = `/play/load-file/${encodedFilename}`; 
+    const url = `/play/load-file/${encodedFilename}`;
+
+    // Start spinner
+    loading = true;
+    animateCanvasSpinner();
+
     fetch(url)
         .then(response => response.json())
         .then(fileData => {
             cqc = fileData;
             game_file = filename.replace('.json', '');
-            image.src = cqc.mapFile;
-            modalP.style.display = 'none';
             cqc_filename = filename;
-            makePreview();
+
+            // Load image
+            image = new Image();
+            image.src = cqc.mapFile;
+
+            image.onload = () => {
+                loading = false; // Stop spinner
+                modalP.style.display = 'none';
+                makePreview(); // Draw full game UI
+            };
+
+            image.onerror = () => {
+                loading = false;
+                alert("Failed to load image");
+            };
         })
         .catch(error => {
-            console.error("Error loading game data:", error);
+            loading = false;
             alert("Failed to load game data");
         });
 }
@@ -769,6 +789,46 @@ function submitChoice(index, routeOrder, reducedColorMap) {
         choiceMade = true;
     });
 }
+
+function animateCanvasSpinner() {
+    if (!loading) return;
+
+    const ctx = canvas.getContext("2d");
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // Background
+    ctx.fillStyle = "#f5f5f5";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // Spinner circle
+    const centerX = canvas.width / 2;
+    const centerY = canvas.height / 2;
+    const radius = 30;
+    const lineWidth = 6;
+
+    ctx.save();
+    ctx.translate(centerX, centerY);
+    ctx.rotate(spinnerAngle);
+
+    ctx.beginPath();
+    ctx.arc(0, 0, radius, 0, Math.PI * 1.5);
+    ctx.strokeStyle = "#007bff";
+    ctx.lineWidth = lineWidth;
+    ctx.lineCap = "round";
+    ctx.stroke();
+
+    ctx.restore();
+
+    // Optional text
+    ctx.fillStyle = "#333";
+    ctx.font = "18px Arial";
+    ctx.textAlign = "center";
+    ctx.fillText("Loading map...", centerX, centerY + 50);
+
+    spinnerAngle += 0.1;
+    requestAnimationFrame(animateCanvasSpinner);
+}
+
 
 // Function to record time difference between presses
 function playTiming() {

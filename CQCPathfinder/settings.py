@@ -1,7 +1,6 @@
 from pathlib import Path
 import os
 import dj_database_url
-import whitenoise
 from django.core.files.storage import default_storage
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
