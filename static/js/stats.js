@@ -157,7 +157,7 @@ function updateStats(userId) {
         };
 
         const options = {
-            responsive: isMobile,
+            responsive: false,
             plugins: {
                 legend: {
                     display: true,
@@ -224,7 +224,7 @@ function updateStats(userId) {
             type: 'bar',
             data: barData,
             options: {
-                responsive: isMobile,
+                responsive: false,
                 plugins: {
                     legend: {
                         display: true,
