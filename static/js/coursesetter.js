@@ -301,7 +301,7 @@ submitSaveButton.addEventListener('click', async () => {
             const length = r.length;
             const elevation = r.elevation;
 
-            const gradient = (elevation / length) * 200; // Gradient in %
+            const gradient = (elevation / length) * 100; // Gradient in %
             const GAP_p = 0.0017 * (gradient) ** 2 + 0.02901 * gradient + 0.99387;
             const GAP_n = 0.0017 * (gradient) ** 2 - 0.02901 * gradient + 0.99387;
             const GAP = runSpeed / ((GAP_p + GAP_n) / 2);
