@@ -1173,7 +1173,7 @@ function sideWeightOfRoute(pair, route) {
         sum += cross;
     }
 
-    return sum;
+    return sum  / routePoints.length;
 }
 
 function drawStart() {
