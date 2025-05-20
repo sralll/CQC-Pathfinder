@@ -17,15 +17,15 @@ document.addEventListener('DOMContentLoaded', function () {
     isMobile = document.body.classList.contains('mobile');
 
     if (isMobile) {
-        doughnutChart.width = 0.9*canvasWidth;
-        doughnutChart.height = 0.9*canvasWidth;
-        barChart.width = 0.9*canvasWidth;
-        barChart.height = 0.9*canvasWidth;
+        doughnutChart.width = 0.9*screenWidth;
+        doughnutChart.height = 0.9*screenWidth;
+        barChart.width = 0.9*screenWidth;
+        barChart.height = 0.9*screenWidth;
         doughnutChart.style.width = "90vw";
         barChart.style.width = "90vw";
     } else {
-        doughnutChart.width = 0.45*canvasWidth;
-        doughnutChart.height = 0.45*canvasWidth;
+        doughnutChart.width = 0.45*screenWidth;
+        doughnutChart.height = 0.45*screenWidth;
         barChart.style.width = "45vw";
         barChart.style.height = "45vw";
     }
