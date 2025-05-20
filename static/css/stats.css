@@ -48,12 +48,12 @@ body.mobile .canvaschart {
     width: 100%;
 }
 
-#doughnutChart {
-  width: 100%;
-  height: auto;
+body.mobile #doughnutChart {
+  width: 90vw;        /* Responsive width */
+  display: block;     /* Remove inline spacing */
 }
 
-#barChart {
-  width: 100%;
-  height: auto;
+body.mobile #barChart {
+  width: 90vw;        /* Responsive width */
+  display: block;     /* Remove inline spacing */
 }

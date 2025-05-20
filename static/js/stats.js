@@ -16,12 +16,19 @@ let barChartInstance = null;
 document.addEventListener('DOMContentLoaded', function () {
     isMobile = document.body.classList.contains('mobile');
 
-    const canvasWidth = isMobile ? screenWidth * 0.9 : screenWidth * 0.4;
-
-    doughnutChart.width = canvasWidth;
-    doughnutChart.height = canvasWidth;
-    barChart.width = canvasWidth;
-    barChart.height = canvasWidth;
+    if (isMobile) {
+        doughnutChart.width = 0.9*canvasWidth;
+        doughnutChart.height = 0.9*canvasWidth;
+        barChart.width = 0.9*canvasWidth;
+        barChart.height = 0.9*canvasWidth;
+        doughnutChart.style.width = "90vw";
+        barChart.style.width = "90vw";
+    } else {
+        doughnutChart.width = 0.45*canvasWidth;
+        doughnutChart.height = 0.45*canvasWidth;
+        barChart.style.width = "45vw";
+        barChart.style.height = "45vw";
+    }
 
     if (!isTrainer) {
         updateStats();
