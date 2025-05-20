@@ -630,7 +630,9 @@ function generateSortedIndicesByPos(route) {
 }
 
 function submitChoice(index, routeOrder, reducedColorMap) {
-    if (choiceMade) {return;} // Prevent multiple clicks }
+    if (choiceMade) {return;} // Prevent multiple clicks
+    choiceMade = true;
+
     const choiceTime = playTiming();
 
     selectedIndex = index;
@@ -784,7 +786,6 @@ function submitChoice(index, routeOrder, reducedColorMap) {
         nextButton.style.display = "inline-flex";
 
         tbody.appendChild(newRow);
-        choiceMade = true;
     });
 }
 
