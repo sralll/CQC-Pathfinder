@@ -90,8 +90,8 @@ body.desktop #login-form input {
 }
 
 body.mobile #login-form input {
-    padding: 30px;
-    font-size: 3rem;
+    padding: 20px;
+    font-size: 2rem;
 }
 
 .form-content {
@@ -139,7 +139,7 @@ body.mobile #reset-desktop {
     border-radius: 0 10px 10px 0;
     font-size: 1rem;
     cursor: pointer;
-    padding: 7px;
+    padding: 8px;
     outline: none;
     box-shadow: none;
     height: 100%;

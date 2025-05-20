@@ -37,7 +37,7 @@ body.mobile #projectTableDiv {
 }
 
 body.mobile #fileTable {
-    font-size: 2.5rem;
+    font-size: 1rem;
 }
 
 body.mobile #fileTable td{
@@ -106,7 +106,7 @@ table {
     display: flex;
     flex-direction: column;
     align-items: center;
-    justify-content: flex-end;
+    justify-content: center;
 }
 
 #nextButton {
@@ -133,7 +133,7 @@ table {
 }
 
 body.mobile #openButton {
-    font-size: 2.5rem;
+    font-size: 1.5rem;
 }
 
 #startButton {

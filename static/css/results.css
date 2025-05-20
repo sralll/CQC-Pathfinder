@@ -12,9 +12,9 @@
 
 body.mobile #jsonDropdown {
     font-size: 1rem;
-    width: 45vw;
-    padding: 20px;
-    border-radius: 20px;
+    width: 66vw;
+    padding: 12px;
+    border-radius: 12px;
 }
 
 #completionTable td, th {

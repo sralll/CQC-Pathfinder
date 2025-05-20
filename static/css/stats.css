@@ -28,7 +28,7 @@ body.mobile #userSelect {
     font-size: 1rem;
     padding: 12px;
     width: 66vw;
-    border-radius: 18px;
+    border-radius: 12px;
 }
 
 #chartsWrapper {
@@ -36,8 +36,13 @@ body.mobile #userSelect {
     align-items: center;
     flex-direction: column;
     gap: 1vh;
+    overflow-y: auto;
 }
 
 body.desktop #chartsWrapper {
     flex-direction: row;
+}
+
+body.mobile .canvaschart {
+    width: 90vw;
 }
