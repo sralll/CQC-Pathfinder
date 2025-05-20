@@ -139,7 +139,7 @@ body.mobile #reset-desktop {
     border-radius: 0 10px 10px 0;
     font-size: 1rem;
     cursor: pointer;
-    padding: 4px;
+    padding: 8px;
     outline: none;
     box-shadow: none;
     height: 100%;
@@ -155,7 +155,7 @@ body.mobile #loginButton {
 }
 
 body.mobile #loginButton img {
-    height: 80px;
+    height: 60px;
 }
 
 #reset-desktop {

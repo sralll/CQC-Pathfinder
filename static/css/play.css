@@ -85,6 +85,7 @@ table {
     text-overflow: ellipsis;
     max-width: 80%;
     background-color: transparent;
+    justify-content: center;
 }
 
 #routeButtonContainer {
