@@ -798,7 +798,7 @@ function animateCanvasSpinner() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
     // Background
-    ctx.fillStyle = "#f5f5f5";
+    ctx.fillStyle = "#aaaaaa";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
     // Spinner circle
