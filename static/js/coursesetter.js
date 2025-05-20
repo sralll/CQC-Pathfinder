@@ -1151,9 +1151,32 @@ function calcSide() {
         // Iterate over each route within the control pair
         pair.route.forEach((route, indexR) => {
 
-            cqc.cP[indexC].route[indexR].pos = dominantSideOfRoute(pair, route);
+            if (cqc.cP[ncP].complex) {
+                cqc.cP[indexC].route[indexR].pos = sideWeightOfRoute(pair, route);
+            } else {
+                cqc.cP[indexC].route[indexR].pos = dominantSideOfRoute(pair, route);
+            }
         });
     });
+}
+
+function sideWeightOfRoute(pair, route) {
+    let sum = 0;
+    const start = pair.start;
+    const ziel = pair.ziel;
+    const routePoints = route.rP; // Get the route points
+
+    for (const p of routePoints) {
+        const dx = ziel.x - start.x;
+        const dy = ziel.y - start.y;
+        const px = p.x - start.x;
+        const py = p.y - start.y;
+
+        const cross = dx * py - dy * px;
+        sum += cross;
+    }
+
+    return sum;
 }
 
 function dominantSideOfRoute(pair, route) {
