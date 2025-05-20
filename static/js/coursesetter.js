@@ -1007,12 +1007,12 @@ function makeRP(event){
     nRP += 1; //route point counter increase
     
     if (xClick == cqc.cP[ncP].ziel.x && yClick == cqc.cP[ncP].ziel.y) { //if route point is the control point
+        calcSide(); //calculate left/right side of route
+        calcLength(); //calculate route length
+        calcDir(); //calculate number of sharp angles on route
         nR += 1; //increase route counter
         nRP = 0; //reset route point counter
         rDraw = false; //reset route drawing mode
-        calcLength(); //calculate route length
-        calcDir(); //calculate number of sharp angles on route
-        calcSide(); //calculate left/right side of route
     }
 }
 
