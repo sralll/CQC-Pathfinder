@@ -12,7 +12,6 @@
 
 body.mobile #jsonDropdown {
     font-size: 2rem;
-    height: 80px;
     width: 45vw;
     border-radius: 20px;
 }
@@ -50,10 +49,6 @@ body.mobile #completionTable {
     padding-left: 0px;
     padding-right: 0px;
     vertical-align: middle;
-}
-
-body.mobile .userCheckbox {
-    transform: scale(2);
 }
 
 #completionTable td:first-child,
