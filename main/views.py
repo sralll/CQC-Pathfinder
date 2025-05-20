@@ -205,11 +205,6 @@ def user_game_stats(request, user_id=None):
     if not user_id: 
         target_user = user
     else:
-        # If a user_id is provided, check if the logged-in user is an admin
-        if not user.is_staff:  # Only allow admins to view stats for other users
-            return JsonResponse({"error": "Permission denied."}, status=403)
-        
-        # Get the user object for the specified user_id
         target_user = get_object_or_404(User, id=user_id)
 
     # Query the target user's results

@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% load static %}
-
+<!-- TEST TEMPLATE VERSION 5 -->
 {% block content %}
 <div id="login-box">
   <div id="login-logo">
@@ -16,13 +16,14 @@
 
     <div class="form-row">
       {{ form.password }}
+      
       <button id="loginButton" type="submit">
-          <img src="{% static 'img/login.svg' %}" alt="Login" height="30">
+        <img src="{% static 'img/login.svg' %}" alt="Login" height="30">
       </button>
     </div>
   </form>
 
-  <div id="reset-mobile">
+<div id="reset-mobile">
     <a href="{% url 'password_reset' %}" class="reset-link">Passwort vergessen?</a>
   </div>
 </div>

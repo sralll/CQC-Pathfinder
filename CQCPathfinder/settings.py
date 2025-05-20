@@ -10,7 +10,7 @@ FILES_DIR = os.path.join(BASE_DIR, 'jsonfiles')
 MAPS_DIR = os.path.join(BASE_DIR, 'maps')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = False
+DEBUG = True
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
@@ -142,10 +142,9 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 INSTALLED_APPS += ['storages']
 
-if not DEBUG:
-    AWS_ACCESS_KEY_ID = os.environ.get('AWS_ACCESS_KEY_ID')
-    AWS_SECRET_ACCESS_KEY = os.environ.get('AWS_SECRET_ACCESS_KEY')
-    AWS_STORAGE_BUCKET_NAME = os.environ.get('AWS_STORAGE_BUCKET_NAME')
+AWS_ACCESS_KEY_ID = os.environ.get('AWS_ACCESS_KEY_ID')
+AWS_SECRET_ACCESS_KEY = os.environ.get('AWS_SECRET_ACCESS_KEY')
+AWS_STORAGE_BUCKET_NAME = os.environ.get('AWS_STORAGE_BUCKET_NAME')
 AWS_S3_REGION_NAME = 'eu-north-1'
 
 AWS_S3_CUSTOM_DOMAIN = '%s.S3.AMAZONAWS.COM' % AWS_STORAGE_BUCKET_NAME

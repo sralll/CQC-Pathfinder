@@ -4,6 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="csrf-token" content="{{ csrf_token }}">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>QCQ Pathfinder</title>
     <link rel="icon" href="{% static 'favicon.ico' %}" type="image/x-icon">
 
@@ -15,6 +16,12 @@
     <link rel="stylesheet" href="{% static 'css/results.css' %}">
 
     <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
         body, html {
             margin: 0;
             padding: 0;
@@ -93,7 +100,6 @@
     // Do something for desktop
     document.body.classList.add('desktop');
     }
-
 </script>
 </body>
 </html>
