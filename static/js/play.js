@@ -287,7 +287,7 @@ function nextControl() {
         playTiming();
     }
     else {
-        window.location.href = `/results?game=${encodeURIComponent(game_file)}`;
+        window.location.href = `/results/?game=${encodeURIComponent(game_file)}`;
     }
 }
 
@@ -464,7 +464,7 @@ function drawRoutes()  {
         ctx.beginPath();
 
         cqc.cP[ncP].route.forEach((route, nR) => {
-            ctx.beginPath(); // Start a new path for each route
+            ctx.beginPath();
             route.rP.forEach((point, idx) => {
                 if (idx === 0) {
                     ctx.moveTo(point.x / cqc.scale, point.y / cqc.scale);
@@ -472,9 +472,9 @@ function drawRoutes()  {
                     ctx.lineTo(point.x / cqc.scale, point.y / cqc.scale);
                 }
             });
-            ctx.strokeStyle = "white"; // Ensure we don't go out of bounds
-            ctx.lineWidth = 6;
-            ctx.stroke(); // Stroke once per route, not per point
+            ctx.strokeStyle = "white";
+            ctx.lineWidth = 8;
+            ctx.stroke();
         });
 
         const randomizedIndices = generateRandomizedIndices(cqc.cP[ncP].route);
@@ -510,7 +510,7 @@ function drawRoutes()  {
 
             // Set the color for the route based on randomized index
             ctx.strokeStyle = routeColor[colorPicker[indexColor]];
-            ctx.lineWidth = 4;
+            ctx.lineWidth = 6;
             ctx.stroke(); // Stroke the route
 
             const routeCell = document.createElement("td");

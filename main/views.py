@@ -14,6 +14,7 @@ import numpy as np
 from django.shortcuts import get_object_or_404
 from collections import defaultdict
 from coursesetter.models import publishedFile
+from django.core.files.storage import default_storage
 
 @login_required
 def home_view(request):
@@ -36,26 +37,24 @@ def stats_view(request):
 
 @login_required
 def get_published_files(request):
-    json_dir = Path(settings.BASE_DIR) / 'jsonfiles'
     result = []
 
-    # Get all published entries from the database
     published_entries = publishedFile.objects.filter(published=True)
 
     for entry in published_entries:
         filename = entry.filename
-        file_path = json_dir / filename
-
-        if not file_path.exists():
-            continue  # Skip if the file doesn't actually exist
+        file_path = f"jsonfiles/{filename}"  # S3 prefix
 
         try:
-            result.append({
-                'filename': filename,
-                'modified': file_path.stat().st_mtime  # Unix timestamp
-            })
+            # Check if file exists in S3
+            if default_storage.exists(file_path):
+                modified_time = default_storage.get_modified_time(file_path).timestamp()
+                result.append({
+                    'filename': filename,
+                    'modified': modified_time
+                })
         except Exception as e:
-            print(f"Error reading {filename}: {e}")
+            print(f"Error accessing {filename} on S3: {e}")
             continue
 
     # Sort by modified time (descending)
@@ -79,11 +78,11 @@ def users_with_results(request):
 
 @login_required
 def fetch_plot_data(request, filename):
-    json_path = Path(settings.BASE_DIR) / 'jsonfiles' / f"{filename}.json"
+    file_path = f"jsonfiles/{filename}.json"
 
     try:
         # 1. Load control points and compute distances
-        with open(json_path, 'r', encoding='utf-8') as f:
+        with default_storage.open(file_path, 'r') as f:
             content = json.load(f)
             cP_list = content.get('cP', [])
             

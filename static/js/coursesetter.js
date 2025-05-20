@@ -588,52 +588,59 @@ if (confirm(`Projekt "${filenameWithoutExtension}" löschen?`)) {
 }
 
 document.getElementById('uploadForm').addEventListener('submit', function(event) {
-event.preventDefault(); // Prevent default form submission
+    event.preventDefault(); // Prevent default form submission
 
-const fileInput = document.getElementById('fileInput');
-const file = fileInput.files[0];
+    const fileInput = document.getElementById('fileInput');
+    const file = fileInput.files[0];
 
-if (!file) {
-    alert('Please select an image file to upload.');
-    return;
-}
+    if (!file) {
+        alert('Please select an image file to upload.');
+        return;
+    }
 
-const allowedTypes = ['image/jpeg', 'image/png']; // Use MIME types
-if (!allowedTypes.includes(file.type)) {
-    alert('Kartenformat nicht unterstützt');
-    return;
-}
+    const allowedTypes = ['image/jpeg', 'image/png']; // Use MIME types
+    if (!allowedTypes.includes(file.type)) {
+        alert('Kartenformat nicht unterstützt');
+        return;
+    }
 
-const formData = new FormData();
-formData.append('file', file);
+    const formData = new FormData();
+    formData.append('file', file);
 
-fetch('/coursesetter/upload/', {  // Calls your backend upload route
-    method: 'POST',
-    headers: {
-        "X-CSRFToken": getCSRFToken()
-    },
-    body: formData
-})
-.then(response => response.json())
-.then(data => {
-    fileInput.value = '';
-    cqc.mapFile = data.mapFile;
-    image.src = cqc.mapFile;
-    document.getElementById('scalingInfo').style.display = 'flex';
-    document.getElementById("scaleInputDiv").style.display = 'none';
-    cqc.scaled = data.scaled;
-    cqc.scale = 1; //reset scale
-    cDraw = false;
-    cqc.cP = [];
-    nsP = 0;
-    nRP = 0;
-    ncP = 0;
-    draw(rc); //update canvas, tables
-})
-.catch(error => {
-    console.error('Error uploading file:', error);
-    document.getElementById('scalingInfo').textContent = 'Upload failed.';
-});
+    fetch('/coursesetter/upload/', {
+        method: 'POST',
+        headers: {
+            "X-CSRFToken": getCSRFToken()
+        },
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        fileInput.value = '';
+
+        // Extract filename from the returned S3 key or URL
+        const mapFilename = data.filename || data.mapFile.split('/').pop();
+
+        // Replace direct S3 URL with Django protected view URL
+        const protectedMapUrl = `/coursesetter/get_map/${mapFilename}`;
+        cqc.mapFile = protectedMapUrl;
+
+        image.src = cqc.mapFile;
+        document.getElementById('scalingInfo').style.display = 'flex';
+        document.getElementById("scaleInputDiv").style.display = 'none';
+        cqc.scaled = data.scaled;
+        cqc.scale = 1; //reset scale
+        cDraw = false;
+        cqc.cP = [];
+        nsP = 0;
+        nRP = 0;
+        ncP = 0;
+        draw(rc); //update canvas, tables
+    })
+    .catch(error => {
+        console.error('Error uploading file:', error);
+        document.getElementById('scalingInfo').textContent = 'Upload failed.';
+    });
 });
 
 // Handling Enter key to trigger upload

@@ -33,8 +33,7 @@ def get_files(request):
             continue
 
         file_path = f"jsonfiles/{filename}"
-        print("Checking file in S3:", file_path)
-        print("Exists?", default_storage.exists(file_path))
+
         # Check if file exists in S3
         if not default_storage.exists(file_path):
             continue

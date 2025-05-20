@@ -21,13 +21,13 @@ body.desktop #login-logo {
 }
 
 body.mobile #login-logo {
-    width: 90vw;
+    width: 80vw;
     margin: 0;
     margin-bottom: 20px;
 }
 
 body.mobile #login-logo img {
-    width: 90vw;
+    width: 80vw;
 }
 
 body.desktop #login-box {
@@ -51,7 +51,7 @@ body.desktop #login-form {
 body.mobile #login-form {
     display: flex;
     flex-direction: column;
-    width: 90vw;
+    width: 80vw;
     gap: 20px;
 }
 
@@ -73,7 +73,6 @@ body.mobile #login-form {
 #login-form input {
     background-color: rgb(0, 0, 0);
     color: white;
-    border-radius: 6px 0 0 6px;
     width: 100%;
     box-sizing: border-box;
 }
@@ -82,8 +81,17 @@ body.desktop #login-form input {
     font-size: 1rem;
 }
 
+#id_username {
+    border-radius: 10px;
+
+}
+
+#id_password {
+    border-radius: 10px 0 0 10px;
+}
+
 body.mobile #login-form input {
-    padding: 20px;
+    padding: 30px;
     font-size: 3rem;
 }
 
@@ -129,10 +137,10 @@ body.mobile #reset-desktop {
     flex-shrink: 0;
     background-color: rgb(255, 153, 1);
     color: rgb(0, 0, 0);
-    border-radius: 0 6px 6px 0;
+    border-radius: 0 10px 10px 0;
     font-size: 1rem;
     cursor: pointer;
-    padding: 6px;
+    padding: 7px;
     outline: none;
     box-shadow: none;
     height: 100%;
@@ -144,22 +152,22 @@ body.mobile #reset-desktop {
 }
 
 body.mobile #loginButton {
-    padding: 18px;
+    padding: 19px;
 }
 
 body.mobile #loginButton img {
-    height: 60px;
+    height: 80px;
 }
 
 #reset-desktop {
-    display: flex;
+    display: none; /*flex*/
     justify-content: left;
     margin: 5px;
     width: 20%;
 }
 
 #reset-mobile {
-    display: flex;
+    display: none; /*flex*/
     justify-content: left;
     margin-top: 20px;
     width: 90vw;
