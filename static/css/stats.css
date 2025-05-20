@@ -9,8 +9,7 @@
     box-sizing: border-box;
     padding: 2vh;
     gap: 3vh;
-    overflow-y: auto;
-    overflow-x: hidden;
+    overflow: hidden;
 }
 
 #dropdownWrapper {
@@ -38,6 +37,7 @@ body.mobile #userSelect {
     flex-direction: column;
     gap: 1vh;
     overflow-y: auto;
+    overflow-x: hidden;
     width: 90vw;
 }
 
@@ -61,4 +61,5 @@ body.mobile #barChart {
 
 body.mobile #placeholder {
     height: 30vh;
+    width: 0;
 }
