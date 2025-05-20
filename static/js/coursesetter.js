@@ -1147,6 +1147,13 @@ function calcDir() {
 function calcSide() {
     console.log("Calc");
     cqc.cP[ncP].route[nR].pos = sideWeightOfRoute(cqc.cP[ncP], cqc.cP[ncP].route[nR]);
+
+    cqc.cP.forEach((pair, indexC) => {
+        // Iterate over each route within the control pair
+        pair.route.forEach((route, indexR) => {
+            cqc.cP[indexC].route[indexR].pos = sideWeightOfRoute(pair, route);
+        }
+    }
 }
 
 function sideWeightOfRoute(pair, route) {
