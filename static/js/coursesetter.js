@@ -1145,6 +1145,7 @@ function calcDir() {
 }
 
 function calcSide() {
+    console.log("Calc");
     cqc.cP[indexC].route[nR].pos = sideWeightOfRoute(cqc.cP[ncP], cqc.cP[indexC].route[nR]);
 }
 
