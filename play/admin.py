@@ -8,6 +8,7 @@ class UserResultAdmin(admin.ModelAdmin):
     list_display = ('user', 'filename', 'control_pair_index', 'choice_time', 'selected_route_runtime', 'shortest_route_runtime','timestamp')
     list_filter = ('filename', 'user')  # <- This adds filtering options in admin
     search_fields = ('filename', 'user__username')
+    actions = [download_userresults_csv]
 
 @admin.action(description='Download selected results as CSV')
 def download_userresults_csv(modeladmin, request, queryset):
@@ -23,8 +24,3 @@ def download_userresults_csv(modeladmin, request, queryset):
         writer.writerow([getattr(obj, field.name) for field in UserResult._meta.fields])
     
     return response
-
-@admin.register(UserResult)
-class UserResultAdmin(admin.ModelAdmin):
-    list_display = ('user', 'route_efficiency', 'choice_time', 'timestamp')  # Adjust as needed
-    actions = [download_userresults_csv]
