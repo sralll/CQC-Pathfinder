@@ -1145,19 +1145,7 @@ function calcDir() {
 }
 
 function calcSide() {
-
-    // Iterate over each control pair
-    cqc.cP.forEach((pair, indexC) => {
-        // Iterate over each route within the control pair
-        pair.route.forEach((route, indexR) => {
-
-            if (cqc.cP[ncP].complex) {
-                cqc.cP[indexC].route[indexR].pos = sideWeightOfRoute(pair, route);
-            } else {
-                cqc.cP[indexC].route[indexR].pos = dominantSideOfRoute(pair, route);
-            }
-        });
-    });
+    cqc.cP[indexC].route[nR].pos = sideWeightOfRoute(cqc.cP[ncP], cqc.cP[indexC].route[nR]);
 }
 
 function sideWeightOfRoute(pair, route) {
@@ -1177,26 +1165,6 @@ function sideWeightOfRoute(pair, route) {
     }
 
     return sum;
-}
-
-function dominantSideOfRoute(pair, route) {
-    let sum = 0;
-    const start = pair.start;
-    const ziel = pair.ziel;
-    const routePoints = route.rP; // Get the route points
-
-    for (const p of routePoints) {
-        const dx = ziel.x - start.x;
-        const dy = ziel.y - start.y;
-        const px = p.x - start.x;
-        const py = p.y - start.y;
-
-        const cross = dx * py - dy * px;
-        sum += cross;
-    }
-
-    if (sum > 0) return "right";
-    if (sum < 0) return "left";
 }
 
 function drawStart() {

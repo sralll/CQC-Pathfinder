@@ -508,7 +508,7 @@ function drawRoutes()  {
             ctx.stroke();
         });
 
-        const randomizedIndices = generateRandomizedIndices(cqc.cP[ncP].route);
+        const sortedIndices = generateSortedIndicesByPos(cqc.cP[ncP].route);
         
         const colorPicker = reduceColors(cqc.cP[ncP].route.length);
         routeButtonContainer.innerHTML = ""; // Clear existing cells
@@ -526,7 +526,7 @@ function drawRoutes()  {
         choiceMade = false;
 
         // Draw routes in randomized order
-        randomizedIndices.forEach((index, indexColor) => {
+        sortedIndices.forEach((index, indexColor) => {
             const route = cqc.cP[ncP].route[index];
             
             // Begin a new path for each route
@@ -551,7 +551,7 @@ function drawRoutes()  {
             routeCell.style.height = (answerWrapperHeight/4-3) + "px";
 
             routeCell.addEventListener("click", () => {
-                submitChoice(index, randomizedIndices, colorPicker);
+                submitChoice(index, sortedIndices, colorPicker);
             });
 
             headerRow.appendChild(routeCell);
@@ -568,7 +568,7 @@ function drawRoutes()  {
     else {
         routeButtonContainer.innerHTML = ""; // Clear existing cells
 
-        if (cqc.cP[ncP].route[0].pos == "left") {routeOrder = [0, 1];}
+        if (cqc.cP[ncP].route[0].pos < cqc.cP[ncP].route[1].pos) {routeOrder = [0, 1];}
         else {routeOrder = [1, 0];}
 
         const colorPicker = reduceColors(cqc.cP[ncP].route.length);
@@ -619,15 +619,12 @@ function reduceColors(length) {
     return indices;
 }
 
-function generateRandomizedIndices(route) {
-    // Create an array of indices from 0 to route.length - 1
+function generateSortedIndicesByPos(route) {
+    // Create an array of indices
     const indices = Array.from({ length: route.length }, (_, index) => index);
 
-    // Shuffle the indices array using Fisher-Yates (Durstenfeld) algorithm
-    for (let i = indices.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [indices[i], indices[j]] = [indices[j], indices[i]];  // Swap the elements
-    }
+    // Sort indices based on the route[nR].pos value
+    indices.sort((a, b) => route[a].pos - route[b].pos);
 
     return indices;
 }
