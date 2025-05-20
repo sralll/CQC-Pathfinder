@@ -1,18 +1,12 @@
 from django.shortcuts import render
-
-import os
 import json
 from django.conf import settings
-from django.http import JsonResponse, HttpResponseNotFound, HttpResponseBadRequest, HttpResponse, FileResponse, Http404, HttpResponseNotAllowed
+from django.http import JsonResponse, HttpResponseNotFound
 from django.views.decorators.http import require_GET
 from django.contrib.auth.decorators import login_required
-from django.utils.decorators import method_decorator
-import datetime
-from django.utils.timezone import now
 from .models import UserResult
 from coursesetter.models import publishedFile
 from django.core.files.storage import default_storage
-from django.core.files.base import ContentFile
 
 @login_required
 def index(request):

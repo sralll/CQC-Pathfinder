@@ -1,18 +1,12 @@
 from django.shortcuts import render
 from django.contrib.auth.decorators import login_required
-import os
 import json
 import math
 from django.http import JsonResponse
-from django.conf import settings
-from pathlib import Path
 from django.contrib.auth.models import User
-from django.db.models import Count, Q
+from django.db.models import Count
 from play.models import UserResult
-from django.views.decorators.http import require_GET
-import numpy as np
 from django.shortcuts import get_object_or_404
-from collections import defaultdict
 from coursesetter.models import publishedFile
 from django.core.files.storage import default_storage
 
