@@ -97,6 +97,11 @@ table {
     width: 100%;
 }
 
+#divH {
+    right: 0;
+    top: 0;
+}
+
 #gameContainer {
     margin: 0;
     padding: 0;
