@@ -1,5 +1,3 @@
-gunicorn CQCPathfinder.asgi:application -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:$PORT
-
 # Create superuser using environment variables if it doesn't exist
 python manage.py shell <<EOF
 import os
@@ -13,3 +11,5 @@ password = os.environ.get('DJANGO_SUPERUSER_PASSWORD', 'admin
 if not User.objects.filter(username=username).exists():
     User.objects.create_superuser(username=username, email=email, password=password)
 EOF
+
+gunicorn CQCPathfinder.asgi:application -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:$PORT
