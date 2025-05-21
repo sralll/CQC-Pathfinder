@@ -507,7 +507,7 @@ function drawRoutes()  {
                 }
             });
             ctx.strokeStyle = "white";
-            ctx.lineWidth = 8;
+            ctx.lineWidth = 4/cqc.scale;
             ctx.stroke();
         });
 
@@ -544,7 +544,7 @@ function drawRoutes()  {
 
             // Set the color for the route based on randomized index
             ctx.strokeStyle = routeColor[colorPicker[indexColor]];
-            ctx.lineWidth = 6;
+            ctx.lineWidth = 3 / cqc.scale;
             ctx.stroke(); // Stroke the route
 
             const routeCell = document.createElement("td");
