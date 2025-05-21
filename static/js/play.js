@@ -17,8 +17,7 @@ let startTime = null; // To track the start time of the animation
 
 const rControl = 25;		//radius of control circle
 
-const routeColor = ["#FF0000", "#009900", "#0000ff", "#0000ff"];
-//const routeColor = ["#8b0000", "#191970", "#660099", "#00008b"];
+const routeColor = ["#FFFF00", "#FF0000", "#FF00FF", "#0000FF"];
 let selectedIndex = null; // Store the last clicked index
 
 let lastPressTime = null; // Store the time of the last button press
