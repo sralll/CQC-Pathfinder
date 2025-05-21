@@ -15,7 +15,7 @@ DEBUG = False
 
 SECRET_KEY = os.environ.get('SECRET_KEY')
 
-ALLOWED_HOSTS = ['cqcpathfinder.onrender.com', 'cqcpathfinder.up.railway.app/', 'localhost', '127.0.0.1']
+ALLOWED_HOSTS = ['cqcpathfinder.onrender.com', 'cqcpathfinder.up.railway.app', 'localhost', '127.0.0.1']
 
 CSRF_TRUSTED_ORIGINS = [
     'https://cqcpathfinder.onrender.com',
