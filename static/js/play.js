@@ -242,6 +242,10 @@ window.addEventListener('click', (event) => {
     }
 });
 
+function home() {
+    window.location.href = "/";
+}
+
 function makePreview() {
     if (!image.complete) {
         image.onload = makePreview; // Re-run the function once the image is loaded

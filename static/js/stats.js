@@ -35,6 +35,10 @@ document.addEventListener('DOMContentLoaded', function () {
     }
 });
 
+function home() {
+    window.location.href = "/";
+}
+
 if (isTrainer) {
     document.addEventListener('DOMContentLoaded', () => {
         fetch('/user_list/')

@@ -54,6 +54,10 @@ window.onload = function () {
         .catch(error => console.error('Error fetching filenames:', error));
 };
 
+function home() {
+    window.location.href = "/";
+}
+
 // --- Handle dropdown change ---
 document.getElementById('jsonDropdown').addEventListener('change', function () {
     const selectedFilename = this.value;
