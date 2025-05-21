@@ -1,10 +1,10 @@
 #!/usr/bin/env python
 import os
 import sys
-#from dotenv import load_dotenv
 from django.core.asgi import get_asgi_application
 
 # Load environment variables
+#from dotenv import load_dotenv
 #load_dotenv()
 
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'CQCPathfinder.settings')

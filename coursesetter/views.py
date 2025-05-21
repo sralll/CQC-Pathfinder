@@ -120,7 +120,7 @@ def load_file(request, filename):
 @login_required
 def check_file_exists(request, filename):
     filename = unquote(filename)
-    file_path = f'jsonfiles/{filename}'
+    file_path = f'jsonfiles/{filename}.json'
     exists = default_storage.exists(file_path)
     return JsonResponse({'exists': exists})
 

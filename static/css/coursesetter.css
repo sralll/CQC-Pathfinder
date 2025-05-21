@@ -74,17 +74,26 @@
 
 .tableRowMain, .tableCellMain {
     border: 2px solid black;
-    padding: 8px;
     text-align: center;
-    /*background-color: white;*/
     cursor: pointer;
     border-radius: 5px;
     padding: 3px;
 }
 
+i {
+    padding: 0 10px;
+}
+
+body.desktop i {
+    font-size: 1.5rem;
+}
 
 .tableCellMain:hover, .tableHeadMain:hover {
     background: var(--td-background-color);
+}
+
+button:hover {
+    cursor: pointer;
 }
 
 #projectTableDiv {
@@ -102,6 +111,10 @@
     border-collapse: collapse;
     max-height: 800px;
     overflow: auto;
+}
+
+body.desktop #fileTable {
+    font-size: 1.5rem;
 }
 
 .elevationinput {
@@ -126,6 +139,10 @@
 
 #inputDiv {
     margin-bottom: 10px;
+}
+
+body.desktop #filename, #fileInput, #buttonScale {
+    font-size: 1.5rem;
 }
 
 #scalingInfo {

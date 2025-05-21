@@ -315,7 +315,7 @@ submitSaveButton.addEventListener('click', async () => {
     }
 
     try {
-        const encodedFilename = encodeURIComponent(filename); // "WC%20Final%20Tartu%202017.json"
+        const encodedFilename = encodeURIComponent(filename);
         const url = `/coursesetter/file-exists/${encodedFilename}/`;
         // First fetch: Check if file exists
         const response = await fetch(url);
@@ -475,7 +475,7 @@ fetch('/coursesetter/get-files/')
             const loadCell = document.createElement('td');
             loadCell.classList.add('tableCellProjects');
             const loadButton = document.createElement('button');
-            loadButton.textContent = 'Load'; // Button label
+            loadButton.innerHTML = '<i class="fa-solid fa-folder-open"></i>'; // Button label
             loadButton.addEventListener('click', () => {
                 loadFile(file.filename); // Call the loadFile function when clicked
             });
@@ -486,7 +486,7 @@ fetch('/coursesetter/get-files/')
             const deleteCell = document.createElement('td');
             deleteCell.classList.add('tableCellProjects');
             const deleteButton = document.createElement('button');
-            deleteButton.innerHTML = `Delete`;
+            deleteButton.innerHTML = `<i class="fa-solid fa-trash"></i>`;
             deleteButton.addEventListener('click', () => deleteFile(file.filename));
             deleteCell.appendChild(deleteButton);
             row.appendChild(deleteCell);
@@ -496,7 +496,7 @@ fetch('/coursesetter/get-files/')
             publishCell.classList.add('tableCellProjects');
 
             const publishButton = document.createElement('button');
-            publishButton.innerHTML = `Publish`;
+            publishButton.innerHTML = `<i class="fa-solid fa-globe"></i>`;
             publishButton.addEventListener('click', () => publishProject(file.filename, publishButton));
 
             // Set button color based on published state

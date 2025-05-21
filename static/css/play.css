@@ -41,12 +41,11 @@ body.mobile #fileTable {
 }
 
 body.mobile #fileTable td{
-    padding: 20px 0;
+    padding: 10px 0;
 }
 
 #fileTable th, td {
-    padding-left: 10px;
-    padding-right: 10px;
+    padding: 2px 5px;
 }
 
 .tableHeadProjects {

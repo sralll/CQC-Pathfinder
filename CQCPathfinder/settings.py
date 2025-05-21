@@ -8,7 +8,6 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 FILES_DIR = os.path.join(BASE_DIR, 'jsonfiles')
 MAPS_DIR = os.path.join(BASE_DIR, 'maps')
 
-# SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = False
 
 # Quick-start development settings - unsuitable for production
@@ -58,6 +57,7 @@ TEMPLATES = [
         ],
         'APP_DIRS': True,
         'OPTIONS': {
+            'debug': DEBUG,
             'context_processors': [
                 'django.template.context_processors.debug',
                 'django.template.context_processors.request',

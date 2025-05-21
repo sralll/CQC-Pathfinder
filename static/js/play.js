@@ -94,7 +94,7 @@ function openModal() {
 closeModal.onclick = () => modalP.style.display = "none";
 
 function loadFileList() {
-    fetch('/play/get-files')
+    fetch('/play/get-files/')
         .then(response => response.json())
         .then(files => {
             // Sort files by modified date (latest first)
@@ -184,7 +184,7 @@ function loadFileList() {
 
 function loadGameData(filename) {
     const encodedFilename = encodeURIComponent(filename);
-    const url = `/play/load-file/${encodedFilename}`;
+    const url = `/play/load-file/${encodedFilename}/`;
 
     // Start spinner
     loading = true;

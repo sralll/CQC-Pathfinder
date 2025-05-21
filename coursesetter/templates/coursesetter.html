@@ -62,8 +62,12 @@
 			<span id="closeProjects" class="closeModal">&times;</span>
 			<div id="inputDiv">
             	<input type="text" id="filename" placeholder="Projektname">
-            	<button id="submitSaveButton">Speichern</button>
-				<button id="downloadButton" onclick="downloadJSON(cqc, 'cqc_data.json')">Download</button>
+            	<button id="submitSaveButton">
+					<i class="fa-solid fa-floppy-disk"></i>
+				</button>
+				<button id="downloadButton" onclick="downloadJSON(cqc, 'cqc_data.json')">
+					<i class="fa-solid fa-download"></i>
+				</button>
 			</div>
 			<div id="projectTableDiv">
 				<table id="fileTable">
@@ -92,7 +96,9 @@
 			<div id="inputDiv">
 				<form id="uploadForm" enctype="multipart/form-data">
 					<input type="file" id="fileInput" accept="image/*">
-					<button type="submit" id="uploadButton">Upload</button>
+					<button type="submit" id="uploadButton">
+						<i class="fa-solid fa-upload"></i>
+					</button>
 				</form>
 			</div>
 			<div id="scalingInfo">
