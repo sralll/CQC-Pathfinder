@@ -60,7 +60,7 @@ document.addEventListener("DOMContentLoaded", function () {
   const isMobile = document.body.classList.contains("mobile");
 
   if (isMobile) {
-    resultBox.style.fontSize = (resultBox.offsetHeight - 30) + "px";
+    resultBox.style.fontSize = (resultBox.offsetHeight - 10) + "px";
   } else {
     resultBox.style.fontSize = (resultBox.offsetHeight - 10) + "px";
   }
