@@ -3,13 +3,27 @@
 {% load static %}
 {% block content %}
 <body>
+	<div class="divMain" id="divH">
+		<table id="tableH">
+			<thead>
+				<tr>
+					<th id="buttonMap" class="tableHeadMain">
+                        <i class="fa-solid fa-house-chimney"></i>
+                    </th>
+				</tr>
+			</thead>
+		</table>
+	</div>
+
     <div id="gameContainer">
         
         <canvas id="gameCanvas"></canvas>
         <div id="answerWrapper">
             <div id="resultBoxWrapper">
                 <div id="resultBox"></div>
-                <button id="nextButton" onclick="nextControl()">≫</button>
+                <button id="nextButton" onclick="nextControl()">
+                    <i class="fa-solid fa-forward"></i>
+                </button>
             </div>
             <div id="routeButtonContainer"></div>
         </div>

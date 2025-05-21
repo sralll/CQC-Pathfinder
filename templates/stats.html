@@ -5,7 +5,17 @@
   <script>
     const isTrainer = "{{ is_trainer|yesno:'true,false' }}" === "true";
   </script>
-
+	<div class="divMain" id="divH">
+		<table id="tableH">
+			<thead>
+				<tr>
+					<th id="buttonMap" class="tableHeadMain">
+            <i class="fa-solid fa-house-chimney"></i>
+          </th>
+				</tr>
+			</thead>
+		</table>
+	</div>
   <div id="statsContainer">
     {% if is_trainer %}
       <div id="dropdownWrapper">
