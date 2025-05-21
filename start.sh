@@ -1,4 +1,5 @@
 python manage.py shell << END
+print("alive")
 from django.contrib.auth import get_user_model
 User = get_user_model()
 if not User.objects.filter(username="lars").exists():
