@@ -46,9 +46,6 @@ MIDDLEWARE = [
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
 
-# 'whitenoise.middleware.WhiteNoiseMiddleware',
-
-
 ROOT_URLCONF = "CQCPathfinder.urls"
 
 TEMPLATES = [
@@ -72,7 +69,7 @@ TEMPLATES = [
     },
 ]
 
-WSGI_APPLICATION = "CQCPathfinder.wsgi.application"
+#WSGI_APPLICATION = "CQCPathfinder.wsgi.application"
 
 EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'  # For development
 DEFAULT_FROM_EMAIL = 'webmaster@localhost'
@@ -82,14 +79,9 @@ DEFAULT_FROM_EMAIL = 'webmaster@localhost'
 
 if DEBUG:
     DATABASES = {
-        'default': {
-            'ENGINE': 'django.db.backends.postgresql',
-            'NAME': 'db',
-            'USER': 'lars',
-            'PASSWORD': 'admin',
-            'HOST': 'localhost',
-            'PORT': '5432',
-        }
+        'default': dj_database_url.config(
+            default='postgres://lars:admin@localhost:5432/db'
+        )
     }
 
 if not DEBUG:
@@ -98,9 +90,6 @@ if not DEBUG:
             default=os.environ.get('DATABASE_URL')
         )
     }
-
-
-print(os.environ.get('DATABASE_URL'))
 
 # Password validation
 # https://docs.djangoproject.com/en/5.2/ref/settings/#auth-password-validators
@@ -170,5 +159,3 @@ STORAGES = {
         "BACKEND": "servestatic.storage.CompressedManifestStaticFilesStorage",
     },
 }
-
-# STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
