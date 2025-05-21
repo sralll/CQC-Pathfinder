@@ -183,6 +183,12 @@ def delete_file(request, filename):
         except Exception as e:
             print(f"Warning: Could not parse mapFile from JSON: {e}")
 
+        with default_storage.open(json_path, 'rb') as f:
+            file_content = f.read()
+
+        archive_path = json_path.replace('jsonfiles/', 'archive/', 1)
+
+        default_storage.save(archive_path, ContentFile(file_content))
         # Delete the main JSON file
         default_storage.delete(json_path)
 

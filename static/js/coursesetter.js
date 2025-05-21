@@ -1136,6 +1136,12 @@ function calcDir() {
 
 function calcSide() {
     cqc.cP[ncP].route[nR].pos = sideWeightOfRoute(cqc.cP[ncP], cqc.cP[ncP].route[nR]);
+        //use for whole file
+        /*cqc.cP.forEach((pair, indexC) => {
+            pair.route.forEach((route, indexR) => {
+                route.pos = sideWeightOfRoute(pair, route);
+            });
+        });*/
 }
 
 function sideWeightOfRoute(pair, route) {
