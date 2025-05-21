@@ -383,7 +383,7 @@ function calcTransform(ncP) {
     SFF = canvasHeight / 2 / extremes.forwardDistance * cqc.scale;
     SFB = canvasHeight / 2 / extremes.backwardDistance * cqc.scale;
 
-    let scaleFactor = Math.min(SFL, SFR, SFF, SFB, scaleFactor_FB); // Scale factor for the image
+    let scaleFactor = 0.98*Math.min(SFL, SFR, SFF, SFB, scaleFactor_FB); // Scale factor for the image
     const cosA = Math.cos(-angle - Math.PI / 2);
     const sinA = Math.sin(-angle - Math.PI / 2);
 
@@ -399,7 +399,6 @@ function calcTransform(ncP) {
 
     // Store the current transformation matrix
     startTransform = ctx.getTransform();
-
 }
 
 function findExtremes(pair) {
