@@ -16,7 +16,7 @@ DEBUG = False
 SECRET_KEY = os.environ.get('SECRET_KEY')
 
 ALLOWED_HOSTS = ['cqc-pathfinder.ch',
-                 'www.cqc-pathfinder.ch'
+                 'www.cqc-pathfinder.ch',
                  'cqcpathfinder.up.railway.app',
                  'localhost',
                  '127.0.0.1']
