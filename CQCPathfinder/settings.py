@@ -24,7 +24,7 @@ ALLOWED_HOSTS = ['cqc-pathfinder.ch',
 CSRF_TRUSTED_ORIGINS = [
     'https://cqc-pathfinder.ch',
     'https://www.cqc-pathfinder.ch',
-    'https://cqcpathfinder.up.railway.app/',
+    'https://cqcpathfinder.up.railway.app',
 ]
 
 # Application definition
