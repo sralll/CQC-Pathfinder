@@ -48,29 +48,6 @@
     pointer-events: none;
 }
 
-#previewCanvasWrapper {
-    position: relative;
-    width: 600px;
-    height: 400px;
-}
-
-#previewFlexBox {
-    display: flex;
-    align-items: start;
-}
-
-#previewUI {
-    display: flex;
-    flex-direction: column;
-    align-items: start;
-    gap: 10px;
-}
-
-.UIelements {
-    display: flex;
-    flex-direction: column;
-}
-
 .divMain{
     position: absolute;
     margin: 5px;
@@ -101,7 +78,7 @@
     top: 0;
     left: 50%;
     transform: translateX(-50%);
-    display: block;
+    display: none; /*block*/
 }
 
 #tableC {

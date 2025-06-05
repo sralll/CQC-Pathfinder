@@ -45,7 +45,7 @@ def get_files(request):
             # Find missing control point indices
             existing_entries = UserResult.objects.filter(
                 user=user, filename=file_base
-            ).values_list('cpIndex', flat=True)
+            ).values_list('control_pair_index', flat=True)
 
             modified_time = ''
             try:
@@ -92,7 +92,7 @@ def load_file(request, filename):
         # Query existing entries for this user and file
         existing_entries = list(
             UserResult.objects.filter(user=request.user, filename=file_base)
-            .values_list('cpIndex', flat=True)  # assumes you store cpIndex
+            .values_list('control_pair_index', flat=True)  # assumes you store cpIndex
         )
 
         # Determine missing control points

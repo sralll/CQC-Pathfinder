@@ -3,6 +3,11 @@ import os
 import dj_database_url
 from django.core.files.storage import default_storage
 
+from dotenv import load_dotenv
+
+# Load .env file
+#load_dotenv()
+
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 FILES_DIR = os.path.join(BASE_DIR, 'jsonfiles')

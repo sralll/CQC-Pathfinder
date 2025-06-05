@@ -59,16 +59,18 @@ buttonCV.addEventListener('click', () => {
             alertBox.innerHTML = `<span style="color: red;">Keine Karte geladen</span>`;
             return;
         }
-        const filename = mapPath.split('/').pop();  // Gets just "FILENAME.extension"
-
-        // Get scale
+       // Get scale
         const scale = cqc.scale;
-
-        // Construct request URL
-        const url = `/coursesetter/run_unet/?filename=${encodeURIComponent(filename)}&scale=${encodeURIComponent(scale)}`;
         const prediction_time = Math.round(5+scale/0.7104*image.naturalWidth*image.naturalHeight*2/1000000)
 
         alertBox.innerHTML = `<span><i style="font-size: 1rem; padding: 0px 5px" class="fa-solid fa-spinner fa-spin-pulse"></i> Geschätze Dauer für neurales Netzwerk: ${prediction_time}s</span>`;
+
+        const filename = mapPath.split('/').pop();  // Gets just "FILENAME.extension"
+
+ 
+
+        // Construct request URL
+        const url = `/coursesetter/run_unet/?filename=${encodeURIComponent(filename)}&scale=${encodeURIComponent(scale)}`;
 
         // Fetch request
         fetch(url)
@@ -142,7 +144,6 @@ function updateTableM() {
         buttonCV.style.backgroundColor = "white";
         addBlocked.style.display = "none";
         removeBlocked.style.display = "none";
-        alertBox.innerHTML = "";
     }
 }
 

@@ -209,7 +209,7 @@ def get_files(request):
                     modified_time = modified_dt.isoformat()
             except Exception:
                 modified_time = ''
-            '''
+            
             try:
                 gamefile = publishedFile.objects.get(filename=filename)
                 published = gamefile.published
@@ -227,7 +227,6 @@ def get_files(request):
                 'published': published,
                 'author': author,
             })
-            '''
 
         return JsonResponse(files, safe=False)
 
@@ -298,17 +297,20 @@ def save_file(request):
         content_file = ContentFile(json_content.encode('utf-8'))
         saved_path = default_storage.save(file_path, content_file)
 
-        # Update or create publishedFile record with author
+        # Get number of control points
+        cp_list = data.get("cP", [])
+        cp_count = len(cp_list) if isinstance(cp_list, list) else 0
+
+        # Update or create publishedFile record with author and ncP
         from .models import publishedFile  # import here or at top of file
 
         author_name = request.user.get_full_name() or request.user.username
 
-        # Update or create record
         obj, created = publishedFile.objects.update_or_create(
             filename=filename,
             defaults={
                 'author': author_name,
-                # optionally update other fields like ncP here if needed
+                'ncP': cp_count,
             }
         )
 
@@ -317,6 +319,7 @@ def save_file(request):
     except Exception as e:
         print("Save error:", e)
         return JsonResponse({'message': 'Error saving file', 'error': str(e)}, status=500)
+
 
 @group_required('Trainer')
 @login_required
