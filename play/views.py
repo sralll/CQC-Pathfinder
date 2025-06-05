@@ -64,6 +64,7 @@ def get_files(request):
                 'filename': filename,
                 'modified': modified_time,
                 'cPCount': cp_count,
+                'userEntryCount': existing_entries,
                 'published': True,
             })
 
