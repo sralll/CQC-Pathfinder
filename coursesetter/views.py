@@ -21,7 +21,6 @@ import onnxruntime as ort
 import numpy as np
 from types import SimpleNamespace
 from PIL import UnidentifiedImageError
-import traceback
 
 def group_required(group_name):
     def in_group(u):
@@ -156,47 +155,6 @@ def run_UNet(request):
     except Exception as e:
         return JsonResponse({'message': 'Server error', 'error': str(e)}, status=500)
 
-    # Predict
-    '''
-    def model_predict_fn(input_data):
-        outputs = ort_session.run(None, {"input": input_data})
-        output_array = outputs[0]
-        if output_array.ndim == 4:
-            output_array = output_array[0]
-        if output_array.shape[0] > 1:
-            output_array = output_array.argmax(axis=0)
-        return output_array.astype(np.float32)
-
-    t0 = time.time()
-    output_img = model_predict_fn(img_np)
-    t1 = time.time()
-    print(f"NN forward pass ATTR {int(t1 - t0)}s")
-    
-    # Postprocess
-    h, w = output_img.shape
-    visual = 255 * np.ones((h, w, 1), dtype=np.uint8)
-
-    map_object = SimpleNamespace(
-        impassable=0,
-        very_slow=100,
-        slow=150,
-        cross=200,
-        fast=230,
-    )
-
-    visual[output_img < 10] = map_object.impassable
-    visual[(output_img >= 10) & (output_img < 22)] = map_object.very_slow
-    visual[(output_img >= 22) & (output_img < 26)] = map_object.slow
-    visual[(output_img >= 26) & (output_img < 28)] = map_object.cross
-    visual[(output_img >= 28) & (output_img < 32)] = map_object.fast
-    visual[output_img == 32] = map_object.cross
-    visual[output_img == 33] = map_object.fast
-    visual[output_img == 34] = map_object.impassable
-
-    visual_img = np.repeat(visual, 3, axis=2)  # grayscale to RGB
-    final_img = Image.fromarray(visual_img.astype(np.uint8))
-    '''
-
 @login_required
 def get_map_file(request, filename):
     s3 = boto3.client(
@@ -226,7 +184,6 @@ def get_files(request):
     prefix = 'jsonfiles/'
     files = []
 
-    # Only works if the storage is actually S3-based
     if not isinstance(default_storage, S3Boto3Storage):
         return JsonResponse({'error': 'Storage backend is not S3'}, status=500)
 
@@ -237,42 +194,45 @@ def get_files(request):
             if not key.endswith('.json'):
                 continue
 
-            filename = key[len(prefix):]  # remove folder prefix
+            filename = key[len(prefix):]  # remove prefix folder
 
-            # Read and parse file to count control points
+            # Get last modified time via head_object for up-to-date metadata
+            modified_time = ''
             try:
-                with default_storage.open(key, 'r') as f:
-                    data = json.load(f)
-                    cp_count = len(data.get('cP', []))
+                head = default_storage.connection.meta.client.head_object(
+                    Bucket=settings.AWS_STORAGE_BUCKET_NAME,
+                    Key=key
+                )
+                modified_dt = head.get('LastModified')
+                if modified_dt:
+                    # Convert to ISO string for frontend
+                    modified_time = modified_dt.isoformat()
             except Exception:
-                cp_count = 0
+                modified_time = ''
 
-            # Get modified timestamp (convert to milliseconds for frontend)
-            last_modified = file_info.last_modified
-            if last_modified and last_modified.tzinfo is None:
-                last_modified = last_modified.replace(tzinfo=timezone.utc)
-            modified = int(last_modified.timestamp() * 1000) if last_modified else 0
-
-            # Check if published in DB
             try:
                 gamefile = publishedFile.objects.get(filename=filename)
                 published = gamefile.published
+                cp_count = gamefile.ncP
+                author = gamefile.author  # your new DB field
             except publishedFile.DoesNotExist:
                 published = False
+                cp_count = 0
+                author = ''
 
             files.append({
                 'filename': filename,
-                'modified': modified,
+                'modified': modified_time,
                 'cPCount': cp_count,
                 'published': published,
+                'author': author,
             })
 
         return JsonResponse(files, safe=False)
 
     except Exception as e:
-        print("⚠️ Error in get_files():", e)
-        traceback.print_exc()
-        return JsonResponse({'error': str(e)}, status=500)
+        return JsonResponse({'error': f'Error in get_files(): {str(e)}'}, status=500)
+
 
 @group_required('Trainer')
 def load_file(request, filename):
@@ -337,7 +297,21 @@ def save_file(request):
         content_file = ContentFile(json_content.encode('utf-8'))
         saved_path = default_storage.save(file_path, content_file)
 
-        return JsonResponse({'message': 'File saved successfully to S3', 'path': saved_path})
+        # Update or create publishedFile record with author
+        from .models import publishedFile  # import here or at top of file
+
+        author_name = request.user.get_full_name() or request.user.username
+
+        # Update or create record
+        obj, created = publishedFile.objects.update_or_create(
+            filename=filename,
+            defaults={
+                'author': author_name,
+                # optionally update other fields like ncP here if needed
+            }
+        )
+
+        return JsonResponse({'message': 'File saved successfully to S3 and DB', 'path': saved_path})
 
     except Exception as e:
         print("Save error:", e)

@@ -2,6 +2,7 @@ const clientWidth = window.innerWidth;
 const clientHeight = window.innerHeight;
 
 let cqc = null;
+let missingCPs = null;      // holds the list of missing control points
 let image = new Image();
 let choiceMade = false;
 
@@ -189,11 +190,12 @@ function loadGameData(filename) {
     animateCanvasSpinner();
     modalP.style.display = 'none';
 
-
     fetch(url)
         .then(response => response.json())
-        .then(fileData => {
-            cqc = fileData;
+        .then(response => {
+            cqc = response.data;               // original JSON file contents
+            missingCPs = response.missingCPs;  // list of missing control points
+
             game_file = filename.replace('.json', '');
             cqc_filename = filename;
 
@@ -203,7 +205,7 @@ function loadGameData(filename) {
 
             image.onload = () => {
                 loading = false; // Stop spinner
-                makePreview(); // Draw full game UI
+                makePreview();   // Draw full game UI
             };
 
             image.onerror = () => {
@@ -214,6 +216,7 @@ function loadGameData(filename) {
         .catch(error => {
             loading = false;
             alert("Failed to load game data");
+            console.error("Error loading file:", error);
         });
 }
 
@@ -288,7 +291,7 @@ function makePreview() {
 
 
 function startGame() {
-    ncP = 0;
+    ncP = missingCPs[0];
 
     resultBox.innerHTML = "Bereit?";
     resultBox.style.color = "blue";
@@ -307,21 +310,36 @@ function startGame() {
 }
 
 function nextControl() {
-    if (ncP < (cqc.cP.length - 1)) {
-        ncP++;
-    
-        nextButton.style.display = "none";
-        resultBox.innerHTML = "Bereit?";
-        resultBox.style.color = "blue";
-        routeButtonContainer.innerHTML = ""; // Clear existing cells
-        startTime = null;
-        calcTransform(ncP);
-        animateTransition();
-        playTiming();
+    // Find current index in missingCPs
+    let currentIndex = missingCPs.indexOf(ncP);
+
+    if (currentIndex === -1) {
+        // ncP not in missingCPs (unlikely), just increment normally if possible
+        if (ncP < (cqc.cP.length - 1)) {
+            ncP++;
+        } else {
+            window.location.href = `/results/?game=${encodeURIComponent(game_file)}`;
+            return;
+        }
+    } else {
+        // Move to next missing CP if exists
+        if (currentIndex < missingCPs.length - 1) {
+            ncP = missingCPs[currentIndex + 1];
+        } else {
+            // No more missing CPs — redirect to results
+            window.location.href = `/results/?game=${encodeURIComponent(game_file)}`;
+            return;
+        }
     }
-    else {
-        window.location.href = `/results/?game=${encodeURIComponent(game_file)}`;
-    }
+
+    nextButton.style.display = "none";
+    resultBox.innerHTML = "Bereit?";
+    resultBox.style.color = "blue";
+    routeButtonContainer.innerHTML = ""; // Clear existing cells
+    startTime = null;
+    calcTransform(ncP);
+    animateTransition();
+    playTiming();
 }
 
 // Function to start the animation

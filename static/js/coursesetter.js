@@ -582,7 +582,6 @@ fetch('/coursesetter/get-files/')
             const lastModifiedCell = document.createElement('td');
             lastModifiedCell.classList.add('tableCellProjects');
             
-            // Format the date and time to dd.mm.yyyy HH:mm:ss
             const formattedDate = new Date(file.modified);
             const day = String(formattedDate.getDate()).padStart(2, '0');
             const month = String(formattedDate.getMonth() + 1).padStart(2, '0');
@@ -597,7 +596,12 @@ fetch('/coursesetter/get-files/')
 
             row.appendChild(lastModifiedCell);
 
-            
+            // Author
+            const authorCell = document.createElement('td');
+            authorCell.classList.add('tableCellProjects');
+            authorCell.textContent = file.author; // Button label
+            row.appendChild(authorCell);
+
             // Load button
             const loadCell = document.createElement('td');
             loadCell.classList.add('tableCellProjects');

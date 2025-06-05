@@ -7,6 +7,8 @@ from django.contrib.auth.decorators import login_required
 from .models import UserResult
 from coursesetter.models import publishedFile
 from django.core.files.storage import default_storage
+from storages.backends.s3boto3 import S3Boto3Storage
+from django.utils.timezone import utc
 
 @login_required
 def index(request):
@@ -16,71 +18,92 @@ def index(request):
 @login_required
 def get_files(request):
     user = request.user
-
-    published_files = publishedFile.objects.filter(published=True)
-
+    prefix = 'jsonfiles/'
     metadata = []
 
-    for pub in published_files:
-        filename = pub.filename
-        if not filename.endswith('.json'):
-            continue
+    if not isinstance(default_storage, S3Boto3Storage):
+        return JsonResponse({'error': 'Storage backend is not S3'}, status=500)
 
-        file_path = f"jsonfiles/{filename}"
+    try:
+        for file_info in default_storage.bucket.objects.filter(Prefix=prefix):
+            key = file_info.key
+            if not key.endswith('.json'):
+                continue
 
-        # Check if file exists in S3
-        if not default_storage.exists(file_path):
-            continue
+            filename = key[len(prefix):]
 
-        try:
-            with default_storage.open(file_path, 'r') as f:
-                # f is a file-like object from S3
-                data = json.load(f)
-                cp_count = len(data.get('cP', []))
-                file_base = filename.replace('.json', '')
+            try:
+                pub = publishedFile.objects.get(filename=filename)
+            except publishedFile.DoesNotExist:
+                continue  # skip files not in DB
 
-                user_entry_count = UserResult.objects.filter(
-                    user=user,
-                    filename=file_base
-                ).count()
+            if not pub.published:
+                continue
 
-                # Get last modified time from S3 metadata
-                modified_time = None
-                try:
-                    modified_dt = default_storage.connection.meta.client.head_object(
-                        Bucket=settings.AWS_STORAGE_BUCKET_NAME,
-                        Key=file_path
-                    )['LastModified']
-                    # convert to ISO format string
+            cp_count = pub.ncP or 0
+            file_base = filename.replace('.json', '')
+
+            # Find missing control point indices
+            existing_entries = UserResult.objects.filter(
+                user=user, filename=file_base
+            ).values_list('cpIndex', flat=True)
+
+            modified_time = ''
+            try:
+                head = default_storage.connection.meta.client.head_object(
+                    Bucket=settings.AWS_STORAGE_BUCKET_NAME,
+                    Key=key
+                )
+                modified_dt = head.get('LastModified')
+                if modified_dt:
+                    # Convert to ISO string for frontend
                     modified_time = modified_dt.isoformat()
-                except Exception:
-                    # fallback: no modified time available
-                    modified_time = ''
+            except Exception:
+                modified_time = ''
 
-                metadata.append({
-                    'filename': filename,
-                    'modified': modified_time,
-                    'cPCount': cp_count,
-                    'userEntryCount': user_entry_count,
-                    'published': True  # Always true, filtered before
-                })
+            metadata.append({
+                'filename': filename,
+                'modified': modified_time,
+                'cPCount': cp_count,
+                'published': True,
+            })
 
-        except Exception as e:
-            print(f"Error reading {filename} from S3:", e)
+        return JsonResponse(metadata, safe=False)
 
-    return JsonResponse(metadata, safe=False)
+    except Exception as e:
+        return JsonResponse({'error': f'Error in get_files(): {str(e)}'}, status=500)
 
 @login_required
 def load_file(request, filename):
-    file_path = f"jsonfiles/{filename}"  # S3 key path inside the bucket
+    file_path = f"jsonfiles/{filename}"
 
     if not default_storage.exists(file_path):
         return HttpResponseNotFound(f"File {filename} not found")
 
     try:
         with default_storage.open(file_path, 'r') as file:
-            file_data = json.load(file)  # Read JSON content from S3
-            return JsonResponse(file_data)
+            data = json.load(file)
+
+        # Extract base name for DB comparison (filename without .json)
+        file_base = filename.replace('.json', '')
+
+        # Get control point count from the loaded file
+        cp_count = len(data.get('cP', []))
+
+        # Query existing entries for this user and file
+        existing_entries = list(
+            UserResult.objects.filter(user=request.user, filename=file_base)
+            .values_list('cpIndex', flat=True)  # assumes you store cpIndex
+        )
+
+        # Determine missing control points
+        missing_cps = [i for i in range(cp_count) if i not in existing_entries]
+
+        return JsonResponse({
+            'data': data,
+            'missingCPs': missing_cps
+        })
+
     except Exception as e:
         return JsonResponse({'message': 'Error loading file', 'error': str(e)}, status=500)
     
