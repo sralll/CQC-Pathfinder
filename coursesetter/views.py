@@ -80,7 +80,7 @@ def run_UNet(request):
     SCALE_FACTOR = scale * omap_scale/train_omap_scale #To do: retrain model for 300dpi
 
     #NN later
-    ort_session = ort.InferenceSession("best_model_focal_dynamic.onnx")
+    ort_session = ort.InferenceSession("best_model_300dpi.onnx")
 
     # S3 image loading
     map_key = f'maps/{filename}'
