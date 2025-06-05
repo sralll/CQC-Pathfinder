@@ -178,9 +178,6 @@ def get_map_file(request, filename):
         else:
             return HttpResponse(f"Error: {str(e)}", status=500)
 
-import logging
-logger = logging.getLogger(__name__)
-
 @group_required('Trainer')
 @require_GET
 def get_files(request):
@@ -212,7 +209,7 @@ def get_files(request):
                     modified_time = modified_dt.isoformat()
             except Exception:
                 modified_time = ''
-
+            '''
             try:
                 gamefile = publishedFile.objects.get(filename=filename)
                 published = gamefile.published
@@ -230,11 +227,11 @@ def get_files(request):
                 'published': published,
                 'author': author,
             })
+            '''
 
         return JsonResponse(files, safe=False)
 
     except Exception as e:
-        logger.exception("Exception in get_files view")  # This logs the full traceback
         return JsonResponse({'error': f'Error in get_files(): {str(e)}'}, status=500)
 
 
