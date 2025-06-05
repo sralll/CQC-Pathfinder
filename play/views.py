@@ -8,7 +8,6 @@ from .models import UserResult
 from coursesetter.models import publishedFile
 from django.core.files.storage import default_storage
 from storages.backends.s3boto3 import S3Boto3Storage
-from django.utils.timezone import utc
 
 @login_required
 def index(request):
