@@ -3,7 +3,7 @@ import json
 import boto3
 from django.shortcuts import render
 from django.conf import settings
-from django.http import JsonResponse, HttpResponseNotFound, HttpResponseBadRequest, HttpResponse
+from django.http import JsonResponse, HttpResponseNotFound, HttpResponseBadRequest, HttpResponse, FileResponse
 from django.views.decorators.http import require_GET, require_POST
 from django.contrib.auth.decorators import login_required
 from django.utils.timezone import now
@@ -15,17 +15,186 @@ from botocore.exceptions import ClientError
 from urllib.parse import unquote
 from storages.backends.s3boto3 import S3Boto3Storage
 from datetime import timezone
+from PIL import Image
+from io import BytesIO
+import onnxruntime as ort
+import numpy as np
+from types import SimpleNamespace
+from PIL import UnidentifiedImageError
 
 def group_required(group_name):
     def in_group(u):
         return u.is_authenticated and u.groups.filter(name=group_name).exists()
     return user_passes_test(in_group)
 
-
 @group_required('Trainer')
 @login_required
 def index(request):
     return render(request, 'coursesetter.html')
+
+@group_required('Trainer')
+def upload_mask(request):
+    if request.method == 'POST' and 'mask' in request.FILES:
+        uploaded_file = request.FILES['mask']
+        filename = f"masks/{uploaded_file.name}"  # Save in 'masks/' directory in S3
+
+        path = default_storage.save(filename, ContentFile(uploaded_file.read()))
+        return JsonResponse({'status': 'success', 'path': path})
+    return HttpResponseBadRequest('No mask file received')
+
+
+@group_required('Trainer')
+def get_mask(request, filename):
+    key = f"masks/{filename}"
+
+    if not default_storage.exists(key):
+        return HttpResponseNotFound("Mask not found.")
+
+    file = default_storage.open(key, 'rb')
+    response = FileResponse(file, content_type='image/png')
+    response['Content-Disposition'] = f'inline; filename="{filename}"'
+    return response
+
+@group_required('Trainer')
+@login_required
+def run_UNet(request):
+    filename = request.GET.get('filename')
+    cqc_scale = request.GET.get('scale')
+
+    if not filename or not cqc_scale:
+        return HttpResponse("Missing map or scaling parameter", status=400)
+
+    try:
+        scale = float(cqc_scale)
+        if scale <= 0:
+            raise ValueError()
+    except ValueError:
+        return HttpResponse("Invalid 'scale' parameter", status=400)
+
+    # Disable max pixel limit
+    Image.MAX_IMAGE_PIXELS = None
+
+    # Constants
+    train_omap_scale = 4000
+    omap_scale = 4000
+    SCALE_FACTOR = scale * omap_scale/train_omap_scale #To do: retrain model for 300dpi
+
+    #NN later
+    ort_session = ort.InferenceSession("best_model_focal_dynamic.onnx")
+
+    # S3 image loading
+    map_key = f'maps/{filename}'
+
+    if not default_storage.exists(map_key):
+        return HttpResponseNotFound(f"Karte '{filename}' nicht verfügbar.")
+
+    try:
+        with default_storage.open(map_key, 'rb') as f:
+            img = Image.open(f)
+            img.load()  # Force loading
+            img = img.convert("RGB")
+            new_size = (int(img.width * SCALE_FACTOR), int(img.height * SCALE_FACTOR))
+
+            if new_size[0] > 8000 or new_size[1] > 8000:
+                return HttpResponse("Karte zu gross für neurales Netzwerk. Skalierung überprüfen", status=400)
+            img = img.resize(new_size, resample=Image.BICUBIC)
+            
+            # NN later
+            img_np = np.array(img) / 255.0
+            img_np = np.transpose(img_np, (2, 0, 1)).astype(np.float32)  # HWC to CHW
+            input_data = img_np[np.newaxis, :, :, :]
+
+            def model_predict_fn(input_data):
+                outputs = ort_session.run(None, {"input": input_data})
+                output_array = outputs[0]
+                if output_array.ndim == 4:
+                    output_array = output_array[0]
+                if output_array.shape[0] > 1:
+                    output_array = output_array.argmax(axis=0)
+                return output_array.astype(np.float32)
+
+            output_img = model_predict_fn(input_data)
+
+            h, w = output_img.shape
+            visual = 255 * np.ones((h, w, 1), dtype=np.uint8)
+
+            map_object = SimpleNamespace(
+                impassable=0,
+                very_slow=100,
+                slow=150,
+                cross=200,
+                fast=230,
+            )
+
+            visual[output_img < 10] = map_object.impassable
+            visual[(output_img >= 10) & (output_img < 22)] = map_object.very_slow
+            visual[(output_img >= 22) & (output_img < 26)] = map_object.slow
+            visual[(output_img >= 26) & (output_img < 28)] = map_object.cross
+            visual[(output_img >= 28) & (output_img < 32)] = map_object.fast
+            visual[output_img == 32] = map_object.cross
+            visual[output_img == 33] = map_object.fast
+            visual[output_img == 34] = map_object.impassable
+
+            visual_img = np.repeat(visual, 3, axis=2)  # grayscale to img
+            final_img = Image.fromarray(visual_img.astype(np.uint8))
+
+            basename, _ = os.path.splitext(filename)
+            mask_filename = f"masks/mask_{basename}.png"
+            final_img_bytes = BytesIO()
+            final_img.save(final_img_bytes, format="PNG")
+            final_img_bytes.seek(0)
+
+            default_storage.save(mask_filename, final_img_bytes)
+
+            return JsonResponse({"message": "Kartenmaske generiert"})
+        
+    except FileNotFoundError:
+        return HttpResponseNotFound("Image file not found.")
+    except UnidentifiedImageError:
+        return JsonResponse({'message': 'Could not identify or open image file.'}, status=500)
+    except Exception as e:
+        return JsonResponse({'message': 'Server error', 'error': str(e)}, status=500)
+
+    # Predict
+    '''
+    def model_predict_fn(input_data):
+        outputs = ort_session.run(None, {"input": input_data})
+        output_array = outputs[0]
+        if output_array.ndim == 4:
+            output_array = output_array[0]
+        if output_array.shape[0] > 1:
+            output_array = output_array.argmax(axis=0)
+        return output_array.astype(np.float32)
+
+    t0 = time.time()
+    output_img = model_predict_fn(img_np)
+    t1 = time.time()
+    print(f"NN forward pass ATTR {int(t1 - t0)}s")
+    
+    # Postprocess
+    h, w = output_img.shape
+    visual = 255 * np.ones((h, w, 1), dtype=np.uint8)
+
+    map_object = SimpleNamespace(
+        impassable=0,
+        very_slow=100,
+        slow=150,
+        cross=200,
+        fast=230,
+    )
+
+    visual[output_img < 10] = map_object.impassable
+    visual[(output_img >= 10) & (output_img < 22)] = map_object.very_slow
+    visual[(output_img >= 22) & (output_img < 26)] = map_object.slow
+    visual[(output_img >= 26) & (output_img < 28)] = map_object.cross
+    visual[(output_img >= 28) & (output_img < 32)] = map_object.fast
+    visual[output_img == 32] = map_object.cross
+    visual[output_img == 33] = map_object.fast
+    visual[output_img == 34] = map_object.impassable
+
+    visual_img = np.repeat(visual, 3, axis=2)  # grayscale to RGB
+    final_img = Image.fromarray(visual_img.astype(np.uint8))
+    '''
 
 @login_required
 def get_map_file(request, filename):
@@ -112,9 +281,26 @@ def load_file(request, filename):
     try:
         with default_storage.open(key, 'r') as f:
             file_data = json.load(f)
+
+        # Extract mapFile path from JSON
+        map_path = file_data.get("mapFile", "")
+        if map_path:
+            # Get the basename with extension
+            import os
+            basename = os.path.splitext(os.path.basename(map_path))[0]  # removes folders and extension
+            mask_filename = f"masks/mask_{basename}.png"
+            
+            # Check if mask exists
+            if default_storage.exists(mask_filename):
+                file_data["has_mask"] = True
+            else:
+                file_data["has_mask"] = False
+
         return JsonResponse(file_data)
+
     except Exception as e:
         return JsonResponse({'message': 'Error loading file', 'error': str(e)}, status=500)
+
 
 @group_required('Trainer')
 @login_required

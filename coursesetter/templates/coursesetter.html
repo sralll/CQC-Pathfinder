@@ -2,6 +2,7 @@
 
 {% load static %}
 {% block content %}
+<!-- TEST-->
 	<div class="divMain" id="divC">
 		<div id="headC">
 		<table id="tableHC">
@@ -49,13 +50,34 @@
 	<div class="divMain" id="divM">
 		<table id="tableM">
 			<thead>
-				<tr>
+				<tr id="mapMenuTableRow">
 					<th id="buttonMap" class="tableHeadMain">Karte...</th>
+					<th id="buttonCV" class="tableHeadMain">
+						<i class="fa-solid fa-eye"></i>
+					</th>
+					<th id="buttonAddblocked" class="tableHeadMain" style="display:none">
+						<i class="fa-solid fa-pen"></i>
+					</th>
+					<th id="buttonRemoveBlocked" class="tableHeadMain" style="display:none">
+						<i class="fa-solid fa-eraser"></i>
+					</th>
+					<th id="saveEditButton" class="tableHeadMain" style="display:none">
+						<i class="fa-solid fa-floppy-disk"></i>
+					</th>
 				</tr>
 			</thead>
 		</table>
 	</div>
-
+	
+	<div class="divMain" id="divI">
+		<table id="tableA">
+			<thead>
+				<tr>
+					<th id="alertBox" class="tableHeadMain"></th>
+				</tr>
+			</thead>
+		</table>
+	</div>
 
 	<div id="modalP" class="modal">
         <div class="modal-content">
@@ -116,7 +138,9 @@
 		</div>
 	</div>
 
-	<canvas id="routeCanvas" tabindex="0"></canvas>
+	<canvas id="routeCanvas"></canvas>
+	<canvas id="maskCanvas"></canvas>
+	<canvas id="editLiveCanvas"></canvas>
 	
 	<script src="{% static 'js/coursesetter.js' %}"></script>
 {% endblock %}

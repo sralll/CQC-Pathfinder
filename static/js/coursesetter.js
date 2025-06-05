@@ -7,7 +7,9 @@ function getCSRFToken() {
     return document.querySelector('meta[name="csrf-token"]').getAttribute('content');
 }
 //global variables
-var routeCanvas = document.getElementById("routeCanvas"), rc = routeCanvas.getContext("2d");
+const routeCanvas = document.getElementById("routeCanvas"); rc = routeCanvas.getContext("2d");
+const maskCanvas = document.getElementById("maskCanvas"); mc = maskCanvas.getContext("2d");
+const editLiveCanvas = document.getElementById('editLiveCanvas'); ec = editLiveCanvas.getContext("2d");
 
 const rControl = 25;		//radius of control circle
 const snapThreshhold = 25;	//distance to snap cursor (same as control circle radius)
@@ -25,14 +27,127 @@ var transX = transY = 0;	//translation of map
 //state booleans
 var isDragging = cDraw = rDraw = sDraw = false;
 
+let isEditing = false;
+
+var cv_mask = false;
 var mode = "placeControls";	//tool mode
+var subMode = null;
 
 let isEditingElevation = false;
 
+let BrushRadius = 2;
+
 let runSpeed = 4.75;
 
+let subImageData = null;
+
+const addBlocked = document.getElementById("buttonAddblocked");
+const removeBlocked = document.getElementById("buttonRemoveBlocked");
+const buttonCV = document.getElementById("buttonCV");
+const instructionBox = document.getElementById("divI");
+const alertBox = document.getElementById("alertBox");
+
+
+buttonCV.addEventListener('click', () => {
+    if (cv_mask) {
+        mode = "mapCV"
+    } else {
+        // Extract filename from cqc.mapFile
+        const mapPath = cqc.mapFile;
+
+        if (!mapPath) {
+            alertBox.innerHTML = `<span style="color: red;">Keine Karte geladen</span>`;
+            return;
+        }
+        const filename = mapPath.split('/').pop();  // Gets just "FILENAME.extension"
+
+        // Get scale
+        const scale = cqc.scale;
+
+        // Construct request URL
+        const url = `/coursesetter/run_unet/?filename=${encodeURIComponent(filename)}&scale=${encodeURIComponent(scale)}`;
+        const prediction_time = Math.round(5+scale/0.7104*image.naturalWidth*image.naturalHeight*2/1000000)
+
+        alertBox.innerHTML = `<span><i style="font-size: 1rem; padding: 0px 5px" class="fa-solid fa-spinner fa-spin-pulse"></i> Geschätze Dauer für neurales Netzwerk: ${prediction_time}s</span>`;
+
+        // Fetch request
+        fetch(url)
+            .then(response => {
+                if (!response.ok) {
+                    return response.text().then(text => {
+                        throw new Error(text || 'Server returned an error');
+                    });
+                }
+                return response.json();  // expecting { message: "Prediction done" }
+            })
+            .then(data => {
+                alertBox.innerHTML = `<span>${data.message}</span>`;
+                cv_mask = true;
+                const basename = filename.split('.').slice(0, -1).join('.');
+                const maskUrl = `/coursesetter/get_mask/mask_${basename}.png`;
+
+                mask.src = maskUrl;
+
+                mask.onload = () => {
+                    processMaskImage(mask);
+                };
+                draw(rc);
+            })
+            .catch(error => {
+                alertBox.innerHTML = `<span style="color: red;">Error: ${error.message}</span>`;
+            });
+    }
+    draw(rc);
+});
+
+addBlocked.addEventListener('click', () => {
+    subMode = "add";
+    draw(rc);
+});
+
+removeBlocked.addEventListener('click', () => {
+    subMode = "remove";
+    draw(rc);
+});
+
+function updateTableI() {
+    if (instructionBox.innerHTML == "") {
+        instructionBox.style.display = "none";
+    } else {
+        instructionBox.style.display = "block";
+    }
+}
+
+function updateTableM() {
+    if (mode == "mapCV") {
+        routeCanvas.style.opacity = 0.5;
+        maskCanvas.style.display = "block";
+        editLiveCanvas.style.display = "block";
+        buttonCV.style.backgroundColor = "green";
+        addBlocked.style.display = "table-cell";
+        removeBlocked.style.display = "table-cell";
+        addBlocked.style.backgroundColor = "white";
+        removeBlocked.style.backgroundColor = "white";
+
+        if (subMode == "add") {
+            addBlocked.style.backgroundColor = "yellow";
+        } else if (subMode == "remove") {
+            removeBlocked.style.backgroundColor = "yellow";
+        }
+
+    } else {
+        routeCanvas.style.opacity = 1;
+        maskCanvas.style.display = "none";
+        editLiveCanvas.style.display = "none";
+        buttonCV.style.backgroundColor = "white";
+        addBlocked.style.display = "none";
+        removeBlocked.style.display = "none";
+        alertBox.innerHTML = "";
+    }
+}
+
 //indexing
-var ncP = nR = nRP = 0;//counters for control points, routes, route points	
+var ncP = nR = nRP = 0; //counters for control points, routes, route points	
 
 //update table with controls
 function updateTableC() {
@@ -284,6 +399,10 @@ function resizeCanvas() {
     //follow window size change
     routeCanvas.width = window.innerWidth;
     routeCanvas.height = window.innerHeight;
+    maskCanvas.width = window.innerWidth;
+    maskCanvas.height = window.innerHeight;
+    editLiveCanvas.width = window.innerWidth;
+    editLiveCanvas.height = window.innerHeight;
 }
 
 const filenameInput = document.getElementById('filename');
@@ -292,6 +411,10 @@ document.getElementById('buttonProjects').addEventListener('click', () => {
     document.getElementById('modalP').style.display = 'block';
     loadFileList();  // Load file list when the modal opens
 });
+
+const editCanvas = document.createElement('canvas');
+const editCtx = editCanvas.getContext('2d');
+editCtx.imageSmoothingEnabled = false;
 
 submitSaveButton.addEventListener('click', async () => {
     const filename = filenameInput.value.trim();
@@ -358,19 +481,22 @@ submitSaveButton.addEventListener('click', async () => {
 // Get the "x" element to close the modal
 const closeProjects = document.getElementById('closeProjects');
 const modalP = document.getElementById('modalP');
+const modalCV = document.getElementById('modalCV');
+
 
 // When the "x" is clicked, close the modal
 closeProjects.addEventListener('click', () => {
-modalP.style.display = 'none';
-document.getElementById('filename').value = '';
+    modalP.style.display = 'none';
+    document.getElementById('filename').value = '';
 });
 
 // Also, make sure to close the modal when clicking outside of the modal content
 window.addEventListener('click', (event) => {
-if (event.target === modalP) {
-    modalP.style.display = 'none';
-    document.getElementById('filename').value = '';
-}
+    if (event.target === modalP) {
+        modalP.style.display = 'none';
+
+        document.getElementById('filename').value = '';
+    }
 });
 
 // Get the "x" element to close the modal
@@ -380,21 +506,22 @@ const modalM = document.getElementById('modalM');
 
 // When the "x" is clicked, close the modal
 closeMap.addEventListener('click', () => {
-
-modalM.style.display = 'none';
+    modalM.style.display = 'none';
+    draw(rc);
 document.getElementById('filename').value = '';
 });
 
 // Also, make sure to close the modal when clicking outside of the modal content
 window.addEventListener('click', (event) => {
-if (event.target === modalM) {
-    modalM.style.display = 'none';
-    document.getElementById('filename').value = '';
-}
+    if (event.target === modalM) {
+        modalM.style.display = 'none';
+        document.getElementById('filename').value = '';
+        draw(rc);
+    }
 });
 
 openMap.addEventListener('click', () => {
-modalM.style.display = 'block';
+    modalM.style.display = 'block';
 });
 
 function loadFileList() {
@@ -543,28 +670,123 @@ function publishProject(filename, button) {
     });
 }
 
-// Function to load a file when the "Load" button is clicked
+function updateMaskFromEdits(mask) {
+    const w = mask.width, h = mask.height;
+
+    // Draw original mask into a new canvas to get its data
+    const originalCanvas = document.createElement('canvas');
+    originalCanvas.width = w;
+    originalCanvas.height = h;
+    const originalCtx = originalCanvas.getContext('2d');
+    originalCtx.drawImage(mask, 0, 0);
+    const maskImageData = originalCtx.getImageData(0, 0, w, h);
+    const maskData = maskImageData.data;
+
+    // Get editCanvas pixel data (red drawing)
+    const editedImageData = editCtx.getImageData(0, 0, w, h);
+    const editedData = editedImageData.data;
+
+    // Process pixel-by-pixel
+    for (let i = 0; i < maskData.length; i += 4) {
+        const origR = maskData[i], origG = maskData[i + 1], origB = maskData[i + 2], origA = maskData[i + 3];
+        const editR = editedData[i], editG = editedData[i + 1], editB = editedData[i + 2], editA = editedData[i + 3];
+
+        const wasBlack = (origR === 0 && origG === 0 && origB === 0 && origA > 0);
+        const isRed = (editR === 255 && editG === 0 && editB === 0 && editA === 255);
+
+        if (isRed && !wasBlack) {
+            maskData[i] = 0;
+            maskData[i + 1] = 0;
+            maskData[i + 2] = 0;
+            maskData[i + 3] = 255;
+        } else if (!isRed && wasBlack) {
+            maskData[i] = 200;
+            maskData[i + 1] = 200;
+            maskData[i + 2] = 200;
+            maskData[i + 3] = 255;
+        }
+        // Else: leave as-is
+    }
+
+    // Write the updated mask data back to originalCanvas or wherever needed
+    originalCtx.putImageData(maskImageData, 0, 0);
+
+    // Optional: you can update editCanvas too if you want to visualize the changes
+    // editCtx.clearRect(0, 0, w, h);
+    // editCtx.drawImage(originalCanvas, 0, 0);
+
+    // Return the updated canvas or blob if needed
+    return originalCanvas;
+}
+
+function processMaskImage(mask) {
+    // Create off-screen editCanvas
+    editCanvas.width = mask.width;
+    editCanvas.height = mask.height;
+
+    // Draw and extract pixel data
+    editCtx.drawImage(mask, 0, 0);
+    const imgData = editCtx.getImageData(0, 0, mask.width, mask.height);
+    const data = imgData.data;
+
+    // Create a new blank ImageData
+    const newImageData = editCtx.createImageData(mask.width, mask.height);
+    const newData = newImageData.data;
+
+    // Copy only black pixels as red
+    for (let i = 0; i < data.length; i += 4) {
+        const r = data[i], g = data[i + 1], b = data[i + 2], a = data[i + 3];
+        if (r === 0 && g === 0 && b === 0 && a > 0) {
+            newData[i] = 255;     // Red
+            newData[i + 1] = 0;
+            newData[i + 2] = 0;
+            newData[i + 3] = 255; // Fully opaque
+        } else {
+            newData[i + 3] = 0;   // Transparent
+        }
+    }
+
+    // ✅ Write filtered data to editCanvas
+    editCtx.putImageData(newImageData, 0, 0);
+}
+
 function loadFile(filename) {
-    const encodedFilename = encodeURIComponent(filename); // "WC%20Final%20Tartu%202017.json"
+    const encodedFilename = encodeURIComponent(filename);
     const url = `/coursesetter/load-file/${encodedFilename}/`;
 
     fetch(url)
     .then(response => response.json())
     .then(fileData => {
-        console.log('File data loaded:', fileData);
-        cqc = fileData;  // Assign the loaded data to the global variable
+        cqc = fileData;
+        cv_mask = fileData.has_mask || false;
         image.src = cqc.mapFile;
+
+        if (cv_mask) {
+            const mapFilename = cqc.mapFile.split('/').pop().split('.')[0];
+            const maskUrl = `/coursesetter/get_mask/mask_${mapFilename}.png`;
+
+            mask.onload = () => {
+                processMaskImage(mask);
+            };
+
+            mask.crossOrigin = "anonymous";
+            mask.src = maskUrl;
+        } else {
+            mask = null;
+        }
+
         modalP.style.display = 'none';
         document.getElementById('filename').value = '';
         ncP = nRP = nR = 0;
         transX = transY = 0;
-        draw(rc); // Update canvas, tables
+        draw(rc);  // your main draw call
     })
     .catch(error => {
         console.error('Error loading the file:', error);
         alert('Failed to load the file');
     });
 }
+
 
 // Function to delete a file
 function deleteFile(filename) {
@@ -688,6 +910,19 @@ document.addEventListener("keydown", function(e) {
             case 82: //r
                 mode = "drawRoutes";
             break;
+            case 86: //v
+                mode = "mapCV";
+            break;
+            case 65: //a
+                if (mode == "mapCV"){
+                    subMode = "add";
+                }
+            break;
+            case 69: //e
+                if (mode == "mapCV"){
+                    subMode = "remove";
+                }
+            break;
             case 77: //m
                 modalM.style.display = 'block';
             break;
@@ -695,6 +930,40 @@ document.addEventListener("keydown", function(e) {
     }
     draw(rc); //update canvas, tables
 })
+
+function saveCanvas() {
+    const updatedCanvas = updateMaskFromEdits(mask);
+
+    // Extract base name from cqc.mapFile
+    const fullPath = cqc.mapFile;  // e.g., "/media/maps/forest_map.jpg"
+    const baseName = fullPath.split('/').pop().split('.')[0];  // "forest_map"
+    const maskFilename = `mask_${baseName}.png`;
+
+    updatedCanvas.toBlob(blob => {
+        const formData = new FormData();
+        formData.append('mask', blob, maskFilename);
+
+        fetch('/coursesetter/upload-mask/', {
+            method: 'POST',
+            body: formData,
+            headers: {
+                'X-CSRFToken': getCSRFToken()
+            },
+            credentials: 'include'
+        })
+        .then(response => {
+            if (!response.ok) throw new Error('Upload failed');
+            return response.json();
+        })
+        .then(data => {
+            alertBox.innerHTML = "Maske gespeichert";
+        })
+        .catch(error => {
+            alertBox.innerHTML = error;
+        });
+    }, 'image/png');
+}
+
 
 //set tool modes
 function setModeC() {
@@ -834,8 +1103,8 @@ let cqc = {
     cP		: []
 };
 
-//hard load background image file (change to user upload later)
 let image = new Image();
+let mask = new Image();
 
 draw(rc); //draw initial canvas and (empty) tables (onload?)
 
@@ -858,6 +1127,200 @@ routeCanvas.addEventListener('wheel', (event) => {
     draw(rc); //update canvas, tables
 });
 
+maskCanvas.addEventListener('wheel', (event) => {
+    event.preventDefault(); //prevent scrolling as usual
+    if (event.deltaY < 0) { //check scroll direction
+        if(scale<10){ //scale limit
+            scale *= 1.1; //zoom in
+            calcTransf(1.1, event); //calculate new transformation matrix
+
+        }
+    } else { 
+        if (scale > 0.1) { // minimum scale limit
+            scale /= 1.1; //zoom out
+            calcTransf(1/1.1, event); //calculate new transformation matrix
+        }
+    }
+    
+    draw(rc); //update canvas, tables
+    editingCursor(event);
+});
+
+maskCanvas.addEventListener("mousedown", startDraw);
+maskCanvas.addEventListener("mousemove", editing);
+maskCanvas.addEventListener("mouseup", stopDrawSave);
+maskCanvas.addEventListener("mouseleave", stopDraw);
+maskCanvas.addEventListener('mousemove', editingCursor);
+
+addBlocked.addEventListener('wheel', (event) => {
+    event.preventDefault();
+    if (event.deltaY < 0) { //check scroll direction
+        if(BrushRadius<10){ //scale limit
+            BrushRadius += 1; //zoom in
+        }
+    } else { 
+        if (BrushRadius > 1) { // minimum scale limit
+            BrushRadius -= 1; //zoom out
+        }
+    }
+    });
+
+removeBlocked.addEventListener('wheel', (event) => {
+    event.preventDefault();
+    if (event.deltaY < 0) { //check scroll direction
+        if(BrushRadius<10){ //scale limit
+            BrushRadius += 1; //zoom in
+        }
+    } else { 
+        if (BrushRadius > 1) { // minimum scale limit
+            BrushRadius -= 1; //zoom out
+        }
+    }
+    });
+
+function startDraw(event) {
+    isEditing = true;
+    editing(event); // draw immediately on click
+    editingCursor(event);
+}
+
+function stopDraw() {
+    isEditing = false;
+    mc.beginPath(); // reset path
+    draw(rc);
+}
+
+function stopDrawSave() {
+    isEditing = false;
+    mc.beginPath(); // reset path
+    draw(rc);
+    saveCanvas();
+}
+
+function editingCursor(event) {
+    ec.clearRect(0, 0, editLiveCanvas.width, editLiveCanvas.height);
+
+    const rect = editLiveCanvas.getBoundingClientRect();
+
+    // Calculate cursor position relative to the canvas and account for transforms
+    mc.setTransform(1, 0, 0, 1, 0, 0); // reset transform
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+    if (subMode == "add") {
+        ec.beginPath();
+        ec.arc(x, y, BrushRadius*scale, 0, Math.PI * 2);
+        ec.strokeStyle = "black";
+        ec.lineWidth = 1;
+        ec.stroke();
+    } else if (subMode == "remove") {
+        ec.beginPath();
+        ec.arc(x, y, BrushRadius*scale, 0, Math.PI * 2);
+        ec.strokeStyle = "black";
+        ec.lineWidth = 1;
+        ec.stroke();   
+    }
+}
+
+function drawPixelCircle(ctx, centerX, centerY, radius, color = [255, 0, 0, 255]) {
+    const imageData = ctx.getImageData(0, 0, ctx.canvas.width, ctx.canvas.height);
+    const data = imageData.data;
+
+    const r2 = radius * radius;
+
+    const xStart = Math.max(0, Math.floor(centerX - radius));
+    const xEnd = Math.min(ctx.canvas.width, Math.ceil(centerX + radius));
+    const yStart = Math.max(0, Math.floor(centerY - radius));
+    const yEnd = Math.min(ctx.canvas.height, Math.ceil(centerY + radius));
+
+    for (let y = yStart; y < yEnd; y++) {
+        for (let x = xStart; x < xEnd; x++) {
+            const dx = x - centerX;
+            const dy = y - centerY;
+            if (dx * dx + dy * dy <= r2) {
+                const index = (y * ctx.canvas.width + x) * 4;
+                data[index] = color[0];     // R
+                data[index + 1] = color[1]; // G
+                data[index + 2] = color[2]; // B
+                data[index + 3] = color[3]; // A
+            }
+        }
+    }
+
+    ctx.putImageData(imageData, 0, 0);
+}
+
+function eraseCircle(editCtx, centerX, centerY, radius) {
+    const imgData = editCtx.getImageData(0, 0, editCtx.canvas.width, editCtx.canvas.height);
+    const data = imgData.data;
+    const w = imgData.width;
+    const h = imgData.height;
+
+    const rSq = radius * radius;
+
+    // Loop over a square bounding box around the circle
+    const xStart = Math.max(0, Math.floor(centerX - radius));
+    const xEnd = Math.min(w - 1, Math.ceil(centerX + radius));
+    const yStart = Math.max(0, Math.floor(centerY - radius));
+    const yEnd = Math.min(h - 1, Math.ceil(centerY + radius));
+
+    for (let y = yStart; y <= yEnd; y++) {
+        for (let x = xStart; x <= xEnd; x++) {
+            const dx = x - centerX;
+            const dy = y - centerY;
+            if (dx*dx + dy*dy <= rSq) {
+                const idx = 4 * (y * w + x);
+                // Set pixel fully transparent:
+                data[idx + 3] = 0;
+            }
+        }
+    }
+
+    editCtx.putImageData(imgData, 0, 0);
+}
+
+function drawCircle(mc, x, y, radius, color = 'red') {
+    mc.beginPath();
+    mc.arc(x, y, radius, 0, 2 * Math.PI);
+    mc.fillStyle = color;
+    mc.fill();
+}
+
+function editing(event) {
+    if (!isEditing) return;
+
+    const rect = maskCanvas.getBoundingClientRect();
+    const x = (event.clientX - rect.left) / scale - transX / scale;
+    const y = (event.clientY - rect.top) / scale - transY / scale;
+
+    if (subMode === "add") {
+        editCtx.fillStyle = "rgba(255,0,0,1)";
+        drawPixelCircle(editCtx, Math.round(x), Math.round(y), BrushRadius)
+        // Show live feedback directly on mc (screen canvas)
+        mc.save();
+        mc.setTransform(1, 0, 0, 1, 0, 0); // reset transform
+        mc.fillStyle = "rgba(255,0,0,1)";
+        const canvasX = event.clientX - rect.left;
+        const canvasY = event.clientY - rect.top;
+        drawCircle(mc, canvasX, canvasY, BrushRadius*scale);
+        mc.restore();
+
+    } else if (subMode === "remove") {
+        eraseCircle(editCtx, Math.round(x), Math.round(y), BrushRadius);
+
+        // Normal smooth erase circle on mc:
+        const canvasX = event.clientX - rect.left;
+        const canvasY = event.clientY - rect.top;
+        mc.save();
+        mc.setTransform(1, 0, 0, 1, 0, 0);
+        mc.beginPath();
+        mc.arc(canvasX, canvasY, BrushRadius*scale, 0, 2 * Math.PI);
+        mc.globalCompositeOperation = 'destination-out';
+        mc.fill();
+        mc.globalCompositeOperation = 'source-over';
+        mc.restore();
+    }
+}
+
 //mouse object for panning and clicking
 const mouse = {x: 0, y: 0, oldX: 0, oldY: 0, button: false};
 
@@ -865,6 +1328,17 @@ const mouse = {x: 0, y: 0, oldX: 0, oldY: 0, button: false};
 routeCanvas.addEventListener("mousemove", mouseEvent, {passive: true});
 routeCanvas.addEventListener("mousedown", mouseEvent, {passive: true});
 routeCanvas.addEventListener("mouseup", mouseEvent, {passive: true});
+
+function drawMask() {
+    if (!editCanvas) return;
+
+    if (mode == "mapCV") {
+        mc.clearRect(0, 0, maskCanvas.width, maskCanvas.height);
+        mc.setTransform(scale, 0, 0, scale, transX, transY);
+        mc.drawImage(editCanvas, 0, 0); // respects transforms
+        mc.setTransform(1, 0, 0, 1, 0, 0);
+    }
+}
 
 //main mouse event function
 function mouseEvent(event) {
@@ -895,6 +1369,9 @@ function mouseEvent(event) {
                 break;
                 case "scaleMap":
                     makeScale(event); //make a new scale point at clicked coordinates
+                break;
+                case "mapCV":
+                    console.log("CV Mode")
                 break;
             }
             draw(rc); //update canvas, tables
@@ -940,12 +1417,13 @@ function draw(tc) {
         if (cqc.mapFile) { //check if image is loaded
             drawScaledImage(image); //draw background map
         }
-        liveDraw(); //draw live elements
+        drawRoutes(); //draw routes
         drawStart(); //draw all start controls
         drawZiel(); //draw all finish controls
         drawConnection(); //draw connecting lines
-        drawRoutes(); //draw routes
-        updateTableC(), updateTableR(); //draw tables
+        liveDraw(); //draw live elements
+        drawMask();
+        updateTableC(), updateTableR(); updateTableI(); updateTableM();//draw tables
     }
 }
 
@@ -958,25 +1436,24 @@ function scaleMap() {
 }
 
 function submitScale() {
-const inputValue = document.getElementById("scaleInput").value;
+    const inputValue = document.getElementById("scaleInput").value;
 
-if (isNaN(inputValue) || inputValue <= 0) {
-    alert("Please enter a valid positive number!");
-    return;
-}
+    if (isNaN(inputValue) || inputValue <= 0) {
+        alert("Please enter a valid positive number!");
+        return;
+    }
 
-cqc.scale = inputValue / cqc.sP.dist / 0.48;
+    cqc.scale = inputValue / cqc.sP.dist / 0.48;
+    console.log("Scaling factor set to:", cqc.scale);
 
-console.log("Scaling factor set to:", cqc.scale);
-
-// Close the modal
-document.getElementById("modalM").style.display = "none";
-document.getElementById("scaleInput").value = "";
-document.getElementById("scaleInputDiv").style.display = 'none';
-mode = "placeControls";
-transX = transY = 0; //reset translation
-cqc.scaled = true;
-draw(rc); //update canvas, tables
+    // Close the modal
+    document.getElementById("modalM").style.display = "none";
+    document.getElementById("scaleInput").value = "";
+    document.getElementById("scaleInputDiv").style.display = 'none';
+    mode = "placeControls";
+    transX = transY = 0; //reset translation
+    cqc.scaled = true;
+    draw(rc); //update canvas, tables
 }
 
 // Allow Enter key to submit
@@ -1435,6 +1912,9 @@ function liveDraw() {
                     rc.stroke();
                 }
             }
+        break;
+        case "mapCV":
+            drawCursor(mc);
         break;
     }
 }

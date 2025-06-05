@@ -123,20 +123,7 @@ function loadFileList() {
                 const fileNameWithoutExtension = file.filename.replace('.json', ''); // Remove the '.json' extension
                 const fileNameText = document.createElement('span');
                 fileNameText.textContent = fileNameWithoutExtension || 'Unknown'; // Display filename without extension
-                    
-                // Add hover effect to the table cell (feedback)
-                fileNameCell.style.cursor = 'pointer';
-                fileNameCell.addEventListener('mouseenter', () => {
-                    fileNameCell.style.backgroundColor = '#f0f0f0'; // Light gray background when hovering
-                });
-                fileNameCell.addEventListener('mouseleave', () => {
-                    fileNameCell.style.backgroundColor = ''; // Reset background when not hovering
-                });
 
-                // Add click event to set filename in input field (entire cell)
-                fileNameCell.addEventListener('click', () => {
-                    loadGameData(file.filename); // Call the loadFile function when clicked                        });
-                });
                 fileNameCell.appendChild(fileNameText);
                 row.appendChild(fileNameCell);
 
@@ -171,9 +158,20 @@ function loadFileList() {
                 statusCell.style.textAlign = 'center';
                 row.appendChild(statusCell);
 
-
                 // Append row to tbody
                 tbody.appendChild(row);
+                                // Add hover effect to the table cell (feedback)
+                row.style.cursor = 'pointer';
+                row.addEventListener('mouseenter', () => {
+                    row.style.backgroundColor = '#f0f0f0'; // Light gray background when hovering
+                });
+                row.addEventListener('mouseleave', () => {
+                    row.style.backgroundColor = ''; // Reset background when not hovering
+                });
+                // Add click event to set filename in input field (entire cell)
+                row.addEventListener('click', () => {
+                    loadGameData(file.filename); // Call the loadFile function when clicked                        });
+                });
             });
         })
         .catch(error => {

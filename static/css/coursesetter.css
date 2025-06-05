@@ -6,6 +6,10 @@
     display: none;
 }
 
+#modalCV {
+    display: block;
+}
+
 .reset-form * {
     all: revert;
 }
@@ -18,37 +22,86 @@
 
 #routeCanvas {
     position: absolute;
-    top:0px;
-    left:0px;
+    top:0;
+    left:0;
     display: block;
     margin: 0 auto;
     z-index: 0;
 }
 
-.divMain{
+#maskCanvas {
     position: absolute;
-    margin: 5px;
+    top:0;
+    left:0;
+    display: none;
+    margin: 0 auto;
     z-index: 1;
 }
 
+#editLiveCanvas {
+    position: absolute;
+    top:0;
+    left:0;
+    display: none;
+    margin: 0 auto;
+    z-index: 2;
+    pointer-events: none;
+}
+
+#previewCanvasWrapper {
+    position: relative;
+    width: 600px;
+    height: 400px;
+}
+
+#previewFlexBox {
+    display: flex;
+    align-items: start;
+}
+
+#previewUI {
+    display: flex;
+    flex-direction: column;
+    align-items: start;
+    gap: 10px;
+}
+
+.UIelements {
+    display: flex;
+    flex-direction: column;
+}
+
+.divMain{
+    position: absolute;
+    margin: 5px;
+    z-index: 3;
+}
+
 #divC{
-    left: 0px;
-    top: 0px;
+    left: 0;
+    top: 0;
 }
 
 #divR {
-    right: 0px;
-    top: 0px;
+    right: 0;
+    top: 0;
 }
 
 #divP {
-    right: 0px;
-    bottom: 0px;
+    right: 0;
+    bottom: 0;
 }
 
 #divM {
     left: 0px;
-    bottom: 0px;
+    bottom: 0;
+}
+
+#divI {
+    top: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    display: block;
 }
 
 #tableC {
@@ -89,7 +142,7 @@ body.desktop i {
 }
 
 .tableCellMain:hover, .tableHeadMain:hover {
-    background: var(--td-background-color);
+    background: #d3d3d3;
 }
 
 button:hover {
