@@ -21,6 +21,7 @@ import onnxruntime as ort
 import numpy as np
 from types import SimpleNamespace
 from PIL import UnidentifiedImageError
+import traceback
 
 def group_required(group_name):
     def in_group(u):
@@ -269,6 +270,8 @@ def get_files(request):
         return JsonResponse(files, safe=False)
 
     except Exception as e:
+        print("⚠️ Error in get_files():", e)
+        traceback.print_exc()
         return JsonResponse({'error': str(e)}, status=500)
 
 @group_required('Trainer')
