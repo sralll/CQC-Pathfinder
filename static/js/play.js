@@ -31,7 +31,7 @@ const canvas = document.getElementById("gameCanvas");
 const ctx = canvas.getContext("2d");
 
 // Set canvas dimensions
-canvas.height = Math.min(clientHeight*0.75,1.5*clientWidth);
+canvas.height = Math.min(clientHeight*0.75,1.33*clientWidth);
 canvas.width = Math.min(canvas.height, clientWidth);
 
 const canvasHeight = canvas.clientHeight;
@@ -339,7 +339,8 @@ function makePreview() {
 
 function startGame() {
     ncP = missingCPs[0];
-
+    const openButton = document.getElementById("openButton");
+    openButton.style.display = "none";
     resultBox.innerHTML = "Bereit?";
     resultBox.style.color = "blue";
     resultBox.style.backgroundColor = "white";
@@ -848,6 +849,8 @@ function submitChoice(index, routeOrder, reducedColorMap) {
         resultBox.style.display = "block";
         if (ncP == (cqc.cP.length - 1)) {
             nextButton.innerHTML = "Ende";
+            const openButton = document.getElementById("openButton");
+            openButton.style.display = "block";
         }
         nextButton.style.display = "inline-flex";
 
