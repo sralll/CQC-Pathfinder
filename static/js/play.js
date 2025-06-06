@@ -31,7 +31,7 @@ const canvas = document.getElementById("gameCanvas");
 const ctx = canvas.getContext("2d");
 
 // Set canvas dimensions
-canvas.height = Math.min(clientHeight*0.75,clientWidth);
+canvas.height = Math.min(clientHeight*0.75,1.5*clientWidth);
 canvas.width = Math.min(canvas.height, clientWidth);
 
 const canvasHeight = canvas.clientHeight;
