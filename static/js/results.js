@@ -26,6 +26,8 @@ function getUrlParameter(name) {
 }
 
 window.onload = function () {
+    resultsSpinner = document.getElementById("resultsSpinner");
+    resultsSpinner.style.display = "flex";
     fetch('/get_published_files/')
         .then(response => response.json())
         .then(filenames => {
@@ -50,6 +52,7 @@ window.onload = function () {
                     dropdown.dispatchEvent(new Event('change')); // Trigger the loading
                 }
             }
+            resultsSpinner.style.display = "none";
         })
         .catch(error => console.error('Error fetching filenames:', error));
 };
@@ -62,8 +65,16 @@ function home() {
 document.getElementById('jsonDropdown').addEventListener('change', function () {
     const selectedFilename = this.value;
 
+    if (selectedFilename != ""){
     const tableBody = document.getElementById('userTableBody');
-    tableBody.innerHTML = '';
+        tableBody.innerHTML = `
+            <tr>
+                <td colspan="5" style="text-align: center; padding: 20px;">
+                    <i style="font-size: 2rem; padding: 0px 5px" class="fa-solid fa-spinner fa-spin-pulse"></i>
+                </td>
+            </tr>
+        `;
+    }
 
     // Clear canvas
     const canvas = document.getElementById('OLchart');

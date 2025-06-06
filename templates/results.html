@@ -15,9 +15,12 @@
 	</div>
 
     <div id="resultContainer">
-        <select id="jsonDropdown">
-            <option value="">auswählen...</option>
-        </select>
+        <div style="display: flex; align-items: center; gap: 8px;">
+            <select id="jsonDropdown">
+                <option value="">auswählen...</option>
+            </select>
+            <i id="resultsSpinner" style="font-size: 1rem; padding: 0px 5px; display: none" class="fa-solid fa-spinner fa-spin-pulse"></i>
+        </div>
         <table id="completionTable">
             <thead id ="resultTableHead">
             <tr>

@@ -9,7 +9,6 @@ let choiceMade = false;
 let game_file = null;
 
 let loading = false;
-let spinnerAngle = 0;
 
 let startTransform = null; // To store the starting transformation matrix
 let targetTransform = null; // To store the target transformation matrix
@@ -95,6 +94,16 @@ function openModal() {
 closeModal.onclick = () => modalP.style.display = "none";
 
 function loadFileList() {
+    let tbody = fileTable.querySelector('tbody');
+
+    // Show a loading spinner row
+    tbody.innerHTML = `
+        <tr>
+            <td colspan="4" style="text-align: center; padding: 20px;">
+                <i style="font-size: 2rem; padding: 0px 5px" class="fa-solid fa-spinner fa-spin-pulse"></i>
+            </td>
+        </tr>
+    `;
     fetch('/play/get-files/')
         .then(response => response.json())
         .then(files => {
@@ -181,13 +190,48 @@ function loadFileList() {
         });
 }
 
+
+function drawLoadingAnimation(timestamp) {
+    if (!startTime) startTime = timestamp;
+    const elapsed = (timestamp - startTime) / 1000; // seconds
+
+    const centerX = gameCanvas.width / 2;
+    const centerY = gameCanvas.height / 2;
+    const baseRadius = gameCanvas.height/20
+    const radiusList = [baseRadius-10, baseRadius, baseRadius+10];
+    const speedList = [1, 0.7, 0.4]; // radians per second
+    const colorList = ['#666', '#999', '#ccc'];
+
+    // Clear canvas
+    ctx.clearRect(0, 0, gameCanvas.width, gameCanvas.height);
+
+    for (let i = 0; i < 3; i++) {
+        const radius = radiusList[i];
+        const angle = elapsed * speedList[i] * Math.PI * 2;
+        const startAngle = angle;
+        const endAngle = angle + Math.PI * 1.2;
+        ctx.setTransform(1,0,0,1,0,0);
+        ctx.beginPath();
+        ctx.strokeStyle = colorList[i];
+        ctx.lineWidth = 4;
+        ctx.arc(centerX, centerY, radius, startAngle, endAngle);
+        ctx.stroke();
+    }
+
+    if (loading) {
+        requestAnimationFrame(drawLoadingAnimation);
+    } else {
+        makePreview();
+    }
+}
+
 function loadGameData(filename) {
     const encodedFilename = encodeURIComponent(filename);
     const url = `/play/load-file/${encodedFilename}/`;
 
     // Start spinner
     loading = true;
-    animateCanvasSpinner();
+    requestAnimationFrame(drawLoadingAnimation);
     modalP.style.display = 'none';
 
     fetch(url)
@@ -195,6 +239,10 @@ function loadGameData(filename) {
         .then(response => {
             cqc = response.data;               // original JSON file contents
             missingCPs = response.missingCPs;  // list of missing control points
+
+            if (missingCPs.length === 0) {
+                missingCPs = Array.from({ length: cqc.cP.length }, (_, i) => i);
+            }
 
             game_file = filename.replace('.json', '');
             cqc_filename = filename;
@@ -205,7 +253,6 @@ function loadGameData(filename) {
 
             image.onload = () => {
                 loading = false; // Stop spinner
-                makePreview();   // Draw full game UI
             };
 
             image.onerror = () => {

@@ -51,7 +51,7 @@
 			<thead>
 				<tr id="mapMenuTableRow">
 					<th id="buttonMap" class="tableHeadMain">Karte...</th>
-					<th id="buttonCV" class="tableHeadMain" style="display:none"> <!--Remove display none when Version CV ready-->
+					<th id="buttonCV" class="tableHeadMain"> <!--Remove display none when Version CV ready-->
 						<i class="fa-solid fa-eye"></i>
 					</th>
 					<th id="buttonAddblocked" class="tableHeadMain" style="display:none">
@@ -122,6 +122,7 @@
 						<i class="fa-solid fa-upload"></i>
 					</button>
 				</form>
+                <i id="uploadSpinner" style="font-size: 1.5rem; padding: 0px 5px; display: none" class="fa-solid fa-spinner fa-spin-pulse"></i>
 			</div>
 			<div id="scalingInfo">
 				<button id="buttonScale" onclick="scaleMap()">Karte skalieren</button>

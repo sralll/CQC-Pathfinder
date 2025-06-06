@@ -16,6 +16,11 @@ const snapThreshhold = 25;	//distance to snap cursor (same as control circle rad
 const mrklen = 5;			//small cross marker size
 const waitThreshhold = 150;	//ms, waittime for cursor change when dragging
 
+let image = new Image();
+let mask = null;
+
+let loading = false;
+let startTime = null;
 
 let liveX, liveY;			//cursor live position relative to canvas (inverse of transformation matrix)
 var xClick, yClick;			//coordinates on mouse click
@@ -67,8 +72,6 @@ buttonCV.addEventListener('click', () => {
 
         const filename = mapPath.split('/').pop();  // Gets just "FILENAME.extension"
 
- 
-
         // Construct request URL
         const url = `/coursesetter/run_unet/?filename=${encodeURIComponent(filename)}&scale=${encodeURIComponent(scale)}`;
 
@@ -88,12 +91,15 @@ buttonCV.addEventListener('click', () => {
                 const basename = filename.split('.').slice(0, -1).join('.');
                 const maskUrl = `/coursesetter/get_mask/mask_${basename}.png`;
 
-                mask.src = maskUrl;
-
+                if (!mask) {
+                    mask = new Image();
+                    mask.crossOrigin = "anonymous";
+                }
                 mask.onload = () => {
                     processMaskImage(mask);
                 };
-                draw(rc);
+                mask.src = maskUrl;
+                mode = "mapCV";
             })
             .catch(error => {
                 alertBox.innerHTML = `<span style="color: red;">Error: ${error.message}</span>`;
@@ -526,129 +532,139 @@ openMap.addEventListener('click', () => {
 });
 
 function loadFileList() {
-fetch('/coursesetter/get-files/')
-    .then(response => response.json())
-    .then(files => {
-        // Sort files by modified date (latest first)
-        files.sort((a, b) => new Date(b.modified) - new Date(a.modified));
+    let tbody = fileTable.querySelector('tbody');
 
-        // Get or create the tbody element
-        let tbody = fileTable.querySelector('tbody');
-        if (!tbody) {
-            tbody = document.createElement('tbody');  // Create tbody if it doesn't exist
-            fileTable.appendChild(tbody);  // Append tbody to table
-        }
+    // Show a loading spinner row
+    tbody.innerHTML = `
+        <tr>
+            <td colspan="4" style="text-align: center; padding: 20px;">
+                <i style="font-size: 2rem; padding: 0px 5px" class="fa-solid fa-spinner fa-spin-pulse"></i>
+            </td>
+        </tr>
+    `;
+    fetch('/coursesetter/get-files/')
+        .then(response => response.json())
+        .then(files => {
+            // Sort files by modified date (latest first)
+            files.sort((a, b) => new Date(b.modified) - new Date(a.modified));
 
-        // Clear the existing table rows (inside tbody)
-        tbody.innerHTML = '';
-
-        // Loop through each file and add a row
-        files.forEach(file => {
-            const row = document.createElement('tr');
-            row.classList.add('tableRowProjects');
-            
-            // File name without the extension
-            const fileNameCell = document.createElement('td');
-            fileNameCell.classList.add('tableCellProjects');
-            const fileNameWithoutExtension = file.filename.replace('.json', ''); // Remove the '.json' extension
-            const fileNameText = document.createElement('span');
-            fileNameText.textContent = fileNameWithoutExtension || 'Unknown'; // Display filename without extension
-            
-            // Add hover effect to the table cell (feedback)
-            fileNameCell.style.cursor = 'pointer';
-            fileNameCell.addEventListener('mouseenter', () => {
-                fileNameCell.style.backgroundColor = '#f0f0f0'; // Light gray background when hovering
-            });
-            fileNameCell.addEventListener('mouseleave', () => {
-                fileNameCell.style.backgroundColor = ''; // Reset background when not hovering
-            });
-
-            // Add click event to set filename in input field (entire cell)
-            fileNameCell.addEventListener('click', () => {
-                filenameInput.value = fileNameWithoutExtension;  // Set the file name in input field
-            });
-
-            fileNameCell.appendChild(fileNameText);
-            row.appendChild(fileNameCell);
-
-            // Number of cP entries
-            const cpCountCell = document.createElement('td');
-            cpCountCell.classList.add('tableCellProjects');
-            const cpCount = file.cPCount; // Count the number of cP entries (if exists)
-            cpCountCell.textContent = cpCount; // Display the number of cP entries
-            cpCountCell.style.textAlign = 'center'; // Center the text
-            row.appendChild(cpCountCell);
-
-            // Last modified time
-            const lastModifiedCell = document.createElement('td');
-            lastModifiedCell.classList.add('tableCellProjects');
-            
-            const formattedDate = new Date(file.modified);
-            const day = String(formattedDate.getDate()).padStart(2, '0');
-            const month = String(formattedDate.getMonth() + 1).padStart(2, '0');
-            const year = formattedDate.getFullYear();
-            const hours = String(formattedDate.getHours()).padStart(2, '0');
-            const minutes = String(formattedDate.getMinutes()).padStart(2, '0');
-            const seconds = String(formattedDate.getSeconds()).padStart(2, '0');
-
-            const formattedDateString = `${day}.${month}.${year} ${hours}:${minutes}:${seconds}`;
-
-            lastModifiedCell.textContent = formattedDateString; // Display the formatted date and time
-
-            row.appendChild(lastModifiedCell);
-
-            // Author
-            const authorCell = document.createElement('td');
-            authorCell.classList.add('tableCellProjects');
-            authorCell.textContent = file.author; // Button label
-            row.appendChild(authorCell);
-
-            // Load button
-            const loadCell = document.createElement('td');
-            loadCell.classList.add('tableCellProjects');
-            const loadButton = document.createElement('button');
-            loadButton.innerHTML = '<i class="fa-solid fa-folder-open"></i>'; // Button label
-            loadButton.addEventListener('click', () => {
-                loadFile(file.filename); // Call the loadFile function when clicked
-            });
-            loadCell.appendChild(loadButton);
-            row.appendChild(loadCell);
-
-            // Delete button
-            const deleteCell = document.createElement('td');
-            deleteCell.classList.add('tableCellProjects');
-            const deleteButton = document.createElement('button');
-            deleteButton.innerHTML = `<i class="fa-solid fa-trash"></i>`;
-            deleteButton.addEventListener('click', () => deleteFile(file.filename));
-            deleteCell.appendChild(deleteButton);
-            row.appendChild(deleteCell);
-
-            // Publish button
-            const publishCell = document.createElement('td');
-            publishCell.classList.add('tableCellProjects');
-
-            const publishButton = document.createElement('button');
-            publishButton.innerHTML = `<i class="fa-solid fa-globe"></i>`;
-            publishButton.addEventListener('click', () => publishProject(file.filename, publishButton));
-
-            // Set button color based on published state
-            if (file.published) {
-                publishButton.style.backgroundColor = "orange";
-            } else {
-                publishButton.style.backgroundColor = "white";
+            // Get or create the tbody element
+            let tbody = fileTable.querySelector('tbody');
+            if (!tbody) {
+                tbody = document.createElement('tbody');  // Create tbody if it doesn't exist
+                fileTable.appendChild(tbody);  // Append tbody to table
             }
 
-            publishCell.appendChild(publishButton);
-            row.appendChild(publishCell);
+            // Clear the existing table rows (inside tbody)
+            tbody.innerHTML = '';
 
-            // Append row to tbody
-            tbody.appendChild(row);
+            // Loop through each file and add a row
+            files.forEach(file => {
+                const row = document.createElement('tr');
+                row.classList.add('tableRowProjects');
+                
+                // File name without the extension
+                const fileNameCell = document.createElement('td');
+                fileNameCell.classList.add('tableCellProjects');
+                const fileNameWithoutExtension = file.filename.replace('.json', ''); // Remove the '.json' extension
+                const fileNameText = document.createElement('span');
+                fileNameText.textContent = fileNameWithoutExtension || 'Unknown'; // Display filename without extension
+                
+                // Add hover effect to the table cell (feedback)
+                fileNameCell.style.cursor = 'pointer';
+                fileNameCell.addEventListener('mouseenter', () => {
+                    fileNameCell.style.backgroundColor = '#f0f0f0'; // Light gray background when hovering
+                });
+                fileNameCell.addEventListener('mouseleave', () => {
+                    fileNameCell.style.backgroundColor = ''; // Reset background when not hovering
+                });
+
+                // Add click event to set filename in input field (entire cell)
+                fileNameCell.addEventListener('click', () => {
+                    filenameInput.value = fileNameWithoutExtension;  // Set the file name in input field
+                });
+
+                fileNameCell.appendChild(fileNameText);
+                row.appendChild(fileNameCell);
+
+                // Number of cP entries
+                const cpCountCell = document.createElement('td');
+                cpCountCell.classList.add('tableCellProjects');
+                const cpCount = file.cPCount; // Count the number of cP entries (if exists)
+                cpCountCell.textContent = cpCount; // Display the number of cP entries
+                cpCountCell.style.textAlign = 'center'; // Center the text
+                row.appendChild(cpCountCell);
+
+                // Last modified time
+                const lastModifiedCell = document.createElement('td');
+                lastModifiedCell.classList.add('tableCellProjects');
+                
+                const formattedDate = new Date(file.modified);
+                const day = String(formattedDate.getDate()).padStart(2, '0');
+                const month = String(formattedDate.getMonth() + 1).padStart(2, '0');
+                const year = formattedDate.getFullYear();
+                const hours = String(formattedDate.getHours()).padStart(2, '0');
+                const minutes = String(formattedDate.getMinutes()).padStart(2, '0');
+                const seconds = String(formattedDate.getSeconds()).padStart(2, '0');
+
+                const formattedDateString = `${day}.${month}.${year} ${hours}:${minutes}:${seconds}`;
+
+                lastModifiedCell.textContent = formattedDateString; // Display the formatted date and time
+
+                row.appendChild(lastModifiedCell);
+
+                // Author
+                const authorCell = document.createElement('td');
+                authorCell.classList.add('tableCellProjects');
+                authorCell.textContent = file.author; // Button label
+                row.appendChild(authorCell);
+
+                // Load button
+                const loadCell = document.createElement('td');
+                loadCell.classList.add('tableCellProjects');
+                const loadButton = document.createElement('button');
+                loadButton.innerHTML = '<i class="fa-solid fa-folder-open"></i>'; // Button label
+                loadButton.addEventListener('click', () => {
+                    loadFile(file.filename); // Call the loadFile function when clicked
+                });
+                loadCell.appendChild(loadButton);
+                row.appendChild(loadCell);
+
+                // Delete button
+                const deleteCell = document.createElement('td');
+                deleteCell.classList.add('tableCellProjects');
+                const deleteButton = document.createElement('button');
+                deleteButton.innerHTML = `<i class="fa-solid fa-trash"></i>`;
+                deleteButton.addEventListener('click', () => deleteFile(file.filename));
+                deleteCell.appendChild(deleteButton);
+                row.appendChild(deleteCell);
+
+                // Publish button
+                const publishCell = document.createElement('td');
+                publishCell.classList.add('tableCellProjects');
+
+                const publishButton = document.createElement('button');
+                publishButton.innerHTML = `<i class="fa-solid fa-globe"></i>`;
+                publishButton.addEventListener('click', () => publishProject(file.filename, publishButton));
+
+                // Set button color based on published state
+                if (file.published) {
+                    publishButton.style.backgroundColor = "orange";
+                } else {
+                    publishButton.style.backgroundColor = "white";
+                }
+
+                publishCell.appendChild(publishButton);
+                row.appendChild(publishCell);
+
+                // Append row to tbody
+                tbody.appendChild(row);
+            });
+        })
+        .catch(error => {
+            console.error('Error loading file list:', error);
+            alert('Failed to load file list');
         });
-    })
-    .catch(error => {
-        console.error('Error loading file list:', error);
-        alert('Failed to load file list');
-    });
 }
 
 function publishProject(filename, button) {
@@ -716,10 +732,6 @@ function updateMaskFromEdits(mask) {
     // Write the updated mask data back to originalCanvas or wherever needed
     originalCtx.putImageData(maskImageData, 0, 0);
 
-    // Optional: you can update editCanvas too if you want to visualize the changes
-    // editCtx.clearRect(0, 0, w, h);
-    // editCtx.drawImage(originalCanvas, 0, 0);
-
     // Return the updated canvas or blob if needed
     return originalCanvas;
 }
@@ -753,6 +765,42 @@ function processMaskImage(mask) {
 
     // ✅ Write filtered data to editCanvas
     editCtx.putImageData(newImageData, 0, 0);
+
+    mc.clearRect(0,0,maskCanvas.width, maskCanvas.height);
+}
+
+function drawLoadingAnimation(timestamp) {
+    if (!startTime) startTime = timestamp;
+    const elapsed = (timestamp - startTime) / 1000; // seconds
+
+    const centerX = routeCanvas.width / 2;
+    const centerY = routeCanvas.height / 2;
+    const baseRadius = routeCanvas.height/20
+    const radiusList = [baseRadius-10, baseRadius, baseRadius+10];
+    const speedList = [1, 0.7, 0.4]; // radians per second
+    const colorList = ['#666', '#999', '#ccc'];
+
+    // Clear canvas
+    rc.clearRect(0, 0, routeCanvas.width, routeCanvas.height);
+
+    for (let i = 0; i < 3; i++) {
+        const radius = radiusList[i];
+        const angle = elapsed * speedList[i] * Math.PI * 2;
+        const startAngle = angle;
+        const endAngle = angle + Math.PI * 1.2;
+        rc.setTransform(1,0,0,1,0,0);
+        rc.beginPath();
+        rc.strokeStyle = colorList[i];
+        rc.lineWidth = 4;
+        rc.arc(centerX, centerY, radius, startAngle, endAngle);
+        rc.stroke();
+    }
+
+    if (loading) {
+        requestAnimationFrame(drawLoadingAnimation);
+    } else {
+        draw(rc);
+    }
 }
 
 function loadFile(filename) {
@@ -764,27 +812,41 @@ function loadFile(filename) {
     .then(fileData => {
         cqc = fileData;
         cv_mask = fileData.has_mask || false;
-        image.src = cqc.mapFile;
+        mask = null;
 
-        if (cv_mask) {
-            const mapFilename = cqc.mapFile.split('/').pop().split('.')[0];
-            const maskUrl = `/coursesetter/get_mask/mask_${mapFilename}.png`;
-
-            mask.onload = () => {
-                processMaskImage(mask);
-            };
-
-            mask.crossOrigin = "anonymous";
-            mask.src = maskUrl;
-        } else {
-            mask = null;
-        }
+        loading = true;
+        requestAnimationFrame(drawLoadingAnimation);
 
         modalP.style.display = 'none';
         document.getElementById('filename').value = '';
         ncP = nRP = nR = 0;
         transX = transY = 0;
-        draw(rc);  // your main draw call
+
+
+        // Load image and draw immediately after it's ready
+        image.onload = () => {
+            loading = false;
+        };
+        image.crossOrigin = "anonymous";
+        image.src = cqc.mapFile;
+
+        // Load mask in parallel, but don't block the draw
+        if (cv_mask) {
+            const mapFilename = cqc.mapFile.split('/').pop().split('.')[0];
+            const maskUrl = `/coursesetter/get_mask/mask_${mapFilename}.png`;
+
+            const tempMask = new Image();
+            tempMask.onload = () => {
+                mask = tempMask;
+                processMaskImage(mask);  // post-process when ready
+            };
+            tempMask.crossOrigin = "anonymous";
+            tempMask.src = maskUrl;
+        } else {
+            mask = null;
+            mode = "placeControls";
+        }
+        draw(rc);
     })
     .catch(error => {
         console.error('Error loading the file:', error);
@@ -834,6 +896,9 @@ document.getElementById('uploadForm').addEventListener('submit', function(event)
     const formData = new FormData();
     formData.append('file', file);
 
+    uploadSpinner = document.getElementById("uploadSpinner");
+    uploadSpinner.style.display = "flex";
+
     fetch('/coursesetter/upload/', {
         method: 'POST',
         headers: {
@@ -845,16 +910,25 @@ document.getElementById('uploadForm').addEventListener('submit', function(event)
     .then(data => {
         fileInput.value = '';
 
+        loading = true;
+        requestAnimationFrame(drawLoadingAnimation);
+
         // Extract filename from the returned S3 key or URL
         const mapFilename = data.filename || data.mapFile.split('/').pop();
 
         // Replace direct S3 URL with Django protected view URL
         const protectedMapUrl = `/coursesetter/get_map/${mapFilename}`;
         cqc.mapFile = protectedMapUrl;
-
+        
+        image.onload = () => {
+            loading = false;
+        };
+        
         image.src = cqc.mapFile;
         document.getElementById('scalingInfo').style.display = 'flex';
         document.getElementById("scaleInputDiv").style.display = 'none';
+        uploadSpinner.style.display = "none";
+
         cqc.scaled = data.scaled;
         cqc.scale = 1; //reset scale
         cDraw = false;
@@ -1108,9 +1182,6 @@ let cqc = {
     cP		: []
 };
 
-let image = new Image();
-let mask = new Image();
-
 draw(rc); //draw initial canvas and (empty) tables (onload?)
 
 //wheel event listener for zooming
@@ -1337,7 +1408,7 @@ routeCanvas.addEventListener("mouseup", mouseEvent, {passive: true});
 function drawMask() {
     if (!editCanvas) return;
 
-    if (mode == "mapCV") {
+    if (mode == "mapCV" & !loading) {
         mc.clearRect(0, 0, maskCanvas.width, maskCanvas.height);
         mc.setTransform(scale, 0, 0, scale, transX, transY);
         mc.drawImage(editCanvas, 0, 0); // respects transforms
@@ -1389,7 +1460,9 @@ function mouseEvent(event) {
     if(mouse.button) { //on mouse down
         pan({x: mouse.x - mouse.oldX, y: mouse.y - mouse.oldY}); //pan by difference between old and new coordinates
     }
-    draw(rc); //update canvas, tables
+    if (!loading) {
+        draw(rc); //update canvas, tables
+    }
 }
 
 function pan(amount) {
