@@ -6,8 +6,6 @@ from django.views.decorators.http import require_GET
 from django.contrib.auth.decorators import login_required
 from .models import UserResult
 from coursesetter.models import publishedFile
-from django.core.files.storage import default_storage
-from storages.backends.s3boto3 import S3Boto3Storage
 
 @login_required
 def index(request):

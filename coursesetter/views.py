@@ -28,7 +28,6 @@ def group_required(group_name):
     return user_passes_test(in_group)
 
 @group_required('Trainer')
-@login_required
 def index(request):
     return render(request, 'coursesetter.html')
 
@@ -56,7 +55,6 @@ def get_mask(request, filename):
     return response
 
 @group_required('Trainer')
-@login_required
 def run_UNet(request):
     filename = request.GET.get('filename')
     cqc_scale = request.GET.get('scale')
@@ -180,7 +178,6 @@ def get_map_file(request, filename):
 
 @group_required('Trainer')
 @require_GET
-@login_required
 def get_files(request):
     try:
         files = []
@@ -201,7 +198,6 @@ def get_files(request):
 import traceback
 
 @group_required('Trainer')
-@login_required
 def load_file(request, filename):
     if not filename.endswith('.json'):
         filename += '.json'
@@ -235,7 +231,6 @@ def load_file(request, filename):
         return JsonResponse({'message': 'Error loading file', 'error': str(e)}, status=500)
 
 @group_required('Trainer')
-@login_required
 def check_file_exists(request, filename):
     filename = unquote(filename)
     file_path = f'jsonfiles/{filename}.json'
@@ -243,7 +238,6 @@ def check_file_exists(request, filename):
     return JsonResponse({'exists': exists})
 
 @group_required('Trainer')
-@login_required
 def save_file(request):
     if request.method != 'POST':
         return HttpResponseBadRequest('Only POST requests are allowed.')
@@ -283,7 +277,6 @@ def save_file(request):
 
 
 @group_required('Trainer')
-@login_required
 def delete_file(request, filename):
     if request.method != 'DELETE':
         return JsonResponse({'message': 'Method not allowed'}, status=405)
@@ -342,7 +335,6 @@ def delete_file(request, filename):
 
 
 @group_required('Trainer')
-@login_required
 def upload_map(request):
     if request.method == 'POST' and request.FILES.get('file'):
         file = request.FILES['file']
@@ -371,7 +363,6 @@ def upload_map(request):
 
 @require_POST
 @group_required('Trainer')
-@login_required
 def toggle_publish(request, filename):
     if not filename.endswith('.json'):
         filename += '.json'
