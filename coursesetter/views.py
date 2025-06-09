@@ -13,14 +13,13 @@ from django.core.files.storage import default_storage
 from django.core.files.base import ContentFile
 from botocore.exceptions import ClientError
 from urllib.parse import unquote
-from storages.backends.s3boto3 import S3Boto3Storage
-from datetime import timezone
 from PIL import Image
 from io import BytesIO
 import onnxruntime as ort
 import numpy as np
 from types import SimpleNamespace
 from PIL import UnidentifiedImageError
+from django.core.files.storage import FileSystemStorage
 
 def group_required(group_name):
     def in_group(u):
@@ -137,12 +136,13 @@ def run_UNet(request):
             final_img = Image.fromarray(visual_img.astype(np.uint8))
 
             basename, _ = os.path.splitext(filename)
-            mask_filename = f"masks/mask_{basename}.png"
+            mask_filename = f"mask_{basename}.png"
             final_img_bytes = BytesIO()
             final_img.save(final_img_bytes, format="PNG")
             final_img_bytes.seek(0)
 
-            default_storage.save(mask_filename, final_img_bytes)
+            local_storage = FileSystemStorage(location='/masks')
+            local_storage.save(mask_filename, final_img_bytes)
 
             return JsonResponse({"message": "Kartenmaske generiert"})
         
