@@ -180,52 +180,17 @@ def get_map_file(request, filename):
 
 @group_required('Trainer')
 @require_GET
+@login_required
 def get_files(request):
-    prefix = 'jsonfiles/'
-    files = []
-
-    if not isinstance(default_storage, S3Boto3Storage):
-        return JsonResponse({'error': 'Storage backend is not S3'}, status=500)
-
     try:
-        # List all files in the 'jsonfiles/' folder
-        for file_info in default_storage.bucket.objects.filter(Prefix=prefix):
-            key = file_info.key
-            if not key.endswith('.json'):
-                continue
-
-            filename = key[len(prefix):]  # remove prefix folder
-
-            # Get last modified time via head_object for up-to-date metadata
-            modified_time = ''
-            try:
-                head = default_storage.connection.meta.client.head_object(
-                    Bucket=settings.AWS_STORAGE_BUCKET_NAME,
-                    Key=key
-                )
-                modified_dt = head.get('LastModified')
-                if modified_dt:
-                    # Convert to ISO string for frontend
-                    modified_time = modified_dt.isoformat()
-            except Exception:
-                modified_time = ''
-            
-            try:
-                gamefile = publishedFile.objects.get(filename=filename)
-                published = gamefile.published
-                cp_count = gamefile.ncP
-                author = gamefile.author  # your new DB field
-            except publishedFile.DoesNotExist:
-                published = False
-                cp_count = 0
-                author = ''
-
+        files = []
+        for obj in publishedFile.objects.order_by('-last_edited'):
             files.append({
-                'filename': filename,
-                'modified': modified_time,
-                'cPCount': cp_count,
-                'published': published,
-                'author': author,
+                'filename': obj.filename,
+                'modified': obj.last_edited.isoformat() if obj.last_edited else '',
+                'cPCount': obj.ncP or 0,
+                'published': obj.published,
+                'author': obj.author or '',
             })
 
         return JsonResponse(files, safe=False)
@@ -233,37 +198,41 @@ def get_files(request):
     except Exception as e:
         return JsonResponse({'error': f'Error in get_files(): {str(e)}'}, status=500)
 
+import traceback
 
 @group_required('Trainer')
+@login_required
 def load_file(request, filename):
-    key = f'jsonfiles/{filename}'
-
-    if not default_storage.exists(key):
-        return HttpResponseNotFound(f"File {filename} not found in storage.")
+    if not filename.endswith('.json'):
+        filename += '.json'
 
     try:
-        with default_storage.open(key, 'r') as f:
-            file_data = json.load(f)
+        gamefile = publishedFile.objects.get(filename=filename)
+    except publishedFile.DoesNotExist:
+        return HttpResponseNotFound(f"File {filename} not found in database.")
 
+    try:
+        # Parse the stored JSON data (assumed to be a dict in .data)
+        file_data = gamefile.data if gamefile.data else {}
+        
         # Extract mapFile path from JSON
         map_path = file_data.get("mapFile", "")
         if map_path:
-            # Get the basename with extension
-            import os
-            basename = os.path.splitext(os.path.basename(map_path))[0]  # removes folders and extension
+            basename = os.path.splitext(os.path.basename(map_path))[0]
             mask_filename = f"masks/mask_{basename}.png"
             
-            # Check if mask exists
+            # Check if mask image exists in volume
             if default_storage.exists(mask_filename):
                 file_data["has_mask"] = True
             else:
                 file_data["has_mask"] = False
-
+        
         return JsonResponse(file_data)
 
     except Exception as e:
+        print("Exception in load_file:", e)
+        print(traceback.format_exc())
         return JsonResponse({'message': 'Error loading file', 'error': str(e)}, status=500)
-
 
 @group_required('Trainer')
 @login_required
@@ -292,7 +261,7 @@ def save_file(request):
         cp_count = len(cp_list) if isinstance(cp_list, list) else 0
 
         # Get author's name
-        author_name = request.user.get_full_name() or request.user.username
+        author_name = request.user.first_name or request.user.username
 
         from .models import publishedFile
 
@@ -407,14 +376,11 @@ def toggle_publish(request, filename):
     if not filename.endswith('.json'):
         filename += '.json'
 
-    file_path = f'jsonfiles/{filename}'
+    try:
+        gamefile = publishedFile.objects.get(filename=filename)
+    except publishedFile.DoesNotExist:
+        return JsonResponse({'error': 'File not found in database'}, status=404)
 
-    # Check if the file exists in S3
-    if not default_storage.exists(file_path):
-        return JsonResponse({'error': 'File not found'}, status=404)
-
-    # Toggle the published state in the database
-    gamefile, _ = publishedFile.objects.get_or_create(filename=filename)
     gamefile.published = not gamefile.published
     gamefile.save()
 

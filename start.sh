@@ -1,10 +1,9 @@
-: 'python manage.py shell << END
-print("alive")
-from django.contrib.auth import get_user_model
-User = get_user_model()
-if not User.objects.filter(username="lars").exists():
-    User.objects.create_superuser("lars", "larsbeglinger@gmail.com", "admin0000")
-END'
-#python manage.py makemigrations
-#python manage.py migrate
+#!/bin/bash
+
+if [ "$RUN_BACKUP" = "true" ]; then
+    echo "Running backup..."
+    python manage.py backup_to_s3
+    exit 0
+fi
+
 gunicorn CQCPathfinder.asgi:application -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:$PORT

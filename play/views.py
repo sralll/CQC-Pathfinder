@@ -17,52 +17,26 @@ def index(request):
 @login_required
 def get_files(request):
     user = request.user
-    prefix = 'jsonfiles/'
     metadata = []
 
-    if not isinstance(default_storage, S3Boto3Storage):
-        return JsonResponse({'error': 'Storage backend is not S3'}, status=500)
-
     try:
-        for file_info in default_storage.bucket.objects.filter(Prefix=prefix):
-            key = file_info.key
-            if not key.endswith('.json'):
-                continue
+        # Only load published files
+        files = publishedFile.objects.filter(published=True)
 
-            filename = key[len(prefix):]
-
-            try:
-                pub = publishedFile.objects.get(filename=filename)
-            except publishedFile.DoesNotExist:
-                continue  # skip files not in DB
-
-            if not pub.published:
-                continue
-
+        for pub in files:
+            filename = pub.filename
             cp_count = pub.ncP or 0
             file_base = filename.replace('.json', '')
 
-            # Find missing control point indices
+            # Count how many control pairs the user has already entered
             existing_entries = UserResult.objects.filter(
-                user=user, filename=file_base
+                user=user,
+                filename=file_base
             ).values_list('control_pair_index', flat=True)
-
-            modified_time = ''
-            try:
-                head = default_storage.connection.meta.client.head_object(
-                    Bucket=settings.AWS_STORAGE_BUCKET_NAME,
-                    Key=key
-                )
-                modified_dt = head.get('LastModified')
-                if modified_dt:
-                    # Convert to ISO string for frontend
-                    modified_time = modified_dt.isoformat()
-            except Exception:
-                modified_time = ''
 
             metadata.append({
                 'filename': filename,
-                'modified': modified_time,
+                'modified': pub.last_edited.isoformat() if pub.last_edited else '',
                 'cPCount': cp_count,
                 'userEntryCount': existing_entries.count(),
                 'published': True,
@@ -75,28 +49,27 @@ def get_files(request):
 
 @login_required
 def load_file(request, filename):
-    file_path = f"jsonfiles/{filename}"
-
-    if not default_storage.exists(file_path):
-        return HttpResponseNotFound(f"File {filename} not found")
+    if not filename.endswith('.json'):
+        filename += '.json'
 
     try:
-        with default_storage.open(file_path, 'r') as file:
-            data = json.load(file)
+        # Load JSON data from DB
+        gamefile = publishedFile.objects.get(filename=filename)
+        data = gamefile.data or {}  # already a dict, no need for json.loads
 
-        # Extract base name for DB comparison (filename without .json)
+        # Extract base name for UserResult lookup
         file_base = filename.replace('.json', '')
 
-        # Get control point count from the loaded file
+        # Get control point count from JSON data
         cp_count = len(data.get('cP', []))
 
-        # Query existing entries for this user and file
+        # Get existing control point indices for this user
         existing_entries = list(
             UserResult.objects.filter(user=request.user, filename=file_base)
-            .values_list('control_pair_index', flat=True)  # assumes you store cpIndex
+            .values_list('control_pair_index', flat=True)
         )
 
-        # Determine missing control points
+        # Determine missing CP indices
         missing_cps = [i for i in range(cp_count) if i not in existing_entries]
 
         return JsonResponse({
@@ -104,6 +77,8 @@ def load_file(request, filename):
             'missingCPs': missing_cps
         })
 
+    except publishedFile.DoesNotExist:
+        return HttpResponseNotFound(f"File {filename} not found in database.")
     except Exception as e:
         return JsonResponse({'message': 'Error loading file', 'error': str(e)}, status=500)
     
