@@ -141,7 +141,7 @@ def run_UNet(request):
             final_img.save(final_img_bytes, format="PNG")
             final_img_bytes.seek(0)
 
-            local_storage = FileSystemStorage(location='/masks')
+            local_storage = FileSystemStorage(location='/data/masks')
             local_storage.save(mask_filename, final_img_bytes)
 
             return JsonResponse({"message": "Kartenmaske generiert"})
