@@ -287,34 +287,26 @@ def save_file(request):
         if not filename or not filename.endswith('.json'):
             return HttpResponseBadRequest('Invalid or missing file name.')
 
-        # Convert JSON data to formatted string
-        json_content = json.dumps(data, ensure_ascii=False, indent=2)
-
-        # Compose the S3 key path (folder + filename)
-        file_path = f"jsonfiles/{filename}"
-
-        # Save file content to S3 bucket via default_storage
-        content_file = ContentFile(json_content.encode('utf-8'))
-        saved_path = default_storage.save(file_path, content_file)
-
-        # Get number of control points
+        # Count control points
         cp_list = data.get("cP", [])
         cp_count = len(cp_list) if isinstance(cp_list, list) else 0
 
-        # Update or create publishedFile record with author and ncP
-        from .models import publishedFile  # import here or at top of file
-
+        # Get author's name
         author_name = request.user.get_full_name() or request.user.username
 
+        from .models import publishedFile
+
+        # Update or create entry
         obj, created = publishedFile.objects.update_or_create(
             filename=filename,
             defaults={
                 'author': author_name,
                 'ncP': cp_count,
+                'data': data,
             }
         )
 
-        return JsonResponse({'message': 'File saved successfully to S3 and DB', 'path': saved_path})
+        return JsonResponse({'message': 'File saved to database', 'updated': not created})
 
     except Exception as e:
         print("Save error:", e)

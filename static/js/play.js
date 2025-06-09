@@ -3,6 +3,7 @@ const clientHeight = window.innerHeight;
 
 let cqc = null;
 let missingCPs = null;      // holds the list of missing control points
+let duplicateGame = null;
 let image = new Image();
 let choiceMade = false;
 
@@ -242,6 +243,9 @@ function loadGameData(filename) {
 
             if (missingCPs.length === 0) {
                 missingCPs = Array.from({ length: cqc.cP.length }, (_, i) => i);
+                duplicateGame = true;
+            } else {
+                duplicateGame = false;
             }
 
             game_file = filename.replace('.json', '');
@@ -798,6 +802,40 @@ function submitChoice(index, routeOrder, reducedColorMap) {
     let resultText = "";
     let resultColor = "";
 
+    if (duplicateGame) {
+        resultText = `Duplikat (${choiceTime.toFixed(2)}s)`;
+        resultColor = "grey";
+    } else {
+        if (index === shortestIndex) {
+            resultText = `richtig! (${choiceTime.toFixed(2)}s)`;
+            resultColor = "green";
+        } else {
+            // Get the length of the selected route
+            const selectedRouterunTime = cqc.cP[ncP].route[index].runTime;
+            const shortestRouterunTime = cqc.cP[ncP].route[shortestIndex].runTime;
+
+            // Calculate percentage difference
+            const percentageLonger = Math.round((selectedRouterunTime / shortestRouterunTime - 1) * 100);
+
+            if (percentageLonger <= 5) {
+                resultText = `okay (${choiceTime.toFixed(2)}s)`;
+                resultColor = "#F4C430";  // Fixed color name
+            } else if (percentageLonger <= 10) {
+                resultText = `nicht ideal (${choiceTime.toFixed(2)}s)`;
+                resultColor = "orange";
+            } else {
+                resultText = `Ui! (${choiceTime.toFixed(2)}s)`;
+                resultColor = "red";
+            }
+        }
+    }
+    
+    resultBox.innerHTML = resultText;
+    resultBox.style.color = resultColor;
+    resultBox.style.backgroundColor = "white";
+    resultBox.style.display = "block";
+    tbody.appendChild(newRow);
+
     fetch('/play/submit_result/', {
         method: 'POST',
         headers: {
@@ -814,47 +852,14 @@ function submitChoice(index, routeOrder, reducedColorMap) {
     })
     .then(res => res.json())
     .then(data => {
-        if (data.status === "duplicate") {
-            resultText = `Duplikat (${choiceTime.toFixed(2)}s)`;
-            resultColor = "grey";
-        } else {
-            if (index === shortestIndex) {
-                resultText = `richtig! (${choiceTime.toFixed(2)}s)`;
-                resultColor = "green";
-            } else {
-                // Get the length of the selected route
-                const selectedRouterunTime = cqc.cP[ncP].route[index].runTime;
-                const shortestRouterunTime = cqc.cP[ncP].route[shortestIndex].runTime;
-
-                // Calculate percentage difference
-                const percentageLonger = Math.round((selectedRouterunTime / shortestRouterunTime - 1) * 100);
-
-                if (percentageLonger <= 5) {
-                    resultText = `okay (${choiceTime.toFixed(2)}s)`;
-                    resultColor = "#F4C430";  // Fixed color name
-                } else if (percentageLonger <= 10) {
-                    resultText = `nicht ideal (${choiceTime.toFixed(2)}s)`;
-                    resultColor = "orange";
-                } else {
-                    resultText = `Ui! (${choiceTime.toFixed(2)}s)`;
-                    resultColor = "red";
-                }
-            }
-        }
-
         // Now update the result box
-        resultBox.innerHTML = resultText;
-        resultBox.style.color = resultColor;
-        resultBox.style.backgroundColor = "white";
-        resultBox.style.display = "block";
+
         if (ncP == (cqc.cP.length - 1)) {
             nextButton.innerHTML = "Ende";
             const openButton = document.getElementById("openButton");
             openButton.style.display = "block";
         }
         nextButton.style.display = "inline-flex";
-
-        tbody.appendChild(newRow);
     });
 }
 
