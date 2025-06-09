@@ -43,12 +43,17 @@ def upload_mask(request):
 
 @group_required('Trainer')
 def get_mask(request, filename):
-    key = f"masks/{filename}"
-
+    key = f"/data/masks/{filename}"
+    '''
     if not default_storage.exists(key):
         return HttpResponseNotFound("Mask not found.")
 
     file = default_storage.open(key, 'rb')
+    response = FileResponse(file, content_type='image/png')
+    response['Content-Disposition'] = f'inline; filename="{filename}"'
+    '''
+    local_storage = FileSystemStorage(location='/data/masks')
+    file = local_storage.open(key, 'rb')
     response = FileResponse(file, content_type='image/png')
     response['Content-Disposition'] = f'inline; filename="{filename}"'
     return response
@@ -138,8 +143,8 @@ def run_UNet(request):
             basename, _ = os.path.splitext(filename)
             mask_filename = f"mask_{basename}.png"
             final_img_bytes = BytesIO()
-            final_img.save(final_img_bytes, format="PNG")
-            final_img_bytes.seek(0)
+            #final_img.save(final_img_bytes, format="PNG")
+            #final_img_bytes.seek(0)
 
             local_storage = FileSystemStorage(location='/data/masks')
             local_storage.save(mask_filename, final_img_bytes)
