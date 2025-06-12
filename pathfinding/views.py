@@ -52,12 +52,12 @@ def find(request):
         a_star_wps = simplify_wps(a_star_wps, subgrid)
         inflated_subgrid = inflate_obstacles(subgrid, radius=1, dilation_block=150)
 
-        corridor_mask = generate_corridor_mask_numpy(a_star_wps, subgrid.shape, radius=30)
+        corridor_mask = generate_corridor_mask_numpy(a_star_wps, subgrid.shape, radius=40)
         constrained_grid = np.where(corridor_mask == 1, inflated_subgrid, 0)
 
         #DEBUG
-        Image.fromarray((corridor_mask * 255).astype(np.uint8)).save("corridor_mask.png")
-        Image.fromarray(constrained_grid.astype(np.uint8)).save("constrained_grid.png")
+        #Image.fromarray((corridor_mask * 255).astype(np.uint8)).save("corridor_mask.png")
+        #Image.fromarray(constrained_grid.astype(np.uint8)).save("constrained_grid.png")
         cached_los = make_los_cached(constrained_grid)
 
         # Step 5: Yield updates from guided_theta_star generator
