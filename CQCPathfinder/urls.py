@@ -13,6 +13,7 @@ urlpatterns = [
     path("admin/", admin.site.urls),
     path("", include("main.urls")),
     path('coursesetter/', include('coursesetter.urls')),
+    path("pathfinding/", include("pathfinding.urls")),
     path('play/', include('play.urls')),
 
     # login/logout

@@ -15,6 +15,7 @@ const rControl = 25;		//radius of control circle
 const snapThreshhold = 25;	//distance to snap cursor (same as control circle radius)
 const mrklen = 5;			//small cross marker size
 const waitThreshhold = 150;	//ms, waittime for cursor change when dragging
+const train_scale = 0.710;  //scale for training mask, 1:1.4
 
 let image = new Image();
 let mask = null;
@@ -73,7 +74,7 @@ buttonCV.addEventListener('click', () => {
         const filename = mapPath.split('/').pop();  // Gets just "FILENAME.extension"
 
         // Construct request URL
-        const url = `/coursesetter/run_unet/?filename=${encodeURIComponent(filename)}&scale=${encodeURIComponent(scale)}`;
+        const url = `/pathfinding/run_unet/?filename=${encodeURIComponent(filename)}&scale=${encodeURIComponent(scale)}`;
 
         // Fetch request
         fetch(url)
@@ -89,7 +90,7 @@ buttonCV.addEventListener('click', () => {
                 alertBox.innerHTML = `<span>${data.message}</span>`;
                 cv_mask = true;
                 const basename = filename.split('.').slice(0, -1).join('.');
-                const maskUrl = `/coursesetter/get_mask/mask_${basename}.png`;
+                const maskUrl = `/pathfinding/get_mask/mask_${basename}.png`;
 
                 if (!mask) {
                     mask = new Image();
@@ -100,6 +101,7 @@ buttonCV.addEventListener('click', () => {
                 };
                 mask.src = maskUrl;
                 mode = "mapCV";
+                draw(rc);
             })
             .catch(error => {
                 alertBox.innerHTML = `<span style="color: red;">Error: ${error.message}</span>`;
@@ -367,6 +369,14 @@ function updateTableR() {
         //add row, cell
         tdR.appendChild(nb);
         row.appendChild(tdR);
+
+        const tdZ = document.createElement('td');
+        tdZ.classList.add('tableCellMain');
+        tdZ.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i>';
+        tdZ.style.backgroundColor  = "white";
+        tdZ.style.setProperty('--td-background-color', '#D6EEEE'); //set hover
+        tdZ.addEventListener('click', send_pathfinding); //function for new route
+        row.appendChild(tdZ);
         tableBody.appendChild(row);
     }	
 
@@ -721,9 +731,9 @@ function updateMaskFromEdits(mask) {
             maskData[i + 2] = 0;
             maskData[i + 3] = 255;
         } else if (!isRed && wasBlack) {
-            maskData[i] = 200;
-            maskData[i + 1] = 200;
-            maskData[i + 2] = 200;
+            maskData[i] = 230; //tune
+            maskData[i + 1] = 230;
+            maskData[i + 2] = 230;
             maskData[i + 3] = 255;
         }
         // Else: leave as-is
@@ -740,7 +750,8 @@ function processMaskImage(mask) {
     // Create off-screen editCanvas
     editCanvas.width = mask.width;
     editCanvas.height = mask.height;
-
+    const scaledWidth = mask.naturalWidth * train_scale;
+    const scaledHeight = mask.naturalHeight * train_scale;
     // Draw and extract pixel data
     editCtx.drawImage(mask, 0, 0);
     const imgData = editCtx.getImageData(0, 0, mask.width, mask.height);
@@ -833,7 +844,7 @@ function loadFile(filename) {
         // Load mask in parallel, but don't block the draw
         if (cv_mask) {
             const mapFilename = cqc.mapFile.split('/').pop().split('.')[0];
-            const maskUrl = `/coursesetter/get_mask/mask_${mapFilename}.png`;
+            const maskUrl = `/pathfinding/get_mask/mask_${mapFilename}.png`;
 
             const tempMask = new Image();
             tempMask.onload = () => {
@@ -847,10 +858,10 @@ function loadFile(filename) {
             mode = "placeControls";
         }
         draw(rc);
+        alertBox.innerHTML = '';
     })
     .catch(error => {
         console.error('Error loading the file:', error);
-        alert('Failed to load the file');
     });
 }
 
@@ -930,12 +941,15 @@ document.getElementById('uploadForm').addEventListener('submit', function(event)
         uploadSpinner.style.display = "none";
 
         cqc.scaled = data.scaled;
-        cqc.scale = 1; //reset scale
+        cqc.scale = 1;
         cDraw = false;
         cqc.cP = [];
         nsP = 0;
         nRP = 0;
         ncP = 0;
+        has_mask = false;
+        mask = null;
+        alertBox.innerHTML = '';
         draw(rc); //update canvas, tables
     })
     .catch(error => {
@@ -1005,10 +1019,147 @@ document.addEventListener("keydown", function(e) {
             case 77: //m
                 modalM.style.display = 'block';
             break;
+            case 90: //z
+                if (mode == "drawRoutes") {
+                    send_pathfinding();
+                }
         }
     }
     draw(rc); //update canvas, tables
 })
+
+function renderProgressBar(current, total, width = 30) {
+  // Calculate how many boxes to fill
+  const filledCount = Math.round((current / total) * width);
+  const emptyCount = width - filledCount;
+
+  const filledBoxes = "█".repeat(filledCount);
+  const emptyBoxes = "░".repeat(emptyCount);
+
+  return 'θ* pathfinding ' + filledBoxes + emptyBoxes + `<i style="font-size: 1rem; padding: 0px 10px" class="fa-solid fa-spinner fa-spin-pulse"></i>`;
+}
+
+function addFinalPathAsRoute(finalPath) {
+
+    if (!finalPath || !Array.isArray(finalPath)) {
+    console.error("Invalid finalPath provided");
+    return;
+  }
+  
+  if (!cqc || !cqc.cP || !cqc.cP[ncP]) {
+    console.error("Global cqc.cP[ncP] not defined");
+    return;
+  }
+
+  if (!Number.isInteger(nR)) {
+    console.error("Invalid route index nR");
+    return;
+  }
+  
+  const newRoute = gen_route();
+
+  newRoute.rP = finalPath.map(([x, y]) => {
+    const point = gen_rP();
+    point.x = x;
+    point.y = y;
+    return point;
+  });
+
+  newRoute.length = newRoute.rP.length;
+  newRoute.noA = 0;
+  newRoute.elevation = 0;
+  newRoute.runTime = null;
+  newRoute.pos = null;
+
+  if (!Array.isArray(cqc.cP[ncP].route)) {
+    cqc.cP[ncP].route = [];
+  }
+
+  // Insert newRoute at insertIndex
+    cqc.cP[ncP].route.push(newRoute);
+    nR = cqc.cP[ncP].route.length - 1; // Set nR to the index of the new route
+    calcLength();
+    calcSide();
+    calcDir();
+
+    draw(rc);
+}
+
+
+
+function send_pathfinding() {
+    alertBox.innerHTML = 'Pathfinding vorbereiten <i style="font-size: 1rem; padding: 0px 10px" class="fa-solid fa-spinner fa-spin-pulse"></i>';
+    
+    if (cqc.cP[ncP].complex == false && cqc.cP[ncP].route.length == 2) {
+        alertBox.innerHTML = "Bei Links/Rechts-Posten maximal 2 Routen";
+        return;
+    }
+  
+    fetch("/pathfinding/find/", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-CSRFToken": getCSRFToken(),
+    },
+    body: JSON.stringify({
+      ...cqc.cP[ncP],
+      mapFile: cqc.mapFile,
+    }),
+  }).then(response => {
+    if (!response.ok) {
+      throw new Error("Network response was not ok");
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder("utf-8");
+    let buffer = "";
+
+    function read() {
+      return reader.read().then(({ done, value }) => {
+        if (done) {
+          console.log("Stream complete");
+          return;
+        }
+        buffer += decoder.decode(value, { stream: true });
+
+        // Split on SSE messages separated by double newline
+        let parts = buffer.split("\n\n");
+        buffer = parts.pop(); // incomplete last part
+
+        for (const part of parts) {
+          // Each part may have multiple 'data:' lines
+          const dataLines = part.split("\n").filter(line => line.startsWith("data: "));
+          if (dataLines.length === 0) continue;
+
+          // Concatenate all data lines, joining with \n (SSE spec)
+          const dataString = dataLines.map(line => line.slice(5).trim()).join("\n");
+
+          try {
+            const data = JSON.parse(dataString);
+
+            if (data.waypoint !== undefined && data.total !== undefined) {
+              alertBox.innerHTML = renderProgressBar(data.waypoint, data.total);
+            } else if (data.final_path !== undefined) {
+                alertBox.innerHTML = "Route generiert";
+                addFinalPathAsRoute(data.final_path);
+            } else if (data.error) {
+              alertBox.innerHTML = data.error;
+            }
+          } catch (e) {
+            console.error("Error parsing SSE JSON", e);
+          }
+        }
+
+        return read();
+      });
+    }
+
+    return read();
+  }).catch(err => {
+    alertBox.innerHTML = err.message;
+    console.error("Fetch error:", err);
+  });
+}
 
 function saveCanvas() {
     const updatedCanvas = updateMaskFromEdits(mask);
@@ -1022,7 +1173,7 @@ function saveCanvas() {
         const formData = new FormData();
         formData.append('mask', blob, maskFilename);
 
-        fetch('/coursesetter/upload-mask/', {
+        fetch('/pathfinding/upload-mask/', {
             method: 'POST',
             body: formData,
             headers: {
@@ -1284,13 +1435,13 @@ function editingCursor(event) {
     const y = event.clientY - rect.top;
     if (subMode == "add") {
         ec.beginPath();
-        ec.arc(x, y, BrushRadius*scale, 0, Math.PI * 2);
+        ec.arc(x, y, BrushRadius*scale*train_scale, 0, Math.PI * 2);
         ec.strokeStyle = "black";
         ec.lineWidth = 1;
         ec.stroke();
     } else if (subMode == "remove") {
         ec.beginPath();
-        ec.arc(x, y, BrushRadius*scale, 0, Math.PI * 2);
+        ec.arc(x, y, BrushRadius*scale*train_scale, 0, Math.PI * 2);
         ec.strokeStyle = "black";
         ec.lineWidth = 1;
         ec.stroke();   
@@ -1370,18 +1521,18 @@ function editing(event) {
 
     if (subMode === "add") {
         editCtx.fillStyle = "rgba(255,0,0,1)";
-        drawPixelCircle(editCtx, Math.round(x), Math.round(y), BrushRadius)
+        drawPixelCircle(editCtx, Math.round(x/train_scale), Math.round(y/train_scale), BrushRadius)
         // Show live feedback directly on mc (screen canvas)
         mc.save();
         mc.setTransform(1, 0, 0, 1, 0, 0); // reset transform
         mc.fillStyle = "rgba(255,0,0,1)";
         const canvasX = event.clientX - rect.left;
         const canvasY = event.clientY - rect.top;
-        drawCircle(mc, canvasX, canvasY, BrushRadius*scale);
+        drawCircle(mc, canvasX, canvasY, BrushRadius*scale*train_scale);
         mc.restore();
 
     } else if (subMode === "remove") {
-        eraseCircle(editCtx, Math.round(x), Math.round(y), BrushRadius);
+        eraseCircle(editCtx, Math.round(x/train_scale), Math.round(y/train_scale), BrushRadius);
 
         // Normal smooth erase circle on mc:
         const canvasX = event.clientX - rect.left;
@@ -1389,7 +1540,7 @@ function editing(event) {
         mc.save();
         mc.setTransform(1, 0, 0, 1, 0, 0);
         mc.beginPath();
-        mc.arc(canvasX, canvasY, BrushRadius*scale, 0, 2 * Math.PI);
+        mc.arc(canvasX, canvasY, BrushRadius*scale*train_scale, 0, 2 * Math.PI);
         mc.globalCompositeOperation = 'destination-out';
         mc.fill();
         mc.globalCompositeOperation = 'source-over';
@@ -1409,10 +1560,14 @@ function drawMask() {
     if (!editCanvas) return;
 
     if (mode == "mapCV" & !loading) {
-        mc.clearRect(0, 0, maskCanvas.width, maskCanvas.height);
-        mc.setTransform(scale, 0, 0, scale, transX, transY);
-        mc.drawImage(editCanvas, 0, 0); // respects transforms
-        mc.setTransform(1, 0, 0, 1, 0, 0);
+        if (mask != undefined && mask != null) {
+            mc.clearRect(0, 0, maskCanvas.width, maskCanvas.height);
+            mc.setTransform(scale, 0, 0, scale, transX, transY);
+            const scaledWidth = mask.naturalWidth * train_scale;
+            const scaledHeight = mask.naturalHeight * train_scale;
+            mc.drawImage(editCanvas, 0, 0, scaledWidth, scaledHeight); // respects transforms
+            mc.setTransform(1, 0, 0, 1, 0, 0);
+        }
     }
 }
 
@@ -1543,11 +1698,12 @@ if (event.key === "Enter" && document.getElementById("scaleInput").style.display
 
 function makeRP(event){
     if (!rDraw) { //if not in route draw mode
+        if (xClick != cqc.cP[ncP].start.x && yClick != cqc.cP[ncP].start.y) {return}
         if (cqc.cP[ncP].route.length > nR) { //check if data exists already in current route
             cqc.cP[ncP].route.splice(nR,1,gen_route()); //replace current route data with empty route sub-object
         } else {
             if (!cqc.cP[ncP].complex && cqc.cP[ncP].route.length > 1) {
-                alert("Bei Links/Rechts-Posten maximal 2 Routen");
+                alertBox.innerHTML = "Bei Links/Rechts-Posten maximal 2 Routen";
                 return;
             }
         cqc.cP[ncP].route.push(gen_route()); //add new route sub-object

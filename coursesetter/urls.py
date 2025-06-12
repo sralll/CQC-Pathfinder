@@ -12,6 +12,4 @@ urlpatterns = [
     path('upload/', views.upload_map, name='upload_map'),
     path('toggle-publish/<str:filename>/', views.toggle_publish, name='toggle_publish'),
     path('get_map/<str:filename>', views.get_map_file, name='get_map_file'),
-    path('get_mask/<str:filename>', views.get_mask, name='get_mask'),
-    path('upload-mask/', views.upload_mask, name='upload_mask'),
-    path('run_unet/', views.run_UNet, name='run_unet')]
+]

@@ -8,7 +8,6 @@ from django.db.models import Count
 from play.models import UserResult
 from django.shortcuts import get_object_or_404
 from coursesetter.models import publishedFile
-from django.core.files.storage import default_storage
 
 @login_required
 def home_view(request):
@@ -36,20 +35,10 @@ def get_published_files(request):
     published_entries = publishedFile.objects.filter(published=True)
 
     for entry in published_entries:
-        filename = entry.filename
-        file_path = f"jsonfiles/{filename}"  # S3 prefix
-
-        try:
-            # Check if file exists in S3
-            if default_storage.exists(file_path):
-                modified_time = default_storage.get_modified_time(file_path).timestamp()
-                result.append({
-                    'filename': filename,
-                    'modified': modified_time
-                })
-        except Exception as e:
-            print(f"Error accessing {filename} on S3: {e}")
-            continue
+        result.append({
+            'filename': entry.filename,
+            'modified': entry.last_edited.timestamp()
+        })
 
     # Sort by modified time (descending)
     result.sort(key=lambda x: x['modified'], reverse=True)
@@ -76,21 +65,24 @@ def fetch_plot_data(request, filename):
 
     try:
         # 1. Load control points and compute distances
-        with default_storage.open(file_path, 'r') as f:
-            content = json.load(f)
-            cP_list = content.get('cP', [])
-            
-            cumulative_distance = 0.0
-            distances = []
+        try:
+            entry = publishedFile.objects.get(filename=filename+".json", published=True)
+        except publishedFile.DoesNotExist:
+            return JsonResponse({"error": "File not found"}, status=404)
 
-            for pair in cP_list:
-                sx, sy = pair['start']['x'], pair['start']['y']
-                zx, zy = pair['ziel']['x'], pair['ziel']['y']
-                dx = zx - sx
-                dy = zy - sy
-                segment_distance = math.sqrt(dx**2 + dy**2)
-                cumulative_distance += segment_distance
-                distances.append(round(cumulative_distance, 2))  # For JS usage
+        cP_list = entry.data.get('cP', []) if entry.data else []
+            
+        cumulative_distance = 0.0
+        distances = []
+
+        for pair in cP_list:
+            sx, sy = pair['start']['x'], pair['start']['y']
+            zx, zy = pair['ziel']['x'], pair['ziel']['y']
+            dx = zx - sx
+            dy = zy - sy
+            segment_distance = math.sqrt(dx**2 + dy**2)
+            cumulative_distance += segment_distance
+            distances.append(round(cumulative_distance, 2))  # For JS usage
 
         ncP_max = len(distances)
 
