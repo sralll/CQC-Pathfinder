@@ -12,10 +12,9 @@ from io import BytesIO
 import onnxruntime as ort
 
 from .communication import extract_pathfinding_inputs
-from .preprocess import load_mask, inflate_obstacles, find_path_with_margin_growth
+from .preprocess import load_mask, inflate_obstacles, find_path_with_margin_growth, generate_corridor_mask_numpy
 from .a_star import get_a_star_turns, simplify_wps
 from .theta_star import make_los_cached, make_terrain_los_cached, guided_theta_star, bresenham_line, simplify_theta_path
-
 
 # Create your views here.
 def group_required(group_name):
@@ -52,11 +51,18 @@ def find(request):
         a_star_wps = get_a_star_turns(a_star_path)
         a_star_wps = simplify_wps(a_star_wps, subgrid)
         inflated_subgrid = inflate_obstacles(subgrid, radius=1, dilation_block=150)
-        cached_los = make_los_cached(inflated_subgrid)
+
+        corridor_mask = generate_corridor_mask_numpy(a_star_wps, subgrid.shape, radius=30)
+        constrained_grid = np.where(corridor_mask == 1, inflated_subgrid, 0)
+
+        #DEBUG
+        Image.fromarray((corridor_mask * 255).astype(np.uint8)).save("corridor_mask.png")
+        Image.fromarray(constrained_grid.astype(np.uint8)).save("constrained_grid.png")
+        cached_los = make_los_cached(constrained_grid)
 
         # Step 5: Yield updates from guided_theta_star generator
         final_path = None
-        for update in guided_theta_star(inflated_subgrid, start_cP, ziel_cP, a_star_wps,
+        for update in guided_theta_star(constrained_grid, start_cP, ziel_cP, a_star_wps,
                                         switch_radius=10, cached_los=cached_los):
             
             if update.get("done"):
@@ -64,13 +70,16 @@ def find(request):
             # Each update should be a dict you convert to JSON
             yield f"data: {json.dumps(update)}\n\n"
 
+        if final_path is None:
+            yield f"data: {json.dumps({'error': 'Guided θ* exited with no path found'})}\n\n"
+            return
         theta_star_path = simplify_theta_path(final_path)
 
         theta_star_path = [((x + offset[0]) * 0.71, (y + offset[1]) * 0.71) for (x, y) in theta_star_path]
         # Step 6: Final done message (optional)
         yield f"data: {json.dumps({'final_path': theta_star_path})}\n\n"
         yield f"data: {json.dumps({'status': 'done'})}\n\n"
-
+        
     return StreamingHttpResponse(event_stream(), content_type='text/event-stream')
 
 

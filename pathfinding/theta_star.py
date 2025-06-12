@@ -3,6 +3,7 @@ from typing import Tuple, List
 from functools import lru_cache
 import heapq
 import math
+from PIL import Image
 
 def heuristic(a: Tuple[int, int], b: Tuple[int, int]) -> float:
     return np.hypot(b[0] - a[0], b[1] - a[1])
@@ -66,6 +67,19 @@ def make_terrain_los_cached(grid: np.ndarray):
 
     return cached_terrain_los
 
+
+def save_grayscale_image(array, filename='visited.png'):
+    # Avoid division by zero
+    if array.max() > 0:
+        norm_array = (array / array.max()) * 255
+        print(f"Normalizing array with max value {array.max()}")
+    else:
+        norm_array = array
+
+    image = Image.fromarray(norm_array.astype(np.uint8), mode='L')  # 'L' for grayscale
+    image.save(filename)
+    print(f"Image saved as {filename}")
+
 def guided_theta_star(grid, start, goal, waypoints, switch_radius=20, cached_los=None):
     h, w = grid.shape
     open_list = []
@@ -74,11 +88,15 @@ def guided_theta_star(grid, start, goal, waypoints, switch_radius=20, cached_los
     heapq.heappush(open_list, (heuristic(start, goal), start))
     closed_set = set()
 
+    visited = np.zeros_like(grid)
+
     guidance_index = 0
     total_waypoints = len(waypoints)
 
     while open_list:
         _, current = heapq.heappop(open_list)
+
+        visited[current[1], current[0]] += 1
 
         if current in closed_set:
             continue
@@ -90,6 +108,7 @@ def guided_theta_star(grid, start, goal, waypoints, switch_radius=20, cached_los
                 current = parent[current]
                 path.append(current)
             yield {"done": True, "path": path[::-1]}
+            save_grayscale_image(visited, 'visited.png')
             return
 
         # Yield progress when switching waypoint

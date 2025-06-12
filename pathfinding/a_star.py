@@ -96,6 +96,7 @@ def get_a_star_turns(path: list):
                 last_turn_dir = curr_turn_dir
             last_index = i
         prev_vector = curr_vector
+    waypoints.append(path[-1])
     return waypoints
 
 def simplify_wps(
