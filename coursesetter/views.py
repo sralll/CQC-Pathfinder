@@ -183,17 +183,9 @@ def delete_file(request, filename):
         # Delete the main JSON file
         default_storage.delete(json_path)
 
-        # Try to delete the map file if it exists
-        #if map_file_path and default_storage.exists(map_file_path):
-        #    try:
-        #        default_storage.delete(map_file_path)
-        #        print(f"Deleted associated map file: {map_file_path}")
-        #    except Exception as e:
-        #        print(f"Warning: Could not delete map file {map_file_path}: {e}")
-
         # Delete the database entry
         try:
-            publishedFile.objects.filter(filename=filename).delete()
+            publishedFile.objects.filter(filename=filename+".json").delete()
         except Exception as e:
             print(f"Error deleting DB entry for {filename}: {e}")
 
