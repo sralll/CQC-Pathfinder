@@ -163,48 +163,14 @@ def delete_file(request, filename):
         return JsonResponse({'message': 'Method not allowed'}, status=405)
 
     filename = unquote(filename)
-    json_path = f'jsonfiles/{filename}'
-
-    if not default_storage.exists(json_path):
-        return JsonResponse({'message': 'File not found'}, status=404)
-
+    print(f"Attempting to delete file: {filename}")
+    # Delete the database entry
     try:
-        # Try reading the JSON to get the optional mapFile path
-        map_file_path = None
-        try:
-            with default_storage.open(json_path, 'r') as f:
-                content = json.load(f)
-                map_file_path = content.get('mapFile')
-
-                if map_file_path:
-                    if map_file_path.startswith('/coursesetter/get_map/'):
-                        map_file_path = map_file_path.replace('/coursesetter/get_map/', 'maps/')
-                    elif map_file_path.startswith('http'):
-                        # fallback: extract S3 key from full URL if still using some old ones
-                        map_file_path = map_file_path.split('.COM/')[-1]
-        except Exception as e:
-            print(f"Warning: Could not parse mapFile from JSON: {e}")
-
-        with default_storage.open(json_path, 'rb') as f:
-            file_content = f.read()
-
-        archive_path = json_path.replace('jsonfiles/', 'archive/', 1)
-
-        default_storage.save(archive_path, ContentFile(file_content))
-        # Delete the main JSON file
-        default_storage.delete(json_path)
-
-        # Delete the database entry
-        try:
-            publishedFile.objects.filter(filename=filename+".json").delete()
-        except Exception as e:
-            print(f"Error deleting DB entry for {filename}: {e}")
-
-        return JsonResponse({'message': 'File deleted successfully!'})
-
+        publishedFile.objects.filter(filename=filename).delete()
     except Exception as e:
-        print(f"Error deleting the file: {str(e)}")
-        return JsonResponse({'message': 'Error deleting the file'}, status=500)
+        print(f"Error deleting DB entry for {filename}: {e}")
+
+    return JsonResponse({'message': 'File deleted successfully!'})
 
 
 @group_required('Trainer')
