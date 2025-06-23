@@ -13,6 +13,7 @@ from django.core.files.storage import default_storage
 from django.core.files.base import ContentFile
 from botocore.exceptions import ClientError
 from urllib.parse import unquote
+import gc
 
 def group_required(group_name):
     def in_group(u):
@@ -33,13 +34,23 @@ def get_map_file(request, filename):
     )
 
     bucket = settings.AWS_STORAGE_BUCKET_NAME
-    key = f'maps/{filename}'  # 'maps/' is your upload prefix
+    key = f'maps/{filename}'
 
     try:
         s3_object = s3.get_object(Bucket=bucket, Key=key)
         content_type = s3_object['ContentType']
         body = s3_object['Body'].read()
-        return HttpResponse(body, content_type=content_type)
+
+        # Return the file response
+        response = HttpResponse(body, content_type=content_type)
+
+        # Cleanup
+        del s3_object
+        del body
+        gc.collect()
+
+        return response
+
     except ClientError as e:
         if e.response['Error']['Code'] == 'NoSuchKey':
             return HttpResponseNotFound(f"Map file '{filename}' not found.")
@@ -212,6 +223,8 @@ def upload_map(request):
 
         # Save the file using Django's default storage (S3 in your case)
         file_path = default_storage.save(filename, file)
+        del file
+        gc.collect()
         # Get the URL to access the file (will be S3 URL if configured)
         map_url = default_storage.url(file_path)
         return JsonResponse({

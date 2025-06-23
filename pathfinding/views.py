@@ -6,6 +6,7 @@ from PIL import Image, UnidentifiedImageError
 from types import SimpleNamespace
 
 import os
+import gc
 import json
 import numpy as np
 from io import BytesIO
@@ -82,92 +83,6 @@ def find(request):
         
     return StreamingHttpResponse(event_stream(), content_type='text/event-stream')
 
-
-'''
-@group_required('Trainer')
-async def find(request):
-    # Your existing input parsing and setup...
-    data, status = extract_pathfinding_inputs(request)
-    if status != 200:
-        yield f"data: {json.dumps({'error': data.get('error', 'Invalid request')})}\n\n"
-        return
-
-    mask = load_mask(data)
-    grid = np.array(mask)
-    a_star_path, subgrid, offset, start_cP, ziel_cP = find_path_with_margin_growth(grid, data["start"], data["ziel"], data["routes"])
-    if a_star_path is None:
-        yield f"data: {json.dumps({'error': 'Exploratory A* aborted with no path found. Check mask.'})}\n\n"
-        return
-    
-    a_star_wps = get_a_star_turns(a_star_path)
-    a_star_wps = simplify_wps(a_star_wps, subgrid)
-    inflated_subgrid = inflate_obstacles(subgrid, radius=1, dilation_block=150)
-    cached_los = make_los_cached(inflated_subgrid)
-
-    async def event_stream():
-        # This generator yields SSE strings
-        for update in guided_theta_star(inflated_subgrid, start_cP, ziel_cP, a_star_wps, switch_radius=10, cached_los=cached_los):
-            # Convert the dict to JSON and format as SSE data chunk
-            yield f"data: {json.dumps(update)}\n\n"
-
-    return StreamingHttpResponse(event_stream(), content_type='text/event-stream')
-'''
-
-'''
-@group_required('Trainer')
-def find(request):
-    # Step 1: Parse and validate input
-    data, status = extract_pathfinding_inputs(request)
-    if status != 200:
-        return JsonResponse({"success": False, "message": data.get("error", "Invalid request")}, status=status)
-
-    mask = load_mask(data)
-
-    grid = np.array(mask)
-
-    a_star_path, subgrid, offset, start_cP, ziel_cP = find_path_with_margin_growth(grid, data["start"], data["ziel"], data["routes"])
-    if a_star_path is None:
-        return JsonResponse({
-            "success": False,
-            "message": "Exploratory A* aborted with no path found. Check mask."
-        }, status=400)
-    
-    a_star_wps = get_a_star_turns(a_star_path)
-    a_star_wps = simplify_wps(a_star_wps, subgrid)
-
-    #inflate grid for character size simulation
-    inflated_subgrid = inflate_obstacles(subgrid, radius=1, dilation_block=150) #tune
-
-    cached_los = make_los_cached(inflated_subgrid)
-    #cached_terrain_los = make_terrain_los_cached(inflated_subgrid)
-
-    tt_0 = time.time()
-    theta_star_path = guided_theta_star(inflated_subgrid, start_cP, ziel_cP, a_star_wps, switch_radius=10, cached_los=cached_los)
-    tt_1 = time.time()
-    print(f"\nθ* completed in {int(tt_1-tt_0)}s")
-
-    theta_star_path = simplify_theta_path(theta_star_path)
-
-    def draw_path_lines_on_grid(grid: np.ndarray, path: list[tuple[int, int]], color: int = 50) -> np.ndarray:
-        grid_with_lines = grid.copy()
-        h, w = grid.shape
-
-        for (x0, y0), (x1, y1) in zip(path[:-1], path[1:]):
-            for x, y in bresenham_line(x0, y0, x1, y1):
-                if 0 <= y < h and 0 <= x < w:
-                    grid_with_lines[y, x] = color  # Note: (y, x) indexing
-
-        return grid_with_lines
-    
-    
-    debug_grid = draw_path_lines_on_grid(inflated_subgrid, theta_star_path, color=50)
-
-    Image.fromarray(debug_grid.astype(np.uint8)).save("debug_subgrid.png")
-    # Step 3: Continue with your own pathfinding or logic
-    return JsonResponse({
-        "message": "success",
-    })
-'''
 @group_required('Trainer')
 def upload_mask(request):
     if request.method == 'POST' and 'mask' in request.FILES:
@@ -280,6 +195,9 @@ def run_UNet(request):
             final_img_bytes.seek(0)
 
             default_storage.save(mask_filename, final_img_bytes)
+
+            del img, img_np, output_img, final_img, visual_img, ort_session  # Free memory
+            gc.collect()
 
             return JsonResponse({"message": "Kartenmaske generiert"})
         
