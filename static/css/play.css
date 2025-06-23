@@ -17,9 +17,9 @@
 
 #projectTableDiv {
     position: relative;
-    padding: 5px;
-    max-height: 600px;
-    overflow: auto;
+    padding: 0;
+    max-height: 70vh;
+    overflow: hidden;
 }
 
 body.mobile #projectTableDiv {
@@ -31,7 +31,6 @@ body.mobile #projectTableDiv {
     width: 100%;
     position: relative;
     border-collapse: collapse;
-    max-height: 600px;
     overflow: auto;
     text-align: left;
 }

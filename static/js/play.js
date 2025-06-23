@@ -18,7 +18,7 @@ let startTime = null; // To track the start time of the animation
 
 const rControl = 25;		//radius of control circle
 
-const routeColor = ["#FFFF00", "#FF0000", "#FF00FF", "#0000FF"];
+const routeColor = ["#FFFF00", "#FF0000", "#FF00FF", "#0000FF", "#00FFFF", "#00FF00"];
 let selectedIndex = null; // Store the last clicked index
 
 let lastPressTime = null; // Store the time of the last button press
@@ -858,6 +858,9 @@ function submitChoice(index, routeOrder, reducedColorMap) {
             nextButton.innerHTML = "Ende";
             const openButton = document.getElementById("openButton");
             openButton.style.display = "block";
+        }
+        else {
+            nextButton.innerHTML = '<i class="fa-solid fa-forward"></i>';
         }
         nextButton.style.display = "inline-flex";
     });

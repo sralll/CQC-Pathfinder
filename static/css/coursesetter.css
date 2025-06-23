@@ -129,9 +129,8 @@ button:hover {
 
 #projectTableDiv {
     position: relative;
-    padding: 5px;
-    max-height: 800px;
-    overflow: auto;
+    overflow: none;
+    padding: 0;
 }
 
 #fileTable {
@@ -140,7 +139,7 @@ button:hover {
     width: 100%;
     position: relative;
     border-collapse: collapse;
-    max-height: 800px;
+    max-height: 70vh;
     overflow: auto;
 }
 
@@ -154,7 +153,6 @@ body.desktop #fileTable {
 }
 
 .tableHeadProjects {
-    padding: 5px;
     text-align: left;
     border: none;
     border-bottom: 1px solid #000;
