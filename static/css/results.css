@@ -130,3 +130,7 @@ body.mobile #completionTable {
 body.mobile #resultContent {
     flex-direction: column;
 }
+
+body.mobile #resultLegend {
+    margin-bottom: 50px;
+}
