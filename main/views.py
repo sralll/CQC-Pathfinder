@@ -100,11 +100,15 @@ def fetch_plot_data(request, filename):
         # 3. Load full sorted data for those users
         all_user_data = []
         for user_id in user_ids:
-            entries = (
-                UserResult.objects
-                .filter(filename=filename, user_id=user_id)
-                .order_by('control_pair_index')
-            )
+            # Get all entries for this user and filename
+            entries = UserResult.objects.filter(filename=filename, user_id=user_id)
+            
+            # Skip this user if any entry has competition == False
+            if entries.filter(competition=False).exists():
+                continue  # skip this user entirely
+
+            # Otherwise, order by control_pair_index
+            entries = entries.order_by('control_pair_index')
 
             user_data = {
                 'user_id': user_id,
@@ -113,8 +117,9 @@ def fetch_plot_data(request, filename):
                     {
                         'index': entry.control_pair_index,
                         'choice_time': entry.choice_time,
+                        'selected_route': entry.selected_route,
                         'selected_route_runtime': entry.selected_route_runtime,
-                        'shortest_route_runtime': entry.shortest_route_runtime  # Make sure this field exists
+                        'shortest_route_runtime': entry.shortest_route_runtime
                     }
                     for entry in entries
                 ]
@@ -194,7 +199,7 @@ def user_game_stats(request, user_id=None):
         target_user = get_object_or_404(User, id=user_id)
 
     # Query the target user's results
-    results_user = UserResult.objects.filter(user_id=target_user.id)
+    results_user = UserResult.objects.filter(user_id=target_user.id, competition=True)
     user_entries = results_user.count()
 
     # Initialize stats counters
@@ -228,7 +233,7 @@ def user_game_stats(request, user_id=None):
     total = fastest_user + less_5_user + between_5_10_user + more_10_user
 
     # Get global results (stats for all users)
-    results_global = UserResult.objects.filter()
+    results_global = UserResult.objects.filter(competition=True)
     global_entries = results_global.count()
 
     fastest_global = 0

@@ -1,6 +1,8 @@
 const clientWidth = window.innerWidth;
 const clientHeight = window.innerHeight;
 
+let competitionMode = true;
+
 let cqc = null;
 let missingCPs = null;      // holds the list of missing control points
 let duplicateGame = null;
@@ -72,6 +74,11 @@ nextButton.style.height = resultBoxWrapper.offsetHeight-10 + "px";
 nextButton.style.fontSize = resultBoxWrapper.offsetHeight-10 + "px";
 nextButton.style.marginRight = "5px";
 
+const trainingButton = document.getElementById("trainingButton");
+trainingButton.style.height = resultBoxWrapper.offsetHeight-15 + "px";
+trainingButton.style.fontSize = resultBoxWrapper.offsetHeight-15 + "px";
+trainingButton.style.marginRight = "5px";
+
 const routeButtonContainer = document.getElementById("routeButtonContainer");
 routeButtonContainer.style.height = (answerWrapperHeight/2) + "px";
 routeButtonContainer.style.width = canvasWidth + "px";
@@ -91,6 +98,21 @@ function openModal() {
     modalP.style.display = "block";
     loadFileList();
 }
+
+document.addEventListener("DOMContentLoaded", () => {
+    const toggle = document.getElementById("trainingToggle");
+
+    // Load saved state or default to true
+    competitionMode = localStorage.getItem("competitionMode") === "false" ? false : true;
+
+    // Set checkbox to reflect variable
+    toggle.checked = competitionMode;
+
+    toggle.addEventListener("change", () => {
+        competitionMode = toggle.checked;
+        localStorage.setItem("competitionMode", competitionMode);
+    });
+});
 
 closeModal.onclick = () => modalP.style.display = "none";
 
@@ -145,10 +167,6 @@ function loadFileList() {
                 cpCountCell.textContent = cpCount; // Display the number of cP entries
                 cpCountCell.style.textAlign = 'center'; // Center the text
                 row.appendChild(cpCountCell);
-
-                // Last modified time
-                const lastModifiedCell = document.createElement('td');
-                lastModifiedCell.classList.add('tableCellProjects');
                     
                 // Completion Status
                 const statusCell = document.createElement('td');
@@ -351,7 +369,6 @@ function startGame() {
     startTime = 0;
     ctx.resetTransform();
     ctx.clearRect(0, 0, canvas.width, canvas.height); // Clear canvas
-
     // Delay the recalculation by 1 second (1000ms)
     setTimeout(function() {
         calcTransform(ncP);
@@ -580,7 +597,7 @@ function drawRoutes()  {
         });
 
         const sortedIndices = generateSortedIndicesByPos(cqc.cP[ncP].route);
-        
+        console.log('Sorted Indices:' + sortedIndices);
         const colorPicker = reduceColors(cqc.cP[ncP].route.length);
         routeButtonContainer.innerHTML = ""; // Clear existing cells
 
@@ -802,7 +819,11 @@ function submitChoice(index, routeOrder, reducedColorMap) {
     let resultText = "";
     let resultColor = "";
 
-    if (duplicateGame) {
+    if (!competitionMode) {
+        resultText = `Training (${choiceTime.toFixed(2)}s)`;
+        resultColor = "grey";
+    }
+    else if (duplicateGame) {
         resultText = `Duplikat (${choiceTime.toFixed(2)}s)`;
         resultColor = "grey";
     } else {
@@ -846,8 +867,10 @@ function submitChoice(index, routeOrder, reducedColorMap) {
             filename: cqc_filename.replace('.json', ''),
             control_pair_index: ncP,
             choice_time: Number(choiceTime.toFixed(2)),
+            selected_route: index,
             selected_route_runtime: Number(cqc.cP[ncP].route[index].runTime.toFixed(2)),
             shortest_route_runtime: Number(cqc.cP[ncP].route[shortestIndex].runTime.toFixed(2)),
+            competition: competitionMode
         })
     })
     .then(res => res.json())
@@ -919,5 +942,15 @@ function playTiming() {
 function draw(ncP) {
     drawMap(ncP);
     drawCP(ncP);
+    if (competitionMode) {
+        drawRoutes(ncP);
+    } else {
+        trainingButton.style.display = "inline-flex";
+        resultBox.innerHTML = "";
+    }
+}
+
+function showRoutes() {
     drawRoutes(ncP);
+    trainingButton.style.display = "none";
 }

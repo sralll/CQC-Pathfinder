@@ -1,14 +1,56 @@
 #resultContainer {
-    display: block;
+    display: flex;
+    flex-direction: column;
+    width: 100vw;
+    height: 100vh;
+    background-color: white;
+    overflow: hidden;
+}
+
+body.mobile #resultContainer {
+    overflow: auto;
+}
+
+/* Row that holds graph and visual side by side */
+#resultsRow {
+    display: flex;
+    flex: 1; /* take remaining vertical space */
+    min-height: 0; /* allows flex children to shrink properly */
+}
+
+body.mobile #resultsRow {
+    flex-direction: column;
+}
+
+/* Left half */
+#resultGraph {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    padding: 5px;
+    overflow-y: auto; /* scroll if table gets tall */
+    box-sizing: border-box;
+}
+
+/* Right half */
+#resultVisual {
+    flex: 1;
+    display: flex;
     flex-direction: column;
     align-items: center;
-    justify-content: flex-start;
-    background-color: white;
-    height: 100vh;
-    width: 100vw;
-    box-sizing: border-box;
-    padding: 2vh;
+    padding: 5px;
     overflow-y: auto;
+    box-sizing: border-box;
+}
+
+body.mobile #resultVisual, body.mobile #resultGraph {
+    flex: none;
+    height: auto;
+    width: 100%;
+}
+
+#resultLegend {
+    padding: 10px;
 }
 
 body.mobile #jsonDropdown {
@@ -61,4 +103,30 @@ body.mobile #completionTable {
 
 .text-right {
     text-align: right;
+}
+
+#resultMapCanvas {
+    width: 400px;
+    height: 600px;
+}
+
+.controlButtons {
+    border-radius: 6px;
+    border: none;
+    cursor: pointer;
+    transition: background-color 0.3s;
+    white-space: nowrap;
+    text-align: center;
+    padding: 5px;
+    justify-content: center;
+    align-items: center;
+    font-size: 1.5rem;
+}
+
+#OLchart {
+    height: 450px;
+}
+
+body.mobile #resultContent {
+    flex-direction: column;
 }

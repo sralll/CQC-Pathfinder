@@ -1,3 +1,4 @@
+let ncP = 0;
 let ncP_max = 0;
 let results = {};
 let prog_distance = [];
@@ -6,6 +7,11 @@ let tabledata = {};
 let avg_times = [];
 let selectedUsers = [];
 let selectedCumulativeDiffs = {};
+let startTime = null; // To track the start time of the animation
+let image = new Image();
+let startTransform = null; // To store the starting transformation matrix
+let targetTransform = null; // To store the target transformation matrix
+const rControl = 25;		//radius of control circle
 
 const userColors = [
     '#ff1e1e', // red
@@ -16,8 +22,20 @@ const userColors = [
     '#ff9901', // yellow
 ];
 
-canvas = document.getElementById('OLchart');
-ctx = canvas.getContext('2d');
+const routeColor = ["#FFFF00", "#FF0000", "#FF00FF", "#0000FF", "#00FFFF", "#00FF00"];
+
+const canvas = document.getElementById('OLchart');
+const ctx = canvas.getContext('2d');
+
+
+const canvasMap = document.getElementById('resultMapCanvas');
+const ctxM = canvasMap.getContext('2d');
+
+canvasMap.height = 600;
+canvasMap.width = 400;
+
+const canvasMapHeight = canvasMap.clientHeight;
+const canvasMapWidth = canvasMap.clientWidth;
 
 // --- Helper: Parse URL parameters ---
 function getUrlParameter(name) {
@@ -91,6 +109,10 @@ document.getElementById('jsonDropdown').addEventListener('change', function () {
     tabledata = [];
     avg_times = [];
     selectedUsers = [];
+    ncP = 0;
+
+    document.getElementById("resultLegend").innerHTML = "";
+    document.getElementById("currentControl").textContent = `Posten 1`;
 
     if (!selectedFilename) return;
 
@@ -161,6 +183,7 @@ document.getElementById('jsonDropdown').addEventListener('change', function () {
         .catch(err => {
             console.error("Fetch failed:", err);
         });
+    loadGameData(dbName);
 });
 
 
@@ -209,6 +232,386 @@ function calcPlotScaling() {
         scale,
         topMargin,
         bottomMargin,
+    };
+}
+
+function loadGameData(filename) {
+    const encodedFilename = encodeURIComponent(filename);
+    const url = `/play/load-file/${encodedFilename}/`;
+
+    // Start spinner
+    loading = true;
+    requestAnimationFrame(drawLoadingAnimation);
+
+    fetch(url)
+        .then(response => response.json())
+        .then(response => {
+            cqc = response.data;               // original JSON file contents
+            missingCPs = response.missingCPs;  // list of missing control points
+
+            if (missingCPs.length === 0) {
+                missingCPs = Array.from({ length: cqc.cP.length }, (_, i) => i);
+                duplicateGame = true;
+            } else {
+                duplicateGame = false;
+            }
+
+            game_file = filename.replace('.json', '');
+            cqc_filename = filename;
+
+            // Load image
+            image = new Image();
+            image.src = cqc.mapFile;
+
+            image.onload = () => {
+                loading = false; // Stop spinner
+            };
+
+            image.onerror = () => {
+                loading = false;
+                alert("Failed to load image");
+            };
+        })
+        .catch(error => {
+            loading = false;
+            alert("Failed to load game data");
+            console.error("Error loading file:", error);
+        });
+}
+
+function drawLoadingAnimation(timestamp) {
+    if (!startTime) startTime = timestamp;
+    const elapsed = (timestamp - startTime) / 1000; // seconds
+
+    const centerX = resultMapCanvas.width / 2;
+    const centerY = resultMapCanvas.height / 2;
+    const baseRadius = resultMapCanvas.height/20
+    const radiusList = [baseRadius-10, baseRadius, baseRadius+10];
+    const speedList = [1, 0.7, 0.4]; // radians per second
+    const colorList = ['#666', '#999', '#ccc'];
+
+    // Clear canvas
+    ctxM.clearRect(0, 0, resultMapCanvas.width, resultMapCanvas.height);
+
+    for (let i = 0; i < 3; i++) {
+        const radius = radiusList[i];
+        const angle = elapsed * speedList[i] * Math.PI * 2;
+        const startAngle = angle;
+        const endAngle = angle + Math.PI * 1.2;
+        ctxM.setTransform(1,0,0,1,0,0);
+        ctxM.beginPath();
+        ctxM.strokeStyle = colorList[i];
+        ctxM.lineWidth = 4;
+        ctxM.arc(centerX, centerY, radius, startAngle, endAngle);
+        ctxM.stroke();
+    }
+
+    if (loading) {
+        requestAnimationFrame(drawLoadingAnimation);
+    } else {
+        calcTransform(ncP); // Just use first control point for now
+        ctxM.setTransform(...targetTransform);
+        drawMap();
+        drawCP(ncP);
+        const routeColors = drawRoutes(ncP);
+        drawLegend(ncP, routeColors);
+    }
+}
+
+function nextControlResults() {
+    if (ncP < cqc.cP.length - 1) {
+        ncP++;
+        calcTransform(ncP); // Just use first control point for now
+        ctxM.setTransform(...targetTransform);
+        drawMap();
+        drawCP(ncP);
+        const routeColors = drawRoutes(ncP);
+        drawLegend(ncP, routeColors);
+        document.getElementById("currentControl").textContent = `Posten ${ncP+1}`;
+        
+        const scaling = calcPlotScaling();
+        draw(scaling);
+    }
+}
+
+function prevControlResults() {
+    if (ncP > 0) {
+        ncP--;
+        calcTransform(ncP); // Just use first control point for now
+        ctxM.setTransform(...targetTransform);
+        drawMap();
+        drawCP(ncP);
+        const routeColors = drawRoutes(ncP);
+        drawLegend(ncP, routeColors);
+        document.getElementById("currentControl").textContent = `Posten ${ncP+1}`;
+        const scaling = calcPlotScaling();
+        draw(scaling);
+    }
+}
+
+function drawMap() {
+    ctxM.drawImage(image, 0, 0);
+}
+
+function drawCP(ncP) {
+    ctxM.beginPath();
+    ctxM.arc(cqc.cP[ncP].start.x/cqc.scale, cqc.cP[ncP].start.y/cqc.scale, rControl/cqc.scale, 0, 2 * Math.PI);
+    ctxM.strokeStyle = "rgb(160, 51, 240,0.8)";
+    ctxM.lineWidth = 3/cqc.scale;
+    ctxM.stroke();
+
+    ctxM.beginPath(ncP);
+    ctxM.arc(cqc.cP[ncP].ziel.x/cqc.scale, cqc.cP[ncP].ziel.y/cqc.scale, rControl/cqc.scale, 0, 2 * Math.PI);
+    ctxM.strokeStyle = "rgb(160, 51, 240,0.8)";
+    ctxM.lineWidth = 3/cqc.scale;
+    ctxM.stroke();
+
+    const angleC = Math.atan2(cqc.cP[ncP].ziel.y - cqc.cP[ncP].start.y, cqc.cP[ncP].ziel.x - cqc.cP[ncP].start.x);
+    const distC = Math.sqrt(
+        Math.pow(cqc.cP[ncP].ziel.x - cqc.cP[ncP].start.x, 2) +
+        Math.pow(cqc.cP[ncP].ziel.y - cqc.cP[ncP].start.y, 2)
+    );
+    if (distC > 2 * (rControl)) {
+        ctxM.beginPath();
+        ctxM.lineWidth = 3/cqc.scale;
+        ctxM.strokeStyle = "rgb(160, 51, 240,0.8)";
+        ctxM.moveTo(cqc.cP[ncP].start.x/cqc.scale + Math.cos(angleC) * (rControl + 0)/cqc.scale,
+            cqc.cP[ncP].start.y/cqc.scale + Math.sin(angleC) * (rControl + 0)/cqc.scale);
+        ctxM.lineTo(cqc.cP[ncP].ziel.x/cqc.scale - Math.cos(angleC) * (rControl + 0)/cqc.scale,
+            cqc.cP[ncP].ziel.y/cqc.scale - Math.sin(angleC) * (rControl + 0)/cqc.scale);
+        ctxM.stroke();
+    }
+}
+
+function reduceColors(length) {
+    let indices = Array.from({ length: routeColor.length }, (_, i) => i);
+
+    for (let i = 0; indices.length != cqc.cP[ncP].route.length; i++) {
+        const j = Math.floor(Math.random() * (indices.length));
+        indices.splice(j, 1);
+    }
+
+    return indices;
+}
+
+function drawRoutes(ncP)  {
+    ctxM.beginPath();
+    cqc.cP[ncP].route.forEach((route, nR) => {
+        ctxM.beginPath();
+        route.rP.forEach((point, idx) => {
+            if (idx === 0) {
+                ctxM.moveTo(point.x / cqc.scale, point.y / cqc.scale);
+            } else {
+                ctxM.lineTo(point.x / cqc.scale, point.y / cqc.scale);
+            }
+        });
+        ctxM.strokeStyle = "white";
+        ctxM.lineWidth = 4 / cqc.scale;
+        ctxM.stroke();
+    });
+
+    const sortedIndices = generateSortedIndicesByPos(cqc.cP[ncP].route);
+    const colorPicker = reduceColors(cqc.cP[ncP].route.length);
+
+    // Build a mapping: routeIndex → color
+    const routeColors = {};
+
+    // Draw routes in randomized order
+    sortedIndices.forEach((index, indexColor) => {
+        const route = cqc.cP[ncP].route[index];
+        const color = routeColor[colorPicker[indexColor]];
+        routeColors[index] = color;
+
+        ctxM.beginPath();
+        route.rP.forEach((point, idx) => {
+            if (idx === 0) {
+                ctxM.moveTo(point.x / cqc.scale, point.y / cqc.scale);
+            } else {
+                ctxM.lineTo(point.x / cqc.scale, point.y / cqc.scale);
+            }
+        });
+
+        ctxM.strokeStyle = color;
+        ctxM.lineWidth = 3 / cqc.scale;
+        ctxM.stroke();
+    });
+
+    return routeColors; // <— return mapping
+}
+
+function drawLegend(ncP, routeColors) {
+    const legendContainer = document.getElementById("resultLegend");
+    legendContainer.innerHTML = ""; // clear old stuff
+
+    const routes = cqc.cP[ncP].route;
+    const wrapper = document.createElement("div");
+
+    // Prepare buckets for each route + N/A
+    const routeBuckets = routes.map(() => []);
+    const noRouteUsers = [];
+
+    // Distribute users once
+    results.forEach(user => {
+        const control = user.controls.find(c => c.index === ncP);
+        if (control) {
+            if (control.selected_route !== null && control.selected_route !== undefined) {
+                if (routeBuckets[control.selected_route]) {
+                    routeBuckets[control.selected_route].push({
+                        name: user.full_name,
+                        choice_time: control.choice_time
+                    });
+                }
+            } else {
+                noRouteUsers.push({
+                    name: user.full_name,
+                    choice_time: control.choice_time
+                });
+            }
+        }
+    });
+
+    // Draw all route categories
+    routes.forEach((route, routeIndex) => {
+        const routeColorValue = routeColors[routeIndex] || "black";
+
+        const header = document.createElement("h3");
+        header.textContent = `Route ${routeIndex + 1} (${route.length}m, ${route.elevation}Hm, ${route.runTime.toFixed(0)}s)`;
+        header.style.fontWeight = "bold";
+        header.style.fontSize = "1.2em";
+        header.style.margin = "8px 0 4px";
+        header.style.padding = "4px";
+        header.style.backgroundColor = hexToRgba(routeColorValue, 0.66);
+
+        const subUl = document.createElement("ul");
+        subUl.style.marginLeft = "20px";
+        subUl.style.listStyleType = "disc";
+        subUl.style.maxHeight = "200px";
+        subUl.style.overflowY = "auto";
+
+        routeBuckets[routeIndex].forEach(u => {
+            const subLi = document.createElement("li");
+            subLi.textContent = `${u.name} (${u.choice_time.toFixed(2)}s)`;
+            subLi.style.fontWeight = "normal";
+            subLi.style.fontSize = "1em";
+            subLi.style.color = "black";
+            subUl.appendChild(subLi);
+        });
+
+        wrapper.appendChild(header);
+        wrapper.appendChild(subUl);
+    });
+
+    legendContainer.appendChild(wrapper);
+}
+
+
+
+function hexToRgba(hex, alpha = 0.3) {
+    // Remove leading #
+    hex = hex.replace(/^#/, '');
+
+    // Parse r,g,b
+    const r = parseInt(hex.substring(0, 2), 16);
+    const g = parseInt(hex.substring(2, 4), 16);
+    const b = parseInt(hex.substring(4, 6), 16);
+
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+function generateSortedIndicesByPos(route) {
+    // Create an array of indices
+    const indices = Array.from({ length: route.length }, (_, index) => index);
+
+    // Sort indices based on the route[nR].pos value
+    indices.sort((a, b) => route[a].pos - route[b].pos);
+
+    return indices;
+}
+
+function calcTransform(ncP) {
+    // Calculate the midpoint between start and ziel
+    const midX = (cqc.cP[ncP].start.x + cqc.cP[ncP].ziel.x) / 2;
+    const midY = (cqc.cP[ncP].start.y + cqc.cP[ncP].ziel.y) / 2;
+
+    // Target position (center of the canvas)
+    const targetX = canvasMap.width / 2;
+    const targetY = canvasMap.height / 2;
+
+    // Compute angle (rotation)
+    const dx = (cqc.cP[ncP].ziel.x - cqc.cP[ncP].start.x);
+    const dy = (cqc.cP[ncP].ziel.y - cqc.cP[ncP].start.y);
+    const angle = Math.atan2(dy, dx); // Radians
+    const originalLength  = Math.sqrt(dx * dx + dy * dy);
+
+    const targetLength = canvasMapHeight * 0.9; // HARDCODED for now
+    let scaleFactor_FB = (targetLength) / (originalLength + 2*rControl) * cqc.scale; // Scale factor for the image
+
+    const extremes = findExtremes(cqc.cP[ncP]);
+    
+    SFL = canvasMapWidth / 2 / extremes.leftDistance * cqc.scale;
+    SFR = canvasMapWidth / 2 / extremes.rightDistance * cqc.scale;
+    SFF = canvasMapHeight / 2 / extremes.forwardDistance * cqc.scale;
+    SFB = canvasMapHeight / 2 / extremes.backwardDistance * cqc.scale;
+
+    let scaleFactor = 0.98*Math.min(SFL, SFR, SFF, SFB, scaleFactor_FB); // Scale factor for the image
+    const cosA = Math.cos(-angle - Math.PI / 2);
+    const sinA = Math.sin(-angle - Math.PI / 2);
+
+    // Set the target transformation matrix
+    targetTransform = [
+        scaleFactor * cosA,
+        scaleFactor * sinA,
+        -scaleFactor * sinA,
+        scaleFactor * cosA,
+        targetX - (midX / cqc.scale) * scaleFactor * cosA + (midY / cqc.scale) * scaleFactor * sinA,
+        targetY - (midX / cqc.scale) * scaleFactor * sinA - (midY / cqc.scale) * scaleFactor * cosA
+    ];
+
+    // Store the current transformation matrix
+    startTransform = ctx.getTransform();
+}
+
+function findExtremes(pair) {
+    const start = pair.start;
+    const ziel = pair.ziel;
+    const dx = ziel.x - start.x;
+    const dy = ziel.y - start.y;
+    const norm = Math.sqrt(dx * dx + dy * dy);
+
+    // Midpoint coordinates
+    const midX = (start.x + ziel.x) / 2;
+    const midY = (start.y + ziel.y) / 2;
+
+    let maxRight = 0;
+    let maxLeft = 0;
+    let maxForward = 0;
+    let maxBackward = 0;
+
+    pair.route.forEach(route => {
+        route.rP.forEach(p => {
+            const px = p.x - midX;
+            const py = p.y - midY;
+
+            // Left/right: perpendicular (cross product)
+            const cross = dx * py - dy * px;
+            const sideDistance = cross / norm;
+            if (sideDistance > maxRight) maxRight = sideDistance;
+            if (sideDistance < maxLeft) maxLeft = sideDistance;
+
+            // Forward/backward: projection on the line (dot product)
+            const dot = px * dx + py * dy;
+            const projection = dot / norm;
+
+            if (projection > maxForward) maxForward = projection;
+            if (projection < maxBackward) maxBackward = projection;
+        });
+    });
+
+    return {
+        leftDistance: Math.abs(maxLeft),
+        rightDistance: maxRight,
+        forwardDistance: maxForward,
+        backwardDistance: Math.abs(maxBackward)
     };
 }
 
@@ -279,6 +682,17 @@ function drawGridX() {
         ctx.lineTo(x, canvasHeight);
         ctx.stroke();
     });
+
+    const prevDistance = (ncP > 0) ? prog_distance[ncP - 1] : 0;
+
+    const leftX = leftMargin + ((prevDistance / totalDistance) * (rightMargin - leftMargin));
+    const rightX = leftMargin + ((prog_distance[ncP] / totalDistance) * (rightMargin - leftMargin));
+
+    const rectWidth = rightX - leftX;
+
+    // Draw filled rectangle
+    ctx.fillStyle = "rgba(255, 0, 0, 0.2)"; // transparent red
+    ctx.fillRect(leftX, 0, rectWidth, canvasHeight);
 
     ctx.restore(); // Restore canvas state
 }

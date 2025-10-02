@@ -23,6 +23,7 @@
                 <button id="nextButton" onclick="nextControl()">
                     <i class="fa-solid fa-forward"></i>
                 </button>
+                <button id="trainingButton" onclick="showRoutes()">Routen</button>
             </div>
             <div id="routeButtonContainer"></div>
         </div>
@@ -31,6 +32,29 @@
                 <span id="closeProjects" class="closeModal">&times;</span>
 
                 <div id="projectTableDiv">
+                    <div class="training-toggle">
+                        <div class="tooltip">
+                            <i id="competitionHover" class="fa-solid fa-book-open"></i>
+                            <span class="tooltiptext">
+                                <b>Trainingsmodus</b>
+                                <br>
+                                Routen werden nicht direkt angezeigt und sollen selber gefunden werden. Ein im Trainingsmodus absolviertes Projekt wird nicht mehr in der Rangliste aufgeführt.
+                            </span>
+                        </div>
+                        <label class="switch">
+                            <input type="checkbox" id="trainingToggle">
+                            <span class="slider round"></span>
+                        </label>
+                        <div class="tooltip">
+                            <i id="competitionHover" class="fa-solid fa-trophy"></i>
+                            <span class="tooltiptext">
+                                <b>Wettkampfmodus</b>
+                                <br>
+                                Der erste Versuch eines Projekts im Wettkampfmodus wird in der Rangliste aufgeführt. Die Entscheidungszeit und die zusätzliche Zeit für nicht-ideale Routen werden gemessen.
+                            </span>
+                        </div>
+
+                    </div>
                     <table id="fileTable">
                         <thead>
                             <tr>

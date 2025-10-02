@@ -101,8 +101,10 @@ def submit_result(request):
             filename=data['filename'],
             control_pair_index=data['control_pair_index'],
             choice_time=data['choice_time'],
+            selected_route=data['selected_route'],
             selected_route_runtime=data['selected_route_runtime'],
-            shortest_route_runtime=data['shortest_route_runtime']
+            shortest_route_runtime=data['shortest_route_runtime'],
+            competition=data['competition']
         )
 
         return JsonResponse({'status': 'success', 'result_id': result.id})

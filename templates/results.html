@@ -15,26 +15,48 @@
 	</div>
 
     <div id="resultContainer">
-        <div style="display: flex; align-items: center; gap: 8px;">
+        <div style="display: flex; align-items: center; gap: 8px; padding: 5px;">
             <select id="jsonDropdown">
                 <option value="">auswählen...</option>
             </select>
             <i id="resultsSpinner" style="font-size: 1rem; padding: 0px 5px; display: none" class="fa-solid fa-spinner fa-spin-pulse"></i>
         </div>
-        <table id="completionTable">
-            <thead id ="resultTableHead">
-            <tr>
-                <th></th>
-                <th style="text-align: left;">Name</th>
-                <th class="text-right">Zeit</th>
-                <th class="text-right">Routen</th>
-                <th class="text-right">Total</th>
-            </tr>
-            </thead>
-            <tbody id="userTableBody"></tbody>
-        </table>
-        <canvas id="OLchart" height="450"></canvas>
-        
-        <script src="{% static 'js/results.js' %}"></script>
+
+        <!-- Side by side layout -->
+        <div id="resultsRow">
+            <div id="resultGraph">
+                <table id="completionTable">
+                    <thead id="resultTableHead">
+                    <tr>
+                        <th></th>
+                        <th style="text-align: left;">Name</th>
+                        <th class="text-right">Zeit</th>
+                        <th class="text-right">Routen</th>
+                        <th class="text-right">Total</th>
+                    </tr>
+                    </thead>
+                    <tbody id="userTableBody"></tbody>
+                </table>
+                <canvas id="OLchart" height="450"></canvas>
+            </div>
+
+            <div id="resultVisual">
+                <!-- Top control bar -->
+                <div id="controlBar" style="display: flex; align-items: center; justify-content: center; margin-bottom: 10px; gap: 10px;">
+                    <button id="prevControlResults" class="controlButtons" onclick="prevControlResults()"><i class="fa-solid fa-backward"></i></button>
+                    <h3 id="currentControl">Posten 1</h3>
+                    <button id="nextControlResults" class="controlButtons" onclick="nextControlResults()"><i class="fa-solid fa-forward"></i></button>
+                </div>
+
+                <!-- Map + legend side by side -->
+                <div id="resultContent" style="display: flex; gap: 20px; width: 100%; justify-content: center;">
+                    <div id="resultMap">
+                        <canvas id="resultMapCanvas"></canvas>
+                    </div>
+                    <div id="resultLegend"></div>
+                </div>
+            </div>
+        </div>
     </div>
+    <script src="{% static 'js/results.js' %}"></script>
 {% endblock %}

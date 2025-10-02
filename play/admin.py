@@ -20,7 +20,7 @@ def download_userresults_csv(modeladmin, request, queryset):
 
 @admin.register(UserResult)
 class UserResultAdmin(admin.ModelAdmin):
-    list_display = ('user', 'filename', 'control_pair_index', 'choice_time', 'selected_route_runtime', 'shortest_route_runtime','timestamp')
+    list_display = ('user', 'filename', 'control_pair_index', 'choice_time', 'selected_route', 'selected_route_runtime', 'shortest_route_runtime', 'competition', 'timestamp')
     list_filter = ('filename', 'user')  # <- This adds filtering options in admin
     search_fields = ('filename', 'user__username')
     actions = [download_userresults_csv]
