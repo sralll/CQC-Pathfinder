@@ -63,7 +63,7 @@ window.onload = function () {
             // Check if a filename is passed via URL
             const gameParam = getUrlParameter('game');
             if (gameParam) {
-                const filenameWithExtension = gameParam + '.json';
+                const filenameWithExtension = gameParam;
                 const optionExists = filenames.includes(filenameWithExtension);
                 if (optionExists) {
                     dropdown.value = filenameWithExtension;
