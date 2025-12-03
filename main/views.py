@@ -8,6 +8,8 @@ from django.db.models import Count
 from play.models import UserResult
 from django.shortcuts import get_object_or_404
 from coursesetter.models import publishedFile
+from accounts.models import UserProfile
+
 
 @login_required
 def home_view(request):
@@ -27,51 +29,89 @@ def stats_view(request):
     is_trainer = request.user.groups.filter(name='Trainer').exists()
     return render(request, 'stats.html', {'is_trainer': is_trainer})
 
-
 @login_required
 def get_published_files(request):
+    user = request.user
     result = []
 
-    published_entries = publishedFile.objects.filter(published=True)
+    try:
+        # Get user's kader
+        try:
+            user_kader = user.userprofile.kader
+        except UserProfile.DoesNotExist:
+            user_kader = None
 
-    for entry in published_entries:
-        result.append({
-            'filename': entry.filename,
-            'modified': entry.last_edited.timestamp()
-        })
+        # Only include published files in the user's kader
+        published_entries = publishedFile.objects.filter(published=True, kader=user_kader)
 
-    # Sort by modified time (descending)
-    result.sort(key=lambda x: x['modified'], reverse=True)
+        for entry in published_entries:
+            result.append({
+                'filename': entry.filename,
+                'modified': entry.last_edited.timestamp() if entry.last_edited else 0
+            })
 
-    # Return just the filenames
-    return JsonResponse([r['filename'] for r in result], safe=False)
+        # Sort by modified time (descending)
+        result.sort(key=lambda x: x['modified'], reverse=True)
+
+        # Return just the filenames
+        return JsonResponse([r['filename'] for r in result], safe=False)
+
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
 
 @login_required
 def users_with_results(request):
-    user_ids = UserResult.objects.values_list('user_id', flat=True).distinct()
-    users = User.objects.filter(id__in=user_ids)
-    user_list = [
-        {
-            'id': u.id,
-            'name': u.get_full_name() or u.username  # fallback to username if no full name
-        }
-        for u in users
-    ]
-    return JsonResponse({'users': user_list})  # Pass the is_trainer flag to the template
+    try:
+        # Get logged-in user's kader
+        try:
+            user_kader = request.user.userprofile.kader
+        except UserProfile.DoesNotExist:
+            user_kader = None
+
+        # Get distinct user IDs that have results
+        user_ids = UserResult.objects.values_list('user_id', flat=True).distinct()
+
+        # Filter users by those IDs and matching kader
+        users = User.objects.filter(id__in=user_ids)
+        if user_kader:
+            users = users.filter(userprofile__kader=user_kader)
+
+        user_list = [
+            {
+                'id': u.id,
+                'name': u.get_full_name() or u.username  # fallback to username
+            }
+            for u in users
+        ]
+        return JsonResponse({'users': user_list})
+
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
 
 @login_required
 def fetch_plot_data(request, filename):
-    file_path = f"jsonfiles/{filename}.json"
-
     try:
-        # 1. Load control points and compute distances
+        from accounts.models import UserProfile
+
+        # 0. Resolve user's kader
         try:
-            entry = publishedFile.objects.get(filename=filename+".json", published=True)
+            user_kader = request.user.userprofile.kader
+        except UserProfile.DoesNotExist:
+            return JsonResponse({"error": "User has no kader"}, status=404)
+
+        unique_filename = f"{filename}_{user_kader.name}"
+
+        # 1. Load control points safely by unique_filename
+        try:
+            entry = publishedFile.objects.get(
+                unique_filename=unique_filename,
+                published=True
+            )
         except publishedFile.DoesNotExist:
             return JsonResponse({"error": "File not found"}, status=404)
 
         cP_list = entry.data.get('cP', []) if entry.data else []
-            
+
         cumulative_distance = 0.0
         distances = []
 
@@ -80,13 +120,12 @@ def fetch_plot_data(request, filename):
             zx, zy = pair['ziel']['x'], pair['ziel']['y']
             dx = zx - sx
             dy = zy - sy
-            segment_distance = math.sqrt(dx**2 + dy**2)
-            cumulative_distance += segment_distance
-            distances.append(round(cumulative_distance, 2))  # For JS usage
+            cumulative_distance += math.sqrt(dx**2 + dy**2)
+            distances.append(round(cumulative_distance, 2))
 
         ncP_max = len(distances)
 
-        # 2. Get all users with exactly ncP_max entries
+        # 2. Users with exactly ncP_max entries (public filename!)
         matching_users = (
             UserResult.objects
             .filter(filename=filename)
@@ -97,97 +136,93 @@ def fetch_plot_data(request, filename):
 
         user_ids = [u['user_id'] for u in matching_users]
 
-        # 3. Load full sorted data for those users
+        # 3. Load and validate user data
         all_user_data = []
-        for user_id in user_ids:
-            # Get all entries for this user and filename
-            entries = UserResult.objects.filter(filename=filename, user_id=user_id)
-            
-            # Skip this user if any entry has competition == False
-            if entries.filter(competition=False).exists():
-                continue  # skip this user entirely
+        users = User.objects.in_bulk(user_ids)
 
-            # Otherwise, order by control_pair_index
+        for user_id in user_ids:
+            entries = UserResult.objects.filter(
+                filename=filename,
+                user_id=user_id
+            )
+
+            if entries.filter(competition=False).exists():
+                continue
+
             entries = entries.order_by('control_pair_index')
 
-            user_data = {
+            all_user_data.append({
                 'user_id': user_id,
-                'full_name': User.objects.get(id=user_id).get_full_name() or f"User_{user_id}",
+                'full_name': users[user_id].get_full_name() or f"User_{user_id}",
                 'controls': [
                     {
-                        'index': entry.control_pair_index,
-                        'choice_time': entry.choice_time,
-                        'selected_route': entry.selected_route,
-                        'selected_route_runtime': entry.selected_route_runtime,
-                        'shortest_route_runtime': entry.shortest_route_runtime
+                        'index': e.control_pair_index,
+                        'choice_time': e.choice_time,
+                        'selected_route': e.selected_route,
+                        'selected_route_runtime': e.selected_route_runtime,
+                        'shortest_route_runtime': e.shortest_route_runtime
                     }
-                    for entry in entries
+                    for e in entries
                 ]
-            }
-            all_user_data.append(user_data)
+            })
 
-        # 4. Compute and sort summary statistics for each user
+        # 4. Summary statistics
         table_ranking = []
-        for user_data in all_user_data:
-            user_id = user_data['user_id']
-            controls = user_data['controls']
+        for u in all_user_data:
+            controls = u['controls']
 
-            # Check if any fields are None or missing
             total_choice_time = sum(c['choice_time'] or 0 for c in controls)
             total_diff_runtime = sum(
-                abs((c['selected_route_runtime'] or 0) - (c.get('shortest_route_runtime') or 0))
+                abs((c['selected_route_runtime'] or 0) - (c['shortest_route_runtime'] or 0))
                 for c in controls
             )
 
-            # Sum of the two values
-            total_sum = total_choice_time + total_diff_runtime
-
             table_ranking.append({
-                'user_id': user_id,
-                'full_name': User.objects.get(id=user_id).get_full_name() or f"User_{user_id}",
+                'user_id': u['user_id'],
+                'full_name': u['full_name'],
                 'total_choice_time': total_choice_time,
                 'total_diff_runtime': total_diff_runtime,
-                'total_sum': total_sum
+                'total_sum': total_choice_time + total_diff_runtime
             })
 
-        # 5. Sort users by the sum of total_choice_time + total_diff_runtime
         table_ranking.sort(key=lambda x: x['total_sum'])
 
-        # 4. Calculate the 3 fastest times per control_pair_index
+        # 5. Fastest averages per control
         fastest_times = []
-        # For each control_pair_index, collect the total times (choice_time + selected_route_runtime - shortest_route_runtime)
-        for control_pair_index in range(ncP_max):
-            times_for_control = []
+        for idx in range(ncP_max):
+            times = []
+            for u in all_user_data:
+                c = u['controls'][idx]
+                total_time = (
+                    (c['choice_time'] or 0)
+                    + ((c['selected_route_runtime'] or 0) - (c['shortest_route_runtime'] or 0))
+                )
+                times.append(total_time)
 
-            for user_data in all_user_data:
-                for control in user_data['controls']:
-                    if control['index'] == control_pair_index:
-                        total_time = (control['choice_time'] +
-                                      (control['selected_route_runtime'] - control['shortest_route_runtime']))
-                        times_for_control.append(total_time)
+            times.sort()
+            fastest = times[:3]
+            avg = sum(fastest) / len(fastest) if fastest else 0
 
-            # Sort the times for the current control_pair_index and take the 3 lowest
-            times_for_control.sort()
-
-            # Take the 3 lowest times or fewer if there aren't enough
-            fastest_times_for_index = times_for_control[:3]
-            average_fastest_time = sum(fastest_times_for_index) / len(fastest_times_for_index) if fastest_times_for_index else 0
             fastest_times.append({
-                'ncP': control_pair_index,
-                'average_fastest_time': round(average_fastest_time, 2)
+                'ncP': idx,
+                'average_fastest_time': round(avg, 2)
             })
 
-        # 6. Prepare the response
+        # 6. Response
         return JsonResponse({
             'distances': distances,
             'results': all_user_data,
-            'shortest_route_runtime': [c['shortest_route_runtime'] for c in all_user_data[0]['controls']] if all_user_data else [],
+            'shortest_route_runtime': [
+                c['shortest_route_runtime']
+                for c in all_user_data[0]['controls']
+            ] if all_user_data else [],
             'tableData': table_ranking,
             'avg_times': fastest_times,
         })
 
     except Exception as e:
         return JsonResponse({'error': str(e)}, status=500)
+
  
 @login_required
 def user_game_stats(request, user_id=None):

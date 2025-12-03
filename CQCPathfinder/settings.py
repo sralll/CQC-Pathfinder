@@ -43,6 +43,7 @@ INSTALLED_APPS = [
     "pathfinding",
     "play",
     "main",
+    "accounts",
 ]
 
 MIDDLEWARE = [

@@ -10,10 +10,24 @@ from django.utils.timezone import now
 from django.contrib.auth.decorators import user_passes_test
 from .models import publishedFile
 from django.core.files.storage import default_storage
-from django.core.files.base import ContentFile
 from botocore.exceptions import ClientError
 from urllib.parse import unquote
 import gc
+from accounts.models import UserProfile
+
+def get_gamefile_by_public_name(request, filename):
+    from .models import publishedFile
+    from accounts.models import UserProfile
+
+    try:
+        kader = request.user.userprofile.kader
+    except UserProfile.DoesNotExist:
+        raise publishedFile.DoesNotExist("User has no kader")
+
+    return publishedFile.objects.get(
+        filename=filename,
+        kader=kader,
+    )
 
 def group_required(group_name):
     def in_group(u):
@@ -62,9 +76,20 @@ def get_map_file(request, filename):
 def get_files(request):
     try:
         files = []
-        for obj in publishedFile.objects.order_by('-last_edited'):
+
+        # start with all publishedFile objects
+        qs = publishedFile.objects.order_by('-last_edited')
+        if not request.user.is_superuser:
+            try:
+                user_kader = request.user.userprofile.kader
+                qs = qs.filter(kader=user_kader)
+            except UserProfile.DoesNotExist:
+                qs = qs.none()
+
+        files = []
+        for obj in qs:
             files.append({
-                'filename': obj.filename,
+                'filename': obj.filename,  # display name
                 'modified': obj.last_edited.isoformat() if obj.last_edited else '',
                 'cPCount': obj.ncP or 0,
                 'published': obj.published,
@@ -73,50 +98,55 @@ def get_files(request):
 
         return JsonResponse(files, safe=False)
 
+
     except Exception as e:
         return JsonResponse({'error': f'Error in get_files(): {str(e)}'}, status=500)
 
-import traceback
-
 @group_required('Trainer')
 def load_file(request, filename):
-    if not filename.endswith('.json'):
-        filename += '.json'
-
     try:
-        gamefile = publishedFile.objects.get(filename=filename)
+        gamefile = get_gamefile_by_public_name(request, filename)
     except publishedFile.DoesNotExist:
-        return HttpResponseNotFound(f"File {filename} not found in database.")
+        return HttpResponseNotFound("File not found")
 
     try:
-        # Parse the stored JSON data (assumed to be a dict in .data)
-        file_data = gamefile.data if gamefile.data else {}
-        
-        # Extract mapFile path from JSON
+        file_data = gamefile.data or {}
+
         map_path = file_data.get("mapFile", "")
         if map_path:
             basename = os.path.splitext(os.path.basename(map_path))[0]
             mask_filename = f"masks/mask_{basename}.png"
-            
-            # Check if mask image exists in volume
-            if default_storage.exists(mask_filename):
-                file_data["has_mask"] = True
-            else:
-                file_data["has_mask"] = False
-        
+            file_data["has_mask"] = default_storage.exists(mask_filename)
+
         return JsonResponse(file_data)
 
     except Exception as e:
-        print("Exception in load_file:", e)
-        print(traceback.format_exc())
-        return JsonResponse({'message': 'Error loading file', 'error': str(e)}, status=500)
+        return JsonResponse(
+            {"message": "Error loading file", "error": str(e)},
+            status=500
+        )
 
 @group_required('Trainer')
 def check_file_exists(request, filename):
+    from accounts.models import UserProfile
+    from .models import publishedFile
+
     filename = unquote(filename)
-    file_path = f'jsonfiles/{filename}.json'
-    exists = default_storage.exists(file_path)
+
+    # Resolve user's kader
+    try:
+        user_kader = request.user.userprofile.kader
+    except UserProfile.DoesNotExist:
+        return JsonResponse({'exists': False})
+
+    unique_filename = f"{filename}_{user_kader.name}"
+
+    exists = publishedFile.objects.filter(
+        unique_filename=unique_filename
+    ).exists()
+
     return JsonResponse({'exists': exists})
+
 
 @group_required('Trainer')
 def save_file(request):
@@ -128,47 +158,59 @@ def save_file(request):
         filename = payload.get('filename')
         data = payload.get('data')
 
-        if not filename or not filename.endswith('.json'):
-            return HttpResponseBadRequest('Invalid or missing file name.')
-
         # Count control points
         cp_list = data.get("cP", [])
         cp_count = len(cp_list) if isinstance(cp_list, list) else 0
 
-        # Get author's name
         author_name = request.user.first_name or request.user.username
 
         from .models import publishedFile
+        from accounts.models import UserProfile
 
-        # Update or create entry
+        # Get user's kader
+        try:
+            user_kader = request.user.userprofile.kader
+        except UserProfile.DoesNotExist:
+            user_kader = None
+
+        unique_filename = f"{filename}_{user_kader.name if user_kader else 'unknown'}"
+
+        # Update or create entry by unique_filename
         obj, created = publishedFile.objects.update_or_create(
-            filename=filename,
+            unique_filename=unique_filename,
             defaults={
+                'filename': filename,  # display name stays clean
                 'author': author_name,
                 'ncP': cp_count,
                 'data': data,
+                'kader': user_kader,
             }
         )
 
-        return JsonResponse({'message': 'File saved to database', 'updated': not created})
+        return JsonResponse({'message': 'File saved', 'updated': not created})
 
     except Exception as e:
         print("Save error:", e)
         return JsonResponse({'message': 'Error saving file', 'error': str(e)}, status=500)
 
-
 @group_required('Trainer')
 def delete_file(request, filename):
-    if request.method != 'DELETE':
-        return JsonResponse({'message': 'Method not allowed'}, status=405)
-
     filename = unquote(filename)
-    print(f"Attempting to delete file: {filename}")
-    # Delete the database entry
+
     try:
-        publishedFile.objects.filter(filename=filename).delete()
-    except Exception as e:
-        print(f"Error deleting DB entry for {filename}: {e}")
+        kader = request.user.userprofile.kader
+        kader_slug = kader.name if kader else "unknown"
+    except UserProfile.DoesNotExist:
+        return JsonResponse({'error': 'No kader assigned'}, status=403)
+
+    unique_filename = f"{filename}_{kader_slug}"
+
+    deleted_count, _ = publishedFile.objects.filter(
+        unique_filename=unique_filename
+    ).delete()
+
+    if deleted_count == 0:
+        return JsonResponse({'error': 'File not found'}, status=404)
 
     return JsonResponse({'message': 'File deleted successfully!'})
 
@@ -204,12 +246,20 @@ def upload_map(request):
 
 @require_POST
 @group_required('Trainer')
-def toggle_publish(request, filename):
-    if not filename.endswith('.json'):
-        filename += '.json'
-
+def toggle_publish(request, filename):  # 'filename' = base/display name
     try:
-        gamefile = publishedFile.objects.get(filename=filename)
+        # get the user's kader
+        try:
+            user_kader = request.user.userprofile.kader
+            kader_slug = user_kader.name if user_kader else 'unknown'
+        except UserProfile.DoesNotExist:
+            kader_slug = 'unknown'
+
+        # build the unique filename
+        unique_filename = f"{filename}_{kader_slug}"
+
+        # query by unique_filename
+        gamefile = publishedFile.objects.get(unique_filename=unique_filename)
     except publishedFile.DoesNotExist:
         return JsonResponse({'error': 'File not found in database'}, status=404)
 

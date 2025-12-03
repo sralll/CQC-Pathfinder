@@ -6,6 +6,7 @@ from django.views.decorators.http import require_GET
 from django.contrib.auth.decorators import login_required
 from .models import UserResult
 from coursesetter.models import publishedFile
+from accounts.models import UserProfile
 
 @login_required
 def index(request):
@@ -18,8 +19,14 @@ def get_files(request):
     metadata = []
 
     try:
-        # Only load published files
-        files = publishedFile.objects.filter(published=True)
+        # Try to get user's kader
+        try:
+            user_kader = user.userprofile.kader
+        except UserProfile.DoesNotExist:
+            user_kader = None
+
+        # Only load published files in the same kader
+        files = publishedFile.objects.filter(published=True, kader=user_kader)
 
         for pub in files:
             filename = pub.filename
@@ -45,26 +52,37 @@ def get_files(request):
     except Exception as e:
         return JsonResponse({'error': f'Error in get_files(): {str(e)}'}, status=500)
 
+
 @login_required
 def load_file(request, filename):
-    if not filename.endswith('.json'):
-        filename += '.json'
-
     try:
-        # Load JSON data from DB
-        gamefile = publishedFile.objects.get(filename=filename)
-        data = gamefile.data or {}  # already a dict, no need for json.loads
+        from accounts.models import UserProfile
 
-        # Extract base name for UserResult lookup
+        # get user's kader
+        try:
+            user_kader = request.user.userprofile.kader
+        except UserProfile.DoesNotExist:
+            return HttpResponseNotFound("User has no kader assigned")
+
+        # build internal unique filename
+        unique_filename = f"{filename}_{user_kader.name}"
+
+        # load JSON data from DB using unique_filename
+        gamefile = publishedFile.objects.get(unique_filename=unique_filename)
+        data = gamefile.data or {}
+
+        # Extract base name for UserResult lookup (public name)
         file_base = filename.replace('.json', '')
 
-        # Get control point count from JSON data
+        # Get control point count
         cp_count = len(data.get('cP', []))
 
-        # Get existing control point indices for this user
+        # Fetch existing results for this user
         existing_entries = list(
-            UserResult.objects.filter(user=request.user, filename=file_base)
-            .values_list('control_pair_index', flat=True)
+            UserResult.objects.filter(
+                user=request.user,
+                filename=file_base
+            ).values_list('control_pair_index', flat=True)
         )
 
         # Determine missing CP indices
@@ -76,9 +94,14 @@ def load_file(request, filename):
         })
 
     except publishedFile.DoesNotExist:
-        return HttpResponseNotFound(f"File {filename} not found in database.")
+        return HttpResponseNotFound("File not found for this kader")
+
     except Exception as e:
-        return JsonResponse({'message': 'Error loading file', 'error': str(e)}, status=500)
+        return JsonResponse(
+            {'message': 'Error loading file', 'error': str(e)},
+            status=500
+        )
+
     
 @login_required
 def submit_result(request):

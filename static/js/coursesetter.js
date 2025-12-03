@@ -476,7 +476,7 @@ submitSaveButton.addEventListener('click', async () => {
                 "X-CSRFToken": getCSRFToken(),
             },
             body: JSON.stringify({
-                filename: `${filename}.json`,
+                filename: `${filename}`,
                 data: cqc
             })
         });
@@ -634,6 +634,7 @@ function loadFileList() {
                 loadCell.classList.add('tableCellProjects');
                 const loadButton = document.createElement('button');
                 loadButton.innerHTML = '<i class="fa-solid fa-folder-open"></i>'; // Button label
+                console.log(file.filename);
                 loadButton.addEventListener('click', () => {
                     loadFile(file.filename); // Call the loadFile function when clicked
                 });
@@ -680,7 +681,7 @@ function loadFileList() {
 function publishProject(filename, button) {
     const filenameWithoutExtension = filename.replace('.json', '');
 
-    fetch(`/coursesetter/toggle-publish/${filenameWithoutExtension}.json/`, {
+    fetch(`/coursesetter/toggle-publish/${filenameWithoutExtension}/`, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
@@ -872,7 +873,7 @@ function deleteFile(filename) {
 const filenameWithoutExtension = filename.replace('.json', '');
 
 if (confirm(`Projekt "${filenameWithoutExtension}" löschen?`)) {
-    fetch(`/coursesetter/delete-file/${filenameWithoutExtension}.json/`, {
+    fetch(`/coursesetter/delete-file/${filenameWithoutExtension}/`, {
         method: 'DELETE',
         headers: {"X-CSRFToken": getCSRFToken()}
     })
