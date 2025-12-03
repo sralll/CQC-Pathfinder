@@ -17,6 +17,8 @@ const mrklen = 5;			//small cross marker size
 const waitThreshhold = 150;	//ms, waittime for cursor change when dragging
 const train_scale = 0.710;  //scale for training mask, 1:1.4
 
+let pfController = null;  // store AbortController
+
 let image = new Image();
 let mask = null;
 
@@ -56,59 +58,119 @@ const alertBox = document.getElementById("alertBox");
 
 buttonCV.addEventListener('click', () => {
     if (cv_mask) {
-        mode = "mapCV"
-    } else {
-        // Extract filename from cqc.mapFile
-        const mapPath = cqc.mapFile;
-
-        if (!mapPath) {
-            alertBox.innerHTML = `<span style="color: red;">Keine Karte geladen</span>`;
-            return;
-        }
-       // Get scale
-        const scale = cqc.scale;
-        const prediction_time = Math.round(5+scale/0.7104*image.naturalWidth*image.naturalHeight*2/1000000)
-
-        alertBox.innerHTML = `<span><i style="font-size: 1rem; padding: 0px 5px" class="fa-solid fa-spinner fa-spin-pulse"></i> Geschätze Dauer für neurales Netzwerk: ${prediction_time}s</span>`;
-
-        const filename = mapPath.split('/').pop();  // Gets just "FILENAME.extension"
-
-        // Construct request URL
-        const url = `/pathfinding/run_unet/?filename=${encodeURIComponent(filename)}&scale=${encodeURIComponent(scale)}`;
-
-        // Fetch request
-        fetch(url)
-            .then(response => {
-                if (!response.ok) {
-                    return response.text().then(text => {
-                        throw new Error(text || 'Server returned an error');
-                    });
-                }
-                return response.json();  // expecting { message: "Prediction done" }
-            })
-            .then(data => {
-                alertBox.innerHTML = `<span>${data.message}</span>`;
-                cv_mask = true;
-                const basename = filename.split('.').slice(0, -1).join('.');
-                const maskUrl = `/pathfinding/get_mask/mask_${basename}.png`;
-
-                if (!mask) {
-                    mask = new Image();
-                    mask.crossOrigin = "anonymous";
-                }
-                mask.onload = () => {
-                    processMaskImage(mask);
-                };
-                mask.src = maskUrl;
-                mode = "mapCV";
-                draw(rc);
-            })
-            .catch(error => {
-                alertBox.innerHTML = `<span style="color: red;">Error: ${error.message}</span>`;
-            });
+        mode = "mapCV";
+        draw(rc);
+        return;
     }
-    draw(rc);
+
+    const mapPath = cqc.mapFile;
+    if (!mapPath) {
+        alertBox.innerHTML = `<span style="color: red;">Keine Karte geladen</span>`;
+        return;
+    }
+
+    const scale = cqc.scale;
+    const prediction_time = Math.round(
+        5 + scale / 0.7104 * image.naturalWidth * image.naturalHeight * 2 / 1_000_000
+    );
+
+    alertBox.innerHTML =
+        `<span>
+            <i style="font-size: 1rem; padding: 0px 5px"
+               class="fa-solid fa-spinner fa-spin-pulse"></i>
+            Geschätzte Dauer für neurales Netzwerk: ${prediction_time}s
+         </span>`;
+
+    const filename = mapPath.split('/').pop();
+    const url = `/pathfinding/run_unet/?filename=${encodeURIComponent(filename)}&scale=${encodeURIComponent(scale)}`;
+
+    fetch(url)
+        .then(response => {
+            if (!response.ok) {
+                return response.text().then(t => { throw new Error(t); });
+            }
+
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder("utf-8");
+            let buffer = "";
+
+            function read() {
+                return reader.read().then(({ done, value }) => {
+                    if (done) {
+                        console.log("UNet stream complete");
+                        return;
+                    }
+
+                    buffer += decoder.decode(value, { stream: true });
+                    let parts = buffer.split("\n\n");
+                    buffer = parts.pop();
+
+                    for (const part of parts) {
+                        const dataLines = part
+                            .split("\n")
+                            .filter(l => l.startsWith("data: "));
+
+                        if (!dataLines.length) continue;
+
+                        const dataString = dataLines
+                            .map(l => l.slice(5).trim())
+                            .join("\n");
+
+                        try {
+                            const data = JSON.parse(dataString);
+
+                            // 🔄 Progress update
+                            if (data.current !== undefined &&
+                                data.total !== undefined) {
+                                alertBox.innerHTML =
+                                    renderUNetProgress(data.current, data.total);
+                            }
+
+                            // ✅ Finished
+                            else if (data.done) {
+                                alertBox.innerHTML = "UNet-Maske generiert";
+                                cv_mask = true;
+
+                                const basename =
+                                    filename.split('.').slice(0, -1).join('.');
+                                const maskUrl =
+                                    `/pathfinding/get_mask/mask_${basename}.png`;
+
+                                if (!mask) {
+                                    mask = new Image();
+                                    mask.crossOrigin = "anonymous";
+                                }
+
+                                mask.onload = () => processMaskImage(mask);
+                                mask.src = maskUrl;
+
+                                mode = "mapCV";
+                                draw(rc);
+                            }
+
+                            // ❌ Error
+                            else if (data.error) {
+                                alertBox.innerHTML =
+                                    `<span style="color:red;">${data.error}</span>`;
+                            }
+
+                        } catch (e) {
+                            console.error("UNet SSE parse error", e);
+                        }
+                    }
+
+                    return read();
+                });
+            }
+
+            return read();
+        })
+        .catch(err => {
+            alertBox.innerHTML =
+                `<span style="color:red;">Error: ${err.message}</span>`;
+        });
 });
+
 
 addBlocked.addEventListener('click', () => {
     subMode = "add";
@@ -1037,7 +1099,23 @@ function renderProgressBar(current, total, width = 30) {
   const filledBoxes = "█".repeat(filledCount);
   const emptyBoxes = "░".repeat(emptyCount);
 
-  return 'θ* pathfinding ' + filledBoxes + emptyBoxes + `<i style="font-size: 1rem; padding: 0px 10px" class="fa-solid fa-spinner fa-spin-pulse"></i>`;
+  return 'θ* pathfinding ' + filledBoxes + emptyBoxes + `<i style="font-size: 1rem; padding: 0px 10px" class="fa-solid fa-spinner fa-spin-pulse"></i> <button id="cancelPF"><i class="fa-solid fa-x fa-sm" style="font-size: 0.8rem;"></i></button>`;
+}
+
+function renderUNetProgress(current, total, width = 30) {
+  const filledCount = Math.round((current / total) * width);
+  const emptyCount = width - filledCount;
+
+  const filledBoxes = "█".repeat(filledCount);
+  const emptyBoxes = "░".repeat(emptyCount);
+
+  return (
+    'Fortschritt ' +
+    filledBoxes +
+    emptyBoxes +
+    `<i style="font-size: 1rem; padding: 0px 10px"
+        class="fa-solid fa-spinner fa-spin-pulse"></i>`
+  );
 }
 
 function addFinalPathAsRoute(finalPath) {
@@ -1086,81 +1164,103 @@ function addFinalPathAsRoute(finalPath) {
     draw(rc);
 }
 
-
-
 function send_pathfinding() {
-    alertBox.innerHTML = 'Pathfinding vorbereiten <i style="font-size: 1rem; padding: 0px 10px" class="fa-solid fa-spinner fa-spin-pulse"></i>';
-    
+    alertBox.innerHTML = 'Pathfinding vorbereiten <i style="font-size: 1rem; padding: 0px 10px" class="fa-solid fa-spinner fa-spin-pulse"></i> <button id="cancelPF"><i class="fa-solid fa-x fa-sm" style="font-size: 0.8rem;"></i></button>';
+
+    // Attach cancel button
+    document.getElementById("cancelPF").addEventListener("click", cancelPathfinding);
+
     if (cqc.cP[ncP].complex == false && cqc.cP[ncP].route.length == 2) {
         alertBox.innerHTML = "Bei Links/Rechts-Posten maximal 2 Routen";
         return;
     }
-  
+
+    // Create AbortController
+    pfController = new AbortController();
+    const signal = pfController.signal;
+
     fetch("/pathfinding/find/", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-CSRFToken": getCSRFToken(),
-    },
-    body: JSON.stringify({
-      ...cqc.cP[ncP],
-      mapFile: cqc.mapFile,
-    }),
-  }).then(response => {
-    if (!response.ok) {
-      throw new Error("Network response was not ok");
-    }
-
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder("utf-8");
-    let buffer = "";
-
-    function read() {
-      return reader.read().then(({ done, value }) => {
-        if (done) {
-          console.log("Stream complete");
-          return;
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+            "X-CSRFToken": getCSRFToken(),
+        },
+        body: JSON.stringify({
+            ...cqc.cP[ncP],
+            mapFile: cqc.mapFile,
+        }),
+        signal
+    }).then(response => {
+        if (!response.ok) {
+            throw new Error("Network response was not ok");
         }
-        buffer += decoder.decode(value, { stream: true });
 
-        // Split on SSE messages separated by double newline
-        let parts = buffer.split("\n\n");
-        buffer = parts.pop(); // incomplete last part
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder("utf-8");
+        let buffer = "";
 
-        for (const part of parts) {
-          // Each part may have multiple 'data:' lines
-          const dataLines = part.split("\n").filter(line => line.startsWith("data: "));
-          if (dataLines.length === 0) continue;
+        function read() {
+            return reader.read().then(({ done, value }) => {
+                if (done) {
+                    console.log("Stream complete");
+                    pfController = null; // clear controller
+                    return;
+                }
 
-          // Concatenate all data lines, joining with \n (SSE spec)
-          const dataString = dataLines.map(line => line.slice(5).trim()).join("\n");
+                buffer += decoder.decode(value, { stream: true });
 
-          try {
-            const data = JSON.parse(dataString);
+                // Split on SSE messages
+                let parts = buffer.split("\n\n");
+                buffer = parts.pop(); // incomplete last part
 
-            if (data.waypoint !== undefined && data.total !== undefined) {
-              alertBox.innerHTML = renderProgressBar(data.waypoint, data.total);
-            } else if (data.final_path !== undefined) {
-                alertBox.innerHTML = "Route generiert";
-                addFinalPathAsRoute(data.final_path);
-            } else if (data.error) {
-              alertBox.innerHTML = data.error;
-            }
-          } catch (e) {
-            console.error("Error parsing SSE JSON", e);
-          }
+                for (const part of parts) {
+                    const dataLines = part.split("\n").filter(line => line.startsWith("data: "));
+                    if (dataLines.length === 0) continue;
+
+                    const dataString = dataLines.map(line => line.slice(5).trim()).join("\n");
+
+                    try {
+                        const data = JSON.parse(dataString);
+
+                        if (data.waypoint !== undefined && data.total !== undefined) {
+                            alertBox.innerHTML = renderProgressBar(data.waypoint, data.total);
+                        } else if (data.final_path !== undefined) {
+                            alertBox.innerHTML = "Route generiert";
+                            addFinalPathAsRoute(data.final_path);
+                        } else if (data.error) {
+                            alertBox.innerHTML = data.error;
+                        }
+
+                    } catch (e) {
+                        console.error("Error parsing SSE JSON", e);
+                    }
+                }
+
+                return read();
+            });
         }
 
         return read();
-      });
-    }
-
-    return read();
-  }).catch(err => {
-    alertBox.innerHTML = err.message;
-    console.error("Fetch error:", err);
-  });
+    }).catch(err => {
+        if (err.name === "AbortError") {
+            alertBox.innerHTML = "<span style='color:red;'>Pathfinding abgebrochen</span>";
+            console.log("Pathfinding canceled");
+        } else {
+            alertBox.innerHTML = err.message;
+            console.error("Fetch error:", err);
+        }
+        pfController = null;
+    });
 }
+
+// Cancel function
+function cancelPathfinding() {
+    if (pfController) {
+        pfController.abort(); // abort the fetch
+        pfController = null;
+    }
+}
+
 
 function saveCanvas() {
     const updatedCanvas = updateMaskFromEdits(mask);

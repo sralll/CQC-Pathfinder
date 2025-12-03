@@ -6,7 +6,8 @@ from django.views.decorators.http import require_GET
 from django.contrib.auth.decorators import login_required
 from .models import UserResult
 from coursesetter.models import publishedFile
-from accounts.models import UserProfile
+from accounts.models import UserProfile, DeviceCounter
+from django.db.models import F
 
 @login_required
 def index(request):
@@ -58,26 +59,35 @@ def load_file(request, filename):
     try:
         from accounts.models import UserProfile
 
+        # --- 1. Detect mobile vs desktop ---
+        user_agent = request.META.get('HTTP_USER_AGENT', '').lower()
+        is_mobile = any(m in user_agent for m in ['iphone', 'android', 'ipad', 'mobile'])
+
+        # Increment counters
+        counter, _ = DeviceCounter.objects.get_or_create(pk=1)
+        if is_mobile:
+            counter.mobile_count = F('mobile_count') + 1
+        else:
+            counter.desktop_count = F('desktop_count') + 1
+        counter.save()
+
+        # --- 2. Existing game loading logic ---
+
         # get user's kader
         try:
             user_kader = request.user.userprofile.kader
         except UserProfile.DoesNotExist:
             return HttpResponseNotFound("User has no kader assigned")
 
-        # build internal unique filename
         unique_filename = f"{filename}_{user_kader.name}"
 
-        # load JSON data from DB using unique_filename
         gamefile = publishedFile.objects.get(unique_filename=unique_filename)
         data = gamefile.data or {}
 
-        # Extract base name for UserResult lookup (public name)
         file_base = filename.replace('.json', '')
 
-        # Get control point count
         cp_count = len(data.get('cP', []))
 
-        # Fetch existing results for this user
         existing_entries = list(
             UserResult.objects.filter(
                 user=request.user,
@@ -85,7 +95,6 @@ def load_file(request, filename):
             ).values_list('control_pair_index', flat=True)
         )
 
-        # Determine missing CP indices
         missing_cps = [i for i in range(cp_count) if i not in existing_entries]
 
         return JsonResponse({

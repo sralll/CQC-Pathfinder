@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block content %}
+	<div class="divMain" id="divH">
+		<table id="tableH">
+			<thead>
+				<tr>
+					<th id="buttonHome" class="tableHeadMain" onclick="home()">
+                        <i class="fa-solid fa-house-chimney"></i>
+                    </th>
+				</tr>
+			</thead>
+		</table>
+	</div>
+
+    <div style="width: 90%; max-width: 750px; margin: auto; padding: 20px;">
+        <p style="margin-bottom: 10px;">Kommentar, Verbesserungsvorschläge, ...</p>
+
+        {% if success %}
+            <p style="color: rgb(0, 0, 128); margin-bottom: 10px;">Merci</p>
+        {% endif %}
+
+        <form method="post">
+            {% csrf_token %}
+            {{ form.comment }}
+            <button type="submit" style="display: block; margin-top: 5px;">Senden</button>
+        </form>
+    </div>
+
+    <script>
+        function home() {
+            window.location.href = "/";
+        }
+    </script>
+
+{% endblock %}

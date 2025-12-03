@@ -5,6 +5,7 @@ from django.core.files.base import ContentFile
 from PIL import Image, UnidentifiedImageError
 from types import SimpleNamespace
 
+import math
 import os
 import gc
 import json
@@ -106,9 +107,12 @@ def get_mask(request, filename):
     return response
 
 @group_required('Trainer')
-def run_UNet(request):
+def run_UNet_stream(request):
     filename = request.GET.get('filename')
     cqc_scale = request.GET.get('scale')
+
+    basename, _ = os.path.splitext(filename)
+    mask_filename = f"masks/mask_{basename}.png"
 
     if not filename or not cqc_scale:
         return HttpResponse("Missing map or scaling parameter", status=400)
@@ -120,55 +124,106 @@ def run_UNet(request):
     except ValueError:
         return HttpResponse("Invalid 'scale' parameter", status=400)
 
-    # Disable max pixel limit
-    Image.MAX_IMAGE_PIXELS = None
+    Image.MAX_IMAGE_PIXELS = None  # disable PIL max pixel limit
 
-    # Constants
+    # Constants for scaling
     train_scale = 0.710
     train_omap_scale = 4000
     omap_scale = 4000
-    SCALE_FACTOR = scale/train_scale * omap_scale/train_omap_scale #To do: retrain model for 300dpi
+    SCALE_FACTOR = scale / train_scale * omap_scale / train_omap_scale
 
-    #NN later
-    ort_session = ort.InferenceSession("best_model_300dpi.onnx")
-
-    # S3 image loading
     map_key = f'maps/{filename}'
-
     if not default_storage.exists(map_key):
         return HttpResponseNotFound(f"Karte '{filename}' nicht verfügbar.")
 
     try:
+        # Load image
         with default_storage.open(map_key, 'rb') as f:
             img = Image.open(f)
-            img.load()  # Force loading
+            img.load()
             img = img.convert("RGB")
             new_size = (int(img.width * SCALE_FACTOR), int(img.height * SCALE_FACTOR))
 
-            if new_size[0] > 8000 or new_size[1] > 8000:
+            if new_size[0] > 16000 or new_size[1] > 16000:
                 return HttpResponse("Karte zu gross für neurales Netzwerk. Skalierung überprüfen", status=400)
+
             img = img.resize(new_size, resample=Image.BICUBIC)
-            
-            # NN later
-            img_np = np.array(img) / 255.0
-            img_np = np.transpose(img_np, (2, 0, 1)).astype(np.float32)  # HWC to CHW
-            input_data = img_np[np.newaxis, :, :, :]
 
-            def model_predict_fn(input_data):
-                outputs = ort_session.run(None, {"input": input_data})
-                output_array = outputs[0]
-                if output_array.ndim == 4:
-                    output_array = output_array[0]
-                if output_array.shape[0] > 1:
-                    output_array = output_array.argmax(axis=0)
-                return output_array.astype(np.float32)
+        # Load ONNX model
+        ort_session = ort.InferenceSession("best_model_300dpi.onnx")
 
-            output_img = model_predict_fn(input_data)
+        # Prepare output array
+        img_w, img_h = img.size
+        output_img = np.zeros((img_h, img_w), dtype=np.float32)
 
-            h, w = output_img.shape
-            visual = 255 * np.ones((h, w, 1), dtype=np.uint8)
+        TILE_SIZE = 2048
+        OVERLAP_RATIO = 0.2
+        overlap = int(TILE_SIZE * OVERLAP_RATIO)
+        step = TILE_SIZE - overlap
+        tiles_y = math.ceil((img_h - overlap) / step)
+        tiles_x = math.ceil((img_w - overlap) / step)
+        total_tiles = tiles_y * tiles_x
+        processed_tiles = 0
 
-            map_object = SimpleNamespace( #tune
+        def model_predict_fn(input_data):
+            outputs = ort_session.run(None, {"input": input_data})
+            out = outputs[0]
+            if out.ndim == 4:
+                out = out[0]
+            if out.shape[0] > 1:
+                out = out.argmax(axis=0)
+            return out.astype(np.float32)
+
+        # Generator for streaming progress
+        async def tile_generator():
+            nonlocal processed_tiles
+            try:
+                for y0 in range(0, img_h, step):
+                    for x0 in range(0, img_w, step):
+                        y1 = min(y0 + TILE_SIZE, img_h)
+                        x1 = min(x0 + TILE_SIZE, img_w)
+
+                        tile = img.crop((x0, y0, x1, y1))
+                        tile_np = np.array(tile) / 255.0
+                        tile_np = np.transpose(tile_np, (2,0,1))[np.newaxis,:,:,:].astype(np.float32)
+
+                        tile_pred = model_predict_fn(tile_np)
+
+                        # Decide crop bounds in output image
+                        out_y0 = y0 if y0 == 0 else y0 + overlap // 2
+                        out_x0 = x0 if x0 == 0 else x0 + overlap // 2
+                        out_y1 = y1 if y1 == img_h else y1 - overlap // 2
+                        out_x1 = x1 if x1 == img_w else x1 - overlap // 2
+
+                        # Corresponding tile indices
+                        tile_y0 = out_y0 - y0
+                        tile_x0 = out_x0 - x0
+                        tile_y1 = tile_y0 + (out_y1 - out_y0)
+                        tile_x1 = tile_x0 + (out_x1 - out_x0)
+
+                        # 🔒 Safety clamp (CRUCIAL)
+                        h_t, w_t = tile_pred.shape
+                        tile_y1 = min(tile_y1, h_t)
+                        tile_x1 = min(tile_x1, w_t)
+                        out_y1 = out_y0 + (tile_y1 - tile_y0)
+                        out_x1 = out_x0 + (tile_x1 - tile_x0)
+
+                        # ✅ Guaranteed matching shapes
+                        output_img[out_y0:out_y1, out_x0:out_x1] = \
+                            tile_pred[tile_y0:tile_y1, tile_x0:tile_x1]
+
+
+                        # Send progress
+                        processed_tiles += 1
+                        print(f"Processed tile {processed_tiles}/{total_tiles}")
+                        yield f"data: {json.dumps({'current': processed_tiles, 'total': total_tiles})}\n\n"
+                                
+            except Exception as e:
+                yield f"data: {json.dumps({'error': str(e)})}\n\n"
+
+            # After all tiles processed, create visual image
+            visual = 255 * np.ones((img_h, img_w, 1), dtype=np.uint8)
+            map_object = SimpleNamespace(
                 impassable=0,
                 very_slow=100,
                 slow=150,
@@ -185,22 +240,21 @@ def run_UNet(request):
             visual[output_img == 33] = map_object.fast
             visual[output_img == 34] = map_object.impassable
 
-            visual_img = np.repeat(visual, 3, axis=2)  # grayscale to img
+            visual_img = np.repeat(visual, 3, axis=2)
             final_img = Image.fromarray(visual_img.astype(np.uint8))
-
-            basename, _ = os.path.splitext(filename)
-            mask_filename = f"masks/mask_{basename}.png"
             final_img_bytes = BytesIO()
             final_img.save(final_img_bytes, format="PNG")
             final_img_bytes.seek(0)
-
             default_storage.save(mask_filename, final_img_bytes)
 
-            del img, img_np, output_img, final_img, visual_img, ort_session  # Free memory
+            # Send final message
+            print("UNet mask generation complete.")
+            yield f"data: {json.dumps({'done': True, 'final_path': mask_filename})}\n\n"
+
             gc.collect()
 
-            return JsonResponse({"message": "Kartenmaske generiert"})
-        
+        return StreamingHttpResponse(tile_generator(), content_type="text/event-stream")
+
     except FileNotFoundError:
         return HttpResponseNotFound("Image file not found.")
     except UnidentifiedImageError:

@@ -2,7 +2,7 @@ from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
 from django.contrib.auth.models import User, Group
 from django.contrib.auth.forms import UserCreationForm
-from .models import UserProfile, Kader
+from .models import UserProfile, Kader, DeviceCounter
 
 class UserProfileInline(admin.StackedInline):
     model = UserProfile
@@ -130,3 +130,52 @@ class CustomUserAdmin(UserAdmin):
 class KaderAdmin(admin.ModelAdmin):
     def has_module_permission(self, request):
         return request.user.is_superuser
+    
+from django.contrib import admin
+from .models import DeviceCounter
+
+@admin.register(DeviceCounter)
+class DeviceCounterAdmin(admin.ModelAdmin):
+    list_display = ('mobile_count', 'desktop_count')
+    readonly_fields = ('mobile_count', 'desktop_count')
+
+    def has_view_permission(self, request, obj=None):
+        # Only superusers can view
+        return request.user.is_superuser
+
+    def has_add_permission(self, request):
+        return False  # Disable adding
+
+    def has_change_permission(self, request, obj=None):
+        return False  # Disable editing
+
+    def has_delete_permission(self, request, obj=None):
+        return False  # Disable deleting
+
+from main.models import Feedback
+
+class FeedbackAdmin(admin.ModelAdmin):
+    list_display = ('created_at', 'short_comment')
+
+    def short_comment(self, obj):
+        # Show first 50 characters
+        return obj.comment[:50] + ('...' if len(obj.comment) > 50 else '')
+    short_comment.short_description = "Comment"
+
+    def has_module_permission(self, request):
+        # Only show module to superusers
+        return request.user.is_superuser
+
+    def has_view_permission(self, request, obj=None):
+        return request.user.is_superuser
+
+    def has_add_permission(self, request):
+        return False  # Superusers cannot add comments manually here
+
+    def has_change_permission(self, request, obj=None):
+        return False  # Superusers cannot change comments
+
+    def has_delete_permission(self, request, obj=None):
+        return request.user.is_superuser  # Can delete if needed
+
+admin.site.register(Feedback, FeedbackAdmin)

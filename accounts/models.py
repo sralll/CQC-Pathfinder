@@ -19,3 +19,10 @@ class UserProfile(models.Model):
 
     def __str__(self):
         return self.user.username
+    
+class DeviceCounter(models.Model):
+    mobile_count = models.PositiveIntegerField(default=0)
+    desktop_count = models.PositiveIntegerField(default=0)
+
+    def __str__(self):
+        return f"Mobile: {self.mobile_count}, Desktop: {self.desktop_count}"

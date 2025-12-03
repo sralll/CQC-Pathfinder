@@ -1,6 +1,5 @@
 from django.shortcuts import render
 from django.contrib.auth.decorators import login_required
-import json
 import math
 from django.http import JsonResponse
 from django.contrib.auth.models import User
@@ -334,3 +333,19 @@ def user_game_stats(request, user_id=None):
     }
 
     return JsonResponse(stats)
+
+from .forms import FeedbackForm
+from django.shortcuts import redirect
+
+@login_required
+def feedback_view(request):
+    if request.method == "POST":
+        form = FeedbackForm(request.POST)
+        if form.is_valid():
+            form.save()
+            # Redirect to same page or a thank-you page
+            return redirect('feedback')  # name of your url pattern
+    else:
+        form = FeedbackForm()
+
+    return render(request, "feedback.html", {"form": form})
