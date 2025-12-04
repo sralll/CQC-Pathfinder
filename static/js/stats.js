@@ -13,74 +13,32 @@ const barChart = document.getElementById('barChart');
 let doughnutChartInstance = null;
 let barChartInstance = null;
 
-document.addEventListener('DOMContentLoaded', function () {
-    isMobile = document.body.classList.contains('mobile');
+if(!isTrainer) {
+    document.addEventListener('DOMContentLoaded', function () {
+        isMobile = document.body.classList.contains('mobile');
 
-    if (isMobile) {
-        doughnutChart.width = 0.9*screenWidth;
-        doughnutChart.height = 0.9*screenWidth;
-        barChart.width = 0.9*screenWidth;
-        barChart.height = 0.9*screenWidth;
-        doughnutChart.style.width = "90vw";
-        barChart.style.width = "90vw";
-    } else {
-        doughnutChart.width = 0.45*screenWidth;
-        doughnutChart.height = 0.45*screenWidth;
-        barChart.style.width = "45vw";
-        barChart.style.height = "45vw";
-    }
+        if (isMobile) {
+            doughnutChart.width = 0.9*screenWidth;
+            doughnutChart.height = 0.9*screenWidth;
+            barChart.width = 0.9*screenWidth;
+            barChart.height = 0.9*screenWidth;
+            doughnutChart.style.width = "90vw";
+            barChart.style.width = "90vw";
+        } else {
+            doughnutChart.width = 0.45*screenWidth;
+            doughnutChart.height = 0.45*screenWidth;
+            barChart.style.width = "45vw";
+            barChart.style.height = "45vw";
+        }
 
-    if (!isTrainer) {
-        updateStats();
-    }
-});
+        if (!isTrainer) {
+            updateStats();
+        }
+    });
+}
 
 function home() {
     window.location.href = "/";
-}
-
-if (isTrainer) {
-    document.addEventListener('DOMContentLoaded', () => {
-        fetch('/user_list/')
-        .then(response => response.json())
-        .then(data => {
-            const select = document.getElementById('userSelect');
-            
-            data.users.sort((a, b) => a.name.localeCompare(b.name));
-
-            data.users.forEach(user => {
-                const option = document.createElement('option');
-                option.value = user.id;
-                option.textContent = user.name;
-                select.appendChild(option);
-            });
-        });
-    });
-
-    const userSelect = document.getElementById('userSelect');
-    userSelect.addEventListener('change', () => {
-        const userId = userSelect.value; // empty string if none selected
-
-        if (userId === "clear") {
-            doughnutChartInstance.destroy();
-            barChartInstance.destroy();
-            return;
-        }
-        // Construct the URL (with or without userId)
-        const url = userId ? `/stats/${userId}/` : '/stats/';
-    
-        fetch(url)
-        .then(response => {
-            if (!response.ok) throw new Error('Failed to fetch stats');
-            return response.json();
-        })
-        .then(data => {
-            updateStats(userId);
-        })
-        .catch(error => {
-            console.error('Error fetching stats:', error);
-        });
-    });
 }
 
 function updateStats(userId) {
@@ -272,6 +230,109 @@ function updateStats(userId) {
                     }
                 }
             }
+        });
+    });
+}
+
+
+document.addEventListener("DOMContentLoaded", () => {
+  if (!isTrainer) return;
+  loadTrainerStats();
+});
+
+async function loadTrainerStats() {
+  const tbody = document.querySelector("#trainerStatsTable tbody");
+
+  try {
+    const response = await fetch("/stats/table/");
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const data = await response.json();
+
+    tbody.innerHTML = "";
+
+    if (data.length === 0) {
+      tbody.innerHTML = `
+        <tr>
+          <td colspan="8">Keine Wettbewerbsdaten vorhanden</td>
+        </tr>
+      `;
+      return;
+    }
+
+    for (const row of data) {
+        const isSummary = row.athlete === "Kaderdurchschnitt";
+            tbody.insertAdjacentHTML(
+            "beforeend",
+            `
+            <tr ${isSummary ? 'class="summary-row" style="font-weight: bold; color:blue"' : ''}>
+                <td>${row.athlete}</td>
+                <td>${row.posten}</td>
+                <td>${formatTime(row.avg_choice_time)}</td>
+                <td>${formatError(row.avg_error)}</td>
+                <td>${row.schnellste}%</td>
+                <td>${row.lt5}%</td>
+                <td>${row.lt10}%</td>
+                <td>${row.gt10}%</td>
+            </tr>
+            `
+            );
+        }
+  } catch (err) {
+    console.error(err);
+    tbody.innerHTML = `
+      <tr>
+        <td colspan="8">Fehler beim Laden der Daten</td>
+      </tr>
+    `;
+  }
+}
+
+function formatTime(seconds) {
+  if (seconds === null || seconds === undefined) return "–";
+  return seconds.toFixed(1) + " s";
+}
+
+function formatError(seconds) {
+  if (seconds === null || seconds === undefined) return "–";
+  return seconds.toFixed(1) + " s";
+}
+
+const table = document.getElementById("trainerStatsTable");
+if (table) {
+    const headers = table.querySelectorAll("th");
+
+    headers.forEach((th, index) => {
+        th.style.cursor = "pointer";
+        th.addEventListener("click", () => {
+            const tbody = table.querySelector("tbody");
+            const allRows = Array.from(tbody.querySelectorAll("tr"));
+            const ascending = !th.asc;
+            th.asc = ascending;
+
+            // Separate summary row
+            const summaryRow = allRows.find(r => r.classList.contains("summary-row"));
+            const rows = allRows.filter(r => !r.classList.contains("summary-row"));
+
+            rows.sort((a, b) => {
+                const aText = a.children[index].textContent.trim();
+                const bText = b.children[index].textContent.trim();
+
+                const aNum = parseFloat(aText.replace(",", "."));
+                const bNum = parseFloat(bText.replace(",", "."));
+
+                if (!isNaN(aNum) && !isNaN(bNum)) {
+                    return ascending ? aNum - bNum : bNum - aNum;
+                }
+                return ascending ? aText.localeCompare(bText) : bText.localeCompare(aText);
+            });
+
+            tbody.innerHTML = "";
+            if (summaryRow) tbody.appendChild(summaryRow); // summary always first
+            rows.forEach(r => tbody.appendChild(r));
         });
     });
 }

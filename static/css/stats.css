@@ -31,6 +31,36 @@ body.mobile #userSelect {
     border-radius: 12px;
 }
 
+#tableWrapper {
+  width: auto;
+  overflow-x: auto;
+}
+
+#trainerStatsTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+#trainerStatsTable th,
+#trainerStatsTable td {
+  padding: 8px 12px;
+  text-align: left;
+  border-bottom: 1px solid #ddd;
+}
+
+#trainerStatsTable thead th {
+  position: sticky;
+  top: 0;
+  background-color: #fff; /* same as table background */
+  z-index: 10;
+  border-bottom: 2px solid #999; /* slightly thicker for header */
+}
+
+#trainerStatsTable tbody tr:nth-child(even) {
+  background: #fafafa;
+}
+
 #chartsWrapper {
     display: flex;
     align-items: center;

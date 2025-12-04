@@ -46,7 +46,7 @@ let isEditingElevation = false;
 let BrushRadius = 2;
 
 let runSpeed = 4.75;
-
+let nnController = null;
 let subImageData = null;
 
 const addBlocked = document.getElementById("buttonAddblocked");
@@ -54,6 +54,17 @@ const removeBlocked = document.getElementById("buttonRemoveBlocked");
 const buttonCV = document.getElementById("buttonCV");
 const instructionBox = document.getElementById("divI");
 const alertBox = document.getElementById("alertBox");
+
+alertBox.addEventListener("click", (e) => {
+    if (e.target.closest("#cancelNN")) {
+        if (nnController) {
+            nnController.abort();
+            nnController = null;
+            alertBox.innerHTML =
+                `<span style="color:red;">Neurales Netzwerk abgebrochen</span>`;
+        }
+    }
+});
 
 
 buttonCV.addEventListener('click', () => {
@@ -78,13 +89,25 @@ buttonCV.addEventListener('click', () => {
         `<span>
             <i style="font-size: 1rem; padding: 0px 5px"
                class="fa-solid fa-spinner fa-spin-pulse"></i>
-            Geschätzte Dauer für neurales Netzwerk: ${prediction_time}s
+            Geschätzte Dauer für neurales Netzwerk: ${prediction_time}s <button id="cancelNN"><i class="fa-solid fa-x fa-sm" style="font-size: 0.8rem;"></i></button>
          </span>`;
 
+    document.getElementById("cancelNN").addEventListener("click", () => {
+        if (nnController) {
+            nnController.abort();
+            nnController = null;
+            alertBox.innerHTML =
+                `<span style="color:red;">Neurales Netzwerk abgebrochen</span>`;
+        }
+    });
+    
     const filename = mapPath.split('/').pop();
     const url = `/pathfinding/run_unet/?filename=${encodeURIComponent(filename)}&scale=${encodeURIComponent(scale)}`;
 
-    fetch(url)
+    nnController = new AbortController();
+    const signal = nnController.signal;
+
+    fetch(url, { signal })
         .then(response => {
             if (!response.ok) {
                 return response.text().then(t => { throw new Error(t); });
@@ -166,6 +189,11 @@ buttonCV.addEventListener('click', () => {
             return read();
         })
         .catch(err => {
+            if (err.name === "AbortError") {
+                console.log("NN abgebrochen");
+                return;
+            }
+
             alertBox.innerHTML =
                 `<span style="color:red;">Error: ${err.message}</span>`;
         });
@@ -1114,7 +1142,7 @@ function renderUNetProgress(current, total, width = 30) {
     filledBoxes +
     emptyBoxes +
     `<i style="font-size: 1rem; padding: 0px 10px"
-        class="fa-solid fa-spinner fa-spin-pulse"></i>`
+        class="fa-solid fa-spinner fa-spin-pulse"></i> <button id="cancelNN"><i class="fa-solid fa-x fa-sm" style="font-size: 0.8rem;"></i></button>`
   );
 }
 

@@ -215,7 +215,6 @@ def run_UNet_stream(request):
 
                         # Send progress
                         processed_tiles += 1
-                        print(f"Processed tile {processed_tiles}/{total_tiles}")
                         yield f"data: {json.dumps({'current': processed_tiles, 'total': total_tiles})}\n\n"
                                 
             except Exception as e:
@@ -248,7 +247,6 @@ def run_UNet_stream(request):
             default_storage.save(mask_filename, final_img_bytes)
 
             # Send final message
-            print("UNet mask generation complete.")
             yield f"data: {json.dumps({'done': True, 'final_path': mask_filename})}\n\n"
 
             gc.collect()

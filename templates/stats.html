@@ -18,20 +18,38 @@
 	</div>
   <div id="statsContainer">
     {% if is_trainer %}
-      <div id="dropdownWrapper">
+      <!--<div id="dropdownWrapper">
         <select id="userSelect">
           <option value="clear">Athlet ...</option>
         </select>
+      </div> -->
+      <div id="tableWrapper">
+        <table id="trainerStatsTable">
+          <thead>
+            <tr>
+              <th>Athlet</th>
+              <th>Posten</th>
+              <th>&#216 Entscheidungszeit</th>
+              <th>&#216 Routenwahlfehler</th>
+              <th style="color: #4CAF50">Schnellste</th>
+              <th style="color: #FFC107">&lt;5%</th>
+              <th style="color: #FF9800">&lt;10%</th>
+              <th style="color: #F44336">&gt;10%</th>
+            </tr>
+          </thead>
+          <tbody>
+            <!-- Filled dynamically via JS -->
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div id="chartsWrapper">
+        <canvas class="canvaschart" id="doughnutChart"></canvas>
+        <canvas class="canvaschart" id="barChart"></canvas>
+        <canvas class="canvaschart" id="placeholder" stle="width: 10px"></canvas>
       </div>
     {% endif %}
 
-
-    <div id="chartsWrapper">
-      <canvas class="canvaschart" id="doughnutChart"></canvas>
-      <canvas class="canvaschart" id="barChart"></canvas>
-      <canvas class="canvaschart" id="placeholder" stle="width: 10px"></canvas>
-
-    </div>
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>

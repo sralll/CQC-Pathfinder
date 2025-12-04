@@ -11,4 +11,5 @@ urlpatterns = [
     path('stats/<int:user_id>/', views.user_game_stats, name='user_game_stats'),
     path('user_list/', views.users_with_results, name='user_list'),
     path('feedback/', views.feedback_view, name='feedback'),
+    path("stats/table/", views.trainer_stats, name="trainer_stats"),
 ]

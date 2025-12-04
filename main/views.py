@@ -349,3 +349,85 @@ def feedback_view(request):
         form = FeedbackForm()
 
     return render(request, "feedback.html", {"form": form})
+
+
+from django.http import JsonResponse
+from django.db.models import (
+    Avg, Count, F, Q, FloatField,
+    Case, When, ExpressionWrapper
+)
+
+@login_required
+def trainer_stats(request):
+    try:
+        profile = request.user.userprofile
+    except UserProfile.DoesNotExist:
+        return JsonResponse({"error": "User has no profile"}, status=404)
+
+    kader = profile.kader
+
+    # annotate rel_error
+    qs = UserResult.objects.filter(
+        user__userprofile__kader=kader,
+        competition=True
+    ).annotate(
+        rel_error=ExpressionWrapper(
+            (F("selected_route_runtime") - F("shortest_route_runtime")) / F("shortest_route_runtime"),
+            output_field=FloatField()
+        )
+    )
+
+    # --- Aggregate per athlete ---
+    athlete_qs = qs.values(
+        "user__id",
+        "user__first_name",
+        "user__last_name",
+    ).annotate(
+        posten=Count("id"),
+        avg_choice_time=Avg("choice_time"),
+        avg_error=Avg(F("selected_route_runtime") - F("shortest_route_runtime")),
+        schnellste=Count(Case(When(selected_route_runtime=F("shortest_route_runtime"), then=1))),
+        lt5=Count(Case(When(Q(rel_error__gt=0) & Q(rel_error__lt=0.05), then=1))),
+        lt10=Count(Case(When(rel_error__gte=0.05, rel_error__lt=0.10, then=1))),
+        gt10=Count(Case(When(rel_error__gte=0.10, then=1))),
+    ).order_by("user__last_name")
+
+    # --- Aggregate for all athletes together ---
+    total = qs.aggregate(
+        posten=Count("id"),
+        avg_choice_time=Avg("choice_time"),
+        avg_error=Avg(F("selected_route_runtime") - F("shortest_route_runtime")),
+        schnellste=Count(Case(When(selected_route_runtime=F("shortest_route_runtime"), then=1))),
+        lt5=Count(Case(When(Q(rel_error__gt=0) & Q(rel_error__lt=0.05), then=1))),
+        lt10=Count(Case(When(rel_error__gte=0.05, rel_error__lt=0.10, then=1))),
+        gt10=Count(Case(When(rel_error__gte=0.10, then=1))),
+    )
+
+    data = []
+
+    # --- First row: all athletes ---
+    data.append({
+        "athlete": "Kaderdurchschnitt",
+        "posten": total["posten"],
+        "avg_choice_time": round(total["avg_choice_time"], 2) if total["avg_choice_time"] else None,
+        "avg_error": round(total["avg_error"], 2) if total["avg_error"] else None,
+        "schnellste": round(total["schnellste"] / total["posten"] * 100, 1) if total["posten"] else 0,
+        "lt5": round(total["lt5"] / total["posten"] * 100, 1) if total["posten"] else 0,
+        "lt10": round(total["lt10"] / total["posten"] * 100, 1) if total["posten"] else 0,
+        "gt10": round(total["gt10"] / total["posten"] * 100, 1) if total["posten"] else 0,
+    })
+
+    # --- Then add individual athletes ---
+    for row in athlete_qs:
+        data.append({
+            "athlete": f"{row['user__first_name']} {row['user__last_name']}",
+            "posten": row["posten"],
+            "avg_choice_time": round(row["avg_choice_time"], 2) if row["avg_choice_time"] else None,
+            "avg_error": round(row["avg_error"], 2) if row["avg_error"] else None,
+            "schnellste": round(row["schnellste"] / row["posten"] * 100, 1) if row["posten"] else 0,
+            "lt5": round(row["lt5"] / row["posten"] * 100, 1) if row["posten"] else 0,
+            "lt10": round(row["lt10"] / row["posten"] * 100, 1) if row["posten"] else 0,
+            "gt10": round(row["gt10"] / row["posten"] * 100, 1) if row["posten"] else 0,
+        })
+
+    return JsonResponse(data, safe=False)

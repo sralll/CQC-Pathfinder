@@ -6,5 +6,11 @@ class FeedbackForm(forms.ModelForm):
         model = Feedback
         fields = ['comment']
         widgets = {
-            'comment': forms.Textarea(attrs={'rows': 5, 'cols': 60, 'maxlength': 1000, 'placeholder': 'Kommentare sind anonym', 'style': 'width: 100%; max-width: 750px;',}),
+            'comment': forms.Textarea(attrs={
+                'rows': 5,
+                'cols': 60,
+                'maxlength': 1000,
+                'placeholder': 'Kommentare sind anonym',
+                'style': 'width: 100%; max-width: 750px;',
+                }),
         }
