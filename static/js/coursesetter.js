@@ -40,6 +40,8 @@ let isEditing = false;
 var cv_mask = false;
 var mode = "placeControls";	//tool mode
 var subMode = null;
+var subModeB = null;
+
 
 let isEditingElevation = false;
 
@@ -54,6 +56,10 @@ const removeBlocked = document.getElementById("buttonRemoveBlocked");
 const buttonCV = document.getElementById("buttonCV");
 const instructionBox = document.getElementById("divI");
 const alertBox = document.getElementById("alertBox");
+const buttonBlock = document.getElementById("buttonBlock");
+const blockArea = document.getElementById("blockArea");
+const blockLine = document.getElementById("blockLine");
+const blockRemove = document.getElementById("blockRemove");
 
 alertBox.addEventListener("click", (e) => {
     if (e.target.closest("#cancelNN")) {
@@ -65,7 +71,6 @@ alertBox.addEventListener("click", (e) => {
         }
     }
 });
-
 
 buttonCV.addEventListener('click', () => {
     if (cv_mask) {
@@ -210,6 +215,21 @@ removeBlocked.addEventListener('click', () => {
     draw(rc);
 });
 
+blockArea.addEventListener('click', () => {
+    subModeB = "area";
+    draw(rc);
+});
+
+blockLine.addEventListener('click', () => {
+    subModeB = "line";
+    draw(rc);
+});
+
+blockRemove.addEventListener('click', () => {
+    subModeB = "remove";
+    draw(rc);
+});
+
 function updateTableI() {
     if (instructionBox.innerHTML == "") {
         instructionBox.style.display = "none";
@@ -224,10 +244,15 @@ function updateTableM() {
         maskCanvas.style.display = "block";
         editLiveCanvas.style.display = "block";
         buttonCV.style.backgroundColor = "green";
-        addBlocked.style.display = "table-cell";
-        removeBlocked.style.display = "table-cell";
+        addBlocked.style.visibility = "visible";
+        removeBlocked.style.visibility = "visible";
         addBlocked.style.backgroundColor = "white";
         removeBlocked.style.backgroundColor = "white";
+        blockArea.style.visibility = "hidden";
+        blockLine.style.visibility = "hidden";
+        buttonBlock.style.backgroundColor = "white";
+        blockRemove.style.visibility = "hidden";
+
 
         if (subMode == "add") {
             addBlocked.style.backgroundColor = "yellow";
@@ -235,13 +260,44 @@ function updateTableM() {
             removeBlocked.style.backgroundColor = "yellow";
         }
 
+    } else if (mode == "drawSperre") {
+        routeCanvas.style.opacity = 1;
+        maskCanvas.style.display = "none";
+        buttonCV.style.backgroundColor = "white";
+        buttonBlock.style.backgroundColor = "green";
+        addBlocked.style.visibility = "hidden";
+        removeBlocked.style.visibility = "hidden";
+        blockArea.style.visibility = "visible";
+        blockLine.style.visibility = "visible";
+        blockRemove.style.visibility = "visible";
+        
+        if (subModeB == "line") {
+            blockLine.style.backgroundColor = "yellow";
+            blockArea.style.backgroundColor = "white";
+            blockRemove.style.backgroundColor = "white";
+
+        } else if (subModeB == "area") {
+            blockArea.style.backgroundColor = "yellow";
+            blockLine.style.backgroundColor = "white";
+            blockRemove.style.backgroundColor = "white";
+
+        } else {
+            blockRemove.style.backgroundColor = "yellow";
+            blockLine.style.backgroundColor = "white";
+            blockArea.style.backgroundColor = "white";
+        }
+
     } else {
         routeCanvas.style.opacity = 1;
         maskCanvas.style.display = "none";
         editLiveCanvas.style.display = "none";
         buttonCV.style.backgroundColor = "white";
-        addBlocked.style.display = "none";
-        removeBlocked.style.display = "none";
+        addBlocked.style.visibility = "hidden";
+        removeBlocked.style.visibility = "hidden";
+        blockArea.style.visibility = "hidden";
+        blockLine.style.visibility = "hidden";
+        buttonBlock.style.backgroundColor = "white";
+        blockRemove.style.visibility = "hidden";
     }
 }
 
@@ -1334,6 +1390,11 @@ function setModeR() {
     nRP = 0;
     nR = 0;
     mode = "drawRoutes";
+    draw(rc); //update canvas, tables
+}
+
+function setModeS() {
+    mode = "drawSperre";
     draw(rc); //update canvas, tables
 }
 

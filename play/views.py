@@ -111,34 +111,42 @@ def load_file(request, filename):
             status=500
         )
 
-    
 @login_required
 def submit_result(request):
-    if request.method == 'POST':
-        data = json.loads(request.body)
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Invalid request'}, status=400)
 
-        # Check if an entry with same user, filename, and control_pair_index already exists
-        exists = UserResult.objects.filter(
-            user=request.user,
-            filename=data['filename'],
-            control_pair_index=data['control_pair_index']
-        ).exists()
+    data = json.loads(request.body)
 
-        if exists:
-            return JsonResponse({'status': 'duplicate', 'message': 'Result already exists'}, status=200)
+    exists = UserResult.objects.filter(
+        user=request.user,
+        filename=data['filename'],
+        control_pair_index=data['control_pair_index']
+    ).exists()
 
-        # Create the new result
-        result = UserResult.objects.create(
-            user=request.user,
-            filename=data['filename'],
-            control_pair_index=data['control_pair_index'],
-            choice_time=data['choice_time'],
-            selected_route=data['selected_route'],
-            selected_route_runtime=data['selected_route_runtime'],
-            shortest_route_runtime=data['shortest_route_runtime'],
-            competition=data['competition']
+    if exists:
+        return JsonResponse(
+            {'status': 'duplicate', 'message': 'Result already exists'},
+            status=200
         )
 
-        return JsonResponse({'status': 'success', 'result_id': result.id})
+    # ✅ Get user's kader safely
+    kader = (
+        request.user.userprofile.kader
+        if hasattr(request.user, "userprofile")
+        else None
+    )
 
-    return JsonResponse({'error': 'Invalid request'}, status=400)
+    result = UserResult.objects.create(
+        user=request.user,
+        filename=data['filename'],
+        control_pair_index=data['control_pair_index'],
+        choice_time=data['choice_time'],
+        selected_route=data['selected_route'],
+        selected_route_runtime=data['selected_route_runtime'],
+        shortest_route_runtime=data['shortest_route_runtime'],
+        competition=data['competition'],
+        kader=kader,  # ✅ stored snapshot
+    )
+
+    return JsonResponse({'status': 'success', 'result_id': result.id})

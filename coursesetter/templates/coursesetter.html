@@ -49,16 +49,38 @@
 	<div class="divMain" id="divM">
 		<table id="tableM">
 			<thead>
+				<tr>
+					<th style="visibility:hidden" class="tableHeadMain"></th>
+					<th style="visibility:hidden" class="tableHeadMain"></th>
+					<th id="blockRemove" style="visibility:hidden" class="tableHeadMain">
+						<i class="fa-solid fa-eraser"></i>
+					</th>
+				</tr>
+				<tr>
+					<th style="visibility:hidden" class="tableHeadMain"></th>
+					<th id="buttonRemoveBlocked" class="tableHeadMain" style="visibility:hidden">
+						<i class="fa-solid fa-eraser"></i>
+					</th>
+					<th id="blockArea" style="visibility:hidden" class="tableHeadMain">
+						<i class="fa-solid fa-draw-polygon"></i>
+					</th>
+				</tr>
+				<tr>
+					<th style="visibility:hidden" class="tableHeadMain"></th>
+					<th id="buttonAddblocked" class="tableHeadMain" style="visibility:hidden">
+						<i class="fa-solid fa-pen"></i>
+					</th>
+					<th id="blockLine" class="tableHeadMain" style="visibility:hidden">
+						<i class="fa-solid fa-slash"></i>
+					</th>
+				</tr>
 				<tr id="mapMenuTableRow">
 					<th id="buttonMap" class="tableHeadMain">Karte...</th>
 					<th id="buttonCV" class="tableHeadMain"> <!--Remove display none when Version CV ready: style="display:none" --> 
 						<i class="fa-solid fa-eye"></i>
 					</th>
-					<th id="buttonAddblocked" class="tableHeadMain" style="display:none">
-						<i class="fa-solid fa-pen"></i>
-					</th>
-					<th id="buttonRemoveBlocked" class="tableHeadMain" style="display:none">
-						<i class="fa-solid fa-eraser"></i>
+					<th id="buttonBlock" class="tableHeadMain" onclick="setModeS()" style="visibility:hidden">
+						<i class="fa-solid fa-ban"></i>
 					</th>
 				</tr>
 			</thead>
