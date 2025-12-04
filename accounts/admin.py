@@ -3,6 +3,7 @@ from django.contrib.auth.admin import UserAdmin
 from django.contrib.auth.models import User, Group
 from django.contrib.auth.forms import UserCreationForm
 from .models import UserProfile, Kader, DeviceCounter
+from main.models import Feedback
 
 class UserProfileInline(admin.StackedInline):
     model = UserProfile
@@ -137,22 +138,18 @@ from .models import DeviceCounter
 @admin.register(DeviceCounter)
 class DeviceCounterAdmin(admin.ModelAdmin):
     list_display = ('mobile_count', 'desktop_count')
-    readonly_fields = ('mobile_count', 'desktop_count')
 
-    def has_view_permission(self, request, obj=None):
-        # Only superusers can view
-        return request.user.is_superuser
+    def has_view_permission(self, request, obj = ...):
+        return True
 
     def has_add_permission(self, request):
-        return False  # Disable adding
+        return request.user.is_superuser
 
     def has_change_permission(self, request, obj=None):
-        return False  # Disable editing
+        return request.user.is_superuser
 
     def has_delete_permission(self, request, obj=None):
         return False  # Disable deleting
-
-from main.models import Feedback
 
 class FeedbackAdmin(admin.ModelAdmin):
     list_display = ('created_at', 'short_comment')

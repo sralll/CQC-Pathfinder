@@ -312,6 +312,8 @@ function drawLoadingAnimation(timestamp) {
         calcTransform(ncP); // Just use first control point for now
         ctxM.setTransform(...targetTransform);
         drawMap();
+        drawBlockedLines();
+        drawBlockedAreas();
         drawCP(ncP);
         const routeColors = drawRoutes(ncP);
         drawLegend(ncP, routeColors);
@@ -324,6 +326,8 @@ function nextControlResults() {
         calcTransform(ncP); // Just use first control point for now
         ctxM.setTransform(...targetTransform);
         drawMap();
+        drawBlockedLines();
+        drawBlockedAreas();
         drawCP(ncP);
         const routeColors = drawRoutes(ncP);
         drawLegend(ncP, routeColors);
@@ -340,6 +344,8 @@ function prevControlResults() {
         calcTransform(ncP); // Just use first control point for now
         ctxM.setTransform(...targetTransform);
         drawMap();
+        drawBlockedLines();
+        drawBlockedAreas();
         drawCP(ncP);
         const routeColors = drawRoutes(ncP);
         drawLegend(ncP, routeColors);
@@ -794,4 +800,80 @@ function calculateUserTimes(user) {
         route_diff: route_diff_sum,
         total: choice_time_sum + route_diff_sum
     };
+}
+
+function drawBlockedLines() {
+    ctxM.strokeStyle = "rgb(160, 51, 240,1)";
+    ctxM.lineWidth = 10; // scale line width like controls
+
+    cqc.blockedTerrain.lines.forEach(line => {
+        ctxM.beginPath();
+        ctxM.moveTo(line.start.x / cqc.scale, line.start.y / cqc.scale);
+        ctxM.lineTo(line.end.x / cqc.scale, line.end.y / cqc.scale);
+        ctxM.stroke();
+    });
+}
+
+function drawBlockedAreas() {
+    cqc.blockedTerrain.areas.forEach(area => {
+        const pts = area.points;
+        if (!pts || pts.length < 3) return;
+
+        // --- Scale points ---
+        const scaledPts = pts.map(p => ({ x: p.x / cqc.scale, y: p.y / cqc.scale }));
+
+        // --- Hatch fill only ---
+        fillPolygonHatch(scaledPts, 45, 13);   // spacing in pixels (already scaled)
+        fillPolygonHatch(scaledPts, -45, 13);
+    });
+}
+
+function fillPolygonHatch(points, angleDeg = 45, spacing = 2) {
+    ctxM.save();
+
+    // build polygon path
+    ctxM.beginPath();
+    ctxM.moveTo(points[0].x, points[0].y);
+    for (let i = 1; i < points.length; i++) {
+        ctxM.lineTo(points[i].x, points[i].y);
+    }
+    ctxM.closePath();
+    ctxM.clip();
+
+    // calculate bounds
+    const bounds = polygonBounds(points);
+    const diag = Math.hypot(
+        bounds.maxX - bounds.minX,
+        bounds.maxY - bounds.minY
+    );
+
+    // rotate hatch lines
+    ctxM.translate(bounds.minX, bounds.minY);
+    ctxM.rotate(angleDeg * Math.PI / 180);
+
+    ctxM.strokeStyle = "rgb(160, 51, 240,1)";
+    ctxM.lineWidth = 4;
+
+    for (let x = -diag; x < diag * 2; x += spacing) {
+        ctxM.beginPath();
+        ctxM.moveTo(x, -diag);
+        ctxM.lineTo(x, diag * 2);
+        ctxM.stroke();
+    }
+
+    ctxM.restore();
+}
+
+function polygonBounds(points) {
+    let minX = Infinity, minY = Infinity;
+    let maxX = -Infinity, maxY = -Infinity;
+
+    points.forEach(p => {
+        minX = Math.min(minX, p.x);
+        minY = Math.min(minY, p.y);
+        maxX = Math.max(maxX, p.x);
+        maxY = Math.max(maxY, p.y);
+    });
+
+    return { minX, minY, maxX, maxY };
 }

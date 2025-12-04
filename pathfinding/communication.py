@@ -12,6 +12,7 @@ def extract_pathfinding_inputs(request):
         ziel = data.get("ziel")
         map_file = data.get("mapFile")
         routes = data.get("route", [])  # Optional, default to empty list
+        blockedTerrain = data.get("blockedTerrain", {})  # <-- add this
 
         if not start or not ziel or not map_file:
             return {"error": "Missing start, ziel, or mapFile"}, 400
@@ -40,7 +41,8 @@ def extract_pathfinding_inputs(request):
             "start": (start_x, start_y),
             "ziel": (ziel_x, ziel_y),
             "filename": filename,
-            "routes": scaled_routes
+            "routes": scaled_routes,
+            "blockedTerrain": blockedTerrain  # <-- include here
         }, 200
 
     except Exception as e:

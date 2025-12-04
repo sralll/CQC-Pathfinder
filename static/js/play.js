@@ -942,6 +942,8 @@ function playTiming() {
 function draw(ncP) {
     drawMap(ncP);
     drawCP(ncP);
+    drawBlockedLines();
+    drawBlockedAreas();
     if (competitionMode) {
         drawRoutes(ncP);
     } else {
@@ -953,4 +955,80 @@ function draw(ncP) {
 function showRoutes() {
     drawRoutes(ncP);
     trainingButton.style.display = "none";
+}
+
+function drawBlockedLines() {
+    ctx.strokeStyle = "rgb(160, 51, 240,1)";
+    ctx.lineWidth = 8; // scale line width like controls
+
+    cqc.blockedTerrain.lines.forEach(line => {
+        ctx.beginPath();
+        ctx.moveTo(line.start.x / cqc.scale, line.start.y / cqc.scale);
+        ctx.lineTo(line.end.x / cqc.scale, line.end.y / cqc.scale);
+        ctx.stroke();
+    });
+}
+
+function drawBlockedAreas() {
+    cqc.blockedTerrain.areas.forEach(area => {
+        const pts = area.points;
+        if (!pts || pts.length < 3) return;
+
+        // --- Scale points ---
+        const scaledPts = pts.map(p => ({ x: p.x / cqc.scale, y: p.y / cqc.scale }));
+
+        // --- Hatch fill only ---
+        fillPolygonHatch(scaledPts, 45, 13);   // spacing in pixels (already scaled)
+        fillPolygonHatch(scaledPts, -45, 13);
+    });
+}
+
+function fillPolygonHatch(points, angleDeg = 45, spacing = 2) {
+    ctx.save();
+
+    // build polygon path
+    ctx.beginPath();
+    ctx.moveTo(points[0].x, points[0].y);
+    for (let i = 1; i < points.length; i++) {
+        ctx.lineTo(points[i].x, points[i].y);
+    }
+    ctx.closePath();
+    ctx.clip();
+
+    // calculate bounds
+    const bounds = polygonBounds(points);
+    const diag = Math.hypot(
+        bounds.maxX - bounds.minX,
+        bounds.maxY - bounds.minY
+    );
+
+    // rotate hatch lines
+    ctx.translate(bounds.minX, bounds.minY);
+    ctx.rotate(angleDeg * Math.PI / 180);
+
+    ctx.strokeStyle = "rgb(160, 51, 240,1)";
+    ctx.lineWidth = 4;
+
+    for (let x = -diag; x < diag * 2; x += spacing) {
+        ctx.beginPath();
+        ctx.moveTo(x, -diag);
+        ctx.lineTo(x, diag * 2);
+        ctx.stroke();
+    }
+
+    ctx.restore();
+}
+
+function polygonBounds(points) {
+    let minX = Infinity, minY = Infinity;
+    let maxX = -Infinity, maxY = -Infinity;
+
+    points.forEach(p => {
+        minX = Math.min(minX, p.x);
+        minY = Math.min(minY, p.y);
+        maxX = Math.max(maxX, p.x);
+        maxY = Math.max(maxY, p.y);
+    });
+
+    return { minX, minY, maxX, maxY };
 }

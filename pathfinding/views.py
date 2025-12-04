@@ -14,7 +14,7 @@ from io import BytesIO
 import onnxruntime as ort
 
 from .communication import extract_pathfinding_inputs
-from .preprocess import load_mask, inflate_obstacles, find_path_with_margin_growth, generate_corridor_mask_numpy
+from .preprocess import load_mask, inflate_obstacles, find_path_with_margin_growth, generate_corridor_mask_numpy, apply_blocked_terrain
 from .a_star import get_a_star_turns, simplify_wps
 from .theta_star import make_los_cached, make_terrain_los_cached, guided_theta_star, bresenham_line, simplify_theta_path
 
@@ -39,7 +39,9 @@ def find(request):
             yield f"data: {json.dumps({'error': error})}\n\n"
             return
         
-        grid = np.array(mask)
+        # Overlay blocking instructions
+        blockedTerrain = data.get("blockedTerrain", {})
+        grid = apply_blocked_terrain(mask, blockedTerrain)
 
         # Step 3: Find path with margin growth
         a_star_path, subgrid, offset, start_cP, ziel_cP = find_path_with_margin_growth(

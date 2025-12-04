@@ -4,7 +4,7 @@ from django.core.files.storage import default_storage
 from typing import Tuple, Optional
 from collections import deque 
 from typing import Union
-from PIL import Image
+from PIL import Image, ImageDraw
 import numpy as np
 
 from .a_star import a_star
@@ -64,6 +64,26 @@ def load_mask(data):
         mask = Image.open(f).convert("L")
 
     return mask, None
+
+def apply_blocked_terrain(mask, blockedTerrain, train_scale=0.710, line_width=7):
+    mask_copy = mask.copy()
+    draw = ImageDraw.Draw(mask_copy)
+
+    # Lines
+    for line in blockedTerrain.get('lines', []):
+        x0 = int(line['start']['x'] / train_scale)
+        y0 = int(line['start']['y'] / train_scale)
+        x1 = int(line['end']['x'] / train_scale)
+        y1 = int(line['end']['y'] / train_scale)
+        draw.line([x0, y0, x1, y1], fill=0, width=line_width)
+
+    # Polygons
+    for area in blockedTerrain.get('areas', []):
+        points = [(int(p['x'] / train_scale), int(p['y'] / train_scale)) for p in area.get('points', [])]
+        if len(points) >= 3:
+            draw.polygon(points, fill=0)
+
+    return np.array(mask_copy)
 
 def extract_subgrid(
     grid: np.ndarray,

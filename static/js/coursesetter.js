@@ -40,8 +40,37 @@ let isEditing = false;
 var cv_mask = false;
 var mode = "placeControls";	//tool mode
 var subMode = null;
-var subModeB = null;
+var subModeB = "line";
 
+//generate main object
+let cqc = {
+    published: false,
+    mapFile	: null,
+    scaled	: null,
+    sP		: {
+        p1: {
+            x: null,
+            y: null,
+        },
+        p2: {
+            x: null,
+            y: null,
+        },
+        dist: null
+    },
+    scale	: 1,
+    cP		: [],
+    blockedTerrain: {
+        lines: [],    // finished blocked lines
+        areas: []     // finished blocked polygons
+    },
+};
+
+let currentBlockLine = null; // for drawing new blocked line
+let currentBlockArea = null; // for drawing new blocked area
+
+// snap distance in map-units (NOT screen pixels)
+const BLOCK_AREA_SNAP_DIST = 8;
 
 let isEditingElevation = false;
 
@@ -60,6 +89,30 @@ const buttonBlock = document.getElementById("buttonBlock");
 const blockArea = document.getElementById("blockArea");
 const blockLine = document.getElementById("blockLine");
 const blockRemove = document.getElementById("blockRemove");
+
+let projectSaved = true; // set to false whenever the user makes changes
+
+// Mark unsaved changes
+function markUnsaved() {
+    projectSaved = false;
+}
+
+// Mark as saved
+function markSaved() {
+    projectSaved = true;
+}
+
+// Warn user when leaving the page if there are unsaved changes
+window.addEventListener("beforeunload", function (e) {
+    if (!projectSaved) {
+        // Some browsers require setting e.returnValue to a non-empty string
+        e.preventDefault();
+        e.returnValue = ""; 
+        // The browser will show a generic "Changes you made may not be saved" warning
+        return "";
+    }
+});
+
 
 alertBox.addEventListener("click", (e) => {
     if (e.target.closest("#cancelNN")) {
@@ -158,6 +211,7 @@ buttonCV.addEventListener('click', () => {
                             else if (data.done) {
                                 alertBox.innerHTML = "UNet-Maske generiert";
                                 cv_mask = true;
+                                markUnsaved();
 
                                 const basename =
                                     filename.split('.').slice(0, -1).join('.');
@@ -339,6 +393,7 @@ function updateTableC() {
 
         tdtc.onclick = () => {
             cqc.cP[i].complex = true;
+            markUnsaved();
             draw(rc); //update canvas, tables
         };
 
@@ -359,6 +414,7 @@ function updateTableC() {
             }
             else {
                 cqc.cP[i].complex = false;
+                markUnsaved();
                 draw(rc); //update canvas, tables
             }
         };
@@ -632,6 +688,7 @@ submitSaveButton.addEventListener('click', async () => {
         }
 
         // Successfully saved
+        markSaved();
         filenameInput.value = '';
         loadFileList();
 
@@ -1272,6 +1329,7 @@ function send_pathfinding() {
         body: JSON.stringify({
             ...cqc.cP[ncP],
             mapFile: cqc.mapFile,
+            blockedTerrain: cqc.blockedTerrain,
         }),
         signal
     }).then(response => {
@@ -1311,6 +1369,7 @@ function send_pathfinding() {
                         } else if (data.final_path !== undefined) {
                             alertBox.innerHTML = "Route generiert";
                             addFinalPathAsRoute(data.final_path);
+                            markUnsaved();
                         } else if (data.error) {
                             alertBox.innerHTML = data.error;
                         }
@@ -1372,6 +1431,7 @@ function saveCanvas() {
         })
         .then(data => {
             alertBox.innerHTML = "Maske gespeichert";
+            markUnsaved();
         })
         .catch(error => {
             alertBox.innerHTML = error;
@@ -1449,6 +1509,12 @@ function delControl() {
                 }
             }
         break;
+        case "drawSperre": //when drawing blocked areas
+            if (subModeB === "area" && currentBlockArea) {
+                const pts = currentBlockArea.points;
+                pts.pop(); // delete last point
+            }
+        break;
     }
     draw(rc); //update canvas, tables
 }
@@ -1502,26 +1568,6 @@ function gen_sP() {
         dist: null
     };
 }
-
-//generate main object
-let cqc = {
-    published: false,
-    mapFile	: null,
-    scaled	: null,
-    sP		: {
-        p1: {
-            x: null,
-            y: null,
-        },
-        p2: {
-            x: null,
-            y: null,
-        },
-        dist: null
-    },
-    scale	: 1,
-    cP		: []
-};
 
 draw(rc); //draw initial canvas and (empty) tables (onload?)
 
@@ -1794,6 +1840,20 @@ function mouseEvent(event) {
                 case "mapCV":
                     console.log("CV Mode")
                 break;
+                case "drawSperre":
+                    switch (subModeB){
+                        case "line":
+                            makeBlockLine(event);
+                        break;
+                        case "area":
+                            makeBlockArea(event);
+                        break; 
+                        case "remove":
+                            removeSperre(event);
+                        break;
+
+                    }
+                break;
             }
             draw(rc); //update canvas, tables
         }
@@ -1844,6 +1904,8 @@ function draw(tc) {
         drawStart(); //draw all start controls
         drawZiel(); //draw all finish controls
         drawConnection(); //draw connecting lines
+        drawBlockedLines();
+        drawBlockedAreas();
         liveDraw(); //draw live elements
         drawMask();
         updateTableC(), updateTableR(); updateTableI(); updateTableM();//draw tables
@@ -1914,6 +1976,7 @@ function makeRP(event){
         nR += 1; //increase route counter
         nRP = 0; //reset route point counter
         rDraw = false; //reset route drawing mode
+        markUnsaved();
     }
 }
 
@@ -1922,6 +1985,7 @@ function makeControl(event){
     if (!sDraw) {
         if (cDraw){ //depending on if it is the first or second
             makeZiel(event); //draw a second control
+            markUnsaved();
         } else {
             makeStart(event); //draw a first control
         }
@@ -1944,6 +2008,7 @@ function makeScale(event) {
             document.getElementById("scalingInfo").style.display = 'none';
             document.getElementById("scaleInputDiv").style.display = 'flex';
             document.getElementById('scaleInput').focus();
+            markUnsaved();
         }
         nsP += 1;
     }
@@ -1970,6 +2035,128 @@ function makeZiel(event) {
     cqc.cP[ncP].ziel.y = yClick;
     cDraw = false; //reset control draw state
     ncP += 1; //increase control pair counter
+}
+
+function makeBlockLine(event) {
+    // FIRST click → start line
+    if (!currentBlockLine) {
+        currentBlockLine = {
+            start: { x: liveX, y: liveY },
+            end: null
+        };
+        return;
+    }
+
+    // SECOND click → finish line
+    currentBlockLine.end = { x: liveX, y: liveY };
+
+    cqc.blockedTerrain.lines.push(currentBlockLine);
+    markUnsaved();
+    currentBlockLine = null; // reset for next line
+}
+
+function makeBlockArea(event) {
+    const p = { x: liveX, y: liveY };
+
+    // FIRST click → start polygon
+    if (!currentBlockArea) {
+        currentBlockArea = {
+            points: [p]
+        };
+        return;
+    }
+
+    const start = currentBlockArea.points[0];
+
+    // CLOSE polygon if click near start AND enough points
+    if (
+        currentBlockArea.points.length >= 3 &&
+        distance(p, start) < BLOCK_AREA_SNAP_DIST
+    ) {
+        cqc.blockedTerrain.areas.push(currentBlockArea);
+        markUnsaved();
+        currentBlockArea = null;
+        return;
+    }
+
+    // otherwise → add point
+    currentBlockArea.points.push(p);
+}
+
+function distance(a, b) {
+    return Math.hypot(a.x - b.x, a.y - b.y);
+}
+
+function distanceToSegment(px, py, x1, y1, x2, y2) {
+    const dx = x2 - x1;
+    const dy = y2 - y1;
+    if (dx === 0 && dy === 0) {
+        // line is a point
+        return Math.hypot(px - x1, py - y1);
+    }
+
+    // Project point onto the segment
+    const t = Math.max(0, Math.min(1, ((px - x1) * dx + (py - y1) * dy) / (dx*dx + dy*dy)));
+    const projX = x1 + t * dx;
+    const projY = y1 + t * dy;
+
+    return Math.hypot(px - projX, py - projY);
+}
+
+// Ray-casting algorithm
+function pointInPolygon(x, y, pts) {
+    let inside = false;
+    for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+        const xi = pts[i].x, yi = pts[i].y;
+        const xj = pts[j].x, yj = pts[j].y;
+
+        const intersect = ((yi > y) !== (yj > y)) &&
+                          (x < (xj - xi) * (y - yi) / (yj - yi) + xi);
+        if (intersect) inside = !inside;
+    }
+    return inside;
+}
+
+function removeSperre(event) {
+    const click = { x: liveX, y: liveY };
+    const threshold = 10 / cqc.scale; // adjust for zoom
+
+    let closest = { type: null, index: -1, dist: Infinity, subIndex: -1 };
+
+    // --- Check lines ---
+    cqc.blockedTerrain.lines.forEach((line, i) => {
+        const d = distanceToSegment(click.x, click.y, line.start.x, line.start.y, line.end.x, line.end.y);
+        if (d < closest.dist && d < threshold) {
+            closest = { type: "line", index: i, dist: d };
+        }
+    });
+
+    // --- Check polygons ---
+    cqc.blockedTerrain.areas.forEach((area, i) => {
+        const pts = area.points;
+        if (pointInPolygon(click.x, click.y, pts)) {
+            // inside polygon → highest priority
+            closest = { type: "area", index: i, dist: 0 };
+        } else {
+            // optionally, check edges for click near boundary
+            for (let j = 0; j < pts.length; j++) {
+                const next = (j + 1) % pts.length;
+                const d = distanceToSegment(click.x, click.y, pts[j].x, pts[j].y, pts[next].x, pts[next].y);
+                if (d < closest.dist && d < threshold) {
+                    closest = { type: "area", index: i, dist: d };
+                }
+            }
+        }
+    });
+
+    // --- Remove closest if found ---
+    if (closest.type === "line") {
+        cqc.blockedTerrain.lines.splice(closest.index, 1);
+    } else if (closest.type === "area") {
+        cqc.blockedTerrain.areas.splice(closest.index, 1);
+    }
+
+    draw(rc); // update canvas
 }
 
 function calcLength() {
@@ -2146,8 +2333,91 @@ function drawConnectionArrow(start, ziel, angle) {
     rc.stroke();
 }
 
+function drawBlockedLines() {
+    rc.strokeStyle = "rgb(160, 51, 240,1)";
+    rc.lineWidth = 6;
 
-    
+    cqc.blockedTerrain.lines.forEach(line => {
+        rc.beginPath();
+        rc.moveTo(line.start.x, line.start.y);
+        rc.lineTo(line.end.x, line.end.y);
+        rc.stroke();
+    });
+}
+
+function drawBlockedAreas() {
+    cqc.blockedTerrain.areas.forEach(area => {
+        const pts = area.points;
+        if (!pts || pts.length < 3) return;
+
+        rc.beginPath();
+        rc.moveTo(pts[0].x, pts[0].y);
+        for (let i = 1; i < pts.length; i++) {
+            rc.lineTo(pts[i].x, pts[i].y);
+        }
+        rc.closePath();
+
+        // --- Fill (fast) ---
+        rc.fillStyle = "rgb(160, 51, 240,0.5)";
+        rc.fill();
+
+        // --- Hatch fill ---
+        //fillPolygonHatch(pts, 45, 13*cqc.scale);
+        //fillPolygonHatch(pts, -45, 13*cqc.scale);
+
+    });
+}
+
+function fillPolygonHatch(points, angleDeg = 45, spacing = 2) {
+    rc.save();
+
+    // build polygon path
+    rc.beginPath();
+    rc.moveTo(points[0].x, points[0].y);
+    for (let i = 1; i < points.length; i++) {
+        rc.lineTo(points[i].x, points[i].y);
+    }
+    rc.closePath();
+    rc.clip();
+
+    // calculate bounds
+    const bounds = polygonBounds(points);
+    const diag = Math.hypot(
+        bounds.maxX - bounds.minX,
+        bounds.maxY - bounds.minY
+    );
+
+    // rotate hatch lines
+    rc.translate(bounds.minX, bounds.minY);
+    rc.rotate(angleDeg * Math.PI / 180);
+
+    rc.strokeStyle = "red";
+    rc.lineWidth = 2;
+
+    for (let x = -diag; x < diag * 2; x += spacing) {
+        rc.beginPath();
+        rc.moveTo(x, -diag);
+        rc.lineTo(x, diag * 2);
+        rc.stroke();
+    }
+
+    rc.restore();
+}
+
+function polygonBounds(points) {
+    let minX = Infinity, minY = Infinity;
+    let maxX = -Infinity, maxY = -Infinity;
+
+    points.forEach(p => {
+        minX = Math.min(minX, p.x);
+        minY = Math.min(minY, p.y);
+        maxX = Math.max(maxX, p.x);
+        maxY = Math.max(maxY, p.y);
+    });
+
+    return { minX, minY, maxX, maxY };
+}
+
 function drawRoutes() {
     cqc.cP.forEach((pair, indexC) => {
         if (indexC !== ncP) {
@@ -2339,6 +2609,58 @@ function liveDraw() {
         break;
         case "mapCV":
             drawCursor(mc);
+        break;
+        case "drawSperre":
+            if (subModeB == "remove") {
+                    rc.beginPath();
+                    rc.arc(liveX, liveY, 10, 0, 2 * Math.PI);
+                    rc.strokeStyle = "black";
+                    rc.lineWidth = 0.5;
+                    rc.stroke();
+            }
+            else {
+                drawCursor(rc);
+            }
+            if (currentBlockLine) {
+                rc.beginPath();
+                rc.strokeStyle = "rgb(160, 51, 240,1)";
+                rc.lineWidth = 5*cqc.scale;
+
+                rc.moveTo(currentBlockLine.start.x, currentBlockLine.start.y);
+                rc.lineTo(liveX, liveY);
+
+                rc.stroke();
+            }
+            // live polygon preview
+            if (currentBlockArea) {
+                const pts = currentBlockArea.points;
+
+                if (pts.length >= 1) {
+                    rc.beginPath();
+                    rc.moveTo(pts[0].x, pts[0].y);
+
+                    for (let i = 1; i < pts.length; i++) {
+                        rc.lineTo(pts[i].x, pts[i].y);
+                    }
+
+                    // rubber-band to cursor
+                    rc.lineTo(liveX, liveY);
+
+                    // close visually (cursor → start)
+                    if (pts.length >= 2) {
+                        rc.lineTo(pts[0].x, pts[0].y);
+
+                        // ✅ LIVE fill (lighter alpha)
+                        rc.fillStyle = "rgba(160, 51, 240, 0.15)";
+                        rc.fill();
+                    }
+
+                    // ✅ outline
+                    rc.strokeStyle = "rgba(160, 51, 240, 1)";
+                    rc.lineWidth = 1 * cqc.scale;
+                    rc.stroke();
+                }
+            }
         break;
     }
 }
