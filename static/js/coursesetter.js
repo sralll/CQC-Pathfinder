@@ -393,7 +393,6 @@ function updateTableC() {
 
         tdtc.onclick = () => {
             cqc.cP[i].complex = true;
-            markUnsaved();
             draw(rc); //update canvas, tables
         };
 
@@ -1475,8 +1474,24 @@ function setModeR() {
     nRP = 0;
     nR = 0;
     mode = "drawRoutes";
-    draw(rc); //update canvas, tables
+
+    const cps = cqc.cP;
+    const maxIndex = cps.length - 1;
+
+    // safety: empty list
+    if (maxIndex < 0) {
+        ncP = 0;
+    } 
+    else {
+        const current = cps[ncP];
+        if (!current || !current.ziel) {
+            ncP = maxIndex;
+        }
+    }
+
+    draw(rc); // update canvas, tables
 }
+
 
 function setModeS() {
     mode = "drawSperre";
