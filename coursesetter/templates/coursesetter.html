@@ -7,7 +7,7 @@
 		<table id="tableHC">
 			<thead>
 				<tr>
-					<th id="buttonControl" class="tableHeadMain" onclick="setModeC()">Posten</th>
+					<th id="buttonControl" class="tableHeadMain" onclick="setModeC()" title="Posten (P)">Posten</th>
 				</tr>
 			</thead>
 		</table>
@@ -25,7 +25,7 @@
 		<table id="routesTable">
 			<thead>
 				<tr>
-					<th id="buttonRoute" class="tableHeadMain" onclick="setModeR()">Routen</th>
+					<th id="buttonRoute" class="tableHeadMain" onclick="setModeR()" title="Routen (R)">Routen</th>
 					<th class="tableHeadMain">Distanz</th>
 					<th class="tableHeadMain">Höhe</th>
 				</tr>
@@ -52,34 +52,34 @@
 				<tr>
 					<th style="visibility:hidden" class="tableHeadMain"></th>
 					<th style="visibility:hidden" class="tableHeadMain"></th>
-					<th id="blockRemove" style="visibility:hidden" class="tableHeadMain">
+					<th id="blockRemove" style="visibility:hidden" class="tableHeadMain" title="Erase (E)">
 						<i class="fa-solid fa-eraser"></i>
 					</th>
 				</tr>
 				<tr>
 					<th style="visibility:hidden" class="tableHeadMain"></th>
-					<th id="buttonRemoveBlocked" class="tableHeadMain" style="visibility:hidden">
+					<th id="buttonRemoveBlocked" class="tableHeadMain" style="visibility:hidden" title="Erase (E)">
 						<i class="fa-solid fa-eraser"></i>
 					</th>
-					<th id="blockArea" style="visibility:hidden" class="tableHeadMain">
+					<th id="blockArea" style="visibility:hidden" class="tableHeadMain" title="Fläche (F)">
 						<i class="fa-solid fa-draw-polygon"></i>
 					</th>
 				</tr>
 				<tr>
 					<th style="visibility:hidden" class="tableHeadMain"></th>
-					<th id="buttonAddblocked" class="tableHeadMain" style="visibility:hidden">
+					<th id="buttonAddblocked" class="tableHeadMain" style="visibility:hidden" title="Add (A)">
 						<i class="fa-solid fa-pen"></i>
 					</th>
-					<th id="blockLine" class="tableHeadMain" style="visibility:hidden">
+					<th id="blockLine" class="tableHeadMain" style="visibility:hidden" title="Linie (L)">
 						<i class="fa-solid fa-slash"></i>
 					</th>
 				</tr>
 				<tr id="mapMenuTableRow">
-					<th id="buttonMap" class="tableHeadMain">Karte...</th>
-					<th id="buttonCV" class="tableHeadMain"> <!--Remove display none when Version CV ready: style="display:none" --> 
+					<th id="buttonMap" class="tableHeadMain" title="Map (M)">Karte...</th>
+					<th id="buttonCV" class="tableHeadMain" title="Vision (V)"> <!--Remove display none when Version CV ready: style="display:none" --> 
 						<i class="fa-solid fa-eye"></i>
 					</th>
-					<th id="buttonBlock" class="tableHeadMain" onclick="setModeS()">
+					<th id="buttonBlock" class="tableHeadMain" onclick="setModeS()" title="Sperrgebiet (S)">
 						<i class="fa-solid fa-ban"></i>
 					</th>
 				</tr>

@@ -40,7 +40,10 @@ def find(request):
             return
         
         # Overlay blocking instructions
-        blockedTerrain = data.get("blockedTerrain", {})
+        blockedTerrain = {
+            "lines": data.get("blockedTerrain", {}).get("lines", []),
+            "areas": data.get("blockedTerrain", {}).get("areas", [])
+        }
         grid = apply_blocked_terrain(mask, blockedTerrain)
 
         # Step 3: Find path with margin growth

@@ -577,6 +577,7 @@ function updateTableR() {
         tdZ.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i>';
         tdZ.style.backgroundColor  = "white";
         tdZ.style.setProperty('--td-background-color', '#D6EEEE'); //set hover
+        tdZ.title = "Zaubern (Z)";
         tdZ.addEventListener('click', send_pathfinding); //function for new route
         row.appendChild(tdZ);
         tableBody.appendChild(row);
@@ -837,7 +838,6 @@ function loadFileList() {
                 loadCell.classList.add('tableCellProjects');
                 const loadButton = document.createElement('button');
                 loadButton.innerHTML = '<i class="fa-solid fa-folder-open"></i>'; // Button label
-                console.log(file.filename);
                 loadButton.addEventListener('click', () => {
                     loadFile(file.filename); // Call the loadFile function when clicked
                 });
@@ -1018,6 +1018,15 @@ function drawLoadingAnimation(timestamp) {
     }
 }
 
+function normalizeCQC(cqc) {
+    if (!cqc.blockedTerrain) {
+        cqc.blockedTerrain = { lines: [], areas: [] };
+    } else {
+        cqc.blockedTerrain.lines ??= [];
+        cqc.blockedTerrain.areas ??= [];
+    }
+}
+
 function loadFile(filename) {
     const encodedFilename = encodeURIComponent(filename);
     const url = `/coursesetter/load-file/${encodedFilename}/`;
@@ -1026,6 +1035,7 @@ function loadFile(filename) {
     .then(response => response.json())
     .then(fileData => {
         cqc = fileData;
+        normalizeCQC(cqc);
         cv_mask = fileData.has_mask || false;
         mask = null;
 
@@ -1215,9 +1225,24 @@ document.addEventListener("keydown", function(e) {
                     subMode = "add";
                 }
             break;
+            case 83: //s
+                mode = "drawSperre"
+            break;
+            case 76: //l
+                if (mode == "drawSperre"){
+                    subModeB = "line";
+                }
+            break;
+            case 70: //f
+                if (mode == "drawSperre"){
+                    subModeB = "area";
+                }
+            break;
             case 69: //e
                 if (mode == "mapCV"){
                     subMode = "remove";
+                } else if (mode == "drawSperre"){
+                    subModeB = "remove";
                 }
             break;
             case 77: //m
@@ -1837,9 +1862,6 @@ function mouseEvent(event) {
                 case "scaleMap":
                     makeScale(event); //make a new scale point at clicked coordinates
                 break;
-                case "mapCV":
-                    console.log("CV Mode")
-                break;
                 case "drawSperre":
                     switch (subModeB){
                         case "line":
@@ -1928,8 +1950,7 @@ function submitScale() {
         return;
     }
 
-    cqc.scale = inputValue / cqc.sP.dist / 0.48;
-    console.log("Scaling factor set to:", cqc.scale);
+    cqc.scale = inputValue / cqc.sP.dist / 0.48; // DPI relation
 
     // Close the modal
     document.getElementById("modalM").style.display = "none";
@@ -2357,11 +2378,10 @@ function drawBlockedAreas() {
         }
         rc.closePath();
 
-        // --- Fill (fast) ---
         rc.fillStyle = "rgb(160, 51, 240,0.5)";
         rc.fill();
 
-        // --- Hatch fill ---
+        // --- Hatch fill --- (only for athletes)
         //fillPolygonHatch(pts, 45, 13*cqc.scale);
         //fillPolygonHatch(pts, -45, 13*cqc.scale);
 

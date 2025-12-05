@@ -244,6 +244,15 @@ function drawLoadingAnimation(timestamp) {
     }
 }
 
+function normalizeCQC(cqc) {
+    if (!cqc.blockedTerrain) {
+        cqc.blockedTerrain = { lines: [], areas: [] };
+    } else {
+        cqc.blockedTerrain.lines ??= [];
+        cqc.blockedTerrain.areas ??= [];
+    }
+}
+
 function loadGameData(filename) {
     const encodedFilename = encodeURIComponent(filename);
     const url = `/play/load-file/${encodedFilename}/`;
@@ -257,6 +266,7 @@ function loadGameData(filename) {
         .then(response => response.json())
         .then(response => {
             cqc = response.data;               // original JSON file contents
+            normalizeCQC(cqc);
             missingCPs = response.missingCPs;  // list of missing control points
 
             if (missingCPs.length === 0) {
