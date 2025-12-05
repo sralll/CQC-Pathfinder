@@ -1211,10 +1211,10 @@ document.addEventListener("keydown", function(e) {
                 }
             break;
             case 80: //p
-                mode = "placeControls";
+                setModeC();
             break;
             case 82: //r
-                mode = "drawRoutes";
+                setModeR();
             break;
             case 86: //v
                 mode = "mapCV";
@@ -1477,6 +1477,7 @@ function setModeR() {
 
     const cps = cqc.cP;
     const maxIndex = cps.length - 1;
+    console.log(maxIndex);
 
     // safety: empty list
     if (maxIndex < 0) {
