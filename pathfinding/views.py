@@ -113,6 +113,7 @@ def get_mask(request, filename):
 
 @group_required('Trainer')
 def run_UNet_stream(request):
+    print("GET params:", request.GET)
     filename = request.GET.get('filename')
     cqc_scale = request.GET.get('scale')
 
