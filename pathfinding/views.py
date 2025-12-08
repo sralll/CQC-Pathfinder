@@ -12,6 +12,8 @@ import json
 import numpy as np
 from io import BytesIO
 import onnxruntime as ort
+import time
+import asyncio
 
 from .communication import extract_pathfinding_inputs
 from .preprocess import load_mask, inflate_obstacles, find_path_with_margin_growth, generate_corridor_mask_numpy, apply_blocked_terrain
@@ -113,7 +115,6 @@ def get_mask(request, filename):
 
 @group_required('Trainer')
 def run_UNet_stream(request):
-    print("GET params:", request.GET)
     filename = request.GET.get('filename')
     cqc_scale = request.GET.get('scale')
 
@@ -183,6 +184,9 @@ def run_UNet_stream(request):
         # Generator for streaming progress
         async def tile_generator():
             nonlocal processed_tiles
+            yield "data: {}\n\n"  # force initial flush
+
+            loop = asyncio.get_running_loop()
             try:
                 for y0 in range(0, img_h, step):
                     for x0 in range(0, img_w, step):
@@ -193,40 +197,39 @@ def run_UNet_stream(request):
                         tile_np = np.array(tile) / 255.0
                         tile_np = np.transpose(tile_np, (2,0,1))[np.newaxis,:,:,:].astype(np.float32)
 
-                        tile_pred = model_predict_fn(tile_np)
+                        # CPU-bound ONNX call in separate thread
+                        tile_pred = await loop.run_in_executor(None, model_predict_fn, tile_np)
 
-                        # Decide crop bounds in output image
+                        # compute output bounds
                         out_y0 = y0 if y0 == 0 else y0 + overlap // 2
                         out_x0 = x0 if x0 == 0 else x0 + overlap // 2
                         out_y1 = y1 if y1 == img_h else y1 - overlap // 2
                         out_x1 = x1 if x1 == img_w else x1 - overlap // 2
 
-                        # Corresponding tile indices
                         tile_y0 = out_y0 - y0
                         tile_x0 = out_x0 - x0
                         tile_y1 = tile_y0 + (out_y1 - out_y0)
                         tile_x1 = tile_x0 + (out_x1 - out_x0)
 
-                        # 🔒 Safety clamp (CRUCIAL)
                         h_t, w_t = tile_pred.shape
                         tile_y1 = min(tile_y1, h_t)
                         tile_x1 = min(tile_x1, w_t)
                         out_y1 = out_y0 + (tile_y1 - tile_y0)
                         out_x1 = out_x0 + (tile_x1 - tile_x0)
 
-                        # ✅ Guaranteed matching shapes
-                        output_img[out_y0:out_y1, out_x0:out_x1] = \
-                            tile_pred[tile_y0:tile_y1, tile_x0:tile_x1]
+                        output_img[out_y0:out_y1, out_x0:out_x1] = tile_pred[tile_y0:tile_y1, tile_x0:tile_x1]
 
-
-                        # Send progress
+                        # send progress
                         processed_tiles += 1
                         yield f"data: {json.dumps({'current': processed_tiles, 'total': total_tiles})}\n\n"
-                                
+
+                        # allow event loop to process
+                        await asyncio.sleep(0.01)
+
             except Exception as e:
                 yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
-            # After all tiles processed, create visual image
+            # After all tiles processed: create and save final image
             visual = 255 * np.ones((img_h, img_w, 1), dtype=np.uint8)
             map_object = SimpleNamespace(
                 impassable=0,
@@ -254,10 +257,16 @@ def run_UNet_stream(request):
 
             # Send final message
             yield f"data: {json.dumps({'done': True, 'final_path': mask_filename})}\n\n"
-
             gc.collect()
 
-        return StreamingHttpResponse(tile_generator(), content_type="text/event-stream")
+        response = StreamingHttpResponse(
+            tile_generator(),
+            content_type="text/event-stream"
+        )
+        response["Cache-Control"] = "no-cache"
+        response["X-Accel-Buffering"] = "no"
+        return response
+
 
     except FileNotFoundError:
         return HttpResponseNotFound("Image file not found.")
