@@ -140,7 +140,7 @@ buttonCV.addEventListener('click', () => {
 
     const scale = cqc.scale;
     const prediction_time = Math.round(
-        5 + scale / 0.7104 * image.naturalWidth * image.naturalHeight * 2 / 1_000_000
+        5 + scale / 0.7104 * image.naturalWidth * image.naturalHeight * 4 / 1_000_000
     );
 
     alertBox.innerHTML =
