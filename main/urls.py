@@ -12,4 +12,5 @@ urlpatterns = [
     path('user_list/', views.users_with_results, name='user_list'),
     path('feedback/', views.feedback_view, name='feedback'),
     path("stats/table/", views.trainer_stats, name="trainer_stats"),
+    path('results/load-file/<str:filename>/', views.load_file, name='load_file'),
 ]

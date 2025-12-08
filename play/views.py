@@ -57,21 +57,17 @@ def get_files(request):
 @login_required
 def load_file(request, filename):
     try:
-        from accounts.models import UserProfile
-
-        # --- 1. Detect mobile vs desktop ---
         user_agent = request.META.get('HTTP_USER_AGENT', '').lower()
         is_mobile = any(m in user_agent for m in ['iphone', 'android', 'ipad', 'mobile'])
 
-        # Increment counters
-        counter, _ = DeviceCounter.objects.get_or_create(pk=1)
-        if is_mobile:
-            counter.mobile_count = F('mobile_count') + 1
-        else:
-            counter.desktop_count = F('desktop_count') + 1
-        counter.save()
-
-        # --- 2. Existing game loading logic ---
+        if not request.user.groups.filter(name='Trainer').exists(): #filter out trainers, always desktop
+            # Increment counters
+            counter, _ = DeviceCounter.objects.get_or_create(pk=1)
+            if is_mobile:
+                counter.mobile_count = F('mobile_count') + 1
+            else:
+                counter.desktop_count = F('desktop_count') + 1
+            counter.save()
 
         # get user's kader
         try:

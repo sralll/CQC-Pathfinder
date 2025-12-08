@@ -1,14 +1,14 @@
 from django.shortcuts import render
 from django.contrib.auth.decorators import login_required
 import math
-from django.http import JsonResponse
+from django.http import JsonResponse, HttpResponseNotFound
 from django.contrib.auth.models import User
 from django.db.models import Count
 from play.models import UserResult
 from django.shortcuts import get_object_or_404
 from coursesetter.models import publishedFile
 from accounts.models import UserProfile
-
+from django.views.decorators.http import require_GET
 
 @login_required
 def home_view(request):
@@ -16,7 +16,6 @@ def home_view(request):
     is_trainer = request.user.groups.filter(name='Trainer').exists()
 
     return render(request, 'home.html', {'is_trainer': is_trainer})
-
 
 @login_required
 def results_view(request):
@@ -431,3 +430,44 @@ def trainer_stats(request):
         })
 
     return JsonResponse(data, safe=False)
+
+@login_required
+def load_file(request, filename):
+    try:
+        # get user's kader
+        try:
+            user_kader = request.user.userprofile.kader
+        except UserProfile.DoesNotExist:
+            return HttpResponseNotFound("User has no kader assigned")
+
+        unique_filename = f"{filename}_{user_kader.name}"
+
+        gamefile = publishedFile.objects.get(unique_filename=unique_filename)
+        data = gamefile.data or {}
+
+        file_base = filename.replace('.json', '')
+
+        cp_count = len(data.get('cP', []))
+
+        existing_entries = list(
+            UserResult.objects.filter(
+                user=request.user,
+                filename=file_base
+            ).values_list('control_pair_index', flat=True)
+        )
+
+        missing_cps = [i for i in range(cp_count) if i not in existing_entries]
+
+        return JsonResponse({
+            'data': data,
+            'missingCPs': missing_cps
+        })
+
+    except publishedFile.DoesNotExist:
+        return HttpResponseNotFound("File not found for this kader")
+
+    except Exception as e:
+        return JsonResponse(
+            {'message': 'Error loading file', 'error': str(e)},
+            status=500
+        )

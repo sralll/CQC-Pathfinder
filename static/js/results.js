@@ -246,7 +246,7 @@ function normalizeCQC(cqc) {
 
 function loadGameData(filename) {
     const encodedFilename = encodeURIComponent(filename);
-    const url = `/play/load-file/${encodedFilename}/`;
+    const url = `/results/load-file/${encodedFilename}/`;
 
     // Start spinner
     loading = true;
