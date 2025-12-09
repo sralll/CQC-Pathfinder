@@ -44,36 +44,46 @@ function getUrlParameter(name) {
 }
 
 window.onload = function () {
-    resultsSpinner = document.getElementById("resultsSpinner");
+    const resultsSpinner = document.getElementById("resultsSpinner");
     resultsSpinner.style.display = "flex";
+
     fetch('/get_published_files/')
         .then(response => response.json())
-        .then(filenames => {
+        .then(data => {
             const dropdown = document.getElementById('jsonDropdown');
+            const files = data.files;
+            const userSharedPool = data.user_shared_pool;
 
-            // Populate filenames, skipping the default option which is already in the HTML
-            filenames.forEach(filename => {
-                const displayName = filename.replace('.json', '');
+            // Populate dropdown
+            files.forEach(file => {
                 const option = document.createElement('option');
-                option.value = filename;
+                option.value = file.filename;
+
+                // Show Kader name if shared_pool
+                let displayName = file.filename.replace('.json', '');
+                if (userSharedPool) {
+                    displayName += ` (${file.kader})`;
+                }
+
                 option.textContent = displayName;
                 dropdown.appendChild(option);
             });
 
-            // Check if a filename is passed via URL
+            // Auto-select filename from URL if present
             const gameParam = getUrlParameter('game');
             if (gameParam) {
-                const filenameWithExtension = gameParam;
-                const optionExists = filenames.includes(filenameWithExtension);
+                const optionExists = files.some(f => f.filename === gameParam);
                 if (optionExists) {
-                    dropdown.value = filenameWithExtension;
-                    dropdown.dispatchEvent(new Event('change')); // Trigger the loading
+                    dropdown.value = gameParam;
+                    dropdown.dispatchEvent(new Event('change'));
                 }
             }
+
             resultsSpinner.style.display = "none";
         })
         .catch(error => console.error('Error fetching filenames:', error));
 };
+
 
 function home() {
     window.location.href = "/";

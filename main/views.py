@@ -9,6 +9,7 @@ from django.shortcuts import get_object_or_404
 from coursesetter.models import publishedFile
 from accounts.models import UserProfile
 from django.views.decorators.http import require_GET
+from django.db.models import F, Q
 
 @login_required
 def home_view(request):
@@ -70,21 +71,31 @@ def get_published_files(request):
     result = []
 
     try:
-        qs = visible_published_files_for_user(request.user)
+        user_kader = getattr(user.userprofile, "kader", None)
+        user_kader_name = user_kader.name if user_kader else ""
+        user_shared_pool = user_kader.shared_pool if user_kader else False
+
+        qs = visible_published_files_for_user(user)
 
         for entry in qs:
             result.append({
                 'filename': entry.filename,
                 'modified': entry.last_edited.timestamp() if entry.last_edited else 0,
+                'kader': entry.kader.name if entry.kader else "",
             })
 
-        # Sort by modified time (descending)
-        result.sort(key=lambda x: x['modified'], reverse=True)
-
-        return JsonResponse(
-            [r['filename'] for r in result],
-            safe=False
+        # Sort by user's kader match first, then date descending
+        result.sort(
+            key=lambda x: (
+                0 if x['kader'] == user_kader_name else 1,  # own kader first
+                -x['modified']                              # then newest first
+            )
         )
+
+        return JsonResponse({
+            'files': result,
+            'user_shared_pool': user_shared_pool
+        }, safe=False)
 
     except Exception as e:
         return JsonResponse({'error': str(e)}, status=500)
@@ -110,59 +121,40 @@ def users_with_results(request):
 @login_required
 def fetch_plot_data(request, filename):
     try:
-        # 0. Resolve user's kader
+        # Get user's kader
         try:
             user_kader = request.user.userprofile.kader
         except UserProfile.DoesNotExist:
-            return JsonResponse({"error": "User has no kader"}, status=404)
+            return HttpResponseNotFound("User has no kader assigned")
 
-        # Build the base queryset
+        # Build queryset of files user is allowed to see
         qs = publishedFile.objects.filter(published=True, filename=filename)
 
-        # Apply access rules
         if not request.user.is_superuser:
-            # Users can see files of their own kader
             condition = Q(kader=user_kader)
-
-            # If their kader has shared_pool, also include files from other shared kaders
             if user_kader.shared_pool:
                 condition |= Q(kader__shared_pool=True)
-
             qs = qs.filter(condition)
 
-        # Try to get the file or return 404
-        try:
-            file_obj = qs.get()
-        except publishedFile.DoesNotExist:
+        # Prefer user's own kader file
+        file_obj = qs.filter(kader=user_kader).first() or qs.first()
+        if not file_obj:
             return JsonResponse({"error": "File not accessible"}, status=404)
 
-        unique_filename = f"{file_obj.filename}_{file_obj.kader.name}"
-
-        # 1. Load control points safely by unique_filename
-        try:
-            entry = publishedFile.objects.get(
-                unique_filename=unique_filename,
-                published=True
-            )
-        except publishedFile.DoesNotExist:
-            return JsonResponse({"error": "File not found"}, status=404)
-
-        cP_list = entry.data.get('cP', []) if entry.data else []
-
+        # Load control points safely
+        cP_list = file_obj.data.get('cP', []) if file_obj.data else []
         cumulative_distance = 0.0
         distances = []
-
         for pair in cP_list:
             sx, sy = pair['start']['x'], pair['start']['y']
             zx, zy = pair['ziel']['x'], pair['ziel']['y']
-            dx = zx - sx
-            dy = zy - sy
+            dx, dy = zx - sx, zy - sy
             cumulative_distance += math.sqrt(dx**2 + dy**2)
             distances.append(round(cumulative_distance, 2))
 
         ncP_max = len(distances)
 
-        # 2. Users with exactly ncP_max entries (public filename!)
+        # Users with exactly ncP_max entries
         matching_users_qs = (
             UserResult.objects
             .filter(filename=filename)
@@ -171,27 +163,20 @@ def fetch_plot_data(request, filename):
             .filter(count=ncP_max)
         )
 
-        # Exclude "Trainer" users only if the requesting user is not a trainer
+        # Exclude Trainer users if requester is not a trainer
         if not request.user.groups.filter(name='Trainer').exists():
             matching_users_qs = matching_users_qs.exclude(user__groups__name='Trainer')
 
         user_ids = [u['user_id'] for u in matching_users_qs]
-
-        # 3. Load and validate user data
-        all_user_data = []
         users = User.objects.in_bulk(user_ids)
 
+        # Load user data
+        all_user_data = []
         for user_id in user_ids:
-            entries = UserResult.objects.filter(
-                filename=filename,
-                user_id=user_id
-            )
-
+            entries = UserResult.objects.filter(filename=filename, user_id=user_id)
             if entries.filter(competition=False).exists():
                 continue
-
             entries = entries.order_by('control_pair_index')
-
             all_user_data.append({
                 'user_id': user_id,
                 'full_name': users[user_id].get_full_name() or f"User_{user_id}",
@@ -207,17 +192,15 @@ def fetch_plot_data(request, filename):
                 ]
             })
 
-        # 4. Summary statistics
+        # Summary ranking
         table_ranking = []
         for u in all_user_data:
             controls = u['controls']
-
             total_choice_time = sum(c['choice_time'] or 0 for c in controls)
             total_diff_runtime = sum(
                 abs((c['selected_route_runtime'] or 0) - (c['shortest_route_runtime'] or 0))
                 for c in controls
             )
-
             table_ranking.append({
                 'user_id': u['user_id'],
                 'full_name': u['full_name'],
@@ -225,45 +208,32 @@ def fetch_plot_data(request, filename):
                 'total_diff_runtime': total_diff_runtime,
                 'total_sum': total_choice_time + total_diff_runtime
             })
-
         table_ranking.sort(key=lambda x: x['total_sum'])
 
-        # 5. Fastest averages per control
+        # Fastest averages per control
         fastest_times = []
         for idx in range(ncP_max):
             times = []
             for u in all_user_data:
                 c = u['controls'][idx]
-                total_time = (
-                    (c['choice_time'] or 0)
-                    + ((c['selected_route_runtime'] or 0) - (c['shortest_route_runtime'] or 0))
-                )
+                total_time = (c['choice_time'] or 0) + ((c['selected_route_runtime'] or 0) - (c['shortest_route_runtime'] or 0))
                 times.append(total_time)
-
             times.sort()
             fastest = times[:3]
-            avg = sum(fastest) / len(fastest) if fastest else 0
+            avg = sum(fastest)/len(fastest) if fastest else 0
+            fastest_times.append({'ncP': idx, 'average_fastest_time': round(avg, 2)})
 
-            fastest_times.append({
-                'ncP': idx,
-                'average_fastest_time': round(avg, 2)
-            })
-
-        # 6. Response
+        # Return response
         return JsonResponse({
             'distances': distances,
             'results': all_user_data,
-            'shortest_route_runtime': [
-                c['shortest_route_runtime']
-                for c in all_user_data[0]['controls']
-            ] if all_user_data else [],
+            'shortest_route_runtime': [c['shortest_route_runtime'] for c in all_user_data[0]['controls']] if all_user_data else [],
             'tableData': table_ranking,
             'avg_times': fastest_times,
         })
 
     except Exception as e:
         return JsonResponse({'error': str(e)}, status=500)
-
  
 @login_required
 def user_game_stats(request, user_id=None):
@@ -313,7 +283,7 @@ def user_game_stats(request, user_id=None):
 
     # Exclude users in the "Trainer" group
     results_global = results_global.exclude(user__groups__name='Trainer')
-    
+
     global_entries = results_global.count()
 
     fastest_global = 0
@@ -487,23 +457,20 @@ def load_file(request, filename):
         except UserProfile.DoesNotExist:
             return HttpResponseNotFound("User has no kader assigned")
 
-        # Build queryset of files user is allowed to see
+        # Base queryset
         qs = publishedFile.objects.filter(published=True, filename=filename)
 
+        # Access rules
         if not request.user.is_superuser:
-            # Always allow files from the user's own kader
             condition = Q(kader=user_kader)
-
-            # If the user's kader is allowed to share, include other shared_pool files
             if user_kader.shared_pool:
                 condition |= Q(kader__shared_pool=True)
-
             qs = qs.filter(condition)
 
-        # Fetch the file
-        try:
-            gamefile = qs.get()
-        except publishedFile.DoesNotExist:
+        # ✅ Prefer file from user's own kader
+        gamefile = qs.filter(kader=user_kader).first() or qs.first()
+
+        if not gamefile:
             return HttpResponseNotFound("File not accessible")
 
         # Load the data

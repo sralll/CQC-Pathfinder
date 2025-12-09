@@ -139,7 +139,7 @@ button:hover {
     width: 100%;
     position: relative;
     border-collapse: collapse;
-    max-height: 70vh;
+    max-height: 75vh;
     overflow: auto;
 }
 

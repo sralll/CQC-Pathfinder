@@ -63,7 +63,6 @@ def get_files(request):
     except Exception as e:
         return JsonResponse({'error': f'Error in get_files(): {str(e)}'}, status=500)
 
-
 @login_required
 def load_file(request, filename):
     try:
@@ -89,19 +88,20 @@ def load_file(request, filename):
         qs = publishedFile.objects.filter(published=True, filename=filename)
 
         if not request.user.is_superuser:
-            # Users always see their own kader files
             condition = Q(kader=user_kader)
-
-            # If their kader allows shared_pool, include other shared files
             if user_kader.shared_pool:
                 condition |= Q(kader__shared_pool=True)
-
             qs = qs.filter(condition)
 
-        # Try to get the file
-        try:
-            gamefile = qs.get()
-        except publishedFile.DoesNotExist:
+        # Prefer user's own kader if multiple files exist
+        gamefile = None
+        own_kader_file = qs.filter(kader=user_kader).first()
+        if own_kader_file:
+            gamefile = own_kader_file
+        else:
+            gamefile = qs.first()
+
+        if not gamefile:
             return HttpResponseNotFound("File not accessible")
 
         # Load data

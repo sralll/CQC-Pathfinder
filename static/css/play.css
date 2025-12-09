@@ -30,6 +30,7 @@
 
 body.mobile #projectTableDiv {
     margin-top: 50px;
+    padding-bottom: 50px;
 }
 
 body.mobile #fileTable {
