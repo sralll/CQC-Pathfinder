@@ -745,132 +745,165 @@ openMap.addEventListener('click', () => {
 });
 
 function loadFileList() {
-    let tbody = fileTable.querySelector('tbody');
+    const table = document.getElementById('fileTable');
+    const tbody = table.querySelector('tbody');
 
-    // Show a loading spinner row
+    // Show loading spinner
     tbody.innerHTML = `
         <tr>
-            <td colspan="4" style="text-align: center; padding: 20px;">
+            <td colspan="8" style="text-align: center; padding: 20px;">
                 <i style="font-size: 2rem; padding: 0px 5px" class="fa-solid fa-spinner fa-spin-pulse"></i>
             </td>
         </tr>
     `;
+
     fetch('/coursesetter/get-files/')
         .then(response => response.json())
-        .then(files => {
-            // Sort files by modified date (latest first)
-            files.sort((a, b) => new Date(b.modified) - new Date(a.modified));
+        .then(data => {
+            const files = data.files;
 
-            // Get or create the tbody element
-            let tbody = fileTable.querySelector('tbody');
-            if (!tbody) {
-                tbody = document.createElement('tbody');  // Create tbody if it doesn't exist
-                fileTable.appendChild(tbody);  // Append tbody to table
+            const userKaderName = data.user_kader;
+            const userSharedPool = data.user_shared_pool;
+
+            // Sort: own kader first, then date descending
+            files.sort((a, b) => {
+                const aOwn = a.kader === userKaderName ? 1 : 0;
+                const bOwn = b.kader === userKaderName ? 1 : 0;
+                if (bOwn - aOwn !== 0) return bOwn - aOwn;
+                return new Date(b.modified) - new Date(a.modified);
+            });
+
+            // --- Build table header dynamically ---
+            const thead = table.querySelector('thead');
+            thead.innerHTML = '';
+            const headerRow = document.createElement('tr');
+
+            // Always visible columns
+            ['Projekt', 'Posten', 'Letzte Änderungen', 'Autor'].forEach(text => {
+                const th = document.createElement('th');
+                th.textContent = text;
+                th.classList.add('tableHeadProjects');
+                headerRow.appendChild(th);
+            });
+
+            // Conditionally add "Kader"
+            if (userSharedPool) {
+                const thKader = document.createElement('th');
+                thKader.textContent = 'Kader';
+                thKader.classList.add('tableHeadProjects');
+                headerRow.appendChild(thKader);
             }
 
-            // Clear the existing table rows (inside tbody)
+            // Add 3 extra empty header columns
+            for (let i = 0; i < 3; i++) {
+                const th = document.createElement('th');
+                th.classList.add('tableHeadProjects');
+                headerRow.appendChild(th);
+            }
+
+            thead.appendChild(headerRow);
+
+            // --- Clear tbody ---
             tbody.innerHTML = '';
 
-            // Loop through each file and add a row
             files.forEach(file => {
                 const row = document.createElement('tr');
                 row.classList.add('tableRowProjects');
-                
-                // File name without the extension
+
+                // Project name
                 const fileNameCell = document.createElement('td');
                 fileNameCell.classList.add('tableCellProjects');
-                const fileNameWithoutExtension = file.filename.replace('.json', ''); // Remove the '.json' extension
-                const fileNameText = document.createElement('span');
-                fileNameText.textContent = fileNameWithoutExtension || 'Unknown'; // Display filename without extension
+                fileNameCell.textContent = file.filename || 'Unknown';
                 
-                // Add hover effect to the table cell (feedback)
-                fileNameCell.style.cursor = 'pointer';
+                // --- Add click event to populate the input field ---
+                fileNameCell.style.cursor = 'pointer'; // show pointer on hover
+                fileNameCell.addEventListener('click', () => {
+                    const input = document.getElementById('filename');
+                    if (input) input.value = file.filename;
+                });
+
+                // Optional: add hover effect
                 fileNameCell.addEventListener('mouseenter', () => {
-                    fileNameCell.style.backgroundColor = '#f0f0f0'; // Light gray background when hovering
+                    fileNameCell.style.backgroundColor = '#f0f0f0';
                 });
                 fileNameCell.addEventListener('mouseleave', () => {
-                    fileNameCell.style.backgroundColor = ''; // Reset background when not hovering
+                    fileNameCell.style.backgroundColor = '';
                 });
 
-                // Add click event to set filename in input field (entire cell)
-                fileNameCell.addEventListener('click', () => {
-                    filenameInput.value = fileNameWithoutExtension;  // Set the file name in input field
-                });
-
-                fileNameCell.appendChild(fileNameText);
                 row.appendChild(fileNameCell);
 
-                // Number of cP entries
+                // cP count
                 const cpCountCell = document.createElement('td');
                 cpCountCell.classList.add('tableCellProjects');
-                const cpCount = file.cPCount; // Count the number of cP entries (if exists)
-                cpCountCell.textContent = cpCount; // Display the number of cP entries
-                cpCountCell.style.textAlign = 'center'; // Center the text
+                cpCountCell.textContent = file.cPCount;
+                cpCountCell.style.textAlign = 'center';
                 row.appendChild(cpCountCell);
 
-                // Last modified time
+                // Last modified
                 const lastModifiedCell = document.createElement('td');
                 lastModifiedCell.classList.add('tableCellProjects');
-                
-                const formattedDate = new Date(file.modified);
-                const day = String(formattedDate.getDate()).padStart(2, '0');
-                const month = String(formattedDate.getMonth() + 1).padStart(2, '0');
-                const year = formattedDate.getFullYear();
-                const hours = String(formattedDate.getHours()).padStart(2, '0');
-                const minutes = String(formattedDate.getMinutes()).padStart(2, '0');
-                const seconds = String(formattedDate.getSeconds()).padStart(2, '0');
-
-                const formattedDateString = `${day}.${month}.${year} ${hours}:${minutes}:${seconds}`;
-
-                lastModifiedCell.textContent = formattedDateString; // Display the formatted date and time
-
+                const date = new Date(file.modified);
+                lastModifiedCell.textContent = date.toLocaleString();
                 row.appendChild(lastModifiedCell);
 
                 // Author
                 const authorCell = document.createElement('td');
                 authorCell.classList.add('tableCellProjects');
-                authorCell.textContent = file.author; // Button label
+                authorCell.textContent = file.author;
                 row.appendChild(authorCell);
+
+                // Kader (conditionally displayed)
+                const kaderCell = document.createElement('td');
+                kaderCell.classList.add('tableCellProjects');
+                if (userSharedPool) {
+                    // Always show the kader for own files or shared pool files
+                    kaderCell.textContent = file.kader || '';
+                }
+                row.appendChild(kaderCell);
 
                 // Load button
                 const loadCell = document.createElement('td');
-                loadCell.classList.add('tableCellProjects');
                 const loadButton = document.createElement('button');
-                loadButton.innerHTML = '<i class="fa-solid fa-folder-open"></i>'; // Button label
-                loadButton.addEventListener('click', () => {
-                    loadFile(file.filename); // Call the loadFile function when clicked
-                });
+                loadButton.innerHTML = '<i class="fa-solid fa-folder-open"></i>';
+                loadButton.addEventListener('click', () => loadFile(file.filename));
+                loadButton.style.padding = "2px 0px";
                 loadCell.appendChild(loadButton);
                 row.appendChild(loadCell);
 
                 // Delete button
                 const deleteCell = document.createElement('td');
-                deleteCell.classList.add('tableCellProjects');
-                const deleteButton = document.createElement('button');
-                deleteButton.innerHTML = `<i class="fa-solid fa-trash"></i>`;
-                deleteButton.addEventListener('click', () => deleteFile(file.filename));
-                deleteCell.appendChild(deleteButton);
+                if (file.editable) {
+                    const deleteButton = document.createElement('button');
+                    deleteButton.innerHTML = '<i class="fa-solid fa-trash"></i>';
+                    deleteButton.addEventListener('click', () => deleteFile(file.filename));
+                    deleteButton.style.padding = "2px 0px";
+                    deleteCell.appendChild(deleteButton);
+                }
                 row.appendChild(deleteCell);
 
-                // Publish button
+                // Publish button / state
                 const publishCell = document.createElement('td');
-                publishCell.classList.add('tableCellProjects');
-
                 const publishButton = document.createElement('button');
-                publishButton.innerHTML = `<i class="fa-solid fa-globe"></i>`;
-                publishButton.addEventListener('click', () => publishProject(file.filename, publishButton));
+                publishButton.innerHTML = '<i class="fa-solid fa-globe"></i>';
+                publishButton.style.borderRadius = "5px";
+                publishButton.style.padding = "3px 0px";
 
-                // Set button color based on published state
-                if (file.published) {
-                    publishButton.style.backgroundColor = "orange";
+                if (file.editable) {
+                    publishButton.addEventListener('click', () => publishProject(file.filename, publishButton));
+                    publishButton.style.border = "1px solid black";
+                    publishButton.style.backgroundColor = file.published ? "rgba(255,165,0,1)" : "white";
                 } else {
-                    publishButton.style.backgroundColor = "white";
+                    publishButton.style.cursor = "default";
+                    publishButton.style.backgroundColor = file.published ? "rgba(255,165,0,0.5)" : "white";
+                    publishButton.disabled = true;
+                    publishButton.style.border = "1px solid rgba(255,165,0,0.0)";
+                    publishButton.style.pointerEvents = "none";  // disables hover & clicks
                 }
 
                 publishCell.appendChild(publishButton);
                 row.appendChild(publishCell);
 
-                // Append row to tbody
+                // Append row
                 tbody.appendChild(row);
             });
         })
@@ -879,6 +912,7 @@ function loadFileList() {
             alert('Failed to load file list');
         });
 }
+
 
 function publishProject(filename, button) {
     const filenameWithoutExtension = filename.replace('.json', '');

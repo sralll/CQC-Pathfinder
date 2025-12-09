@@ -20,14 +20,19 @@ def get_gamefile_by_public_name(request, filename):
     from accounts.models import UserProfile
 
     try:
-        kader = request.user.userprofile.kader
+        user_kader = request.user.userprofile.kader
     except UserProfile.DoesNotExist:
         raise publishedFile.DoesNotExist("User has no kader")
 
-    return publishedFile.objects.get(
-        filename=filename,
-        kader=kader,
-    )
+    # Try own kader first
+    try:
+        return publishedFile.objects.get(filename=filename, kader=user_kader)
+    except publishedFile.DoesNotExist:
+        # If not found, check shared_pool kaders
+        return publishedFile.objects.get(
+            filename=filename,
+            kader__shared_pool=True
+        )
 
 def group_required(group_name):
     def in_group(u):
@@ -75,32 +80,58 @@ def get_map_file(request, filename):
 @require_GET
 def get_files(request):
     try:
-        files = []
+        user = request.user
 
-        # start with all publishedFile objects
+        # --- Get user's kader ---
+        try:
+            user_kader = user.userprofile.kader
+            user_shared_pool = user_kader.shared_pool
+        except UserProfile.DoesNotExist:
+            user_kader = None
+            user_shared_pool = False
+
+        # Start with all published files
         qs = publishedFile.objects.order_by('-last_edited')
-        if not request.user.is_superuser:
-            try:
-                user_kader = request.user.userprofile.kader
-                qs = qs.filter(kader=user_kader)
-            except UserProfile.DoesNotExist:
-                qs = qs.none()
+
+        if not user.is_superuser:
+            if user_kader:
+                # Own kader files
+                own_qs = qs.filter(kader=user_kader)
+
+                # Shared pool files from other kaders if allowed
+                if user_shared_pool:
+                    shared_qs = qs.filter(
+                        kader__shared_pool=True
+                    ).exclude(kader=user_kader)
+                    qs = own_qs | shared_qs
+                else:
+                    qs = own_qs
+            else:
+                qs = publishedFile.objects.none()  # no kader → no files
 
         files = []
-        for obj in qs:
+        for obj in qs.distinct():  # distinct in case of union
+            editable = obj.kader == user_kader
             files.append({
-                'filename': obj.filename,  # display name
+                'filename': obj.filename,
                 'modified': obj.last_edited.isoformat() if obj.last_edited else '',
                 'cPCount': obj.ncP or 0,
                 'published': obj.published,
                 'author': obj.author or '',
+                'shared_pool': obj.kader.shared_pool if obj.kader else False,
+                'editable': editable,
+                'kader': obj.kader.name if obj.kader else '',
             })
 
-        return JsonResponse(files, safe=False)
-
+        return JsonResponse({
+            'files': files,
+            'user_shared_pool': user_shared_pool,  # top-level info
+            'user_kader': user_kader.name if user_kader else '',
+        }, safe=False)
 
     except Exception as e:
         return JsonResponse({'error': f'Error in get_files(): {str(e)}'}, status=500)
+
 
 @group_required('Trainer')
 def load_file(request, filename):
@@ -166,6 +197,7 @@ def save_file(request):
 
         from .models import publishedFile
         from accounts.models import UserProfile
+        from django.db.models import Q
 
         # Get user's kader
         try:
@@ -173,13 +205,29 @@ def save_file(request):
         except UserProfile.DoesNotExist:
             user_kader = None
 
-        unique_filename = f"{filename}_{user_kader.name if user_kader else 'unknown'}"
+        if not user_kader:
+            return JsonResponse({'message': 'User has no kader assigned'}, status=400)
 
-        # Update or create entry by unique_filename
+        # --- Check for name collisions across shared pool ---
+        if user_kader.shared_pool:
+            collision_qs = publishedFile.objects.filter(
+                filename=filename,
+                kader__shared_pool=True
+            ).exclude(kader=user_kader)  # exclude own kader
+            if collision_qs.exists():
+                return JsonResponse(
+                    {'message': 'Projektname bereits in Verwendung'},
+                    status=400
+                )
+
+        # Build unique filename for storage
+        unique_filename = f"{filename}_{user_kader.name}"
+
+        # Update or create entry
         obj, created = publishedFile.objects.update_or_create(
             unique_filename=unique_filename,
             defaults={
-                'filename': filename,  # display name stays clean
+                'filename': filename,
                 'author': author_name,
                 'ncP': cp_count,
                 'data': data,

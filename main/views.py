@@ -2,7 +2,7 @@ from django.shortcuts import render
 from django.contrib.auth.decorators import login_required
 import math
 from django.http import JsonResponse, HttpResponseNotFound
-from django.contrib.auth.models import User
+from django.contrib.auth.models import User, Group
 from django.db.models import Count
 from play.models import UserResult
 from django.shortcuts import get_object_or_404
@@ -27,32 +27,64 @@ def stats_view(request):
     is_trainer = request.user.groups.filter(name='Trainer').exists()
     return render(request, 'stats.html', {'is_trainer': is_trainer})
 
+def visible_published_files_for_user(user):
+    qs = publishedFile.objects.filter(published=True)
+    if user.is_superuser:
+        return qs
+
+    kader = getattr(user.userprofile, 'kader', None)
+    if not kader:
+        return qs.none()
+
+    condition = Q(kader=kader)
+    if kader.shared_pool:
+        condition |= Q(kader__shared_pool=True)
+
+    return qs.filter(condition)
+
+def visible_users_with_results_for_user(user):
+    # Get user IDs that have results
+    user_ids = UserResult.objects.values_list('user_id', flat=True).distinct()
+
+    qs = User.objects.filter(id__in=user_ids)
+
+    if user.is_superuser:
+        return qs
+
+    try:
+        user_kader = user.userprofile.kader
+    except UserProfile.DoesNotExist:
+        return qs.none()
+
+    condition = Q(userprofile__kader=user_kader)
+
+    if user_kader.shared_pool:
+        condition |= Q(userprofile__kader__shared_pool=True)
+
+    return qs.filter(condition)
+
+@require_GET
 @login_required
 def get_published_files(request):
     user = request.user
     result = []
 
     try:
-        # Get user's kader
-        try:
-            user_kader = user.userprofile.kader
-        except UserProfile.DoesNotExist:
-            user_kader = None
+        qs = visible_published_files_for_user(request.user)
 
-        # Only include published files in the user's kader
-        published_entries = publishedFile.objects.filter(published=True, kader=user_kader)
-
-        for entry in published_entries:
+        for entry in qs:
             result.append({
                 'filename': entry.filename,
-                'modified': entry.last_edited.timestamp() if entry.last_edited else 0
+                'modified': entry.last_edited.timestamp() if entry.last_edited else 0,
             })
 
         # Sort by modified time (descending)
         result.sort(key=lambda x: x['modified'], reverse=True)
 
-        # Return just the filenames
-        return JsonResponse([r['filename'] for r in result], safe=False)
+        return JsonResponse(
+            [r['filename'] for r in result],
+            safe=False
+        )
 
     except Exception as e:
         return JsonResponse({'error': str(e)}, status=500)
@@ -60,27 +92,16 @@ def get_published_files(request):
 @login_required
 def users_with_results(request):
     try:
-        # Get logged-in user's kader
-        try:
-            user_kader = request.user.userprofile.kader
-        except UserProfile.DoesNotExist:
-            user_kader = None
-
-        # Get distinct user IDs that have results
-        user_ids = UserResult.objects.values_list('user_id', flat=True).distinct()
-
-        # Filter users by those IDs and matching kader
-        users = User.objects.filter(id__in=user_ids)
-        if user_kader:
-            users = users.filter(userprofile__kader=user_kader)
+        users = visible_users_with_results_for_user(request.user)
 
         user_list = [
             {
                 'id': u.id,
-                'name': u.get_full_name() or u.username  # fallback to username
+                'name': u.get_full_name() or u.username
             }
             for u in users
         ]
+
         return JsonResponse({'users': user_list})
 
     except Exception as e:
@@ -89,15 +110,33 @@ def users_with_results(request):
 @login_required
 def fetch_plot_data(request, filename):
     try:
-        from accounts.models import UserProfile
-
         # 0. Resolve user's kader
         try:
             user_kader = request.user.userprofile.kader
         except UserProfile.DoesNotExist:
             return JsonResponse({"error": "User has no kader"}, status=404)
 
-        unique_filename = f"{filename}_{user_kader.name}"
+        # Build the base queryset
+        qs = publishedFile.objects.filter(published=True, filename=filename)
+
+        # Apply access rules
+        if not request.user.is_superuser:
+            # Users can see files of their own kader
+            condition = Q(kader=user_kader)
+
+            # If their kader has shared_pool, also include files from other shared kaders
+            if user_kader.shared_pool:
+                condition |= Q(kader__shared_pool=True)
+
+            qs = qs.filter(condition)
+
+        # Try to get the file or return 404
+        try:
+            file_obj = qs.get()
+        except publishedFile.DoesNotExist:
+            return JsonResponse({"error": "File not accessible"}, status=404)
+
+        unique_filename = f"{file_obj.filename}_{file_obj.kader.name}"
 
         # 1. Load control points safely by unique_filename
         try:
@@ -124,7 +163,7 @@ def fetch_plot_data(request, filename):
         ncP_max = len(distances)
 
         # 2. Users with exactly ncP_max entries (public filename!)
-        matching_users = (
+        matching_users_qs = (
             UserResult.objects
             .filter(filename=filename)
             .values('user_id')
@@ -132,7 +171,11 @@ def fetch_plot_data(request, filename):
             .filter(count=ncP_max)
         )
 
-        user_ids = [u['user_id'] for u in matching_users]
+        # Exclude "Trainer" users only if the requesting user is not a trainer
+        if not request.user.groups.filter(name='Trainer').exists():
+            matching_users_qs = matching_users_qs.exclude(user__groups__name='Trainer')
+
+        user_ids = [u['user_id'] for u in matching_users_qs]
 
         # 3. Load and validate user data
         all_user_data = []
@@ -267,6 +310,10 @@ def user_game_stats(request, user_id=None):
 
     # Get global results (stats for all users)
     results_global = UserResult.objects.filter(competition=True)
+
+    # Exclude users in the "Trainer" group
+    results_global = results_global.exclude(user__groups__name='Trainer')
+    
     global_entries = results_global.count()
 
     fastest_global = 0
@@ -434,19 +481,34 @@ def trainer_stats(request):
 @login_required
 def load_file(request, filename):
     try:
-        # get user's kader
+        # Get user's kader
         try:
             user_kader = request.user.userprofile.kader
         except UserProfile.DoesNotExist:
             return HttpResponseNotFound("User has no kader assigned")
 
-        unique_filename = f"{filename}_{user_kader.name}"
+        # Build queryset of files user is allowed to see
+        qs = publishedFile.objects.filter(published=True, filename=filename)
 
-        gamefile = publishedFile.objects.get(unique_filename=unique_filename)
+        if not request.user.is_superuser:
+            # Always allow files from the user's own kader
+            condition = Q(kader=user_kader)
+
+            # If the user's kader is allowed to share, include other shared_pool files
+            if user_kader.shared_pool:
+                condition |= Q(kader__shared_pool=True)
+
+            qs = qs.filter(condition)
+
+        # Fetch the file
+        try:
+            gamefile = qs.get()
+        except publishedFile.DoesNotExist:
+            return HttpResponseNotFound("File not accessible")
+
+        # Load the data
         data = gamefile.data or {}
-
         file_base = filename.replace('.json', '')
-
         cp_count = len(data.get('cP', []))
 
         existing_entries = list(
@@ -462,9 +524,6 @@ def load_file(request, filename):
             'data': data,
             'missingCPs': missing_cps
         })
-
-    except publishedFile.DoesNotExist:
-        return HttpResponseNotFound("File not found for this kader")
 
     except Exception as e:
         return JsonResponse(

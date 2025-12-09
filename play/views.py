@@ -7,7 +7,7 @@ from django.contrib.auth.decorators import login_required
 from .models import UserResult
 from coursesetter.models import publishedFile
 from accounts.models import UserProfile, DeviceCounter
-from django.db.models import F
+from django.db.models import F, Q
 
 @login_required
 def index(request):
@@ -20,21 +20,25 @@ def get_files(request):
     metadata = []
 
     try:
-        # Try to get user's kader
         try:
             user_kader = user.userprofile.kader
         except UserProfile.DoesNotExist:
-            user_kader = None
+            return JsonResponse({'files': [], 'user_kader': '', 'shared_pool': False}, safe=False)
 
-        # Only load published files in the same kader
-        files = publishedFile.objects.filter(published=True, kader=user_kader)
+        # Base queryset: only published files
+        qs = publishedFile.objects.filter(published=True)
 
-        for pub in files:
+        if not user.is_superuser:
+            condition = Q(kader=user_kader)
+            if user_kader.shared_pool:
+                condition |= Q(kader__shared_pool=True)
+            qs = qs.filter(condition)
+
+        for pub in qs:
             filename = pub.filename
             cp_count = pub.ncP or 0
             file_base = filename.replace('.json', '')
 
-            # Count how many control pairs the user has already entered
             existing_entries = UserResult.objects.filter(
                 user=user,
                 filename=file_base
@@ -46,9 +50,15 @@ def get_files(request):
                 'cPCount': cp_count,
                 'userEntryCount': existing_entries.count(),
                 'published': True,
+                'kader': pub.kader.name if pub.kader else '',
+                'author': pub.author or '',
             })
 
-        return JsonResponse(metadata, safe=False)
+        return JsonResponse({
+            'files': metadata,
+            'user_kader': user_kader.name if user_kader else '',
+            'shared_pool': user_kader.shared_pool if user_kader else False
+        }, safe=False)
 
     except Exception as e:
         return JsonResponse({'error': f'Error in get_files(): {str(e)}'}, status=500)
@@ -57,11 +67,11 @@ def get_files(request):
 @login_required
 def load_file(request, filename):
     try:
+        # Detect mobile vs desktop
         user_agent = request.META.get('HTTP_USER_AGENT', '').lower()
         is_mobile = any(m in user_agent for m in ['iphone', 'android', 'ipad', 'mobile'])
 
-        if not request.user.groups.filter(name='Trainer').exists(): #filter out trainers, always desktop
-            # Increment counters
+        if not request.user.groups.filter(name='Trainer').exists():  # trainers are skipped
             counter, _ = DeviceCounter.objects.get_or_create(pk=1)
             if is_mobile:
                 counter.mobile_count = F('mobile_count') + 1
@@ -69,19 +79,34 @@ def load_file(request, filename):
                 counter.desktop_count = F('desktop_count') + 1
             counter.save()
 
-        # get user's kader
+        # Get user's kader
         try:
             user_kader = request.user.userprofile.kader
         except UserProfile.DoesNotExist:
             return HttpResponseNotFound("User has no kader assigned")
 
-        unique_filename = f"{filename}_{user_kader.name}"
+        # Build queryset of files user is allowed to see
+        qs = publishedFile.objects.filter(published=True, filename=filename)
 
-        gamefile = publishedFile.objects.get(unique_filename=unique_filename)
+        if not request.user.is_superuser:
+            # Users always see their own kader files
+            condition = Q(kader=user_kader)
+
+            # If their kader allows shared_pool, include other shared files
+            if user_kader.shared_pool:
+                condition |= Q(kader__shared_pool=True)
+
+            qs = qs.filter(condition)
+
+        # Try to get the file
+        try:
+            gamefile = qs.get()
+        except publishedFile.DoesNotExist:
+            return HttpResponseNotFound("File not accessible")
+
+        # Load data
         data = gamefile.data or {}
-
         file_base = filename.replace('.json', '')
-
         cp_count = len(data.get('cP', []))
 
         existing_entries = list(
@@ -98,14 +123,12 @@ def load_file(request, filename):
             'missingCPs': missing_cps
         })
 
-    except publishedFile.DoesNotExist:
-        return HttpResponseNotFound("File not found for this kader")
-
     except Exception as e:
         return JsonResponse(
             {'message': 'Error loading file', 'error': str(e)},
             status=500
         )
+
 
 @login_required
 def submit_result(request):

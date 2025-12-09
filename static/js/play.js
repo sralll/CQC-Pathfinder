@@ -117,98 +117,128 @@ document.addEventListener("DOMContentLoaded", () => {
 closeModal.onclick = () => modalP.style.display = "none";
 
 function loadFileList() {
-    let tbody = fileTable.querySelector('tbody');
+    const table = document.getElementById('fileTable');
+    const tbody = table.querySelector('tbody');
 
-    // Show a loading spinner row
+    // Show loading spinner
     tbody.innerHTML = `
         <tr>
             <td colspan="4" style="text-align: center; padding: 20px;">
-                <i style="font-size: 2rem; padding: 0px 5px" class="fa-solid fa-spinner fa-spin-pulse"></i>
+                <i class="fa-solid fa-spinner fa-spin-pulse" style="font-size:2rem;"></i>
             </td>
         </tr>
     `;
+
     fetch('/play/get-files/')
         .then(response => response.json())
-        .then(files => {
-            // Sort files by modified date (latest first)
-            files.sort((a, b) => new Date(b.modified) - new Date(a.modified));
+        .then(data => {
+            const files = data.files;
+            const userKaderName = data.user_kader;
+            const showKaderColumn = data.shared_pool;
 
-            // Get or create the tbody element
-            let tbody = fileTable.querySelector('tbody');
-            if (!tbody) {
-                tbody = document.createElement('tbody');  // Create tbody if it doesn't exist
-                fileTable.appendChild(tbody);  // Append tbody to table
+            // Sort: own kader first, then date descending
+            files.sort((a, b) => {
+                const aOwn = a.kader === userKaderName ? 1 : 0;
+                const bOwn = b.kader === userKaderName ? 1 : 0;
+                if (bOwn - aOwn !== 0) return bOwn - aOwn;
+                return new Date(b.modified) - new Date(a.modified);
+            });
+
+            // Build table header dynamically
+            const thead = table.querySelector('thead');
+            thead.innerHTML = '';
+            const headerRow = document.createElement('tr');
+
+            ['Projekt', 'Posten', 'Status'].forEach(text => {
+                const th = document.createElement('th');
+                th.textContent = text;
+                th.classList.add('tableHeadProjects');
+                headerRow.appendChild(th);
+            });
+
+            if (showKaderColumn) {
+                const thKader = document.createElement('th');
+                thKader.textContent = 'Kader';
+                thKader.classList.add('tableHeadProjects');
+                headerRow.appendChild(thKader);
             }
 
-            // Clear the existing table rows (inside tbody)
+            thead.appendChild(headerRow);
             tbody.innerHTML = '';
 
-            // Loop through each file and add a row
+            // Fill table rows
             files.forEach(file => {
-                if (!file.published) return;                            
+                if (!file.published) return;
+
                 const row = document.createElement('tr');
                 row.classList.add('tableRowProjects');
-                row.style.borderBottom = '1px solid #ccc'; // Add a bottom border to each row
-                    
-                // File name without the extension
-                const fileNameCell = document.createElement('td');
-                fileNameCell.classList.add('tableCellProjects');
-                const fileNameWithoutExtension = file.filename.replace('.json', ''); // Remove the '.json' extension
-                const fileNameText = document.createElement('span');
-                fileNameText.textContent = fileNameWithoutExtension || 'Unknown'; // Display filename without extension
 
-                fileNameCell.appendChild(fileNameText);
-                row.appendChild(fileNameCell);
+                // Projekt
+                const projektCell = document.createElement('td');
+                projektCell.classList.add('tableCellProjects');
 
-                // Number of cP entries
-                const cpCountCell = document.createElement('td');
-                cpCountCell.classList.add('tableCellProjects');
-                const cpCount = file.cPCount; // Count the number of cP entries (if exists)
-                cpCountCell.textContent = cpCount; // Display the number of cP entries
-                cpCountCell.style.textAlign = 'center'; // Center the text
-                row.appendChild(cpCountCell);
-                    
-                // Completion Status
+                // Truncate if longer than 30 characters
+                const maxLength = 30;
+                let displayName = file.filename;
+                if (displayName.length > maxLength) {
+                    displayName = displayName.slice(0, maxLength) + '...';
+                }
+
+                projektCell.textContent = displayName;
+                projektCell.title = file.filename;
+                projektCell.style.wordBreak = "break-word";
+                projektCell.style.whiteSpace = "normal";
+                projektCell.style.maxWidth = "200px";
+                row.appendChild(projektCell);
+
+                // Posten
+                const postenCell = document.createElement('td');
+                postenCell.classList.add('tableCellProjects');
+                postenCell.textContent = file.cPCount;
+                postenCell.style.textAlign = 'center';
+                row.appendChild(postenCell);
+
+                // Status
                 const statusCell = document.createElement('td');
                 statusCell.classList.add('tableCellProjects');
-                let status = 'neu';
-                    statusCell.style.color = 'blue'; // Default background color
 
+                let status = 'neu';
+                let color = 'blue';
                 if (file.userEntryCount === file.cPCount) {
                     status = 'erledigt';
-                    statusCell.style.color = 'green'; // Default background color
-
+                    color = 'green';
                 } else if (file.userEntryCount > 0) {
                     status = 'begonnen';
-                    statusCell.style.color = 'orange'; // Default background color
-
+                    color = 'orange';
                 }
+
                 statusCell.textContent = status;
+                statusCell.style.color = color;
                 statusCell.style.textAlign = 'center';
                 row.appendChild(statusCell);
 
-                // Append row to tbody
-                tbody.appendChild(row);
-                                // Add hover effect to the table cell (feedback)
+                // Kader (conditionally)
+                if (showKaderColumn) {
+                    const kaderCell = document.createElement('td');
+                    kaderCell.classList.add('tableCellProjects');
+                    kaderCell.textContent = file.kader || '';
+                    row.appendChild(kaderCell);
+                }
+
+                // Row hover/click
                 row.style.cursor = 'pointer';
-                row.addEventListener('mouseenter', () => {
-                    row.style.backgroundColor = '#f0f0f0'; // Light gray background when hovering
-                });
-                row.addEventListener('mouseleave', () => {
-                    row.style.backgroundColor = ''; // Reset background when not hovering
-                });
-                // Add click event to set filename in input field (entire cell)
-                row.addEventListener('click', () => {
-                    loadGameData(file.filename); // Call the loadFile function when clicked                        });
-                });
+                row.addEventListener('mouseenter', () => row.style.backgroundColor = '#f0f0f0');
+                row.addEventListener('mouseleave', () => row.style.backgroundColor = '');
+                row.addEventListener('click', () => loadGameData(file.filename));
+
+                tbody.appendChild(row);
             });
         })
         .catch(error => {
             console.error('Error loading file list:', error);
-            alert('Failed to load file list');
+            tbody.innerHTML = `<tr><td colspan="5">Failed to load file list</td></tr>`;
         });
 }
-
 
 function drawLoadingAnimation(timestamp) {
     if (!startTime) startTime = timestamp;

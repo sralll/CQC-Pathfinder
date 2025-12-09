@@ -162,7 +162,6 @@ body.desktop #fileTable {
 }
 
 .tableCellProjects {
-    cursor: pointer;
     border-bottom: 1px solid #ddd;
 }
 
