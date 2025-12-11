@@ -30,6 +30,7 @@ body.mobile #resultsRow {
     padding: 5px;
     overflow-y: auto; /* scroll if table gets tall */
     box-sizing: border-box;
+    width: 100%;
 }
 
 /* Right half */
@@ -124,7 +125,8 @@ body.mobile #completionTable {
 }
 
 #OLchart {
-    height: 450px;
+    width: 95vw;
+    max-width: 700px;
 }
 
 body.mobile #resultContent {
