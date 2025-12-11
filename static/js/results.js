@@ -786,6 +786,8 @@ function drawGridY(scaling) {
 
 function draw(scaling) {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    if (!selectedUsers || selectedUsers.length === 0) return;
     drawGridX();
     drawGridY(scaling);
     selectedUsers.forEach((userId, index) => {
