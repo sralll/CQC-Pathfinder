@@ -251,10 +251,22 @@ function resizeCanvas() {
     canvas.height = canvas.clientHeight * dpr;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.scale(dpr, dpr);
+    console.log("trigger");
 }
 
-window.addEventListener('load', resizeCanvas);
-window.addEventListener('resize', resizeCanvas);
+// On load / resize:
+window.addEventListener('load', () => {
+    resizeCanvas();
+    //const scaling = calcPlotScaling();
+    //draw(scaling);
+});
+
+window.addEventListener('resize', () => {
+    resizeCanvas();
+    const scaling = calcPlotScaling();
+    draw(scaling);
+});
+
 
 function normalizeCQC(cqc) {
     if (!cqc.blockedTerrain) {
@@ -363,7 +375,6 @@ function nextControlResults() {
         const routeColors = drawRoutes(ncP);
         drawLegend(ncP, routeColors);
         document.getElementById("currentControl").textContent = `Posten ${ncP+1}`;
-        
         const scaling = calcPlotScaling();
         draw(scaling);
     }
