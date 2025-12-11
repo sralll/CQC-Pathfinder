@@ -245,29 +245,6 @@ function calcPlotScaling() {
     };
 }
 
-function resizeCanvas() {
-    const dpr = window.devicePixelRatio || 1;
-    canvas.width = canvas.clientWidth * dpr;
-    canvas.height = canvas.clientHeight * dpr;
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.scale(dpr, dpr);
-    console.log("trigger");
-}
-
-// On load / resize:
-window.addEventListener('load', () => {
-    resizeCanvas();
-    //const scaling = calcPlotScaling();
-    //draw(scaling);
-});
-
-window.addEventListener('resize', () => {
-    resizeCanvas();
-    const scaling = calcPlotScaling();
-    draw(scaling);
-});
-
-
 function normalizeCQC(cqc) {
     if (!cqc.blockedTerrain) {
         cqc.blockedTerrain = { lines: [], areas: [] };
@@ -375,6 +352,7 @@ function nextControlResults() {
         const routeColors = drawRoutes(ncP);
         drawLegend(ncP, routeColors);
         document.getElementById("currentControl").textContent = `Posten ${ncP+1}`;
+        
         const scaling = calcPlotScaling();
         draw(scaling);
     }
@@ -695,28 +673,11 @@ function drawUserLine(userId, index, scaling) {
     const fullName = tabledata.find(u => u.user_id === userId)?.full_name || '';
     const canvasName = fullName.substring(0, 3);
 
-    const dpr = window.devicePixelRatio || 1;
-
-    // Save current context
-    ctx.save();
-
-    // Reset transform so font size is in CSS pixels
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.font = "14px Arial"; 
+    ctx.textAlign = 'left'; // Set text alignment to left
+    ctx.textBaseline = 'middle'; // Set text baseline to middle
+    ctx.font = "14px Arial";
     ctx.fillStyle = userColors[index % userColors.length];
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'middle';
-    console.log("new trigger");
-
-    // Draw text at the scaled position
-    ctx.fillText(
-        canvasName, 
-        (xCoords[xCoords.length - 1] + 5) * dpr, 
-        yCoords[yCoords.length - 1] * dpr
-    );
-
-    // Restore previous context with scaling
-    ctx.restore();
+    ctx.fillText(canvasName, xCoords[xCoords.length - 1] + 5, yCoords[yCoords.length - 1])
 }
 
 function drawGridX() {
@@ -799,45 +760,25 @@ function drawGridY(scaling) {
     ctx.strokeStyle = 'black';
     ctx.stroke();
 
-    const dpr = window.devicePixelRatio || 1;
-
     ctx.save();
     ctx.strokeStyle = 'grey';
     ctx.lineWidth = 1;
-
-    // Save scaled context for lines
-    ctx.save();
-    ctx.beginPath();
-    ctx.moveTo(leftMargin, 1);
-    ctx.lineTo(leftMargin, canvas.height - 1);
-    ctx.lineTo(rightMargin, canvas.height - 1);
-    ctx.lineTo(rightMargin, 1);
-    ctx.lineTo(leftMargin, 1);
-    ctx.stroke();
-    ctx.restore(); // back to scaled context
-
     ctx.font = '12px sans-serif';
     ctx.fillStyle = '#666';
 
     for (let yVal = startYVal; yVal <= scaling.max; yVal += interval) {
+        // Correct y-value transformation:
         const yCanvas = topMargin + (yVal - scaling.offset) * scaling.scale;
 
-        // Draw horizontal line
         ctx.beginPath();
         ctx.moveTo(leftMargin, yCanvas);
         ctx.lineTo(rightMargin, yCanvas);
         ctx.stroke();
 
-        // Draw text using neutral transform for consistent font size
-        ctx.save();
-        ctx.setTransform(1, 0, 0, 1, 0, 0); // remove DPR scaling
-        ctx.textAlign = 'right';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(
-            `${yVal.toFixed(0)}s`,
-            (0.06 * canvas.width - 3) * dpr,
-            yCanvas * dpr
-        );
+        // Label the line
+        ctx.textAlign = 'right'; // Set text alignment to right
+        ctx.textBaseline = 'middle'; // Set text baseline to middle
+        ctx.fillText(`${yVal.toFixed(0)}s`, 0.06*canvasWidth-3, yCanvas);
     }
 
     ctx.restore();
