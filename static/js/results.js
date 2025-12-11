@@ -22,6 +22,9 @@ const userColors = [
     '#ff9901', // yellow
 ];
 
+
+let gridXPositions = [];   // reset
+
 const routeColor = ["#FFFF00", "#FF0000", "#FF00FF", "#0000FF", "#00FFFF", "#00FF00"];
 
 const canvas = document.getElementById('OLchart');
@@ -683,6 +686,8 @@ function drawUserLine(userId, index, scaling) {
 function drawGridX() {
     if (!prog_distance || prog_distance.length === 0) return;
 
+    gridXPositions = []; // reset
+
     const canvasWidth = canvas.width;
     const canvasHeight = canvas.height;
 
@@ -703,6 +708,8 @@ function drawGridX() {
         // Adjust x-coordinate for the left and right margins
         const x = leftMargin + ((distance / totalDistance) * (rightMargin - leftMargin));
 
+        gridXPositions.push(x);
+
         ctx.beginPath();
         ctx.moveTo(x, 0);
         ctx.lineTo(x, canvasHeight);
@@ -722,6 +729,38 @@ function drawGridX() {
 
     ctx.restore(); // Restore canvas state
 }
+
+canvas.addEventListener("click", (e) => {
+    if (!gridXPositions.length) return;
+
+    const rect = canvas.getBoundingClientRect();
+
+    // Mouse X relative to canvas units
+    const clickX = (e.clientX - rect.left);
+    // Loop through intervals
+    for (let i = 0; i < gridXPositions.length - 1; i++) {
+        if (clickX <= gridXPositions[i]) {
+            ncP = i;
+            break;
+        } else {
+            ncP = gridXPositions.length - 1;
+        }
+    }
+
+    calcTransform(ncP); // Just use first control point for now
+    ctxM.setTransform(...targetTransform);
+    drawMap();
+    drawBlockedLines();
+    drawBlockedAreas();
+    drawCP(ncP);
+    const routeColors = drawRoutes(ncP);
+    drawLegend(ncP, routeColors);
+    document.getElementById("currentControl").textContent = `Posten ${ncP+1}`;
+
+    const scaling = calcPlotScaling();
+    draw(scaling);
+});
+
 
 function drawGridY(scaling) {
     const canvasHeight = canvas.height;
