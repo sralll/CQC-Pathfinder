@@ -1246,6 +1246,7 @@ document.addEventListener("keydown", function(e) {
                     ncP += 1;
                     nR = 0;
                     nRP = 0;
+                    if (cqc.cP.length > ncP) {setMapTransformForControlPair(ncP)};
                 }
             break;
             case 80: //p
@@ -1505,6 +1506,7 @@ function saveCanvas() {
 //set tool modes
 function setModeC() {
     mode = "placeControls";
+    alertBox.innerHTML = '';
     draw(rc); //update canvas, tables
 }
 
@@ -1512,6 +1514,7 @@ function setModeR() {
     nRP = 0;
     nR = 0;
     mode = "drawRoutes";
+    alertBox.innerHTML = '';
 
     const cps = cqc.cP;
     const maxIndex = cps.length - 1;
@@ -1534,6 +1537,7 @@ function setModeR() {
 
 function setModeS() {
     mode = "drawSperre";
+    alertBox.innerHTML = '';
     draw(rc); //update canvas, tables
 }
 
@@ -1550,8 +1554,41 @@ function setcP(index) {
     if (!cDraw) {
         ncP = index;
     }
+
+    if (cqc.cP.length > ncP) {setMapTransformForControlPair(ncP)};
+
     nR = 0; //start at first route when switching control pairs
     draw(rc); //update canvas, tables
+}
+
+function setMapTransformForControlPair(ncP) {
+    const start = cqc.cP[ncP].start;
+    const ziel  = cqc.cP[ncP].ziel;
+
+    // --- 1. Center point between controls ---
+    const cx = (start.x + ziel.x) / 2;
+    const cy = (start.y + ziel.y) / 2;
+
+    // --- 2. Distance between controls ---
+    const dx = ziel.x - start.x;
+    const dy = ziel.y - start.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+
+    // --- 3. Determine zoom ---
+    // You can tune this later
+    const marginFactor = 1.5;
+
+    const zoomX = routeCanvas.width  / (dist * marginFactor);
+    const zoomY = routeCanvas.height / (dist * marginFactor);
+
+    // Take the limiting zoom (incl. hard limits)
+    scale = Math.min(zoomX, zoomY, 5);
+    scale = Math.max(scale, 0.3);
+
+    // --- 4. Compute translation ---
+    // canvas center minus transformed center point
+    transX = routeCanvas.width  / 2 - cx * scale;
+    transY = routeCanvas.height / 2 - cy * scale;
 }
 
 //delete function
@@ -1563,6 +1600,7 @@ function delControl() {
                 if (!cDraw) {
                     if (ncP > 0) {
                         ncP -= 1; //jump back to previous control
+                        setMapTransformForControlPair(ncP);
                     }
                 } else {
                     cDraw = false; //abort active drawing mode
