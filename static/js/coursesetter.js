@@ -459,11 +459,15 @@ function updateTableC() {
     
     //limit div size
     const cpt = document.getElementById('controlPairsTable')
-    if (cpt.scrollHeight  < 600) {
+    const divM = document.getElementById('divM');
+    
+    const availableHeight = window.innerHeight - divM.offsetHeight/2*3; //available height for table div
+
+    // Set table height: minimum of content height or availableHeight
+    if (cpt.scrollHeight < availableHeight) {
         tableC.style.height = cpt.scrollHeight + "px";
-    }
-    else {
-        tableC.style.height = "600px";
+    } else {
+        tableC.style.height = availableHeight + "px";
     }
     
     //change background color according to tool mode

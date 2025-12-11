@@ -245,6 +245,17 @@ function calcPlotScaling() {
     };
 }
 
+function resizeCanvas() {
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = canvas.clientWidth * dpr;
+    canvas.height = canvas.clientHeight * dpr;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.scale(dpr, dpr);
+}
+
+window.addEventListener('load', resizeCanvas);
+window.addEventListener('resize', resizeCanvas);
+
 function normalizeCQC(cqc) {
     if (!cqc.blockedTerrain) {
         cqc.blockedTerrain = { lines: [], areas: [] };
