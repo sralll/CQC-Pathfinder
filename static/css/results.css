@@ -71,7 +71,10 @@ body.mobile #jsonDropdown {
     border: none;
     margin: 20px 0;
     width: 95vw;
-    max-width: 700px;
+}
+
+body.desktop #completionTable {
+    max-width: 45vw;
 }
 
 body.mobile #completionTable {
@@ -126,7 +129,10 @@ body.mobile #completionTable {
 
 #OLchart {
     width: 95vw;
-    max-width: 700px;
+}
+
+body.desktop #OLchart {
+    max-width: 45vw;
 }
 
 body.mobile #resultContent {
