@@ -468,7 +468,7 @@ function animateStep(timestamp) {
     const interpolatedTransform = interpolateTransform(startTransform, targetTransform, progress);
     ctx.resetTransform();
     ctx.clearRect(0, 0, canvas.width, canvas.height); // Clear canvas
-    //console.log(interpolatedTransform)
+
     // Apply the interpolated transformation matrix
     ctx.setTransform(...interpolatedTransform);
     drawMap(); // Draw the image
@@ -637,7 +637,6 @@ function drawRoutes()  {
         });
 
         const sortedIndices = generateSortedIndicesByPos(cqc.cP[ncP].route);
-        console.log('Sorted Indices:' + sortedIndices);
         const colorPicker = reduceColors(cqc.cP[ncP].route.length);
         routeButtonContainer.innerHTML = ""; // Clear existing cells
 

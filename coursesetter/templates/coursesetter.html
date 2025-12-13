@@ -40,7 +40,7 @@
 		<table id="tableS">
 			<thead>
 				<tr>
-					<th id="buttonProjects" class="tableHeadMain">Projekte...</th>
+					<th id="buttonProjects" class="tableHeadMain" onclick="openProjects()">Projekte...</th>
 				</tr>
 			</thead>
 		</table>
@@ -52,31 +52,31 @@
 				<tr>
 					<th style="visibility:hidden" class="tableHeadMain"></th>
 					<th style="visibility:hidden" class="tableHeadMain"></th>
-					<th id="blockRemove" style="visibility:hidden" class="tableHeadMain" title="Erase (E)">
+					<th id="blockRemove" style="visibility:hidden" class="tableHeadMain" title="Erase (E)" onclick="removeBlock()">
 						<i class="fa-solid fa-eraser"></i>
 					</th>
 				</tr>
 				<tr>
 					<th style="visibility:hidden" class="tableHeadMain"></th>
-					<th id="buttonRemoveBlocked" class="tableHeadMain" style="visibility:hidden" title="Erase (E)">
+					<th id="buttonRemoveCVBlocked" class="tableHeadMain" style="visibility:hidden" title="Erase (E)">
 						<i class="fa-solid fa-eraser"></i>
 					</th>
-					<th id="blockArea" style="visibility:hidden" class="tableHeadMain" title="Fläche (F)">
+					<th id="blockArea" style="visibility:hidden" class="tableHeadMain" title="Fläche (F)" onclick="blockingArea()">
 						<i class="fa-solid fa-draw-polygon"></i>
 					</th>
 				</tr>
 				<tr>
 					<th style="visibility:hidden" class="tableHeadMain"></th>
-					<th id="buttonAddblocked" class="tableHeadMain" style="visibility:hidden" title="Add (A)">
+					<th id="buttonAddCVblocked" class="tableHeadMain" style="visibility:hidden" title="Add (A)">
 						<i class="fa-solid fa-pen"></i>
 					</th>
-					<th id="blockLine" class="tableHeadMain" style="visibility:hidden" title="Linie (L)">
+					<th id="blockLine" class="tableHeadMain" style="visibility:hidden" title="Linie (L)" onclick="blockingLine()">
 						<i class="fa-solid fa-slash"></i>
 					</th>
 				</tr>
 				<tr id="mapMenuTableRow">
-					<th id="buttonMap" class="tableHeadMain" title="Map (M)">Karte...</th>
-					<th id="buttonCV" class="tableHeadMain" title="Vision (V)"> <!--Remove display none when Version CV ready: style="display:none" --> 
+					<th id="buttonMap" class="tableHeadMain" title="Map (M)" onclick="openMapModal()">Karte...</th>
+					<th id="buttonCV" class="tableHeadMain" title="Vision (V)" onclick="runUNet()">
 						<i class="fa-solid fa-eye"></i>
 					</th>
 					<th id="buttonBlock" class="tableHeadMain" onclick="setModeS()" title="Sperrgebiet (S)">
@@ -99,7 +99,7 @@
 
 	<div id="modalP" class="modal">
         <div class="modal-content">
-			<span id="closeProjects" class="closeModal">&times;</span>
+			<span id="closeProjects" class="closeModal" onclick="closeProjects()">&times;</span>
 			<div id="inputDiv">
             	<input type="text" id="filename" placeholder="Projektname">
             	<button id="submitSaveButton">
@@ -130,9 +130,9 @@
 
 	<div id="modalM" class="modal">
 		<div class="modal-content">
-			<span id="closeMap" class="closeModal">&times;</span>
+			<span id="closeMap" class="closeModal" onclick="closeMapModal()">&times;</span>
 			<div id="inputDiv">
-				<form id="uploadForm" enctype="multipart/form-data">
+				<form id="uploadForm" enctype="multipart/form-data" class="reset-form">
 					<input type="file" id="fileInput" accept="image/*">
 					<button type="submit" id="uploadButton">
 						<i class="fa-solid fa-upload"></i>

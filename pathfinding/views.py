@@ -169,7 +169,7 @@ def run_UNet_stream(request):
         step = TILE_SIZE - overlap
         tiles_y = math.ceil((img_h - overlap) / step)
         tiles_x = math.ceil((img_w - overlap) / step)
-        total_tiles = tiles_y * tiles_x
+        total_tiles = max(1,tiles_y * tiles_x)
         processed_tiles = 0
 
         def model_predict_fn(input_data):

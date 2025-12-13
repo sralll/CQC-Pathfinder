@@ -15,7 +15,7 @@ def extract_pathfinding_inputs(request):
         blockedTerrain = data.get("blockedTerrain", {})  # <-- add this
 
         if not start or not ziel or not map_file:
-            return {"error": "Missing start, ziel, or mapFile"}, 400
+            return {"error": "Start, Ziel, oder Karte fehlt"}, 400
 
         train_scale = 0.710
         start_x = int(start["x"] / train_scale)
