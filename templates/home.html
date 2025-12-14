@@ -21,6 +21,22 @@
     <div class="half-button-row">
         <a id="fbButton" class="home-button full-width" href="/feedback/"> <i class="fa-regular fa-comments"></i> Feedback</a>
     </div>
-    <a class="password-link" href="/password_change/">Passwort ändern</a>
+    <span class="link-row">
+        <a class="password-link" href="/password_change/">Passwort ändern</a>
+        {% if is_trainer %}
+        
+        <a class="password-link"
+           href="{% static 'docs/Anleitung für Trainer.pdf' %}"
+           target="_blank">
+            Guide (PDF)
+        </a>
+        
+        <a class="password-link"
+           href="https://youtu.be/YS3Q4i0wBB8"
+           target="_blank">
+            Guide (Video)
+        </a>
+        {% endif %}
+    </span>
 </div>
 {% endblock %}

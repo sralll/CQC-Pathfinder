@@ -102,3 +102,8 @@ body.desktop #titleLogo {
 #playButton:hover {
     background-color: #cc7a00;
 }
+
+.link-row {
+    display: flex;
+    gap: 2rem;
+}
