@@ -6,9 +6,9 @@ class StyledLoginForm(AuthenticationForm):
         super().__init__(*args, **kwargs)
         self.fields['username'].widget.attrs.update({
             'class': 'form-control',
-            'placeholder': 'E-Mail'
+            'placeholder': 'Benutzername'
         })
         self.fields['password'].widget.attrs.update({
             'class': 'form-control',
-            'placeholder': 'Password'
+            'placeholder': 'Passwort'
         })
