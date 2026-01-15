@@ -13,6 +13,9 @@ let startTransform = null; // To store the starting transformation matrix
 let targetTransform = null; // To store the target transformation matrix
 const rControl = 25;		//radius of control circle
 
+const gif = document.getElementById("cheaterGif");
+
+
 const userColors = [
     '#ff1e1e', // red
     '#00c000', // blue
@@ -290,6 +293,10 @@ function loadGameData(filename) {
                 loading = false; // Stop spinner
             };
 
+            if (gif) {
+                gif.style.display = "none";
+            }
+
             image.onerror = () => {
                 loading = false;
                 alert("Failed to load image");
@@ -297,8 +304,15 @@ function loadGameData(filename) {
         })
         .catch(error => {
             loading = false;
-            alert("Failed to load game data");
+            //alert("Failed to load game data");
             console.error("Error loading file:", error);
+            
+            ctxM.setTransform(1,0,0,1,0,0);
+            ctxM.clearRect(0, 0, resultMapCanvas.width, resultMapCanvas.height);
+
+            if (gif) {
+                gif.style.display = "block";
+            }
         });
 }
 

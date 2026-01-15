@@ -114,6 +114,22 @@ body.mobile #completionTable {
     height: 600px;
 }
 
+#resultContent {
+    position: relative;
+    justify-content: center;
+}
+
+#cheaterGif {
+    position: absolute;
+    inset: 0;
+    margin: auto;
+    max-width: 100%;
+    max-height: 100%;
+    display: none;
+    z-index: 10;
+    pointer-events: none;
+}
+
 .controlButtons {
     border-radius: 6px;
     border: none;

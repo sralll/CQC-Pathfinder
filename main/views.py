@@ -467,17 +467,38 @@ def load_file(request, filename):
                 condition |= Q(kader__shared_pool=True)
             qs = qs.filter(condition)
 
-        # ✅ Prefer file from user's own kader
+        # Prefer file from user's own kader
         gamefile = qs.filter(kader=user_kader).first() or qs.first()
 
         if not gamefile:
             return HttpResponseNotFound("File not accessible")
 
-        # Load the data
+        # ✅ Load data FIRST
         data = gamefile.data or {}
-        file_base = filename.replace('.json', '')
-        cp_count = len(data.get('cP', []))
 
+        # ✅ Now ncP_max exists
+        ncP_max = len(data.get('cP', []))
+
+        # ✅ Correct filename key
+        file_base = gamefile.filename.replace('.json', '')
+
+        # --- BLOCK users without full result set ---
+        user_entry_count = UserResult.objects.filter(
+            user=request.user,
+            filename=file_base
+        ).count()
+
+        if user_entry_count < ncP_max:
+            return JsonResponse({
+                "distances": [],
+                "results": [],
+                "tableData": [],
+                "avg_times": [],
+                "shortest_route_runtime": [],
+                "incomplete": True,
+            })
+
+        # --- Missing CP logic ---
         existing_entries = list(
             UserResult.objects.filter(
                 user=request.user,
@@ -485,7 +506,10 @@ def load_file(request, filename):
             ).values_list('control_pair_index', flat=True)
         )
 
-        missing_cps = [i for i in range(cp_count) if i not in existing_entries]
+        missing_cps = [
+            i for i in range(ncP_max)
+            if i not in existing_entries
+        ]
 
         return JsonResponse({
             'data': data,

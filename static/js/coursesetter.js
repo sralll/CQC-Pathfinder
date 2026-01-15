@@ -9,7 +9,10 @@ const DRAG_THRESHOLD_PX = 7;    // minimum pixels to move before panning starts
 const RUN_SPEED = 4.75;         // average running speed in m/s
 const MAX_HISTORY = 100;        // Undo stack size
 const BLOCK_AREA_SNAP_DIST = 8; // distance to snap to start of blocking polygon
+const PICK_RADIUS = 6;          // px in map coordinates
 
+const CONTINUATION_COLOR = "rgba(255, 255, 0, 0.4)";
+const CONTINUATION_WIDTH = 1.5;
 
 // state variables and flags
 let mode = "placeControls";	    //main mode of editor
@@ -28,6 +31,10 @@ let cDraw = rDraw = sDraw = false;  //flags for drawing control, route, sperre
 let isEditingElevation = false; //flag for elevation editing
 let nnController = null;        //controller for neural network fetch aborting
 let pfController = null;        //controller for pathfinding fetch aborting
+
+let editRoute = null;           // active route being edited
+let editContinuation = null;    // remaining points after split
+let editInsertIndex = null;     // index where split happened
 
 // timers
 let startTime = null;           //loading animation timer
@@ -516,7 +523,6 @@ function redo() {
     applyEditorState(next);
 }
 
-
 //main mouse event function
 function mouseEvent(event) {
     liveCursor(event); //get inverse transformed mouse coordinates (relative to map)
@@ -562,6 +568,13 @@ function mouseEvent(event) {
                     makeControl(event);
                     break;
                 case "drawRoutes":
+                    // 1. reconnect if clicking dashed route
+                    if (tryReconnectEdit(xClick, yClick)) break;
+
+                    // 2. try split on active route
+                    if (tryEditRoutePoint(xClick, yClick)) break;
+
+                    // 3. normal point insertion
                     makeRP(event);
                     break;
                 case "scaleMap":
@@ -779,6 +792,61 @@ function makeRP(event) {
         rDraw = false;
         markUnsaved();
     }
+}
+
+function tryReconnectEdit(x, y) {
+    if (!editContinuation || !editRoute) return false;
+
+    for (let i = 0; i < editContinuation.length; i++) {
+        if (isNear(editContinuation[i], x, y)) {
+
+            pushUndoState();
+
+            // append remaining original points
+            editRoute.rP.push(...editContinuation.slice(i));
+
+            // cleanup edit state
+            editContinuation = null;
+            editRoute = null;
+            rDraw = false;
+            nRP = 0;
+
+            calcSide();
+            calcLength();
+            calcDir();
+            markUnsaved();
+
+            return true;
+        }
+    }
+    return false;
+}
+
+function tryEditRoutePoint(x, y) {
+    const route = cqc.cP[ncP]?.route[nR];
+    if (!route) return false;
+
+    const rP = route.rP;
+
+    for (let i = 1; i < rP.length - 1; i++) { // avoid start/end
+        if (isNear(rP[i], x, y)) {
+
+            pushUndoState();
+
+            editRoute = route;
+
+            // split
+            editContinuation = rP.slice(i);   // incl clicked point
+            route.rP = rP.slice(0, i + 1);    // keep clicked point
+
+            editInsertIndex = route.rP.length;
+            rDraw = true;
+            nRP = route.rP.length;
+
+            return true;
+        }
+    }
+    return false;
 }
 
 function makeScale(event) {
@@ -2601,6 +2669,30 @@ function drawRoutes() {
         rc.lineWidth = 2;
         rc.stroke();
     }
+
+    drawRouteContinuation(rc);
+}
+
+function drawRouteContinuation(rc) {
+    if (!editContinuation || !editRoute) return;
+
+    rc.save();
+
+    rc.beginPath();
+
+    editContinuation.forEach((point, idx) => {
+        if (idx === 0) {
+            rc.moveTo(point.x, point.y);
+        } else {
+            rc.lineTo(point.x, point.y);
+        }
+    });
+
+    rc.strokeStyle = CONTINUATION_COLOR;
+    rc.lineWidth = CONTINUATION_WIDTH;
+    rc.stroke();
+
+    rc.restore();
 }
 
 function drawConnectionArrow(start, ziel, angle) {
@@ -2676,6 +2768,10 @@ function calcTransf(amount,e) {
 
 function distance(a, b) {
     return Math.hypot(a.x - b.x, a.y - b.y);
+}
+
+function isNear(p, x, y, r = PICK_RADIUS) {
+    return Math.hypot(p.x - x, p.y - y) <= r;
 }
 
 function distanceToSegment(px, py, x1, y1, x2, y2) {
