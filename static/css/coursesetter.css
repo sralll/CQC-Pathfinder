@@ -181,7 +181,28 @@ body.desktop #filename, #fileInput, #buttonScale {
 
 #scaleInputDiv {
     display: none;
+    align-items: flex-start;
+    gap: 12px;
 }
+
+#scaleInputDiv > div {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+#scaleInputDiv label {
+    display: grid;
+    grid-template-columns: 80px auto; /* fixed label width */
+    align-items: center;
+    column-gap: 6px;
+    font-size: 0.9em;
+}
+
+#scaleInputDiv input {
+    width: 10ch;
+}
+
 
 #buttonScale {
     left: 0px;

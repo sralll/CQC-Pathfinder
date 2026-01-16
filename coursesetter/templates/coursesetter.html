@@ -149,9 +149,20 @@
 				</span>
 			</div>
 			<div id="scaleInputDiv">
-        		<input type="number" id="scaleInput" placeholder="Distanz (m)">
-        		<button onclick="submitScale()">Submit</button>
+				<div>
+					<label>
+						Distanz (m)
+						<input type="number" id="scaleInput">
+					</label>
+					
+					<label>
+						Massstab   1:
+						<input type="number" id="mapScaleInput" value="4000" step="500">
+					</label>
+				</div>
+				<button onclick="submitScale()">Submit</button>
 			</div>
+
 		</div>
 	</div>
 

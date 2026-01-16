@@ -127,6 +127,7 @@ const uploadButton = document.getElementById('uploadButton');
 const scaleInputDiv = document.getElementById('scaleInputDiv');
 const scalingInfo = document.getElementById("scalingInfo");
 const scaleInput = document.getElementById("scaleInput");
+const mapScaleInput = document.getElementById("mapScaleInput");
 
 //Main mouseevent listener
 routeCanvas.addEventListener("mousemove", mouseEvent, {passive: true});
@@ -1065,13 +1066,19 @@ function scaleMap() {
 
 function submitScale() {
     const inputValue = scaleInput.value;
+    const mapScale = mapScaleInput.value;
 
     if (isNaN(inputValue) || inputValue <= 0) {
         alert("Please enter a valid positive number!");
         return;
     }
 
-    cqc.scale = inputValue / cqc.sP.dist / 0.48; // DPI relation
+    if (isNaN(mapScale) || mapScale <= 0) {
+        alert("Please enter a valid positive number!");
+        return;
+    }
+
+    cqc.scale = inputValue * 4000 / mapScale / cqc.sP.dist / 0.48; // DPI relation
 
     // Close the modal
     modalM.style.display = "none";
