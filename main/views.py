@@ -386,6 +386,8 @@ def trainer_stats(request):
     qs = UserResult.objects.filter(
         user__userprofile__kader=kader,
         competition=True
+    ).exclude(
+        user__groups__name="Trainer"
     ).annotate(
         rel_error=ExpressionWrapper(
             (F("selected_route_runtime") - F("shortest_route_runtime")) / F("shortest_route_runtime"),
@@ -482,21 +484,24 @@ def load_file(request, filename):
         # ✅ Correct filename key
         file_base = gamefile.filename.replace('.json', '')
 
-        # --- BLOCK users without full result set ---
-        user_entry_count = UserResult.objects.filter(
-            user=request.user,
-            filename=file_base
-        ).count()
+        # --- BLOCK users without full result set (except Trainer) ---
+        is_trainer = request.user.groups.filter(name="Trainer").exists()
 
-        if user_entry_count < ncP_max:
-            return JsonResponse({
-                "distances": [],
-                "results": [],
-                "tableData": [],
-                "avg_times": [],
-                "shortest_route_runtime": [],
-                "incomplete": True,
-            })
+        if not is_trainer:
+            user_entry_count = UserResult.objects.filter(
+                user=request.user,
+                filename=file_base
+            ).count()
+
+            if user_entry_count < ncP_max:
+                return JsonResponse({
+                    "distances": [],
+                    "results": [],
+                    "tableData": [],
+                    "avg_times": [],
+                    "shortest_route_runtime": [],
+                    "incomplete": True,
+                })
 
         # --- Missing CP logic ---
         existing_entries = list(

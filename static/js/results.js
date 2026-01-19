@@ -49,6 +49,27 @@ function getUrlParameter(name) {
     return params.get(name);
 }
 
+function makeEmptyCQC() {
+    return {
+        published: false,
+        mapFile: null,
+        scaled: null,
+        sP: {
+            p1: { x: null, y: null },
+            p2: { x: null, y: null },
+            dist: null
+        },
+        scale: 0.001,
+        cP: [],
+        blockedTerrain: {
+            lines: [],
+            areas: []
+        }
+    };
+}
+
+let cqc = makeEmptyCQC();
+
 window.onload = function () {
     const resultsSpinner = document.getElementById("resultsSpinner");
     resultsSpinner.style.display = "flex";
@@ -251,6 +272,11 @@ function calcPlotScaling() {
     };
 }
 
+function showGif(show) {
+    if (!gif) return;
+    gif.style.display = show ? "block" : "none";
+}
+
 function normalizeCQC(cqc) {
     if (!cqc.blockedTerrain) {
         cqc.blockedTerrain = { lines: [], areas: [] };
@@ -265,55 +291,80 @@ function loadGameData(filename) {
     const url = `/results/load-file/${encodedFilename}/`;
 
     // Start spinner
+    showGif(false);
     loading = true;
     requestAnimationFrame(drawLoadingAnimation);
 
     fetch(url)
-        .then(response => response.json())
-        .then(response => {
-            cqc = response.data;               // original JSON file contents
-            normalizeCQC(cqc);
-            missingCPs = response.missingCPs;  // list of missing control points
+    .then(response => response.json())
+    .then(response => {
 
-            if (missingCPs.length === 0) {
-                missingCPs = Array.from({ length: cqc.cP.length }, (_, i) => i);
-                duplicateGame = true;
-            } else {
-                duplicateGame = false;
-            }
+        // always start with empty CQC
+        cqc = makeEmptyCQC();
 
-            game_file = filename.replace('.json', '');
-            cqc_filename = filename;
+        const hasData =
+            response.data &&
+            Object.keys(response.data).length > 0;
 
-            // Load image
+        if (hasData) {
+            Object.assign(cqc, response.data);
+        }
+
+        // ensure structure
+        cqc.cP ??= [];
+        cqc.blockedTerrain ??= { lines: [], areas: [] };
+
+        // ❗ show GIF if no usable data
+        showGif(!hasData);
+
+        if (!hasData) {
+            loading = false;
+            return;
+        }
+
+        // ---- normal valid-file path ----
+        normalizeCQC(cqc);
+
+        missingCPs = response.missingCPs || [];
+
+        if (missingCPs.length === 0) {
+            missingCPs = Array.from(
+                { length: cqc.cP.length },
+                (_, i) => i
+            );
+            duplicateGame = true;
+        } else {
+            duplicateGame = false;
+        }
+
+        game_file = filename.replace('.json', '');
+        cqc_filename = filename;
+
+        if (cqc.mapFile) {
             image = new Image();
             image.src = cqc.mapFile;
 
             image.onload = () => {
-                loading = false; // Stop spinner
+                loading = false;
             };
-
-            if (gif) {
-                gif.style.display = "none";
-            }
 
             image.onerror = () => {
                 loading = false;
                 alert("Failed to load image");
             };
-        })
-        .catch(error => {
+        } else {
             loading = false;
-            //alert("Failed to load game data");
-            console.error("Error loading file:", error);
-            
-            ctxM.setTransform(1,0,0,1,0,0);
-            ctxM.clearRect(0, 0, resultMapCanvas.width, resultMapCanvas.height);
+        }
+    })
+    .catch(error => {
+        loading = false;
+        console.error("Error loading file:", error);
 
-            if (gif) {
-                gif.style.display = "block";
-            }
-        });
+        ctxM.setTransform(1,0,0,1,0,0);
+        ctxM.clearRect(0, 0, resultMapCanvas.width, resultMapCanvas.height);
+
+        cqc = makeEmptyCQC();
+    });
 }
 
 function drawLoadingAnimation(timestamp) {
