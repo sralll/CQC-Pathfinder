@@ -155,9 +155,10 @@ def fetch_plot_data(request, filename):
         ncP_max = len(distances)
 
         # Users with exactly ncP_max entries
+        base_qs = UserResult.objects.filter(filename=filename)
+
         matching_users_qs = (
-            UserResult.objects
-            .filter(filename=filename)
+            base_qs
             .values('user_id')
             .annotate(count=Count('id'))
             .filter(count=ncP_max)
@@ -172,11 +173,13 @@ def fetch_plot_data(request, filename):
 
         # Load user data
         all_user_data = []
+
         for user_id in user_ids:
-            entries = UserResult.objects.filter(filename=filename, user_id=user_id)
-            if entries.filter(competition=False).exists():
-                continue
-            entries = entries.order_by('control_pair_index')
+            entries = UserResult.objects.filter(
+                filename=filename,
+                user_id=user_id
+            ).order_by('control_pair_index')
+
             all_user_data.append({
                 'user_id': user_id,
                 'full_name': users[user_id].get_full_name() or f"User_{user_id}",
@@ -186,7 +189,8 @@ def fetch_plot_data(request, filename):
                         'choice_time': e.choice_time,
                         'selected_route': e.selected_route,
                         'selected_route_runtime': e.selected_route_runtime,
-                        'shortest_route_runtime': e.shortest_route_runtime
+                        'shortest_route_runtime': e.shortest_route_runtime,
+                        'competition': e.competition,  # ✅ important
                     }
                     for e in entries
                 ]
@@ -216,10 +220,13 @@ def fetch_plot_data(request, filename):
             times = []
             for u in all_user_data:
                 c = u['controls'][idx]
-                total_time = (c['choice_time'] or 0) + ((c['selected_route_runtime'] or 0) - (c['shortest_route_runtime'] or 0))
-                times.append(total_time)
+                # Only include competition runs
+                if c.get('competition', True):
+                    total_time = (c['choice_time'] or 0) + ((c['selected_route_runtime'] or 0) - (c['shortest_route_runtime'] or 0))
+                    times.append(total_time)
+
             times.sort()
-            fastest = times[:3]
+            fastest = times[:3]  # top 3 fastest
             avg = sum(fastest)/len(fastest) if fastest else 0
             fastest_times.append({'ncP': idx, 'average_fastest_time': round(avg, 2)})
 
@@ -382,10 +389,14 @@ def trainer_stats(request):
 
     kader = profile.kader
 
-    # annotate rel_error
+    # --- NEW: read mode ---
+    mode = request.GET.get("mode", "competition")
+    is_competition = (mode == "competition")
+
+    # --- base queryset ---
     qs = UserResult.objects.filter(
         user__userprofile__kader=kader,
-        competition=True
+        competition=is_competition   # <-- SWITCH HERE
     ).exclude(
         user__groups__name="Trainer"
     ).annotate(
@@ -410,7 +421,7 @@ def trainer_stats(request):
         gt10=Count(Case(When(rel_error__gte=0.10, then=1))),
     ).order_by("user__last_name")
 
-    # --- Aggregate for all athletes together ---
+    # --- Aggregate total ---
     total = qs.aggregate(
         posten=Count("id"),
         avg_choice_time=Avg("choice_time"),
@@ -423,9 +434,11 @@ def trainer_stats(request):
 
     data = []
 
-    # --- First row: all athletes ---
+    # --- label depending on mode ---
+    label = "Kaderdurchschnitt (Wettkampf)" if is_competition else "Kaderdurchschnitt (Training)"
+
     data.append({
-        "athlete": "Kaderdurchschnitt",
+        "athlete": label,
         "posten": total["posten"],
         "avg_choice_time": round(total["avg_choice_time"], 2) if total["avg_choice_time"] else None,
         "avg_error": round(total["avg_error"], 2) if total["avg_error"] else None,
@@ -435,7 +448,6 @@ def trainer_stats(request):
         "gt10": round(total["gt10"] / total["posten"] * 100, 1) if total["posten"] else 0,
     })
 
-    # --- Then add individual athletes ---
     for row in athlete_qs:
         data.append({
             "athlete": f"{row['user__first_name']} {row['user__last_name']}",

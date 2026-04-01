@@ -1252,6 +1252,16 @@ function loadFileList() {
                 publishCell.appendChild(publishButton);
                 row.appendChild(publishCell);
 
+                // Batch pathfinding button
+                /*const batchPFCell = document.createElement('td');
+                const batchPFButton = document.createElement('button');
+                batchPFButton.innerHTML = 'Batch Pathfinding';
+                batchPFButton.style.borderRadius = "5px";
+                batchPFButton.style.padding = "3px 0px";
+                batchPFButton.addEventListener('click', () => runBatchFromProjectFile(file.filename));
+                batchPFCell.appendChild(batchPFButton);
+                row.appendChild(batchPFCell);
+                */
                 // Append row
                 tbody.appendChild(row);
             });
@@ -1262,6 +1272,40 @@ function loadFileList() {
         });
 }
 
+/*
+async function runBatchFromProjectFile(filename) {
+    console.log("Initiating batch pathfinding for file:", filename);
+    try {
+        // Step 1: send batch request to backend with only the filename
+        const batchResp = await fetch("/pathfinding/batch/", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "X-CSRFToken": getCSRFToken()
+            },
+            body: JSON.stringify({ filename: filename })
+        });
+
+        if (!batchResp.ok) {
+            alert("Batch pathfinding request failed: " + batchResp.status);
+            return;
+        }
+
+        const result = await batchResp.json();
+        console.log("Batch result:", result);
+
+        if (result.error) {
+            alert("Batch pathfinding failed: " + result.error);
+        } else {
+            alert("Batch complete. Saved as " + result.filename);
+        }
+
+    } catch (err) {
+        console.error("Error in batch pathfinding:", err);
+        alert("Unexpected error: " + err.message);
+    }
+}
+*/
 function loadFile(filename) {
     const encodedFilename = encodeURIComponent(filename);
     const url = `/coursesetter/load-file/${encodedFilename}/`;

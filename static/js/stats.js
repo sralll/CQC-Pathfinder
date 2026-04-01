@@ -234,17 +234,29 @@ function updateStats(userId) {
     });
 }
 
-
 document.addEventListener("DOMContentLoaded", () => {
   if (!isTrainer) return;
-  loadTrainerStats();
+
+  const toggle = document.getElementById("trainingToggle");
+
+  // initial load
+  loadTrainerStats(toggle.checked);
+
+  // reload on toggle
+  toggle.addEventListener("change", () => {
+    const tbody = document.querySelector("#trainerStatsTable tbody");
+    tbody.style.opacity = 0.2;
+    loadTrainerStats(toggle.checked);
+  });
 });
 
-async function loadTrainerStats() {
+async function loadTrainerStats(isTraining) {
   const tbody = document.querySelector("#trainerStatsTable tbody");
 
+  const mode = isTraining ? "competition" : "training";
+
   try {
-    const response = await fetch("/stats/table/");
+    const response = await fetch(`/stats/table/?mode=${mode}`);
 
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
@@ -257,30 +269,33 @@ async function loadTrainerStats() {
     if (data.length === 0) {
       tbody.innerHTML = `
         <tr>
-          <td colspan="8">Keine Wettbewerbsdaten vorhanden</td>
+          <td colspan="8">Keine Daten vorhanden</td>
         </tr>
       `;
       return;
     }
 
     for (const row of data) {
-        const isSummary = row.athlete === "Kaderdurchschnitt";
-            tbody.insertAdjacentHTML(
-            "beforeend",
-            `
-            <tr ${isSummary ? 'class="summary-row" style="font-weight: bold; color:blue"' : ''}>
-                <td>${row.athlete}</td>
-                <td>${row.posten}</td>
-                <td>${formatTime(row.avg_choice_time)}</td>
-                <td>${formatError(row.avg_error)}</td>
-                <td>${row.schnellste}%</td>
-                <td>${row.lt5}%</td>
-                <td>${row.lt10}%</td>
-                <td>${row.gt10}%</td>
-            </tr>
-            `
-            );
-        }
+      const isSummary = row.athlete.includes("Kaderdurchschnitt");
+
+      tbody.insertAdjacentHTML(
+        "beforeend",
+        `
+        <tr ${isSummary ? 'class="summary-row" style="font-weight: bold; color:blue"' : ''}>
+            <td>${row.athlete}</td>
+            <td>${row.posten}</td>
+            <td>${formatTime(row.avg_choice_time)}</td>
+            <td>${formatError(row.avg_error)}</td>
+            <td>${row.schnellste}%</td>
+            <td>${row.lt5}%</td>
+            <td>${row.lt10}%</td>
+            <td>${row.gt10}%</td>
+        </tr>
+        `
+      );
+    }
+    tbody.style.opacity = 1;
+
   } catch (err) {
     console.error(err);
     tbody.innerHTML = `

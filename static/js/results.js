@@ -1,6 +1,7 @@
 let ncP = 0;
 let ncP_max = 0;
 let results = {};
+let rawResults = [];
 let prog_distance = [];
 let shortest_route_runtime = [];
 let tabledata = {};
@@ -116,12 +117,142 @@ function home() {
     window.location.href = "/";
 }
 
+const trainingCheckbox = document.getElementById("trainingsCheckBox");
+
+function filterResults(includeTraining) {
+    return rawResults.map(user => {
+        return {
+            ...user,
+            controls: user.controls.filter(c =>
+                includeTraining || c.competition
+            )
+        };
+    });
+}
+
+document.getElementById("trainingsCheckBox")
+    .addEventListener("change", applyFilter);
+
+function applyFilter() {
+    const includeTraining = document.getElementById("trainingsCheckBox").checked;
+    selectedUsers = []; // reset selected users on filter change
+    // filter per control
+    results = rawResults.map(user => ({
+        ...user,
+        controls: user.controls.filter(c =>
+            includeTraining || c.competition
+        )
+    }));
+
+    // remove empty users
+    results = results.filter(u => u.controls.length > 0);
+
+    // recompute derived data
+    tabledata = computeTableData(results);
+
+    renderTable();
+    redrawPlot();
+
+     // Only draw routes / legend if data is loaded
+    if (typeof cqc !== "undefined" && cqc.cP && cqc.cP.length > ncP) {
+        const routeColors = drawRoutes(ncP);
+        drawLegend(ncP, routeColors);
+    }
+}
+
+function renderTable() {
+    const tableBody = document.getElementById('userTableBody');
+    tableBody.innerHTML = '';
+
+    tabledata.forEach(user => {
+        const row = document.createElement('tr');
+
+        // ✅ apply gray if training data present
+        if (user.hasTraining) {
+            row.style.color = "#888";   // light gray
+        }
+
+        row.innerHTML = `
+            <td><input type="checkbox" class="userCheckbox" data-user-id="${user.user_id}"></td>
+            <td class="tableName">${user.full_name}</td>
+            <td class="tableTime">${formatTime(user.total_choice_time)}</td>
+            <td class="tableTime">${formatTime(user.total_diff_runtime)}</td>
+            <td class="tableTime">${formatTime(user.total_sum)}</td>
+        `;
+
+        tableBody.appendChild(row);
+    });
+
+    attachCheckboxListeners();
+}
+
+function redrawPlot() {
+    const canvas = document.getElementById('OLchart');
+    const completionTable = document.getElementById('completionTable');
+
+    const canvasWidth = completionTable.offsetWidth;
+    canvas.width = canvasWidth;
+    canvas.style.width = canvasWidth + 'px';
+
+    const scaling = calcPlotScaling();
+    draw(scaling);
+}
+
+function attachCheckboxListeners() {
+    document.querySelectorAll('.userCheckbox').forEach(checkbox => {
+        checkbox.addEventListener('change', event => {
+            const userId = parseInt(event.target.dataset.userId);
+
+            if (event.target.checked) {
+                if (!selectedUsers.includes(userId)) {
+                    selectedUsers.push(userId);
+                }
+            } else {
+                selectedUsers = selectedUsers.filter(id => id !== userId);
+            }
+
+            selectedUsers.sort((a, b) => {
+                const indexA = tabledata.findIndex(user => user.user_id === a);
+                const indexB = tabledata.findIndex(user => user.user_id === b);
+                return indexA - indexB;
+            });
+
+            redrawPlot();
+        });
+    });
+}
+
+function computeTableData(results) {
+    return results.map(u => {
+        const controls = u.controls;
+
+        const total_choice_time = controls.reduce((sum, c) => sum + (c.choice_time || 0), 0);
+
+        const total_diff_runtime = controls.reduce((sum, c) =>
+            sum + Math.abs((c.selected_route_runtime || 0) - (c.shortest_route_runtime || 0)), 0
+        );
+
+        // ✅ NEW: check if any training data is included
+        const hasTraining = controls.some(c => !c.competition);
+
+        return {
+            user_id: u.user_id,
+            full_name: u.full_name,
+            total_choice_time,
+            total_diff_runtime,
+            total_sum: total_choice_time + total_diff_runtime,
+            hasTraining   // <-- important
+        };
+    }).sort((a, b) => a.total_sum - b.total_sum);
+}
+
 // --- Handle dropdown change ---
 document.getElementById('jsonDropdown').addEventListener('change', function () {
     const selectedFilename = this.value;
 
-    if (selectedFilename != ""){
     const tableBody = document.getElementById('userTableBody');
+
+    if (selectedFilename !== "") {
         tableBody.innerHTML = `
             <tr>
                 <td colspan="5" style="text-align: center; padding: 20px;">
@@ -131,25 +262,8 @@ document.getElementById('jsonDropdown').addEventListener('change', function () {
         `;
     }
 
-    // Clear canvas
-    const canvas = document.getElementById('OLchart');
-    const ctx = canvas.getContext('2d');
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-    // Clear previously selected checkboxes
-    document.querySelectorAll('.userCheckbox').forEach(cb => cb.checked = false);
-
-    // Reset global variables
-    prog_distance = [];
-    results = [];
-    shortest_route_runtime = [];
-    tabledata = [];
-    avg_times = [];
-    selectedUsers = [];
-    ncP = 0;
-
-    document.getElementById("resultLegend").innerHTML = "";
-    document.getElementById("currentControl").textContent = `Posten 1`;
+    // Reset state
+    resetUI();
 
     if (!selectedFilename) return;
 
@@ -163,65 +277,43 @@ document.getElementById('jsonDropdown').addEventListener('change', function () {
                 return;
             }
 
-            // Assign data to global variables
+            // store raw data
             prog_distance = data.distances;
-            results = data.results;
+            rawResults = data.results;
             shortest_route_runtime = data.shortest_route_runtime;
-            tabledata = data.tableData;
             avg_times = data.avg_times;
-        })
-        .then(() => {
-            const tableBody = document.getElementById('userTableBody');
-            tableBody.innerHTML = '';
 
-            tabledata.forEach(user => {
-                const userTimes = calculateUserTimes(user);
+            // apply filter + render everything
+            applyFilter();
 
-                const row = document.createElement('tr');
-                row.innerHTML = `
-                    <td><input type="checkbox" class="userCheckbox" data-user-id="${user.user_id}" id="userCheckbox${user.user_id}"></td>
-                    <td class="tableName">${user.full_name}</td>
-                    <td class="tableTime">${formatTime(user.total_choice_time)}</td>
-                    <td class="tableTime">${formatTime(user.total_diff_runtime)}</td>
-                    <td class="tableTime">${formatTime(user.total_sum)}</td>
-                `;
-                tableBody.appendChild(row);
-            });
-
-            // Attach event listeners to checkboxes
-            document.querySelectorAll('.userCheckbox').forEach(checkbox => {
-                checkbox.addEventListener('change', event => {
-                    const userId = parseInt(event.target.dataset.userId);
-
-                    if (event.target.checked) {
-                        if (!selectedUsers.includes(userId)) {
-                            selectedUsers.push(userId);
-                        }
-                    } else {
-                        selectedUsers = selectedUsers.filter(id => id !== userId);
-                    }
-
-                    selectedUsers.sort((a, b) => {
-                        const indexA = tabledata.findIndex(user => user.user_id === a);
-                        const indexB = tabledata.findIndex(user => user.user_id === b);
-                        return indexA - indexB;
-                    });
-
-                    const completionTable = document.getElementById('completionTable');
-                    const canvasWidth = completionTable.offsetWidth;
-                    canvas.width = canvasWidth;
-                    canvas.style.width = canvasWidth + 'px';
-
-                    const scaling = calcPlotScaling();
-                    draw(scaling);
-                });
-            });
+            // load map etc.
+            loadGameData(dbName);
         })
         .catch(err => {
             console.error("Fetch failed:", err);
         });
-    loadGameData(dbName);
 });
+
+function resetUI() {
+    const canvas = document.getElementById('OLchart');
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    document.querySelectorAll('.userCheckbox').forEach(cb => cb.checked = false);
+
+    prog_distance = [];
+    results = [];
+    rawResults = [];
+    shortest_route_runtime = [];
+    tabledata = [];
+    avg_times = [];
+    selectedUsers = [];
+    ncP = 0;
+
+    document.getElementById("resultLegend").innerHTML = "";
+    document.getElementById("currentControl").textContent = `Posten 1`;
+}
+
 
 
 function calcPlotScaling() {
@@ -535,7 +627,7 @@ function drawRoutes(ncP)  {
 
 function drawLegend(ncP, routeColors) {
     const legendContainer = document.getElementById("resultLegend");
-    legendContainer.innerHTML = ""; // clear old stuff
+    legendContainer.innerHTML = ""; // clear old legend
 
     const routes = cqc.cP[ncP].route;
     const wrapper = document.createElement("div");
@@ -544,21 +636,34 @@ function drawLegend(ncP, routeColors) {
     const routeBuckets = routes.map(() => []);
     const noRouteUsers = [];
 
+    // Should trainings be highlighted differently?
+    const includeTraining = document.getElementById("trainingsCheckBox").checked;
+
     // Distribute users once
     results.forEach(user => {
         const control = user.controls.find(c => c.index === ncP);
         if (control) {
+            const isTraining = control.competition === false;
+
+            // Decide whether to push into a bucket
+            if (!includeTraining && isTraining) {
+                // Skip this run entirely if training should be hidden
+                return;
+            }
+
             if (control.selected_route !== null && control.selected_route !== undefined) {
                 if (routeBuckets[control.selected_route]) {
                     routeBuckets[control.selected_route].push({
                         name: user.full_name,
-                        choice_time: control.choice_time
+                        choice_time: control.choice_time,
+                        isTraining: isTraining
                     });
                 }
             } else {
                 noRouteUsers.push({
                     name: user.full_name,
-                    choice_time: control.choice_time
+                    choice_time: control.choice_time,
+                    isTraining: isTraining
                 });
             }
         }
@@ -582,12 +687,19 @@ function drawLegend(ncP, routeColors) {
         subUl.style.maxHeight = "200px";
         subUl.style.overflowY = "auto";
 
+        // Sort: competition runs first, then training
+        routeBuckets[routeIndex].sort((a, b) => {
+            return (a.isTraining === b.isTraining) ? 0 : (a.isTraining ? 1 : -1);
+        });
+
         routeBuckets[routeIndex].forEach(u => {
             const subLi = document.createElement("li");
             subLi.textContent = `${u.name} (${u.choice_time.toFixed(2)}s)`;
+
+            // Gray for training runs
+            subLi.style.color = u.isTraining ? "#888" : "black";
             subLi.style.fontWeight = "normal";
             subLi.style.fontSize = "1em";
-            subLi.style.color = "black";
             subUl.appendChild(subLi);
         });
 
@@ -597,8 +709,6 @@ function drawLegend(ncP, routeColors) {
 
     legendContainer.appendChild(wrapper);
 }
-
-
 
 function hexToRgba(hex, alpha = 0.3) {
     // Remove leading #

@@ -12,13 +12,12 @@ import json
 import numpy as np
 from io import BytesIO
 import onnxruntime as ort
-import time
 import asyncio
 
 from .communication import extract_pathfinding_inputs
 from .preprocess import load_mask, inflate_obstacles, find_path_with_margin_growth, generate_corridor_mask_numpy, apply_blocked_terrain
 from .a_star import get_a_star_turns, simplify_wps
-from .theta_star import make_los_cached, make_terrain_los_cached, guided_theta_star, bresenham_line, simplify_theta_path
+from .theta_star import make_los_cached, guided_theta_star, simplify_theta_path
 
 # Create your views here.
 def group_required(group_name):
@@ -274,3 +273,128 @@ def run_UNet_stream(request):
         return JsonResponse({'message': 'Could not identify or open image file.'}, status=500)
     except Exception as e:
         return JsonResponse({'message': 'Server error', 'error': str(e)}, status=500)
+    
+
+from coursesetter.models import publishedFile
+
+def pathfinding_loop(cp_data, mapFile, blockedTerrain=None):
+    blockedTerrain = blockedTerrain or {"lines": [], "areas": []}
+
+    # Step 1: Load mask
+    mask, error = load_mask({"filename": mapFile})
+    # DEBUG
+    mask.save("mask.png")
+    if error:
+        print("Error loading mask:", os.error)
+        return None
+    
+    # Step 2: Apply blocked terrain
+    grid = apply_blocked_terrain(mask, blockedTerrain)
+
+    # Step 3: Find path with margin growth (A* exploratory)
+    print("Grid shape:", grid.shape, "Start:", cp_data["start"], "Ziel:", cp_data["ziel"], "Routes:", cp_data["route"])
+    a_star_path, subgrid, offset, start_cP, ziel_cP = find_path_with_margin_growth(
+        grid,
+        cp_data["start"],
+        cp_data["ziel"],
+        cp_data["route"]
+    )
+    if a_star_path is None:
+        print("No A* path found for CP:", cp_data)
+        return None
+
+    # Step 4: Simplify waypoints & prepare grid for guided θ*
+    a_star_wps = simplify_wps(get_a_star_turns(a_star_path), subgrid)
+    inflated_subgrid = inflate_obstacles(subgrid, radius=1, dilation_block=150)
+    corridor_mask = generate_corridor_mask_numpy(a_star_wps, subgrid.shape, radius=40)
+    constrained_grid = np.where(corridor_mask == 1, inflated_subgrid, 0)
+
+    # Optional LOS cache
+    try:
+        cached_los = make_los_cached(constrained_grid)
+    except Exception:
+        cached_los = None
+
+    # Step 5: Run guided θ* to get final path
+    final_path = None
+    for update in guided_theta_star(
+        constrained_grid=constrained_grid,
+        start_cP=start_cP,
+        ziel_cP=ziel_cP,
+        a_star_wps=a_star_wps,
+        cached_los=cached_los
+    ):
+        if update.get("done"):
+            final_path = update["path"]
+
+    if final_path is None:
+        print("No guided θ* path found for cp:", cp_data)
+        return None
+
+    # Step 6: Simplify & scale path
+    theta_star_path = simplify_theta_path(final_path)
+    final_path_scaled = [((x + offset[0]) * 0.71, (y + offset[1]) * 0.71)
+                         for x, y in theta_star_path]
+
+    return final_path_scaled
+
+def batch_pathfinding(request):
+    if request.method != "POST":
+        return JsonResponse({'error': 'POST required'}, status=400)
+
+    try:
+        payload = json.loads(request.body)
+        filename = payload.get("filename")
+        if not filename:
+            return JsonResponse({"error": "Filename required"}, status=400)
+
+        user_kader = request.user.userprofile.kader
+        if not user_kader:
+            return JsonResponse({"error": "User has no kader assigned"}, status=400)
+
+        orig_unique_filename = f"{filename}_{user_kader.name}"
+        try:
+            pf = publishedFile.objects.get(unique_filename=orig_unique_filename)
+        except publishedFile.DoesNotExist:
+            return JsonResponse({"error": f"Original file not found: {orig_unique_filename}"}, status=404)
+
+        data = pf.data
+        if not data or "cP" not in data or "mapFile" not in data:
+            return JsonResponse({"error": "Invalid file data: missing cP or mapFile"}, status=400)
+
+        mapFile = os.path.splitext(os.path.basename(data["mapFile"]))[0]
+        print(f"Starting batch pathfinding for file: {filename}, map: {mapFile}")
+        # --- Only process first cP for now ---
+        cp0 = data["cP"][0]
+        blockedTerrain = data.get("blockedTerrain", {})
+
+        # Find up to 2 routes if not already present
+        while len(cp0["route"]) < 2:
+            route = pathfinding_loop(cp0, mapFile, blockedTerrain)
+            print(f"Route found: {route}")
+            if route is None:
+                # Stop if no path found
+                break
+            cp0["route"].append(route)
+
+        # Save result back to DB
+        unique_filename_out = f"{filename}_autoRoutes_{user_kader.name}"
+        
+        pf_result, created = publishedFile.objects.update_or_create(
+            unique_filename=unique_filename_out,
+            defaults={
+                "filename": filename+"_autoRoutes",
+                "author": request.user.first_name or request.user.username,
+                "ncP": len(data["cP"]),
+                "data": data,
+                "kader": user_kader
+            }
+        )
+
+        return JsonResponse({
+            "message": f"Batch pathfinding complete for cP[0], saved as {unique_filename_out}",
+            "filename": unique_filename_out
+        })
+
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=500)

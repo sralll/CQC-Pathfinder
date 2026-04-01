@@ -6,4 +6,5 @@ urlpatterns = [
     path('upload-mask/', views.upload_mask, name='upload_mask'),
     path('run_unet/', views.run_UNet_stream, name='run_unet'),
     path("find/", views.find, name="find"),
+    path("batch/", views.batch_pathfinding, name="batch_find"),
 ]
