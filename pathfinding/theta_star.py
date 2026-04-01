@@ -163,6 +163,84 @@ def guided_theta_star(grid, start, goal, waypoints, switch_radius=20, cached_los
 
     yield {"error": "No path found"}
 
+def guided_theta_star_sync(grid, start, goal, waypoints, switch_radius=20, cached_los=None):
+    h, w = grid.shape
+
+    # Fallback if no LOS cache provided
+    if cached_los is None:
+        def cached_los(p1, p2):
+            return has_line_of_sight(grid, p1, p2)
+
+    open_list = []
+    g_score = {start: 0}
+    parent = {start: start}
+    heapq.heappush(open_list, (heuristic(start, goal), start))
+    closed_set = set()
+
+    guidance_index = 0
+    total_waypoints = len(waypoints)
+
+    while open_list:
+        _, current = heapq.heappop(open_list)
+
+        if current in closed_set:
+            continue
+        closed_set.add(current)
+
+        if current == goal:
+            path = [current]
+            while current != parent[current]:
+                current = parent[current]
+                path.append(current)
+            return path[::-1]
+
+        # Advance guidance waypoint
+        while (guidance_index + 1 < total_waypoints and
+               np.linalg.norm(np.array(current) - np.array(waypoints[guidance_index])) < switch_radius):
+            guidance_index += 1
+
+        guidance_target = waypoints[guidance_index] if guidance_index < total_waypoints else goal
+
+        for dx in [-1, 0, 1]:
+            for dy in [-1, 0, 1]:
+                if dx == 0 and dy == 0:
+                    continue
+                neighbor = (current[0] + dx, current[1] + dy)
+                if not (0 <= neighbor[0] < w and 0 <= neighbor[1] < h):
+                    continue
+                if grid[neighbor[1], neighbor[0]] == 0:
+                    continue
+                if neighbor in closed_set:
+                    continue
+
+                cost = (255 - grid[neighbor[1], neighbor[0]])
+
+                if cached_los(parent[current], neighbor):
+                    cand_parent = parent[current]
+                    los_path = bresenham_line(cand_parent[0], cand_parent[1], neighbor[0], neighbor[1])
+                    ref_speed = grid[cand_parent[1], cand_parent[0]]
+                    same_terrain = all(grid[y, x] == ref_speed for x, y in los_path[1:])
+                    if same_terrain:
+                        distance = np.hypot(neighbor[0] - cand_parent[0], neighbor[1] - cand_parent[1])
+                        cand_g = g_score[cand_parent] + distance * cost
+                    else:
+                        cand_parent = current
+                        distance = np.hypot(neighbor[0] - current[0], neighbor[1] - current[1])
+                        cand_g = g_score[current] + distance * cost
+                else:
+                    cand_parent = current
+                    penalty = (255 - grid[neighbor[1], neighbor[0]])
+                    distance = np.hypot(neighbor[0] - current[0], neighbor[1] - current[1])
+                    cand_g = g_score[current] + distance + penalty
+
+                if neighbor not in g_score or cand_g < g_score[neighbor]:
+                    g_score[neighbor] = cand_g
+                    parent[neighbor] = cand_parent
+                    f_score = cand_g + heuristic(neighbor, guidance_target)
+                    heapq.heappush(open_list, (f_score, neighbor))
+
+    return None  # No path found
+
 def simplify_theta_path(
     path: List[Tuple[int, int]],
     angle_threshold_deg: float = 10.0,

@@ -1145,7 +1145,7 @@ function loadFileList() {
             }
 
             // Add 3 extra empty header columns
-            for (let i = 0; i < 3; i++) {
+            for (let i = 0; i < 5; i++) {
                 const th = document.createElement('th');
                 th.classList.add('tableHeadProjects');
                 headerRow.appendChild(th);
@@ -1214,6 +1214,7 @@ function loadFileList() {
                 const loadCell = document.createElement('td');
                 const loadButton = document.createElement('button');
                 loadButton.innerHTML = '<i class="fa-solid fa-folder-open"></i>';
+                loadButton.title = "Öffnen";
                 loadButton.addEventListener('click', () => loadFile(file.filename));
                 loadButton.style.padding = "2px 0px";
                 loadCell.appendChild(loadButton);
@@ -1224,6 +1225,7 @@ function loadFileList() {
                 if (file.editable) {
                     const deleteButton = document.createElement('button');
                     deleteButton.innerHTML = '<i class="fa-solid fa-trash"></i>';
+                    deleteButton.title = "Löschen";
                     deleteButton.addEventListener('click', () => deleteFile(file.filename));
                     deleteButton.style.padding = "2px 0px";
                     deleteCell.appendChild(deleteButton);
@@ -1245,6 +1247,7 @@ function loadFileList() {
                     publishButton.style.cursor = "default";
                     publishButton.style.backgroundColor = file.published ? "rgba(255,165,0,0.5)" : "white";
                     publishButton.disabled = true;
+                    publishButton.title = "Publizieren";
                     publishButton.style.border = "1px solid rgba(255,165,0,0.0)";
                     publishButton.style.pointerEvents = "none";  // disables hover & clicks
                 }
@@ -1253,15 +1256,17 @@ function loadFileList() {
                 row.appendChild(publishCell);
 
                 // Batch pathfinding button
-                /*const batchPFCell = document.createElement('td');
-                const batchPFButton = document.createElement('button');
-                batchPFButton.innerHTML = 'Batch Pathfinding';
-                batchPFButton.style.borderRadius = "5px";
-                batchPFButton.style.padding = "3px 0px";
-                batchPFButton.addEventListener('click', () => runBatchFromProjectFile(file.filename));
-                batchPFCell.appendChild(batchPFButton);
+                const batchPFCell = document.createElement('td');
+                if (file.editable) {
+                    const batchPFButton = document.createElement('button');
+                    batchPFButton.innerHTML = '<i class="fa-solid fa-industry"></i>';
+                    batchPFButton.style.padding = "2px 0px";
+                    batchPFButton.title = "Batch Pathfinding (2 Routen pro Postenpaar)";
+                    batchPFButton.addEventListener('click', () => runBatchFromProjectFile(file.filename, batchPFButton));
+                    batchPFCell.appendChild(batchPFButton);
+                }
                 row.appendChild(batchPFCell);
-                */
+                
                 // Append row
                 tbody.appendChild(row);
             });
@@ -1272,9 +1277,10 @@ function loadFileList() {
         });
 }
 
-/*
-async function runBatchFromProjectFile(filename) {
-    console.log("Initiating batch pathfinding for file:", filename);
+async function runBatchFromProjectFile(filename, batchPFButton) {
+    
+    batchPFButton.disabled = true; // disable button to prevent multiple clicks
+    batchPFButton.style.display = 'none'; // hide button during processing
     try {
         // Step 1: send batch request to backend with only the filename
         const batchResp = await fetch("/pathfinding/batch/", {
@@ -1286,26 +1292,11 @@ async function runBatchFromProjectFile(filename) {
             body: JSON.stringify({ filename: filename })
         });
 
-        if (!batchResp.ok) {
-            alert("Batch pathfinding request failed: " + batchResp.status);
-            return;
-        }
-
-        const result = await batchResp.json();
-        console.log("Batch result:", result);
-
-        if (result.error) {
-            alert("Batch pathfinding failed: " + result.error);
-        } else {
-            alert("Batch complete. Saved as " + result.filename);
-        }
-
     } catch (err) {
         console.error("Error in batch pathfinding:", err);
-        alert("Unexpected error: " + err.message);
     }
 }
-*/
+
 function loadFile(filename) {
     const encodedFilename = encodeURIComponent(filename);
     const url = `/coursesetter/load-file/${encodedFilename}/`;

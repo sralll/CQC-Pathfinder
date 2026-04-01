@@ -13,11 +13,13 @@ import numpy as np
 from io import BytesIO
 import onnxruntime as ort
 import asyncio
+import threading
+from django.db import connection
 
 from .communication import extract_pathfinding_inputs
 from .preprocess import load_mask, inflate_obstacles, find_path_with_margin_growth, generate_corridor_mask_numpy, apply_blocked_terrain
 from .a_star import get_a_star_turns, simplify_wps
-from .theta_star import make_los_cached, guided_theta_star, simplify_theta_path
+from .theta_star import make_los_cached, guided_theta_star, simplify_theta_path, guided_theta_star_sync
 
 # Create your views here.
 def group_required(group_name):
@@ -275,35 +277,75 @@ def run_UNet_stream(request):
         return JsonResponse({'message': 'Server error', 'error': str(e)}, status=500)
     
 
+RUN_SPEED = 4.75  # m/s
+
+def calc_length(rP):
+    length = 0
+    for i in range(1, len(rP)):
+        dx = rP[i]["x"] - rP[i-1]["x"]
+        dy = rP[i]["y"] - rP[i-1]["y"]
+        length += math.sqrt(dx*dx + dy*dy) * 0.48
+    return round(length)
+
+def calc_no_angles(rP):
+    sharp_angles = 0
+    for i in range(1, len(rP) - 1):
+        prev_v = (rP[i]["x"] - rP[i-1]["x"], rP[i]["y"] - rP[i-1]["y"])
+        curr_v = (rP[i+1]["x"] - rP[i]["x"], rP[i+1]["y"] - rP[i]["y"])
+        dot = prev_v[0]*curr_v[0] + prev_v[1]*curr_v[1]
+        prev_mag = math.sqrt(prev_v[0]**2 + prev_v[1]**2)
+        curr_mag = math.sqrt(curr_v[0]**2 + curr_v[1]**2)
+        if prev_mag == 0 or curr_mag == 0:
+            continue
+        cos_theta = max(-1.0, min(1.0, dot / (prev_mag * curr_mag)))  # clamp for floating point safety
+        angle = math.degrees(math.acos(cos_theta))
+        if angle > 60:
+            sharp_angles += 1
+    return sharp_angles
+
+def calc_pos(rP, start, ziel):
+    dx = ziel["x"] - start["x"]
+    dy = ziel["y"] - start["y"]
+    total = sum(dx * (p["y"] - start["y"]) - dy * (p["x"] - start["x"]) for p in rP)
+    return total / len(rP) if rP else 0
+
 from coursesetter.models import publishedFile
 
-def pathfinding_loop(cp_data, mapFile, blockedTerrain=None):
+def pathfinding_loop(cp_data, grid, blockedTerrain=None):
     blockedTerrain = blockedTerrain or {"lines": [], "areas": []}
+    train_scale = 0.710
 
-    # Step 1: Load mask
-    mask, error = load_mask({"filename": mapFile})
-    # DEBUG
-    mask.save("mask.png")
-    if error:
-        print("Error loading mask:", os.error)
-        return None
-    
-    # Step 2: Apply blocked terrain
-    grid = apply_blocked_terrain(mask, blockedTerrain)
+    # Scale coordinates from map units to grid units
+    start = (
+        int(cp_data["start"]["x"] / train_scale),
+        int(cp_data["start"]["y"] / train_scale),
+    )
+    ziel = (
+        int(cp_data["ziel"]["x"] / train_scale),
+        int(cp_data["ziel"]["y"] / train_scale),
+    )
 
-    # Step 3: Find path with margin growth (A* exploratory)
-    print("Grid shape:", grid.shape, "Start:", cp_data["start"], "Ziel:", cp_data["ziel"], "Routes:", cp_data["route"])
+    # Scale route points too
+    scaled_routes = []
+    for route in cp_data.get("route", []):
+        scaled_rP = [
+            {"x": int(pt["x"] / train_scale), "y": int(pt["y"] / train_scale)}
+            for pt in route.get("rP", [])
+        ]
+        scaled_routes.append({**route, "rP": scaled_rP})
+
+    # Step 1: Find path with margin growth (A* exploratory)
     a_star_path, subgrid, offset, start_cP, ziel_cP = find_path_with_margin_growth(
         grid,
-        cp_data["start"],
-        cp_data["ziel"],
-        cp_data["route"]
+        start,
+        ziel,
+        scaled_routes
     )
     if a_star_path is None:
         print("No A* path found for CP:", cp_data)
         return None
 
-    # Step 4: Simplify waypoints & prepare grid for guided θ*
+    # Step 2: Simplify waypoints & prepare grid for guided θ*
     a_star_wps = simplify_wps(get_a_star_turns(a_star_path), subgrid)
     inflated_subgrid = inflate_obstacles(subgrid, radius=1, dilation_block=150)
     corridor_mask = generate_corridor_mask_numpy(a_star_wps, subgrid.shape, radius=40)
@@ -315,33 +357,67 @@ def pathfinding_loop(cp_data, mapFile, blockedTerrain=None):
     except Exception:
         cached_los = None
 
-    # Step 5: Run guided θ* to get final path
-    final_path = None
-    for update in guided_theta_star(
-        constrained_grid=constrained_grid,
-        start_cP=start_cP,
-        ziel_cP=ziel_cP,
-        a_star_wps=a_star_wps,
+    # Step 3: Run guided θ* to get final path
+    final_path = guided_theta_star_sync(
+        grid=constrained_grid,
+        start=start_cP,
+        goal=ziel_cP,
+        waypoints=a_star_wps,
         cached_los=cached_los
-    ):
-        if update.get("done"):
-            final_path = update["path"]
+    )
 
     if final_path is None:
         print("No guided θ* path found for cp:", cp_data)
         return None
 
-    # Step 6: Simplify & scale path
+    # Step 4: Simplify & scale path back to map units
     theta_star_path = simplify_theta_path(final_path)
-    final_path_scaled = [((x + offset[0]) * 0.71, (y + offset[1]) * 0.71)
-                         for x, y in theta_star_path]
-
+    final_path_scaled = [
+        ((x + offset[0]) * train_scale, (y + offset[1]) * train_scale)
+        for x, y in theta_star_path
+    ]
     return final_path_scaled
+
+def run_batch_async(data, grid, blockedTerrain, filename, user_kader, author):
+    try:
+        for i, cp in enumerate(data["cP"]):
+            print(f"Processing CP {i + 1}/{len(data['cP'])}")
+            while len(cp["route"]) < 2:
+                result = pathfinding_loop(cp, grid, blockedTerrain)
+                if result is None:
+                    print(f"CP {i + 1}: pathfinding failed, stopping at {len(cp['route'])} route(s)")
+                    break
+                rP = [{"x": x, "y": y} for x, y in result]
+                length = calc_length(rP)
+                cp["route"].append({
+                    "rP": rP,
+                    "elevation": 0,
+                    "length": length,
+                    "noA": calc_no_angles(rP),
+                    "pos": calc_pos(rP, cp["start"], cp["ziel"]),
+                    "runTime": round(length / RUN_SPEED),
+                })
+        unique_filename_out = f"{filename}_batchGen_{user_kader.name}"
+        publishedFile.objects.update_or_create(
+            unique_filename=unique_filename_out,
+            defaults={
+                "filename": filename + "_batchGen",
+                "author": author,
+                "ncP": len(data["cP"]),
+                "data": data,
+                "kader": user_kader,
+            }
+        )
+        print(f"Batch complete: {unique_filename_out}")
+    except Exception as e:
+        print(f"Batch failed: {e}")
+    finally:
+        connection.close()  # always release DB connection when thread finishes
+
 
 def batch_pathfinding(request):
     if request.method != "POST":
         return JsonResponse({'error': 'POST required'}, status=400)
-
     try:
         payload = json.loads(request.body)
         filename = payload.get("filename")
@@ -363,37 +439,26 @@ def batch_pathfinding(request):
             return JsonResponse({"error": "Invalid file data: missing cP or mapFile"}, status=400)
 
         mapFile = os.path.splitext(os.path.basename(data["mapFile"]))[0]
-        print(f"Starting batch pathfinding for file: {filename}, map: {mapFile}")
-        # --- Only process first cP for now ---
-        cp0 = data["cP"][0]
         blockedTerrain = data.get("blockedTerrain", {})
 
-        # Find up to 2 routes if not already present
-        while len(cp0["route"]) < 2:
-            route = pathfinding_loop(cp0, mapFile, blockedTerrain)
-            print(f"Route found: {route}")
-            if route is None:
-                # Stop if no path found
-                break
-            cp0["route"].append(route)
+        mask, error = load_mask({"filename": mapFile})
+        if error:
+            return JsonResponse({"error": f"Failed to load mask: {error}"}, status=400)
+        grid = apply_blocked_terrain(mask, blockedTerrain)
 
-        # Save result back to DB
-        unique_filename_out = f"{filename}_autoRoutes_{user_kader.name}"
-        
-        pf_result, created = publishedFile.objects.update_or_create(
-            unique_filename=unique_filename_out,
-            defaults={
-                "filename": filename+"_autoRoutes",
-                "author": request.user.first_name or request.user.username,
-                "ncP": len(data["cP"]),
-                "data": data,
-                "kader": user_kader
-            }
+        author = request.user.first_name or request.user.username
+
+        # Fire and forget — returns immediately to the frontend
+        thread = threading.Thread(
+            target=run_batch_async,
+            args=(data, grid, blockedTerrain, filename, user_kader, author),
+            daemon=True
         )
+        thread.start()
 
         return JsonResponse({
-            "message": f"Batch pathfinding complete for cP[0], saved as {unique_filename_out}",
-            "filename": unique_filename_out
+            "message": "Batch pathfinding started in background",
+            "filename": f"{filename}_batchGen_{user_kader.name}"
         })
 
     except Exception as e:
