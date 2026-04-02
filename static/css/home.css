@@ -68,6 +68,12 @@ body.desktop .half-button-row {
     text-decoration: none;
 }
 
+.updateInfo {
+    font-size: 0.9rem;
+    color: rgb(0, 183, 255);
+    text-decoration: none;
+}
+
 body.mobile .password-link {
     font-size: 1rem;
 }
