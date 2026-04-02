@@ -6,13 +6,16 @@ from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
 from coursesetter.models import publishedFile
 
+import os
+import signal
+import subprocess
+
 class Command(BaseCommand):
-    help = 'Backup JSON files to S3 if modified in the last 24 hours.'
+    help = 'Backup JSON files to S3 if modified in the last 24 hours, then restart gunicorn.'
 
     def handle(self, *args, **options):
         now = timezone.now()
         since = now - timedelta(hours=24)
-
         recent_files = publishedFile.objects.filter(last_edited__gte=since)
 
         for f in recent_files:
@@ -23,3 +26,14 @@ class Command(BaseCommand):
                 self.stdout.write(self.style.SUCCESS(f'Backed up {f.filename}'))
             except Exception as e:
                 self.stderr.write(self.style.ERROR(f'Error backing up {f.filename}: {e}'))
+
+        # Restart gunicorn gracefully after backup
+        try:
+            result = subprocess.run(['pgrep', '-f', 'gunicorn'], capture_output=True, text=True)
+            pids = result.stdout.strip().split('\n')
+            # Find the master process (lowest PID is typically the master)
+            master_pid = min(int(pid) for pid in pids if pid)
+            os.kill(master_pid, signal.SIGUSR2)  # graceful restart
+            self.stdout.write(self.style.SUCCESS(f'Sent SIGUSR2 to gunicorn master (PID {master_pid})'))
+        except Exception as e:
+            self.stderr.write(self.style.ERROR(f'Failed to restart gunicorn: {e}'))
