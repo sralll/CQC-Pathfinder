@@ -121,6 +121,8 @@ def get_files(request):
                 'shared_pool': obj.kader.shared_pool if obj.kader else False,
                 'editable': editable,
                 'kader': obj.kader.name if obj.kader else '',
+                'batch_progress': obj.batch_progress,
+                'batch_output_filename': f"{obj.filename}_batchGen_{obj.kader.name}" if obj.kader else None,
             })
 
         return JsonResponse({

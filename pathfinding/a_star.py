@@ -118,5 +118,4 @@ def simplify_wps(
                 next_i = j
                 break
         i = next_i
-    print(f"Reduced A* path from {len(waypoints)} to {len(simplified)} waypoints")
     return simplified

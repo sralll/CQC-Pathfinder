@@ -108,7 +108,6 @@ def guided_theta_star(grid, start, goal, waypoints, switch_radius=20, cached_los
                 current = parent[current]
                 path.append(current)
             yield {"done": True, "path": path[::-1]}
-            save_grayscale_image(visited, 'visited.png')
             return
 
         # Yield progress when switching waypoint

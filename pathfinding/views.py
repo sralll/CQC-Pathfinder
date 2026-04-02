@@ -342,7 +342,6 @@ def pathfinding_loop(cp_data, grid, blockedTerrain=None):
         scaled_routes
     )
     if a_star_path is None:
-        print("No A* path found for CP:", cp_data)
         return None
 
     # Step 2: Simplify waypoints & prepare grid for guided θ*
@@ -367,7 +366,6 @@ def pathfinding_loop(cp_data, grid, blockedTerrain=None):
     )
 
     if final_path is None:
-        print("No guided θ* path found for cp:", cp_data)
         return None
 
     # Step 4: Simplify & scale path back to map units

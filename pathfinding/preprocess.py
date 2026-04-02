@@ -259,7 +259,6 @@ def find_path_with_margin_growth(
         except Exception as e:
             last_exception = e
 
-        print(f"No path found with margin {margin}, increasing...")
         margin += step
 
     # After loop, if still no path

@@ -1933,15 +1933,21 @@ function editing(event) {
 
 function drawMask() {
     if (!editCanvas) return;
+    if (mode == "mapCV" && !loading) {
+        // Ensure maskCanvas always matches routeCanvas dimensions
+        if (maskCanvas.width !== routeCanvas.width || maskCanvas.height !== routeCanvas.height) {
+            maskCanvas.width = routeCanvas.width;
+            maskCanvas.height = routeCanvas.height;
+        }
 
-    if (mode == "mapCV" & !loading) {
         if (mask != undefined && mask != null) {
             mc.clearRect(0, 0, maskCanvas.width, maskCanvas.height);
+            mc.save();
             mc.setTransform(scale, 0, 0, scale, transX, transY);
             const scaledWidth = mask.naturalWidth * TRAIN_SCALE;
             const scaledHeight = mask.naturalHeight * TRAIN_SCALE;
-            mc.drawImage(editCanvas, 0, 0, scaledWidth, scaledHeight); // respects transforms
-            mc.setTransform(1, 0, 0, 1, 0, 0);
+            mc.drawImage(editCanvas, 0, 0, scaledWidth, scaledHeight);
+            mc.restore(); // safer than manually resetting to identity
         }
     }
 }
