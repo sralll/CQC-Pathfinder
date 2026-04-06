@@ -8,6 +8,8 @@ from django.contrib.auth import views as auth_views
 from CQCPathfinder.forms import StyledLoginForm
 from django.views.generic import RedirectView
 
+from main import views
+
 urlpatterns = [
 
     path("admin/", admin.site.urls),
@@ -18,7 +20,8 @@ urlpatterns = [
 
     # login/logout
     path('login/', auth_views.LoginView.as_view(authentication_form=StyledLoginForm), name='login'),
-
+    path('logout/', views.logout_view, name='logout'),
+       
     # password change (when logged in)
     path('password_change/', auth_views.PasswordChangeView.as_view(), name='password_change'),
     path('password_change/done/', auth_views.PasswordChangeDoneView.as_view(), name='password_change_done'),

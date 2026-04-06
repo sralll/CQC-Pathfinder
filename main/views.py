@@ -11,6 +11,12 @@ from accounts.models import UserProfile
 from django.views.decorators.http import require_GET
 from django.db.models import F, Q
 
+from django.contrib.auth import logout
+
+def logout_view(request):
+    logout(request)
+    return redirect('login') # or wherever you want them to go
+
 @login_required
 def home_view(request):
     # Check if the user is in the 'Trainer' group

@@ -22,6 +22,8 @@
         <a id="fbButton" class="home-button full-width" href="/feedback/"> <i class="fa-regular fa-comments"></i> Feedback</a>
     </div>
     <span class="link-row">
+        {% csrf_token %}
+        <a class="password-link" href="/logout/">Abmelden</a>
         <a class="password-link" href="/password_change/">Passwort ändern</a>
         {% if is_trainer %}
         

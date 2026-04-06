@@ -128,6 +128,7 @@ SESSION_COOKIE_SECURE = not DEBUG
 LOGIN_URL = '/login/'
 LOGIN_REDIRECT_URL = '/'
 
+LOGOUT_REDIRECT_URL = 'login'  # Redirects to the URL pattern named 'login'
 
 # Internationalization
 # https://docs.djangoproject.com/en/5.2/topics/i18n/
