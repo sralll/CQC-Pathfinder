@@ -295,9 +295,14 @@ document.getElementById('jsonDropdown').addEventListener('change', function () {
 });
 
 function resetUI() {
-    const canvas = document.getElementById('OLchart');
-    const ctx = canvas.getContext('2d');
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    const chartCanvas = document.getElementById('OLchart');
+    const ctxC = chartCanvas.getContext('2d');
+    ctxC.clearRect(0, 0, chartCanvas.width, chartCanvas.height);
+
+    const mapCanvas = document.getElementById('resultMapCanvas');
+    const ctxM = mapCanvas.getContext('2d');
+    ctxM.setTransform(1,0,0,1,0,0);
+    ctxM.clearRect(0, 0, mapCanvas.width, mapCanvas.height);
 
     document.querySelectorAll('.userCheckbox').forEach(cb => cb.checked = false);
 

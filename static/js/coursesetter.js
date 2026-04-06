@@ -31,7 +31,7 @@ let cDraw = rDraw = sDraw = false;  //flags for drawing control, route, sperre
 let isEditingElevation = false; //flag for elevation editing
 let nnController = null;        //controller for neural network fetch aborting
 let pfController = null;        //controller for pathfinding fetch aborting
-
+let loadedFileName = null;      // name of currently loaded file (for better UX on reload)
 let editRoute = null;           // active route being edited
 let editContinuation = null;    // remaining points after split
 let editInsertIndex = null;     // index where split happened
@@ -44,6 +44,7 @@ let BrushRadius = 2;            //brush radius for CV editing
 
 //objects
 let image = new Image();        //main map image
+let imgBitmap = null;           //bitmap memory holder
 let mask = null;                //mask image from UNet
 
 let cqc = {
@@ -128,6 +129,7 @@ const scaleInputDiv = document.getElementById('scaleInputDiv');
 const scalingInfo = document.getElementById("scalingInfo");
 const scaleInput = document.getElementById("scaleInput");
 const mapScaleInput = document.getElementById("mapScaleInput");
+const projectNameDisplay = document.getElementById("projectName");
 
 //Main mouseevent listener
 routeCanvas.addEventListener("mousemove", mouseEvent, {passive: true});
@@ -642,6 +644,7 @@ function liveCursor(event){
 // navigation
 function openProjects() {
     modalP.style.display = 'block';
+    projectNameDisplay.textContent = loadedFileName ? loadedFileName : "Neues Projekt";
     loadFileList();  // Load file list when the modal opens
 }
 
@@ -1278,12 +1281,12 @@ function loadFileList() {
 }
 
 async function runBatchFromProjectFile(filename, batchPFButton) {
-    
-    batchPFButton.disabled = true; // disable button to prevent multiple clicks
-    batchPFButton.style.display = 'none'; // hide button during processing
+    // UI Feedback
+    batchPFButton.disabled = true;
+    batchPFButton.style.display = 'none';
+
     try {
-        // Step 1: send batch request to backend with only the filename
-        const batchResp = await fetch("/pathfinding/batch/", {
+        const response = await fetch("/pathfinding/batch/", {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
@@ -1292,8 +1295,21 @@ async function runBatchFromProjectFile(filename, batchPFButton) {
             body: JSON.stringify({ filename: filename })
         });
 
+        const result = await response.json();
+
+        // Check if the server returned an error (like our 400 Mask Error)
+        if (!response.ok) {
+            throw new Error(result.error || "Server error occurred");
+        }
+
     } catch (err) {
+        // Catch both Network errors and our custom Mask error
         console.error("Error in batch pathfinding:", err);
+        alert("Fehler: " + err.message);
+
+        // Restore the button so the user can fix the mask and try again
+        batchPFButton.disabled = false;
+        batchPFButton.style.display = 'block';
     }
 }
 
@@ -1303,29 +1319,34 @@ function loadFile(filename) {
 
     fetch(url)
     .then(response => response.json())
-    .then(fileData => {
-        cqc = fileData;
+    .then(data => {
+        cqc = data.content; 
+        loadedFileName = data.metadata.filename;
+
+        // 2. Use the content for your processing logic
         normalizeCQC(cqc);
-        cv_mask = fileData.has_mask || false;
+        
+        // Note: has_mask is now inside data.content
+        cv_mask = cqc.has_mask || false; 
         mask = null;
 
         loading = true;
         requestAnimationFrame(drawLoadingAnimation);
 
         modalP.style.display = 'none';
-        filenameInput.value = '';
+        
         ncP = nRP = nR = 0;
         transX = transY = 0;
 
-
         // Load image and draw immediately after it's ready
-        image.onload = () => {
+        image.onload = async () => {
+            imgBitmap = await createImageBitmap(image);
             loading = false;
         };
         image.crossOrigin = "anonymous";
-        image.src = cqc.mapFile;
+        image.src = cqc.mapFile; // mapFile is inside the content object
 
-        // Load mask in parallel, but don't block the draw
+        // Load mask in parallel
         if (cv_mask) {
             const mapFilename = cqc.mapFile.split('/').pop().split('.')[0];
             const maskUrl = `/pathfinding/get_mask/mask_${mapFilename}.png`;
@@ -1333,7 +1354,7 @@ function loadFile(filename) {
             const tempMask = new Image();
             tempMask.onload = () => {
                 mask = tempMask;
-                processMaskImage(mask);  // post-process when ready
+                processMaskImage(mask);
             };
             tempMask.crossOrigin = "anonymous";
             tempMask.src = maskUrl;
@@ -1515,7 +1536,8 @@ mapUploadForm.addEventListener('submit', function(event) {
         const protectedMapUrl = `/coursesetter/get_map/${mapFilename}`;
         cqc.mapFile = protectedMapUrl;
         
-        image.onload = () => {
+        image.onload = async () => {
+            imgBitmap = await createImageBitmap(image);
             loading = false;
         };
         
@@ -2126,11 +2148,10 @@ function resizeCanvas() {
 }
 
 function drawScaledImage(image) {
-    // Apply scaling to the image, but without modifying the canvas transform
-    const scaledWidth = image.naturalWidth * cqc.scale;
-    const scaledHeight = image.naturalHeight * cqc.scale;
-
-    rc.drawImage(image, 0, 0, scaledWidth, scaledHeight);
+    const src = imgBitmap ?? image;  // use bitmap if available
+    const scaledWidth = src.width * cqc.scale;
+    const scaledHeight = src.height * cqc.scale;
+    rc.drawImage(src, 0, 0, scaledWidth, scaledHeight);
 }
 
 // update tables

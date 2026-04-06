@@ -7,6 +7,7 @@ let cqc = null;
 let missingCPs = null;      // holds the list of missing control points
 let duplicateGame = null;
 let image = new Image();
+let imgBitmap = null;
 let choiceMade = false;
 
 let game_file = null;
@@ -313,8 +314,9 @@ function loadGameData(filename) {
             image = new Image();
             image.src = cqc.mapFile;
 
-            image.onload = () => {
-                loading = false; // Stop spinner
+            image.onload = async () => {
+                imgBitmap = await createImageBitmap(image);
+                loading = false;
             };
 
             image.onerror = () => {
@@ -381,7 +383,7 @@ function makePreview() {
     const offsetY = (canvasHeight - newHeight) / 2;
     
     // Draw the scaled image centered
-    ctx.drawImage(image, 0, 0, imgWidth, imgHeight, offsetX, offsetY, newWidth, newHeight);
+    ctx.drawImage(imgBitmap ?? image, 0, 0, imgWidth, imgHeight, offsetX, offsetY, newWidth, newHeight);
 
     // Create a button dynamically inside resultBox
     const resultBox = document.getElementById("resultBox");
@@ -584,8 +586,7 @@ function interpolateTransform(start, end, progress) {
 }
 
 function drawMap() {
-    ctx.drawImage(image, 0, 0);
-}
+    ctx.drawImage(imgBitmap ?? image, 0, 0);}
 
 function drawCP(ncP) {
     ctx.beginPath();

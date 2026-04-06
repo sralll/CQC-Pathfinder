@@ -144,14 +144,17 @@ def load_file(request, filename):
 
     try:
         file_data = gamefile.data or {}
-
+        file_name = gamefile.filename or "unknown"
         map_path = file_data.get("mapFile", "")
         if map_path:
             basename = os.path.splitext(os.path.basename(map_path))[0]
             mask_filename = f"masks/mask_{basename}.png"
             file_data["has_mask"] = default_storage.exists(mask_filename)
 
-        return JsonResponse(file_data)
+        return JsonResponse({
+            "metadata": {"filename": file_name},
+            "content": file_data
+        })
 
     except Exception as e:
         return JsonResponse(

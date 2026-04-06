@@ -436,17 +436,17 @@ def batch_pathfinding(request):
         if not data or "cP" not in data or "mapFile" not in data:
             return JsonResponse({"error": "Invalid file data: missing cP or mapFile"}, status=400)
 
-        mapFile = os.path.splitext(os.path.basename(data["mapFile"]))[0]
+        map_basename = os.path.splitext(os.path.basename(data["mapFile"]))[0]
         blockedTerrain = data.get("blockedTerrain", {})
 
-        mask, error = load_mask({"filename": mapFile})
+        mask, error = load_mask({"filename": map_basename})
+        
         if error:
-            return JsonResponse({"error": f"Failed to load mask: {error}"}, status=400)
+            return JsonResponse({"error": f"Keine Maske gefunden"}, status=400)
         grid = apply_blocked_terrain(mask, blockedTerrain)
 
         author = request.user.first_name or request.user.username
 
-        # Fire and forget — returns immediately to the frontend
         thread = threading.Thread(
             target=run_batch_async,
             args=(data, grid, blockedTerrain, filename, user_kader, author),

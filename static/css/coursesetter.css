@@ -207,3 +207,8 @@ body.desktop #filename, #fileInput, #buttonScale {
 #buttonScale {
     left: 0px;
 }
+
+#projectName {
+    font-size: 1.5rem;
+    font-weight: bold;
+}

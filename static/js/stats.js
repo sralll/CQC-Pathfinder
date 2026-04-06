@@ -239,13 +239,16 @@ document.addEventListener("DOMContentLoaded", () => {
 
   const toggle = document.getElementById("trainingToggle");
 
-  // initial load
+  // Force the toggle to 'true' on load via JS (Alternative to HTML 'checked')
+  toggle.checked = true; 
+
+  // Initial load - now correctly receives 'true'
   loadTrainerStats(toggle.checked);
 
-  // reload on toggle
+  // Reload on toggle
   toggle.addEventListener("change", () => {
     const tbody = document.querySelector("#trainerStatsTable tbody");
-    tbody.style.opacity = 0.2;
+    if (tbody) tbody.style.opacity = 0.2;
     loadTrainerStats(toggle.checked);
   });
 });

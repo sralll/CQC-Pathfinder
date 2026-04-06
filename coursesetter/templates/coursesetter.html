@@ -101,12 +101,15 @@
         <div class="modal-content">
 			<span id="closeProjects" class="closeModal" onclick="closeProjects()">&times;</span>
 			<div id="inputDiv">
+				<div id="projectName"></div>
+				<button id="downloadButton" onclick="downloadJSON(cqc, 'cqc_data.json')" title="Herunterladen (Notfall)">
+					<i class="fa-solid fa-download"></i>
+				</button>
+			</div>
+			<div id="inputDiv">
             	<input type="text" id="filename" placeholder="Projektname">
             	<button id="submitSaveButton" title="Speichern">
 					<i class="fa-solid fa-floppy-disk"></i>
-				</button>
-				<button id="downloadButton" onclick="downloadJSON(cqc, 'cqc_data.json')" title="Herunterladen (Notfall)">
-					<i class="fa-solid fa-download"></i>
 				</button>
 			</div>
 			<div id="projectTableDiv">
