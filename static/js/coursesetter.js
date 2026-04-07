@@ -24,6 +24,7 @@ let projectSaved = true;        //set to false whenever the user makes changes
 
 let loading = false;            //flag for loading state
 let batchPollInterval = null;   //interval ID for polling batch progress
+let batchPollingActive = false; // guard flag
 let mouse = {button: false};    //mouse click state
 let isEditing = false;          //flag for editing mask
 let hasDragged = false;         //flag for drag detection in main mouse event
@@ -1299,8 +1300,12 @@ function loadFileList() {
 }
 
 function startBatchProgressPolling() {
-    if (batchPollInterval) return; // already polling
+    if (batchPollInterval) return;
+    batchPollingActive = true;
+
     batchPollInterval = setInterval(async () => {
+        if (!batchPollingActive) return; // bail if stopped mid-flight
+
         const progressSpans = document.querySelectorAll('[data-batch-filename]');
         if (progressSpans.length === 0) {
             stopBatchProgressPolling();
@@ -1308,19 +1313,19 @@ function startBatchProgressPolling() {
         }
         try {
             const response = await fetch('/coursesetter/get-files/');
-            const data = await response.json();
-            const fileMap = Object.fromEntries(data.files.map(f => [f.filename, f]));
+            if (!batchPollingActive) return; // bail after await if closed
 
+            const data = await response.json();
+            if (!batchPollingActive) return; // bail after parse too
+
+            const fileMap = Object.fromEntries(data.files.map(f => [f.filename, f]));
             progressSpans.forEach(span => {
                 const filename = span.dataset.batchFilename;
                 const file = fileMap[filename];
                 if (!file) return;
-
                 if (file.batch_progress && file.batch_progress.total) {
-                    // Update progress bar in place
                     span.innerHTML = renderBatchProgressBar(file.batch_progress.done, file.batch_progress.total);
                 } else {
-                    // Batch finished — do a full reload
                     stopBatchProgressPolling();
                     loadFileList();
                 }
@@ -1332,6 +1337,7 @@ function startBatchProgressPolling() {
 }
 
 function stopBatchProgressPolling() {
+    batchPollingActive = false; // disarms any in-flight async callbacks
     clearInterval(batchPollInterval);
     batchPollInterval = null;
 }
