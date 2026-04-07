@@ -652,6 +652,7 @@ function openProjects() {
 function closeProjects() {
     modalP.style.display = 'none';
     filenameInput.value = '';
+    stopBatchProgressPolling();
 }
 
 function closeMapModal() {
@@ -1387,6 +1388,7 @@ function loadFile(filename) {
         requestAnimationFrame(drawLoadingAnimation);
 
         modalP.style.display = 'none';
+        stopBatchProgressPolling();
         
         ncP = nRP = nR = 0;
         transX = transY = 0;
