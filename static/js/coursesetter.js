@@ -211,8 +211,8 @@ document.addEventListener("keydown", function(e) {
     if (modalP.style.display === 'block' || modalM.style.display === 'block') {
         if (cqc.scaled) {
             if (e.key === 'Escape' || e.keyCode === 27) {
-                modalP.style.display = 'none';
-                modalM.style.display = 'none';
+                closeProjects();
+                closeMapModal();
                 return;
             }
         }
@@ -315,16 +315,13 @@ window.addEventListener("beforeunload", function (e) {
 // close modals
 modalP.addEventListener('click', (event) => {
     if (event.target === modalP) {
-        modalP.style.display = 'none';
-
-        filenameInput.value = '';
+        closeProjects();
     }
 });
 
 modalM.addEventListener('click', (event) => {
     if (event.target === modalM) {
-        modalM.style.display = 'none';
-        filenameInput.value = '';
+        closeMapModal();
     }
 });
 
@@ -1393,8 +1390,7 @@ function loadFile(filename) {
         loading = true;
         requestAnimationFrame(drawLoadingAnimation);
 
-        modalP.style.display = 'none';
-        stopBatchProgressPolling();
+        closeProjects();
         
         ncP = nRP = nR = 0;
         transX = transY = 0;
