@@ -378,8 +378,16 @@ def pathfinding_loop(cp_data, grid, blockedTerrain=None):
 
 def run_batch_async(data, grid, blockedTerrain, filename, user_kader, author):
     try:
+        orig_unique_filename = f"{filename}_{user_kader.name}"
+        total = len(data["cP"])
+
+        # Update batch_progress on original file without touching last_edited
+        publishedFile.objects.filter(unique_filename=orig_unique_filename).update(
+            batch_progress={"done": 0, "total": total}
+        )
+
         for i, cp in enumerate(data["cP"]):
-            print(f"Processing CP {i + 1}/{len(data['cP'])}")
+            print(f"Processing CP {i + 1}/{total}")
             while len(cp["route"]) < 2:
                 result = pathfinding_loop(cp, grid, blockedTerrain)
                 if result is None:
@@ -395,22 +403,39 @@ def run_batch_async(data, grid, blockedTerrain, filename, user_kader, author):
                     "pos": calc_pos(rP, cp["start"], cp["ziel"]),
                     "runTime": round(length / RUN_SPEED),
                 })
-        unique_filename_out = f"{filename}_batchGen_{user_kader.name}"
+
+            # Update batch_progress on original file without touching last_edited
+            publishedFile.objects.filter(unique_filename=orig_unique_filename).update(
+                batch_progress={"done": i + 1, "total": total}
+            )
+
+        # All CPs done — write the final batchGen file once
+        unique_filename_out = f"{filename}_batch_{user_kader.name}"
         publishedFile.objects.update_or_create(
             unique_filename=unique_filename_out,
             defaults={
-                "filename": filename + "_batchGen",
+                "filename": filename + "_batch",
                 "author": author,
-                "ncP": len(data["cP"]),
+                "ncP": total,
                 "data": data,
                 "kader": user_kader,
             }
         )
+
+        # Clear progress indicator on original file
+        publishedFile.objects.filter(unique_filename=orig_unique_filename).update(
+            batch_progress=None
+        )
+
         print(f"Batch complete: {unique_filename_out}")
     except Exception as e:
         print(f"Batch failed: {e}")
+        # Optionally mark failure in progress field
+        publishedFile.objects.filter(
+            unique_filename=f"{filename}_{user_kader.name}"
+        ).update(batch_progress=None)
     finally:
-        connection.close()  # always release DB connection when thread finishes
+        connection.close()
 
 
 def batch_pathfinding(request):

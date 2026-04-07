@@ -23,6 +23,7 @@ let projectSaved = true;        //set to false whenever the user makes changes
 
 
 let loading = false;            //flag for loading state
+let batchPollInterval = null;   //interval ID for polling batch progress
 let mouse = {button: false};    //mouse click state
 let isEditing = false;          //flag for editing mask
 let hasDragged = false;         //flag for drag detection in main mouse event
@@ -1260,19 +1261,35 @@ function loadFileList() {
 
                 // Batch pathfinding button
                 const batchPFCell = document.createElement('td');
+                const batchProgressCell = document.createElement('td');
+
                 if (file.editable) {
-                    const batchPFButton = document.createElement('button');
-                    batchPFButton.innerHTML = '<i class="fa-solid fa-industry"></i>';
-                    batchPFButton.style.padding = "2px 0px";
-                    batchPFButton.title = "Batch Pathfinding (2 Routen pro Postenpaar)";
-                    batchPFButton.addEventListener('click', () => runBatchFromProjectFile(file.filename, batchPFButton));
-                    batchPFCell.appendChild(batchPFButton);
+                    if (file.batch_progress && file.batch_progress.total) {
+                        const progressSpan = document.createElement('span');
+                        progressSpan.dataset.batchFilename = file.filename;
+                        progressSpan.innerHTML = renderBatchProgressBar(file.batch_progress.done, file.batch_progress.total);
+                        progressSpan.style.color = "#757575";
+                        batchProgressCell.appendChild(progressSpan);
+                    } else {
+                        const batchPFButton = document.createElement('button');
+                        batchPFButton.innerHTML = '<i class="fa-solid fa-industry"></i>';
+                        batchPFButton.style.padding = "2px 0px";
+                        batchPFButton.title = "Batch Pathfinding (2 Routen pro Postenpaar)";
+                        batchPFButton.addEventListener('click', () => runBatchFromProjectFile(file.filename, batchPFButton, batchPFCell, batchProgressCell, file.cPCount));
+                        batchPFCell.appendChild(batchPFButton);
+                    }
                 }
+
                 row.appendChild(batchPFCell);
+                row.appendChild(batchProgressCell);
                 
                 // Append row
                 tbody.appendChild(row);
             });
+            
+            if (data.files.some(f => f.batch_progress && f.batch_progress.total)) {
+                startBatchProgressPolling();
+            }
         })
         .catch(error => {
             console.error('Error loading file list:', error);
@@ -1280,11 +1297,52 @@ function loadFileList() {
         });
 }
 
-async function runBatchFromProjectFile(filename, batchPFButton) {
-    // UI Feedback
-    batchPFButton.disabled = true;
-    batchPFButton.style.display = 'none';
+function startBatchProgressPolling() {
+    if (batchPollInterval) return; // already polling
+    batchPollInterval = setInterval(async () => {
+        const progressSpans = document.querySelectorAll('[data-batch-filename]');
+        if (progressSpans.length === 0) {
+            stopBatchProgressPolling();
+            return;
+        }
+        try {
+            const response = await fetch('/coursesetter/get-files/');
+            const data = await response.json();
+            const fileMap = Object.fromEntries(data.files.map(f => [f.filename, f]));
 
+            progressSpans.forEach(span => {
+                const filename = span.dataset.batchFilename;
+                const file = fileMap[filename];
+                if (!file) return;
+
+                if (file.batch_progress && file.batch_progress.total) {
+                    // Update progress bar in place
+                    span.innerHTML = renderBatchProgressBar(file.batch_progress.done, file.batch_progress.total);
+                } else {
+                    // Batch finished — do a full reload
+                    stopBatchProgressPolling();
+                    loadFileList();
+                }
+            });
+        } catch (err) {
+            console.error("Progress poll failed:", err);
+        }
+    }, 3000);
+}
+
+function stopBatchProgressPolling() {
+    clearInterval(batchPollInterval);
+    batchPollInterval = null;
+}
+
+async function runBatchFromProjectFile(filename, batchPFButton, batchPFCell, batchProgressCell, ncP) {
+    // Immediately show empty progress bar
+    batchPFButton.style.display = 'none';
+    const progressSpan = document.createElement('span');
+    progressSpan.dataset.batchFilename = filename;  // needed for poller to find it
+    progressSpan.innerHTML = renderBatchProgressBar(0, ncP);
+    progressSpan.style.color = "#757575";
+    batchProgressCell.appendChild(progressSpan);
     try {
         const response = await fetch("/pathfinding/batch/", {
             method: "POST",
@@ -1294,22 +1352,17 @@ async function runBatchFromProjectFile(filename, batchPFButton) {
             },
             body: JSON.stringify({ filename: filename })
         });
-
         const result = await response.json();
-
-        // Check if the server returned an error (like our 400 Mask Error)
         if (!response.ok) {
             throw new Error(result.error || "Server error occurred");
         }
-
+        // Start polling now that batch is confirmed running
+        startBatchProgressPolling(() => renderFilesTable());
     } catch (err) {
-        // Catch both Network errors and our custom Mask error
         console.error("Error in batch pathfinding:", err);
         alert("Fehler: " + err.message);
-
-        // Restore the button so the user can fix the mask and try again
-        batchPFButton.disabled = false;
         batchPFButton.style.display = 'block';
+        batchProgressCell.innerHTML = '';
     }
 }
 
@@ -3073,4 +3126,12 @@ function renderUNetProgress(current, total, width = 30) {
     `<i style="font-size: 1rem; padding: 0px 10px"
         class="fa-solid fa-spinner fa-spin-pulse"></i> <button onclick="cancelNN()"><i class="fa-solid fa-x fa-sm" style="font-size: 0.8rem;"></i></button>`
   );
+}
+
+function renderBatchProgressBar(current, total, width = 15) {
+    const filledCount = Math.round((current / total) * width);
+    const emptyCount = width - filledCount;
+    const filledBoxes = "█".repeat(filledCount);
+    const emptyBoxes = "░".repeat(emptyCount);
+    return `${filledBoxes}${emptyBoxes} ${current}/${total}`;
 }
