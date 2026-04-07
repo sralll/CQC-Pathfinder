@@ -208,10 +208,16 @@ document.addEventListener("keydown", function(e) {
     // Block all other Ctrl-modified keys
     if (isCtrl) return;
 
-    if (modalP.style.display === 'block' || modalM.style.display === 'block') {
+    if (modalP.style.display === 'block') {
+        if (e.key === 'Escape') {
+            closeProjects();
+            return;
+        }
+    }
+
+    if (modalM.style.display === 'block') {
         if (cqc.scaled) {
-            if (e.key === 'Escape' || e.keyCode === 27) {
-                closeProjects();
+            if (e.key === 'Escape') {
                 closeMapModal();
                 return;
             }
@@ -321,7 +327,8 @@ modalP.addEventListener('click', (event) => {
 
 modalM.addEventListener('click', (event) => {
     if (event.target === modalM) {
-        closeMapModal();
+        modalM.style.display = 'none';
+        filenameInput.value = '';
     }
 });
 
