@@ -1307,14 +1307,12 @@ function loadFileList() {
 function startBatchProgressPolling() {
     if (batchPollInterval) return;
     batchPollingActive = true;
+    activeBatchFilenames.clear();
 
     batchPollInterval = setInterval(async () => {
         if (!batchPollingActive) return;
 
-        // Re-query spans every time to ensure we have fresh DOM references
         const progressSpans = document.querySelectorAll('[data-batch-filename]');
-        
-        // If there are no spans on the page at all, just stop.
         if (progressSpans.length === 0) {
             stopBatchProgressPolling();
             return;
@@ -1333,36 +1331,36 @@ function startBatchProgressPolling() {
                 const hasProgress = file.batch_progress !== null && file.batch_progress !== undefined;
 
                 if (hasProgress) {
-                    // 1. UPDATE UI ONLY: Do not reload the list here
-                    span.innerHTML = renderBatchProgressBar(file.batch_progress.done, file.batch_progress.total);
+                    const { done, total } = file.batch_progress;
                     
-                    // Mark as active so we know to look for the "transition to null" later
+                    // Update UI
+                    span.innerHTML = renderBatchProgressBar(done, total);
+                    
+                    // Log progress to console
+                    console.log(`[Polling] ${filename}: ${done}/${total} (${Math.round((done/total)*100)}%)`);
+                    
                     activeBatchFilenames.add(filename);
                 } 
                 else if (activeBatchFilenames.has(filename)) {
-                    // 2. TRANSITION DETECTED: Was active, now is null (finished!)
+                    // File transition from active to null (finished)
                     activeBatchFilenames.delete(filename); 
+                    console.log(`%c[Finished] ${filename}`, "color: #4CAF50; font-weight: bold;");
                     
-                    console.log(`Finished processing: ${filename}`);
-                    
-                    // Trigger the list reload because one file is officially done
                     loadFileList(); 
                 }
             });
 
-            // 3. STOP CONDITION: Only stop if the set is empty 
-            // (meaning nothing that was active is still active)
+            // Stop if no files remain in the active set
             if (activeBatchFilenames.size === 0) {
-                // Double check: are there any new files that just started?
-                const anyStarted = data.files.some(f => f.batch_progress !== null);
-                if (!anyStarted) {
-                    console.log("All processes cleared. Stopping interval.");
+                const anyCurrentProgress = data.files.some(f => f.batch_progress !== null);
+                if (!anyCurrentProgress) {
+                    console.log("[Polling] Queue empty. Stopping interval.");
                     stopBatchProgressPolling();
                 }
             }
 
         } catch (err) {
-            console.error("Progress poll failed:", err);
+            console.error("[Polling] Error:", err);
         }
     }, 3000);
 }
