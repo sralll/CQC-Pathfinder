@@ -1332,6 +1332,7 @@ function startBatchProgressPolling() {
                 } else {
                     stopBatchProgressPolling();
                     loadFileList();
+                    console.log("finished");
                 }
             });
         } catch (err) {
