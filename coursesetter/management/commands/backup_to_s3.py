@@ -27,13 +27,9 @@ class Command(BaseCommand):
             except Exception as e:
                 self.stderr.write(self.style.ERROR(f'Error backing up {f.filename}: {e}'))
 
-        # Restart gunicorn gracefully after backup
+        # Replace your gunicorn restart block with this:
         try:
-            result = subprocess.run(['pgrep', '-f', 'gunicorn'], capture_output=True, text=True)
-            pids = result.stdout.strip().split('\n')
-            # Find the master process (lowest PID is typically the master)
-            master_pid = min(int(pid) for pid in pids if pid)
-            os.kill(master_pid, signal.SIGUSR2)  # graceful restart
-            self.stdout.write(self.style.SUCCESS(f'Sent SIGUSR2 to gunicorn master (PID {master_pid})'))
+            subprocess.run(['pkill', '-HUP', '-f', 'gunicorn'], check=True)
+            self.stdout.write(self.style.SUCCESS('Sent SIGHUP to gunicorn (Workers will recycle)'))
         except Exception as e:
-            self.stderr.write(self.style.ERROR(f'Failed to restart gunicorn: {e}'))
+            self.stderr.write(self.style.ERROR(f'Failed to reload gunicorn: {e}'))
