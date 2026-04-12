@@ -32,12 +32,12 @@ body.mobile #userSelect {
 }
 
 #tableWrapper {
-  width: auto;
+  max-width: 100%;
   overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 #trainerStatsTable {
-  width: 100%;
   border-collapse: collapse;
   font-size: 0.9rem;
 }
@@ -55,6 +55,7 @@ body.mobile #userSelect {
   background-color: #fff; /* same as table background */
   z-index: 10;
   border-bottom: 2px solid #999; /* slightly thicker for header */
+  white-space: nowrap;
 }
 
 #trainerStatsTable tbody tr:nth-child(even) {
