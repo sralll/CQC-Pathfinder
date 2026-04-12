@@ -1341,13 +1341,10 @@ function startBatchProgressPolling() {
                     
                     // Track that this file is currently active
                     activeBatchFilenames.add(uniqueId);
-                    
-                    console.log(`[Polling] ${uniqueId}: ${done}/${total} (${Math.round((done/total)*100)}%)`);
                 } 
                 else if (activeBatchFilenames.has(uniqueId)) {
                     // TRANSITION: It was active in our tracker, but backend says it's done (null)
                     activeBatchFilenames.delete(uniqueId); 
-                    console.log(`%c[Finished] ${uniqueId}`, "color: #4CAF50; font-weight: bold;");
                     
                     // Flag that we need to reload the whole list to show the new "Open" buttons
                     refreshNeeded = true; 
@@ -1363,7 +1360,6 @@ function startBatchProgressPolling() {
             if (activeBatchFilenames.size === 0) {
                 const isAnythingStillRunning = data.files.some(f => f.batch_progress !== null);
                 if (!isAnythingStillRunning) {
-                    console.log("[Polling] All batches complete. Cleaning up.");
                     stopBatchProgressPolling();
                 }
             }
