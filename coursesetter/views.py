@@ -114,6 +114,7 @@ def get_files(request):
             editable = obj.kader == user_kader
             files.append({
                 'filename': obj.filename,
+                'unique_filename': obj.unique_filename, # <--- ADD THIS
                 'modified': obj.last_edited.isoformat() if obj.last_edited else '',
                 'cPCount': obj.ncP or 0,
                 'published': obj.published,

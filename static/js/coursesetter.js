@@ -1273,7 +1273,7 @@ function loadFileList() {
                 if (file.editable) {
                     if (file.batch_progress && file.batch_progress.total) {
                         const progressSpan = document.createElement('span');
-                        progressSpan.dataset.batchFilename = file.filename;
+                        progressSpan.dataset.batchFilename = file.unique_filename;
                         progressSpan.innerHTML = renderBatchProgressBar(file.batch_progress.done, file.batch_progress.total);
                         progressSpan.style.color = "#757575";
                         batchProgressCell.appendChild(progressSpan);
@@ -1282,7 +1282,7 @@ function loadFileList() {
                         batchPFButton.innerHTML = '<i class="fa-solid fa-industry"></i>';
                         batchPFButton.style.padding = "2px 0px";
                         batchPFButton.title = "Batch Pathfinding (2 Routen pro Postenpaar)";
-                        batchPFButton.addEventListener('click', () => runBatchFromProjectFile(file.filename, batchPFButton, batchPFCell, batchProgressCell, file.cPCount));
+                        batchPFButton.addEventListener('click', () => runBatchFromProjectFile(file.filename, file.unique_filename, batchPFButton, batchPFCell, batchProgressCell, file.cPCount));
                         batchPFCell.appendChild(batchPFButton);
                     }
                 }
@@ -1312,20 +1312,23 @@ function startBatchProgressPolling() {
     batchPollInterval = setInterval(async () => {
         if (!batchPollingActive) return;
 
+        // 1. Freshly query all progress spans currently on the screen
         const progressSpans = document.querySelectorAll('[data-batch-filename]');
-        if (progressSpans.length === 0) {
-            stopBatchProgressPolling();
-            return;
-        }
-
+        
         try {
             const response = await fetch('/coursesetter/get-files/');
             const data = await response.json();
-            const fileMap = Object.fromEntries(data.files.map(f => [f.filename, f]));
+            
+            // 2. Map backend data by unique_filename
+            const fileMap = Object.fromEntries(data.files.map(f => [f.unique_filename, f]));
+
+            let refreshNeeded = false;
 
             progressSpans.forEach(span => {
-                const filename = span.dataset.batchFilename;
-                const file = fileMap[filename];
+                // This is the unique_filename (e.g., "Test_KaderA")
+                const uniqueId = span.dataset.batchFilename;
+                const file = fileMap[uniqueId];
+                
                 if (!file) return;
 
                 const hasProgress = file.batch_progress !== null && file.batch_progress !== undefined;
@@ -1333,34 +1336,40 @@ function startBatchProgressPolling() {
                 if (hasProgress) {
                     const { done, total } = file.batch_progress;
                     
-                    // Update UI
+                    // Update the progress bar inside the span
                     span.innerHTML = renderBatchProgressBar(done, total);
                     
-                    // Log progress to console
-                    console.log(`[Polling] ${filename}: ${done}/${total} (${Math.round((done/total)*100)}%)`);
+                    // Track that this file is currently active
+                    activeBatchFilenames.add(uniqueId);
                     
-                    activeBatchFilenames.add(filename);
+                    console.log(`[Polling] ${uniqueId}: ${done}/${total} (${Math.round((done/total)*100)}%)`);
                 } 
-                else if (activeBatchFilenames.has(filename)) {
-                    // File transition from active to null (finished)
-                    activeBatchFilenames.delete(filename); 
-                    console.log(`%c[Finished] ${filename}`, "color: #4CAF50; font-weight: bold;");
+                else if (activeBatchFilenames.has(uniqueId)) {
+                    // TRANSITION: It was active in our tracker, but backend says it's done (null)
+                    activeBatchFilenames.delete(uniqueId); 
+                    console.log(`%c[Finished] ${uniqueId}`, "color: #4CAF50; font-weight: bold;");
                     
-                    loadFileList(); 
+                    // Flag that we need to reload the whole list to show the new "Open" buttons
+                    refreshNeeded = true; 
                 }
             });
 
-            // Stop if no files remain in the active set
+            // 3. If any file finished during this loop, refresh the main list
+            if (refreshNeeded) {
+                loadFileList(); 
+            }
+
+            // 4. STOP CHECK: If our tracker is empty, verify if any new files started in the background
             if (activeBatchFilenames.size === 0) {
-                const anyCurrentProgress = data.files.some(f => f.batch_progress !== null);
-                if (!anyCurrentProgress) {
-                    console.log("[Polling] Queue empty. Stopping interval.");
+                const isAnythingStillRunning = data.files.some(f => f.batch_progress !== null);
+                if (!isAnythingStillRunning) {
+                    console.log("[Polling] All batches complete. Cleaning up.");
                     stopBatchProgressPolling();
                 }
             }
 
         } catch (err) {
-            console.error("[Polling] Error:", err);
+            console.error("[Polling] Fetch failed:", err);
         }
     }, 3000);
 }
@@ -1371,11 +1380,11 @@ function stopBatchProgressPolling() {
     batchPollInterval = null;
 }
 
-async function runBatchFromProjectFile(filename, batchPFButton, batchPFCell, batchProgressCell, ncP) {
+async function runBatchFromProjectFile(filename, uniqueFilename, batchPFButton, batchPFCell, batchProgressCell, ncP) {
     // Immediately show empty progress bar
     batchPFButton.style.display = 'none';
     const progressSpan = document.createElement('span');
-    progressSpan.dataset.batchFilename = filename;  // needed for poller to find it
+    progressSpan.dataset.batchFilename = uniqueFilename;  // needed for poller to find it
     progressSpan.innerHTML = renderBatchProgressBar(0, ncP);
     progressSpan.style.color = "#757575";
     batchProgressCell.appendChild(progressSpan);
