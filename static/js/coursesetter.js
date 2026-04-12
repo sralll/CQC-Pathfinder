@@ -1304,17 +1304,16 @@ function loadFileList() {
         });
 }
 
-function startBatchProgressPolling() {
+async function startBatchProgressPolling() {
     if (batchPollInterval) return;
     batchPollingActive = true;
-    
-    // Reset our tracker every time we start polling
-    activeBatchFilenames.clear();
 
     batchPollInterval = setInterval(async () => {
         if (!batchPollingActive) return;
 
+        // 1. Grab fresh references to the spans every interval
         const progressSpans = document.querySelectorAll('[data-batch-filename]');
+        
         if (progressSpans.length === 0) {
             stopBatchProgressPolling();
             return;
@@ -1323,31 +1322,54 @@ function startBatchProgressPolling() {
         try {
             const response = await fetch('/coursesetter/get-files/');
             const data = await response.json();
+            
+            // Map files by filename for O(1) lookup
             const fileMap = Object.fromEntries(data.files.map(f => [f.filename, f]));
+            
+            let stillProcessingCount = 0;
 
             progressSpans.forEach(span => {
                 const filename = span.dataset.batchFilename;
                 const file = fileMap[filename];
+                
                 if (!file) return;
 
-                const hasProgress = file.batch_progress && file.batch_progress.total;
+                // Check if backend reports active progress
+                const hasProgress = file.batch_progress && 
+                                   file.batch_progress.total > 0 && 
+                                   file.batch_progress.done < file.batch_progress.total;
 
                 if (hasProgress) {
-                    // 1. If it has progress, update the bar and mark it as active
-                    span.innerHTML = renderBatchProgressBar(file.batch_progress.done, file.batch_progress.total);
+                    stillProcessingCount++;
                     activeBatchFilenames.add(filename);
+                    
+                    // Update the UI
+                    const newHTML = renderBatchProgressBar(file.batch_progress.done, file.batch_progress.total);
+                    
+                    // Only update DOM if the HTML actually changed (saves CPU/Battery)
+                    if (span.innerHTML !== newHTML) {
+                        span.innerHTML = newHTML;
+                    }
                 } 
                 else if (activeBatchFilenames.has(filename)) {
-                    // 2. ONLY if it WAS active before, but now has NO progress, it is finished
-                    activeBatchFilenames.delete(filename); // Clean up
+                    // It WAS active, but now it's finished
+                    activeBatchFilenames.delete(filename);
                     
-                    console.log(`Finished processing: ${filename}`);
+                    // Final UI state (e.g., "100%" or "Complete")
+                    span.innerHTML = "Done!"; 
                     
-                    // Specific "Cleanup" actions
-                    stopBatchProgressPolling();
-                    loadFileList(); 
+                    console.log(`${filename} finished.`);
+                    loadFileList(); // Refresh the main list once
                 }
             });
+
+            // 2. Only stop if nothing in the DOM is reporting progress 
+            // AND our internal tracker is empty
+            if (stillProcessingCount === 0 && activeBatchFilenames.size === 0) {
+                console.log("All batches finished. Stopping poll.");
+                stopBatchProgressPolling();
+            }
+
         } catch (err) {
             console.error("Progress poll failed:", err);
         }
