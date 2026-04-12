@@ -1304,16 +1304,17 @@ function loadFileList() {
         });
 }
 
-async function startBatchProgressPolling() {
+function startBatchProgressPolling() {
     if (batchPollInterval) return;
     batchPollingActive = true;
 
     batchPollInterval = setInterval(async () => {
         if (!batchPollingActive) return;
 
-        // 1. Grab fresh references to the spans every interval
+        // Re-query spans every time to ensure we have fresh DOM references
         const progressSpans = document.querySelectorAll('[data-batch-filename]');
         
+        // If there are no spans on the page at all, just stop.
         if (progressSpans.length === 0) {
             stopBatchProgressPolling();
             return;
@@ -1322,52 +1323,42 @@ async function startBatchProgressPolling() {
         try {
             const response = await fetch('/coursesetter/get-files/');
             const data = await response.json();
-            
-            // Map files by filename for O(1) lookup
             const fileMap = Object.fromEntries(data.files.map(f => [f.filename, f]));
-            
-            let stillProcessingCount = 0;
 
             progressSpans.forEach(span => {
                 const filename = span.dataset.batchFilename;
                 const file = fileMap[filename];
-                
                 if (!file) return;
 
-                // Check if backend reports active progress
-                const hasProgress = file.batch_progress && 
-                                   file.batch_progress.total > 0 && 
-                                   file.batch_progress.done < file.batch_progress.total;
+                const hasProgress = file.batch_progress !== null && file.batch_progress !== undefined;
 
                 if (hasProgress) {
-                    stillProcessingCount++;
+                    // 1. UPDATE UI ONLY: Do not reload the list here
+                    span.innerHTML = renderBatchProgressBar(file.batch_progress.done, file.batch_progress.total);
+                    
+                    // Mark as active so we know to look for the "transition to null" later
                     activeBatchFilenames.add(filename);
-                    
-                    // Update the UI
-                    const newHTML = renderBatchProgressBar(file.batch_progress.done, file.batch_progress.total);
-                    
-                    // Only update DOM if the HTML actually changed (saves CPU/Battery)
-                    if (span.innerHTML !== newHTML) {
-                        span.innerHTML = newHTML;
-                    }
                 } 
                 else if (activeBatchFilenames.has(filename)) {
-                    // It WAS active, but now it's finished
-                    activeBatchFilenames.delete(filename);
+                    // 2. TRANSITION DETECTED: Was active, now is null (finished!)
+                    activeBatchFilenames.delete(filename); 
                     
-                    // Final UI state (e.g., "100%" or "Complete")
-                    span.innerHTML = "Done!"; 
+                    console.log(`Finished processing: ${filename}`);
                     
-                    console.log(`${filename} finished.`);
-                    loadFileList(); // Refresh the main list once
+                    // Trigger the list reload because one file is officially done
+                    loadFileList(); 
                 }
             });
 
-            // 2. Only stop if nothing in the DOM is reporting progress 
-            // AND our internal tracker is empty
-            if (stillProcessingCount === 0 && activeBatchFilenames.size === 0) {
-                console.log("All batches finished. Stopping poll.");
-                stopBatchProgressPolling();
+            // 3. STOP CONDITION: Only stop if the set is empty 
+            // (meaning nothing that was active is still active)
+            if (activeBatchFilenames.size === 0) {
+                // Double check: are there any new files that just started?
+                const anyStarted = data.files.some(f => f.batch_progress !== null);
+                if (!anyStarted) {
+                    console.log("All processes cleared. Stopping interval.");
+                    stopBatchProgressPolling();
+                }
             }
 
         } catch (err) {
