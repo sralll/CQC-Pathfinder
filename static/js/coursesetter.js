@@ -25,6 +25,7 @@ let projectSaved = true;        //set to false whenever the user makes changes
 let loading = false;            //flag for loading state
 let batchPollInterval = null;   //interval ID for polling batch progress
 let batchPollingActive = false; // guard flag
+let activeBatchFilenames = new Set();
 let mouse = {button: false};    //mouse click state
 let isEditing = false;          //flag for editing mask
 let hasDragged = false;         //flag for drag detection in main mouse event
@@ -1306,33 +1307,45 @@ function loadFileList() {
 function startBatchProgressPolling() {
     if (batchPollInterval) return;
     batchPollingActive = true;
+    
+    // Reset our tracker every time we start polling
+    activeBatchFilenames.clear();
 
     batchPollInterval = setInterval(async () => {
-        if (!batchPollingActive) return; // bail if stopped mid-flight
+        if (!batchPollingActive) return;
 
         const progressSpans = document.querySelectorAll('[data-batch-filename]');
         if (progressSpans.length === 0) {
             stopBatchProgressPolling();
             return;
         }
+
         try {
             const response = await fetch('/coursesetter/get-files/');
-            if (!batchPollingActive) return; // bail after await if closed
-
             const data = await response.json();
-            if (!batchPollingActive) return; // bail after parse too
-
             const fileMap = Object.fromEntries(data.files.map(f => [f.filename, f]));
+
             progressSpans.forEach(span => {
                 const filename = span.dataset.batchFilename;
                 const file = fileMap[filename];
                 if (!file) return;
-                if (file.batch_progress && file.batch_progress.total) {
+
+                const hasProgress = file.batch_progress && file.batch_progress.total;
+
+                if (hasProgress) {
+                    // 1. If it has progress, update the bar and mark it as active
                     span.innerHTML = renderBatchProgressBar(file.batch_progress.done, file.batch_progress.total);
-                } else {
+                    activeBatchFilenames.add(filename);
+                } 
+                else if (activeBatchFilenames.has(filename)) {
+                    // 2. ONLY if it WAS active before, but now has NO progress, it is finished
+                    activeBatchFilenames.delete(filename); // Clean up
+                    
+                    console.log(`Finished processing: ${filename}`);
+                    
+                    // Specific "Cleanup" actions
                     stopBatchProgressPolling();
-                    loadFileList();
-                    console.log("finished");
+                    loadFileList(); 
                 }
             });
         } catch (err) {
