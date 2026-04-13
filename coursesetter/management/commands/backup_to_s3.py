@@ -26,10 +26,3 @@ class Command(BaseCommand):
                 self.stdout.write(self.style.SUCCESS(f'Backed up {f.filename}'))
             except Exception as e:
                 self.stderr.write(self.style.ERROR(f'Error backing up {f.filename}: {e}'))
-
-        # Replace your gunicorn restart block with this:
-        try:
-            subprocess.run(['pkill', '-HUP', '-f', 'gunicorn'], check=True)
-            self.stdout.write(self.style.SUCCESS('Sent SIGHUP to gunicorn (Workers will recycle)'))
-        except Exception as e:
-            self.stderr.write(self.style.ERROR(f'Failed to reload gunicorn: {e}'))
