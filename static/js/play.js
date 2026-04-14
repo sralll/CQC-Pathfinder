@@ -789,6 +789,15 @@ function submitChoice(index, routeOrder, reducedColorMap) {
         })
         .reduce((shortest, curr) => (curr.runTime < shortest.runTime ? curr : shortest)).index;
     
+    const longestIndex = cqc.cP[ncP].route
+        .map((route, i) => {
+            return {
+                index: i,
+                runTime: route.runTime
+            };
+        })
+        .reduce((longest, curr) => (curr.runTime > longest.runTime ? curr : longest)).index;
+        
     resultBox.innerHTML = "";
 
     if (!cqc.cP[ncP].complex) {
@@ -910,6 +919,7 @@ function submitChoice(index, routeOrder, reducedColorMap) {
             selected_route: index,
             selected_route_runtime: Number(cqc.cP[ncP].route[index].runTime.toFixed(2)),
             shortest_route_runtime: Number(cqc.cP[ncP].route[shortestIndex].runTime.toFixed(2)),
+            longest_route_runtime: Number(cqc.cP[ncP].route[longestIndex].runTime.toFixed(2)),
             competition: competitionMode
         })
     })

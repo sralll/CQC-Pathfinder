@@ -65,7 +65,7 @@ class FilenameKaderFilter(SimpleListFilter):
 class UserResultAdmin(admin.ModelAdmin):
     list_display = (
         'user', 'filename', 'control_pair_index', 'choice_time',
-        'selected_route', 'selected_route_runtime', 'shortest_route_runtime',
+        'selected_route', 'selected_route_runtime', 'shortest_route_runtime', 'longest_route_runtime',
         'competition', 'kader', 'timestamp'
     )
     list_filter = (FilenameKaderFilter, UserKaderFilter)

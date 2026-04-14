@@ -9,6 +9,7 @@ class UserResult(models.Model):
     selected_route = models.IntegerField(null=True, blank=True)
     selected_route_runtime = models.FloatField()
     shortest_route_runtime = models.FloatField()
+    longest_route_runtime = models.FloatField(null=True, blank=True)
     competition = models.BooleanField(default=True)
     timestamp = models.DateTimeField(auto_now_add=True)
 

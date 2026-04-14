@@ -164,6 +164,7 @@ def submit_result(request):
         selected_route=data['selected_route'],
         selected_route_runtime=data['selected_route_runtime'],
         shortest_route_runtime=data['shortest_route_runtime'],
+        longest_route_runtime=data['longest_route_runtime'],
         competition=data['competition'],
         kader=kader,  # ✅ stored snapshot
     )
