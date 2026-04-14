@@ -21,12 +21,15 @@ from .preprocess import load_mask, inflate_obstacles, find_path_with_margin_grow
 from .a_star import get_a_star_turns, simplify_wps
 from .theta_star import make_los_cached, guided_theta_star, simplify_theta_path, guided_theta_star_sync
 
+RUN_SPEED = 4.75  # m/s
+
 # Create your views here.
 def group_required(group_name):
     def in_group(u):
         return u.is_authenticated and u.groups.filter(name=group_name).exists()
     return user_passes_test(in_group)
 
+@group_required('Trainer')
 def find(request):
 
     async def event_stream():
@@ -275,9 +278,6 @@ def run_UNet_stream(request):
         return JsonResponse({'message': 'Could not identify or open image file.'}, status=500)
     except Exception as e:
         return JsonResponse({'message': 'Server error', 'error': str(e)}, status=500)
-    
-
-RUN_SPEED = 4.75  # m/s
 
 def calc_length(rP):
     length = 0
@@ -376,8 +376,19 @@ def pathfinding_loop(cp_data, grid, blockedTerrain=None):
     ]
     return final_path_scaled
 
-def run_batch_async(data, grid, blockedTerrain, filename, user_kader, author):
+def run_batch_async(data, map_basename, filename, user_kader, author):
     try:
+        blockedTerrain = data.get("blockedTerrain", {})
+
+        mask, error = load_mask({"filename": map_basename})
+        if error:
+            print(f"Batch failed: Mask load error for {map_basename}")
+            return
+
+        grid = apply_blocked_terrain(mask, blockedTerrain)
+
+        del mask
+
         orig_unique_filename = f"{filename}_{user_kader.name}"
         total = len(data["cP"])
 
@@ -428,6 +439,7 @@ def run_batch_async(data, grid, blockedTerrain, filename, user_kader, author):
         )
 
         print(f"Batch complete: {unique_filename_out}")
+
     except Exception as e:
         print(f"Batch failed: {e}")
         # Optionally mark failure in progress field
@@ -437,7 +449,14 @@ def run_batch_async(data, grid, blockedTerrain, filename, user_kader, author):
     finally:
         connection.close()
 
+        #cleanup
+        if 'grid' in locals(): del grid
+        if 'mask' in locals(): del mask
+        if 'data' in locals(): del data
 
+        gc.collect()
+
+@group_required('Trainer')
 def batch_pathfinding(request):
     if request.method != "POST":
         return JsonResponse({'error': 'POST required'}, status=400)
@@ -462,19 +481,12 @@ def batch_pathfinding(request):
             return JsonResponse({"error": "Invalid file data: missing cP or mapFile"}, status=400)
 
         map_basename = os.path.splitext(os.path.basename(data["mapFile"]))[0]
-        blockedTerrain = data.get("blockedTerrain", {})
-
-        mask, error = load_mask({"filename": map_basename})
         
-        if error:
-            return JsonResponse({"error": f"Keine Maske gefunden"}, status=400)
-        grid = apply_blocked_terrain(mask, blockedTerrain)
-
         author = request.user.first_name or request.user.username
 
         thread = threading.Thread(
             target=run_batch_async,
-            args=(data, grid, blockedTerrain, filename, user_kader, author),
+            args=(data, map_basename, filename, user_kader, author),
             daemon=True
         )
         thread.start()

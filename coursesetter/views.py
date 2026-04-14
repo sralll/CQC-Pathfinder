@@ -3,7 +3,7 @@ import json
 import boto3
 from django.shortcuts import render
 from django.conf import settings
-from django.http import JsonResponse, HttpResponseNotFound, HttpResponseBadRequest, HttpResponse
+from django.http import JsonResponse, HttpResponseNotFound, HttpResponseBadRequest, HttpResponse, StreamingHttpResponse
 from django.views.decorators.http import require_GET, require_POST
 from django.contrib.auth.decorators import login_required
 from django.utils.timezone import now
@@ -57,17 +57,10 @@ def get_map_file(request, filename):
 
     try:
         s3_object = s3.get_object(Bucket=bucket, Key=key)
-        content_type = s3_object['ContentType']
-        body = s3_object['Body'].read()
-
-        # Return the file response
-        response = HttpResponse(body, content_type=content_type)
-
-        # Cleanup
-        del s3_object
-        del body
-        gc.collect()
-
+        response = StreamingHttpResponse(
+            s3_object['Body'], 
+            content_type=s3_object['ContentType']
+        )
         return response
 
     except ClientError as e:
