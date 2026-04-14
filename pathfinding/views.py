@@ -236,7 +236,7 @@ def run_UNet_stream(request):
                 impassable=0,
                 very_slow=255-120,
                 slow=255-24,
-                cross=255-15,
+                cross=255-14,
                 fast=255-12,
             )
 
