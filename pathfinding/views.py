@@ -235,8 +235,8 @@ def run_UNet_stream(request):
             map_object = SimpleNamespace(
                 impassable=0,
                 very_slow=255-120,
-                slow=255-36,
-                cross=255-17,
+                slow=255-24,
+                cross=255-15,
                 fast=255-12,
             )
 
