@@ -234,10 +234,10 @@ def run_UNet_stream(request):
             visual = 255 * np.ones((img_h, img_w, 1), dtype=np.uint8)
             map_object = SimpleNamespace(
                 impassable=0,
-                very_slow=100,
-                slow=150,
-                cross=200,
-                fast=230,
+                very_slow=255-120,
+                slow=255-36,
+                cross=255-17,
+                fast=255-12,
             )
 
             visual[output_img < 10] = map_object.impassable
