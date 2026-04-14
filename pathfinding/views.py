@@ -387,8 +387,6 @@ def run_batch_async(data, map_basename, filename, user_kader, author):
 
         grid = apply_blocked_terrain(mask, blockedTerrain)
 
-        del mask
-
         orig_unique_filename = f"{filename}_{user_kader.name}"
         total = len(data["cP"])
 
@@ -484,6 +482,11 @@ def batch_pathfinding(request):
         
         author = request.user.first_name or request.user.username
 
+        mask_path = f"masks/mask_{map_basename}.png"
+
+        if not default_storage.exists(mask_path):
+            return JsonResponse({"error": f"Keine Maske gefunden"}, status=400)
+        
         thread = threading.Thread(
             target=run_batch_async,
             args=(data, map_basename, filename, user_kader, author),
