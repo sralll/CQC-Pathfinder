@@ -40,6 +40,9 @@
             <b>Wettkampfposten</b>
             </span>
         </div>
+        <div id="infoButton">
+          <i class="fa-solid fa-circle-info"></i>
+        </div>
       </div>
 
       <div id="tableWrapper">
@@ -54,6 +57,8 @@
               <th style="color: #FFC107">&lt;5%</th>
               <th style="color: #FF9800">&lt;10%</th>
               <th style="color: #F44336">&gt;10%</th>
+              <th>Fehlerpotential-Erkennung</th>
+              <th>Zeitsensitivität</th>
             </tr>
           </thead>
           <tbody>
@@ -61,6 +66,23 @@
           </tbody>
         </table>
       </div>
+
+      <div id="modalLegend" class="modal">
+        <div class="modal-content legend-content">
+            <span class="closeModal" onclick="closeInfo()">&times;</span>
+            
+            <div class="legend-section">
+                <b class="legend-title">Fehlerpotential-Erkennung</b>
+                <p>Variation der Entscheidungszeit, wenn das Fehlerpotential hoch ist (großer, zeitlicher Unterschied zwischen verschiedenen Routen). Die Werte sind relativ zum Kaderdurchschnitt. Die Berechnung erfolgt ab 200 gültigen Resultaten.</p>
+            </div>
+
+            <div class="legend-section">
+                <b class="legend-title">Zeitsensitivität</b>
+                <p>Veränderung der Routenwahlfehler pro Sekunde längere Entscheidungszeit relativ zum Kaderdurchschnitt, pro Posten. Ein negativer Wert bedeutet, dass eine längere Entscheidungszeit zu geringerem Routenwahlfehler führt. Konfidenz in Klammer (grösserer Wert bedeutet ein zuverlässigeres Ergebnis.)</p>
+            </div>
+        </div>
+    </div>
+
     {% else %}
       <div id="chartsWrapper">
         <canvas class="canvaschart" id="doughnutChart"></canvas>

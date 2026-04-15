@@ -93,3 +93,42 @@ body.mobile #barChart {
 body.mobile #placeholder {
     height: 30vh;
 }
+
+.info-tip {
+  position: relative;
+  cursor: help;
+  text-decoration: underline dotted #ccc;
+}
+
+#infoButton:hover {
+  cursor: pointer;
+}
+
+#modalLegend{
+  display: none;
+}
+
+.legend-content {
+    display: flex;
+    flex-direction: column;
+    padding: 40px;
+    gap: 30px;
+}
+
+.legend-content div {
+    display: block !important;
+    text-align: left;
+}
+
+.legend-title {
+    display: block !important;
+    font-weight: bold;
+    margin-bottom: 5px;
+}
+
+.legend-content p {
+    display: block !important;
+    margin: 0;
+    text-align: left;
+    line-height: 1.4;
+}

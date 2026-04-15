@@ -293,6 +293,8 @@ async function loadTrainerStats(isTraining) {
             <td>${row.lt5}%</td>
             <td>${row.lt10}%</td>
             <td>${row.gt10}%</td>
+            <td>${row.sensitivity ?? "-"}</td>
+            <td>${row.roi_slope ?? "-"}</td>
         </tr>
         `
       );
@@ -308,6 +310,26 @@ async function loadTrainerStats(isTraining) {
     `;
   }
 }
+
+const modalLegend = document.getElementById("modalLegend");
+const infoButton = document.getElementById("infoButton");
+
+infoButton.addEventListener("click", openInfo);
+
+function openInfo() {
+    modalLegend.style.display = "block";
+}
+
+function closeInfo() {
+    modalLegend.style.display = "none";
+}
+
+// close modals
+modalLegend.addEventListener('click', (event) => {
+    if (event.target === modalLegend) {
+        closeInfo();
+    }
+});
 
 function formatTime(seconds) {
   if (seconds === null || seconds === undefined) return "–";

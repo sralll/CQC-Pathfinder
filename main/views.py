@@ -13,6 +13,8 @@ from django.db.models import F, Q
 
 from django.contrib.auth import logout
 
+import numpy as np
+
 def logout_view(request):
     logout(request)
     return redirect('login') # or wherever you want them to go
@@ -394,17 +396,16 @@ def trainer_stats(request):
         return JsonResponse({"error": "User has no profile"}, status=404)
 
     kader = profile.kader
-
-    # --- NEW: read mode ---
     mode = request.GET.get("mode", "competition")
     is_competition = (mode == "competition")
 
     # --- base queryset ---
     qs = UserResult.objects.filter(
         user__userprofile__kader=kader,
-        competition=is_competition   # <-- SWITCH HERE
+        competition=is_competition
     ).exclude(
-        user__groups__name="Trainer"
+        user__groups__name="Trainer",
+        shortest_route_runtime=F('longest_route_runtime'),
     ).annotate(
         rel_error=ExpressionWrapper(
             (F("selected_route_runtime") - F("shortest_route_runtime")) / F("shortest_route_runtime"),
@@ -412,12 +413,72 @@ def trainer_stats(request):
         )
     )
 
-    # --- Aggregate per athlete ---
-    athlete_qs = qs.values(
-        "user__id",
-        "user__first_name",
-        "user__last_name",
-    ).annotate(
+    # --- 1. SENSITIVITY CALCULATION ---
+    # Fetch data for Risk Sensitivity (Potential vs. Choice Time)
+    sensitivity_qs = qs.values('user_id', 'choice_time', 'longest_route_runtime', 'shortest_route_runtime')
+    
+    user_data_map = {}
+    for res in sensitivity_qs:
+        uid = res['user_id']
+        user_data_map.setdefault(uid, {'x': [], 'y': []})
+        potential = res['longest_route_runtime'] - res['shortest_route_runtime']
+        user_data_map[uid]['x'].append(potential)
+        user_data_map[uid]['y'].append(res['choice_time'])
+
+    all_risk_slopes = []
+    user_sensitivity_stats = {}
+    for uid, vals in user_data_map.items():
+        ux, uy = np.array(vals['x']), np.array(vals['y'])
+        mask = (ux > 0) & (ux < 40)
+        if np.any(mask) and len(ux[mask]) >= 200:
+            try:
+                m_u, _ = np.polyfit(ux[mask], uy[mask], 1)
+                user_sensitivity_stats[uid] = m_u
+                all_risk_slopes.append(m_u)
+            except: pass
+
+    avg_kader_slope = sum(all_risk_slopes) / len(all_risk_slopes) if all_risk_slopes else 1
+
+    # --- 2. ROI CALCULATION ---
+    # Establish benchmarks for the Kader (Choice time avg per leg)
+    roi_data_list = list(qs.values('user_id', 'filename', 'control_pair_index', 'choice_time', 'selected_route_runtime', 'shortest_route_runtime'))
+    
+    temp_storage = {}
+    for res in roi_data_list:
+        key = (res['filename'], res['control_pair_index'])
+        temp_storage.setdefault(key, []).append(res['choice_time'])
+    
+    benchmarks = {key: sum(times) / len(times) for key, times in temp_storage.items()}
+
+    # Calculate individual ROI slopes and Confidence
+    user_roi_stats = {}
+    # Re-group by user for ROI
+    roi_map = {}
+    for res in roi_data_list:
+        uid = res['user_id']
+        key = (res['filename'], res['control_pair_index'])
+        if key in benchmarks:
+            roi_map.setdefault(uid, {'x': [], 'y': []})
+            deviation = res['choice_time'] - benchmarks[key]
+            loss = res['selected_route_runtime'] - res['shortest_route_runtime']
+            roi_map[uid]['x'].append(deviation)
+            roi_map[uid]['y'].append(loss)
+
+    for uid, vals in roi_map.items():
+        ux, uy = np.array(vals['x']), np.array(vals['y'])
+        mask = (ux > -15) & (ux < 15)
+        if np.any(mask) and len(ux) >= 200: # Minimum points for ROI slope
+            try:
+                m_roi, _ = np.polyfit(ux[mask], uy[mask], 1)
+                r_sq = np.corrcoef(ux[mask], uy[mask])[0, 1]**2
+                user_roi_stats[uid] = {'roi_slope': m_roi, 'roi_conf': r_sq}
+            except: pass
+
+    avg_slope_roi = sum([v['roi_slope'] for v in user_roi_stats.values()]) / len(user_roi_stats) if user_roi_stats else 1
+    avg_conf_roi = sum([v['roi_conf'] for v in user_roi_stats.values()]) / len(user_roi_stats) if user_roi_stats else 1
+
+    # --- 3. STANDARD AGGREGATION ---
+    athlete_qs = qs.values("user__id", "user__first_name", "user__last_name").annotate(
         posten=Count("id"),
         avg_choice_time=Avg("choice_time"),
         avg_error=Avg(F("selected_route_runtime") - F("shortest_route_runtime")),
@@ -427,7 +488,6 @@ def trainer_stats(request):
         gt10=Count(Case(When(rel_error__gte=0.10, then=1))),
     ).order_by("user__last_name")
 
-    # --- Aggregate total ---
     total = qs.aggregate(
         posten=Count("id"),
         avg_choice_time=Avg("choice_time"),
@@ -438,32 +498,46 @@ def trainer_stats(request):
         gt10=Count(Case(When(rel_error__gte=0.10, then=1))),
     )
 
+    # --- 4. COMBINE DATA ---
     data = []
-
-    # --- label depending on mode ---
-    label = "Kaderdurchschnitt (Wettkampf)" if is_competition else "Kaderdurchschnitt (Training)"
-
+    
+    # Kader Average Row
     data.append({
-        "athlete": label,
+        "athlete": "Kaderdurchschnitt",
         "posten": total["posten"],
         "avg_choice_time": round(total["avg_choice_time"], 2) if total["avg_choice_time"] else None,
         "avg_error": round(total["avg_error"], 2) if total["avg_error"] else None,
-        "schnellste": round(total["schnellste"] / total["posten"] * 100, 1) if total["posten"] else 0,
-        "lt5": round(total["lt5"] / total["posten"] * 100, 1) if total["posten"] else 0,
-        "lt10": round(total["lt10"] / total["posten"] * 100, 1) if total["posten"] else 0,
-        "gt10": round(total["gt10"] / total["posten"] * 100, 1) if total["posten"] else 0,
+        "schnellste": round(total['schnellste'] / total['posten'] * 100, 1) if total['posten'] else 0,
+        "lt5": round(total['lt5'] / total['posten'] * 100, 1) if total['posten'] else 0,
+        "lt10": round(total['lt10'] / total['posten'] * 100, 1) if total['posten'] else 0,
+        "gt10": round(total['gt10'] / total['posten'] * 100, 1) if total['posten'] else 0,
+        "sensitivity": 1.0,
+        "roi_slope": f"{round(avg_slope_roi, 3)} ({round(avg_conf_roi, 3)})" if avg_slope_roi else "- (-)",
     })
 
     for row in athlete_qs:
+        uid = row['user__id']
+        
+        # Pull Risk Sensitivity
+        m_u = user_sensitivity_stats.get(uid)
+        s_ratio = round(m_u / avg_kader_slope, 3) if m_u is not None else "-"
+        
+        # Pull ROI Stats
+        roi_vals = user_roi_stats.get(uid, {})
+        roi_slope = round(roi_vals.get('roi_slope'), 4) if 'roi_slope' in roi_vals else "-"
+        roi_conf = round(roi_vals.get('roi_conf'), 4) if 'roi_conf' in roi_vals else "-"
+
         data.append({
             "athlete": f"{row['user__first_name']} {row['user__last_name']}",
             "posten": row["posten"],
             "avg_choice_time": round(row["avg_choice_time"], 2) if row["avg_choice_time"] else None,
             "avg_error": round(row["avg_error"], 2) if row["avg_error"] else None,
-            "schnellste": round(row["schnellste"] / row["posten"] * 100, 1) if row["posten"] else 0,
-            "lt5": round(row["lt5"] / row["posten"] * 100, 1) if row["posten"] else 0,
-            "lt10": round(row["lt10"] / row["posten"] * 100, 1) if row["posten"] else 0,
-            "gt10": round(row["gt10"] / row["posten"] * 100, 1) if row["posten"] else 0,
+            "schnellste": round(row['schnellste'] / row['posten'] * 100, 1) if row['posten'] else 0,
+            "lt5": round(row['lt5'] / row['posten'] * 100, 1) if row['posten'] else 0,
+            "lt10": round(row['lt10'] / row['posten'] * 100, 1) if row['posten'] else 0,
+            "gt10": round(row['gt10'] / row['posten'] * 100, 1) if row['posten'] else 0,
+            "sensitivity": s_ratio,
+            "roi_slope": f"{roi_slope} ({roi_conf})" if roi_slope else "-",
         })
 
     return JsonResponse(data, safe=False)

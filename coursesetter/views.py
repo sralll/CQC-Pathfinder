@@ -265,29 +265,31 @@ def delete_file(request, filename):
 @group_required('Trainer')
 def upload_map(request):
     if request.method == 'POST' and request.FILES.get('file'):
-        file = request.FILES['file']
+        uploaded_file = request.FILES['file']
         allowed_types = ['image/png', 'image/jpeg']
 
-        if file.content_type not in allowed_types:
+        if uploaded_file.content_type not in allowed_types:
             return JsonResponse({'success': False, 'message': 'Unsupported file type'}, status=400)
 
         # Generate timestamped filename
         timestamp = now().strftime('%Y%m%d_%H%M%S')
-        ext = os.path.splitext(file.name)[1]
-        filename = f"maps/{timestamp}{ext}"  # Prefix with 'maps/' if you want to keep folder structure on S3
+        ext = os.path.splitext(uploaded_file.name)[1]
+        filename = f"maps/{timestamp}{ext}"
 
-        # Save the file using Django's default storage (S3 in your case)
-        file_path = default_storage.save(filename, file)
-        del file
-        gc.collect()
-        # Get the URL to access the file (will be S3 URL if configured)
-        map_url = default_storage.url(file_path)
-        return JsonResponse({
-            'success': True,
-            'mapFile': map_url,
-            'filename': os.path.basename(file_path),  # This line is key
-            'scaled': False
-        })
+        try:
+            # Save using the file's chunk generator
+            file_path = default_storage.save(filename, uploaded_file)
+            
+            map_url = default_storage.url(file_path)
+            
+            return JsonResponse({
+                'success': True,
+                'mapFile': map_url,
+                'filename': os.path.basename(file_path),
+                'scaled': False
+            })
+        except Exception as e:
+            return JsonResponse({'success': False, 'message': str(e)}, status=500)
 
     return JsonResponse({'success': False, 'message': 'Invalid request'}, status=400)
 
