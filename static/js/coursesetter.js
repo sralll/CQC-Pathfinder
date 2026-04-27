@@ -15,7 +15,7 @@ const CONTINUATION_COLOR = "rgba(255, 255, 0, 0.4)";
 const CONTINUATION_WIDTH = 1.5;
 
 // state variables and flags
-let mode = "placeControls";	    //main mode of editor
+let mode = null;	    //main mode of editor
 var subMode = null;             //submode for CV editing
 var subModeB = "line";          //submode for blocked terrain editing
 let cv_mask = false;            //flag for existing CV mask
@@ -533,9 +533,29 @@ function redo() {
     applyEditorState(next);
 }
 
+routeCanvas.oncontextmenu = function(event) {
+    event.preventDefault();
+};
+
 //main mouse event function
 function mouseEvent(event) {
     liveCursor(event); //get inverse transformed mouse coordinates (relative to map)
+    if (event.button === 2) {
+        if (mode === "drawRoutes" && rDraw) {
+            // Remove the specific route entry from the array of routes
+            cqc.cP[ncP].route.splice(nR, 1); 
+            nRP = 0;
+            rDraw = false;
+        }
+        if (mode === "placeControls" && cDraw) {
+            // Remove the current control pair
+            cqc.cP.splice(ncP, 1);
+            cDraw = false;
+        }
+        mode = null;
+        draw(rc);
+        return; 
+    }
     if (event.type === "mousedown") {
         mouse.button = true;
         isDragging = false;
@@ -1431,6 +1451,7 @@ function loadFile(filename) {
         
         ncP = nRP = nR = 0;
         transX = transY = 0;
+        mode = null;
 
         // Load image and draw immediately after it's ready
         image.onload = async () => {
