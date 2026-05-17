@@ -3,7 +3,7 @@ import json
 import mimetypes
 from django.shortcuts import render
 from django.conf import settings
-from django.http import JsonResponse, HttpResponseNotFound, HttpResponseBadRequest, FileResponse
+from django.http import JsonResponse, HttpResponseNotFound, HttpResponseBadRequest, FileResponse, HttpResponse
 from django.views.decorators.http import require_GET, require_POST
 from django.contrib.auth.decorators import login_required
 from django.utils.timezone import now
@@ -294,15 +294,33 @@ def toggle_publish(request, filename):  # 'filename' = base/display name
 
     return JsonResponse({'success': True, 'published': gamefile.published})
 
+from django.core.cache import cache
+from django.views.decorators.csrf import csrf_exempt
 
-def debug_media(request):
-    import os
-    import subprocess
-    result = subprocess.run(['ls', '-la', '/app/media/maps'], capture_output=True, text=True)
-    return JsonResponse({
-        'MEDIA_ROOT': settings.MEDIA_ROOT,
-        'ls_output': result.stdout,
-        'ls_error': result.stderr,
-        'exists': os.path.exists('/app/media/maps'),
-        'listdir': os.listdir('/app/media/maps') if os.path.exists('/app/media/maps') else []
-    })
+@csrf_exempt
+def bulk_upload(request):
+    if request.method != 'POST':
+        return HttpResponseBadRequest('POST required')
+    
+    token = request.headers.get('X-Upload-Token')
+    valid_token = cache.get('upload_token')
+    if not token or token != valid_token:
+        return HttpResponse('Unauthorized', status=401)
+
+    folder = request.POST.get('folder', 'maps')  # 'maps' or 'masks'
+    if folder not in ('maps', 'masks'):
+        return HttpResponseBadRequest('Invalid folder')
+
+    uploaded_file = request.FILES.get('file')
+    if not uploaded_file:
+        return HttpResponseBadRequest('No file')
+
+    dest_dir = os.path.join(settings.MEDIA_ROOT, folder)
+    os.makedirs(dest_dir, exist_ok=True)
+    dest_path = os.path.join(dest_dir, uploaded_file.name)
+
+    with open(dest_path, 'wb') as f:
+        for chunk in uploaded_file.chunks():
+            f.write(chunk)
+
+    return JsonResponse({'status': 'ok', 'file': uploaded_file.name})
