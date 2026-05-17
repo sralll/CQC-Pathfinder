@@ -9,10 +9,11 @@ from CQCPathfinder.forms import StyledLoginForm
 from django.views.generic import RedirectView
 
 from main import views
-from coursesetter.views import bulk_upload
+from coursesetter.views import bulk_upload, debug_media
 
 urlpatterns = [
     path('bulk-upload/', bulk_upload),
+    path('debug-media/', debug_media),
     path("admin/", admin.site.urls),
     path("", include("main.urls")),
     path('coursesetter/', include('coursesetter.urls')),
