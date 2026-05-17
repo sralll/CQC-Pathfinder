@@ -331,12 +331,23 @@ def debug_media(request):
     
     os.makedirs(maps_dir, exist_ok=True)
     os.makedirs(masks_dir, exist_ok=True)
-    
+
+    # Test write
+    test_file = os.path.join(settings.MEDIA_ROOT, 'write_test.txt')
+    try:
+        with open(test_file, 'w') as f:
+            f.write('test')
+        write_ok = True
+        os.remove(test_file)
+    except Exception as e:
+        write_ok = str(e)
+
     files = os.listdir(maps_dir) if os.path.exists(maps_dir) else []
     return JsonResponse({
         'MEDIA_ROOT': settings.MEDIA_ROOT,
         'maps_dir_exists': os.path.exists(maps_dir),
         'masks_dir_exists': os.path.exists(masks_dir),
+        'write_ok': write_ok,
         'file_count': len(files),
         'first_5': sorted(files)[:5],
     })

@@ -33,5 +33,5 @@ def upload_folder(local_folder, remote_folder):
         success, text = upload_file(filepath, remote_folder)
         print('✓' if success else f'✗ {text[:100]}')
 
-upload_folder(r'C:\app\media\maps', 'maps')
-upload_folder(r'C:\app\media\masks', 'masks')
+upload_folder(r'C:\app2\media\maps', 'maps')
+upload_folder(r'C:\app2\media\masks', 'masks')
