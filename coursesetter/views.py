@@ -325,11 +325,18 @@ from django.contrib.admin.views.decorators import staff_member_required
 def debug_media(request):
     import os
     from django.conf import settings
+    
     maps_dir = os.path.join(settings.MEDIA_ROOT, 'maps')
+    masks_dir = os.path.join(settings.MEDIA_ROOT, 'masks')
+    
+    os.makedirs(maps_dir, exist_ok=True)
+    os.makedirs(masks_dir, exist_ok=True)
+    
     files = os.listdir(maps_dir) if os.path.exists(maps_dir) else []
     return JsonResponse({
         'MEDIA_ROOT': settings.MEDIA_ROOT,
         'maps_dir_exists': os.path.exists(maps_dir),
+        'masks_dir_exists': os.path.exists(masks_dir),
         'file_count': len(files),
         'first_5': sorted(files)[:5],
     })
