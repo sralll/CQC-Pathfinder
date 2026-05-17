@@ -7,10 +7,9 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 FILES_DIR = os.path.join(BASE_DIR, 'jsonfiles')
 MAPS_DIR = os.path.join(BASE_DIR, 'maps')
 
-DEBUG = os.environ.get('DEBUG', 'False') == 'True'
+load_dotenv()
 
-if DEBUG:
-    load_dotenv()
+DEBUG = os.environ.get('DEBUG', 'False') == 'True'
 
 SECRET_KEY = os.environ.get('SECRET_KEY')
 
