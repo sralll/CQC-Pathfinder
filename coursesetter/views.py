@@ -293,3 +293,16 @@ def toggle_publish(request, filename):  # 'filename' = base/display name
     gamefile.save()
 
     return JsonResponse({'success': True, 'published': gamefile.published})
+
+
+def debug_media(request):
+    import os
+    import subprocess
+    result = subprocess.run(['ls', '-la', '/app/media/maps'], capture_output=True, text=True)
+    return JsonResponse({
+        'MEDIA_ROOT': settings.MEDIA_ROOT,
+        'ls_output': result.stdout,
+        'ls_error': result.stderr,
+        'exists': os.path.exists('/app/media/maps'),
+        'listdir': os.listdir('/app/media/maps') if os.path.exists('/app/media/maps') else []
+    })
