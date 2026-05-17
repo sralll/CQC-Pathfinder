@@ -43,6 +43,9 @@ def index(request):
 @login_required
 def get_map_file(request, filename):
     filepath = os.path.join(settings.MEDIA_ROOT, 'maps', filename)
+    print(f"MEDIA_ROOT: {settings.MEDIA_ROOT}")
+    print(f"filepath: {filepath}")
+    print(f"exists: {os.path.exists(filepath)}")
     if not os.path.exists(filepath):
         return HttpResponseNotFound(f"Map file '{filename}' not found.")
     content_type, _ = mimetypes.guess_type(filepath)
