@@ -318,7 +318,17 @@ def bulk_upload(request):
     with open(dest_path, 'wb') as f:
         for chunk in uploaded_file.chunks():
             f.write(chunk)
-    return JsonResponse({'status': 'ok', 'file': uploaded_file.name})
+    
+    # Debug: confirm file was written
+    exists_after = os.path.exists(dest_path)
+    size_after = os.path.getsize(dest_path) if exists_after else 0
+    return JsonResponse({
+        'status': 'ok',
+        'file': uploaded_file.name,
+        'dest_path': dest_path,
+        'exists_after_write': exists_after,
+        'size': size_after,
+    })
 
 from django.contrib.admin.views.decorators import staff_member_required
 @staff_member_required
