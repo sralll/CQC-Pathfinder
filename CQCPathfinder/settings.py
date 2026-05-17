@@ -128,3 +128,5 @@ STORAGES = {
 
 MEDIA_ROOT = os.environ.get('MEDIA_ROOT', '/app/media')
 MEDIA_URL = '/media/'
+
+UPLOAD_SECRET = os.environ.get('UPLOAD_SECRET', '')
