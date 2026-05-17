@@ -1,6 +1,8 @@
 import os
 import json
 import mimetypes
+import posixpath
+
 from django.shortcuts import render
 from django.conf import settings
 from django.http import JsonResponse, HttpResponseNotFound, HttpResponseBadRequest, FileResponse, HttpResponse
@@ -232,14 +234,30 @@ def delete_file(request, filename):
 
     unique_filename = f"{filename}_{kader_slug}"
 
-    deleted_count, _ = publishedFile.objects.filter(
-        unique_filename=unique_filename
-    ).delete()
-
-    if deleted_count == 0:
+    try:
+        file_instance = publishedFile.objects.get(unique_filename=unique_filename)
+    except publishedFile.DoesNotExist:
         return JsonResponse({'error': 'File not found'}, status=404)
 
-    return JsonResponse({'message': 'File deleted successfully!'})
+    file_data = file_instance.data or {}
+    map_url_path = file_data.get('mapFile')
+
+    if map_url_path:
+        actual_map_name = posixpath.basename(map_url_path)
+
+        if actual_map_name:
+            map_file_path = os.path.join(settings.MEDIA_ROOT, 'maps', actual_map_name)
+
+            try:
+                if os.path.exists(map_file_path):
+                    #os.remove(map_file_path)
+                    print(f"Deleted map file: {map_file_path}")
+            except OSError as e:
+                pass
+
+    file_instance.delete()
+
+    return JsonResponse({'message': 'File and associated map deleted successfully!'})
 
 @group_required('Trainer')
 def upload_map(request):
@@ -293,71 +311,3 @@ def toggle_publish(request, filename):  # 'filename' = base/display name
     gamefile.save()
 
     return JsonResponse({'success': True, 'published': gamefile.published})
-
-from django.core.cache import cache
-from django.views.decorators.csrf import csrf_exempt
-
-@csrf_exempt
-def bulk_upload(request):
-    if request.method != 'POST':
-        return HttpResponseBadRequest('POST required')
-    token = request.headers.get('X-Upload-Token')
-    if not token or token != settings.UPLOAD_SECRET:
-        return HttpResponse('Unauthorized', status=401)
-    folder = request.POST.get('folder', 'maps')
-    if folder not in ('maps', 'masks'):
-        return HttpResponseBadRequest('Invalid folder')
-    uploaded_file = request.FILES.get('file')
-    if not uploaded_file:
-        return HttpResponseBadRequest('No file')
-    dest_dir = os.path.join(settings.MEDIA_ROOT, folder)
-    os.makedirs(dest_dir, exist_ok=True)
-    dest_path = os.path.join(dest_dir, uploaded_file.name)
-    if os.path.exists(dest_path):
-        return JsonResponse({'status': 'skipped', 'file': uploaded_file.name})
-    with open(dest_path, 'wb') as f:
-        for chunk in uploaded_file.chunks():
-            f.write(chunk)
-    
-    # Debug: confirm file was written
-    exists_after = os.path.exists(dest_path)
-    size_after = os.path.getsize(dest_path) if exists_after else 0
-    return JsonResponse({
-        'status': 'ok',
-        'file': uploaded_file.name,
-        'dest_path': dest_path,
-        'exists_after_write': exists_after,
-        'size': size_after,
-    })
-
-from django.contrib.admin.views.decorators import staff_member_required
-@staff_member_required
-def debug_media(request):
-    import os
-    from django.conf import settings
-    
-    maps_dir = os.path.join(settings.MEDIA_ROOT, 'maps')
-    masks_dir = os.path.join(settings.MEDIA_ROOT, 'masks')
-    
-    os.makedirs(maps_dir, exist_ok=True)
-    os.makedirs(masks_dir, exist_ok=True)
-
-    # Test write
-    test_file = os.path.join(settings.MEDIA_ROOT, 'write_test.txt')
-    try:
-        with open(test_file, 'w') as f:
-            f.write('test')
-        write_ok = True
-        os.remove(test_file)
-    except Exception as e:
-        write_ok = str(e)
-
-    files = os.listdir(maps_dir) if os.path.exists(maps_dir) else []
-    return JsonResponse({
-        'MEDIA_ROOT': settings.MEDIA_ROOT,
-        'maps_dir_exists': os.path.exists(maps_dir),
-        'masks_dir_exists': os.path.exists(masks_dir),
-        'write_ok': write_ok,
-        'file_count': len(files),
-        'first_5': sorted(files)[:5],
-    })
