@@ -1,6 +1,5 @@
 from django.shortcuts import render
 import json
-from django.conf import settings
 from django.http import JsonResponse, HttpResponseNotFound
 from django.views.decorators.http import require_GET
 from django.contrib.auth.decorators import login_required

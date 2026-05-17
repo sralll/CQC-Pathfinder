@@ -1,5 +1,5 @@
-from django.core.files.storage import default_storage
-
+from django.conf import settings
+import os
 
 from typing import Tuple, Optional
 from collections import deque 
@@ -54,15 +54,11 @@ def generate_corridor_mask_numpy(waypoints, grid_shape, radius=3):
 
 def load_mask(data):
     filename = data.get("filename")
-
-    mask_path = f"masks/mask_{filename}.png"
-
-    if not default_storage.exists(mask_path):
-        return None, f"Keine Maske für Karte gefunden."
-
-    with default_storage.open(mask_path, 'rb') as f:
+    mask_path = os.path.join(settings.MEDIA_ROOT, 'masks', f'mask_{filename}.png')
+    if not os.path.exists(mask_path):
+        return None, "Keine Maske für Karte gefunden."
+    with open(mask_path, 'rb') as f:
         mask = Image.open(f).convert("L")
-
     return mask, None
 
 def apply_blocked_terrain(mask, blockedTerrain, train_scale=0.710, line_width=7):

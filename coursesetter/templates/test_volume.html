@@ -1,0 +1,12 @@
+<!DOCTYPE html>
+<html>
+<body>
+  <h2>Volume files</h2>
+  {% for file in files %}
+    <div>
+      <p>{{ file }}</p>
+      <img src="{% url 'test-volume-serve' file %}" style="max-width:600px;">
+    </div>
+  {% endfor %}
+</body>
+</html>

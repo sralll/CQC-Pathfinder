@@ -1,10 +1,9 @@
 from django.http import JsonResponse, HttpResponseNotFound, HttpResponseBadRequest, HttpResponse, FileResponse, StreamingHttpResponse
 from django.contrib.auth.decorators import user_passes_test
-from django.core.files.storage import default_storage
-from django.core.files.base import ContentFile
 from PIL import Image, UnidentifiedImageError
 from types import SimpleNamespace
 
+from django.conf import settings
 import math
 import os
 import gc
@@ -99,21 +98,22 @@ def find(request):
 def upload_mask(request):
     if request.method == 'POST' and 'mask' in request.FILES:
         uploaded_file = request.FILES['mask']
-        filename = f"masks/{uploaded_file.name}"  # Save in 'masks/' directory in S3
+        dest_path = os.path.join(settings.MEDIA_ROOT, 'masks', uploaded_file.name)
 
-        path = default_storage.save(filename, ContentFile(uploaded_file.read()))
-        return JsonResponse({'status': 'success', 'path': path})
+        with open(dest_path, 'wb') as f:
+            for chunk in uploaded_file.chunks():
+                f.write(chunk)
+
+        return JsonResponse({'status': 'success', 'path': f'masks/{uploaded_file.name}'})
+
     return HttpResponseBadRequest('No mask file received')
 
 @group_required('Trainer')
 def get_mask(request, filename):
-    key = f"masks/{filename}"
-
-    if not default_storage.exists(key):
+    filepath = os.path.join(settings.MEDIA_ROOT, 'masks', filename)
+    if not os.path.exists(filepath):
         return HttpResponseNotFound("Mask not found.")
-
-    file = default_storage.open(key, 'rb')
-    response = FileResponse(file, content_type='image/png')
+    response = FileResponse(open(filepath, 'rb'), content_type='image/png')
     response['Content-Disposition'] = f'inline; filename="{filename}"'
     return response
 
@@ -123,7 +123,7 @@ def run_UNet_stream(request):
     cqc_scale = request.GET.get('scale')
 
     basename, _ = os.path.splitext(filename)
-    mask_filename = f"masks/mask_{basename}.png"
+    mask_filename = f"mask_{basename}.png"
 
     if not filename or not cqc_scale:
         return HttpResponse("Missing map or scaling parameter", status=400)
@@ -135,21 +135,19 @@ def run_UNet_stream(request):
     except ValueError:
         return HttpResponse("Invalid 'scale' parameter", status=400)
 
-    Image.MAX_IMAGE_PIXELS = None  # disable PIL max pixel limit
+    Image.MAX_IMAGE_PIXELS = None
 
-    # Constants for scaling
     train_scale = 0.710
     train_omap_scale = 4000
     omap_scale = 4000
     SCALE_FACTOR = scale / train_scale * omap_scale / train_omap_scale
 
-    map_key = f'maps/{filename}'
-    if not default_storage.exists(map_key):
+    map_path = os.path.join(settings.MEDIA_ROOT, 'maps', filename)
+    if not os.path.exists(map_path):
         return HttpResponseNotFound(f"Karte '{filename}' nicht verfügbar.")
 
     try:
-        # Load image
-        with default_storage.open(map_key, 'rb') as f:
+        with open(map_path, 'rb') as f:
             img = Image.open(f)
             img.load()
             img = img.convert("RGB")
@@ -160,10 +158,8 @@ def run_UNet_stream(request):
 
             img = img.resize(new_size, resample=Image.BICUBIC)
 
-        # Load ONNX model
         ort_session = ort.InferenceSession("best_model_300dpi.onnx")
 
-        # Prepare output array
         img_w, img_h = img.size
         output_img = np.zeros((img_h, img_w), dtype=np.float32)
 
@@ -173,7 +169,7 @@ def run_UNet_stream(request):
         step = TILE_SIZE - overlap
         tiles_y = math.ceil((img_h - overlap) / step)
         tiles_x = math.ceil((img_w - overlap) / step)
-        total_tiles = max(1,tiles_y * tiles_x)
+        total_tiles = max(1, tiles_y * tiles_x)
         processed_tiles = 0
 
         def model_predict_fn(input_data):
@@ -185,10 +181,9 @@ def run_UNet_stream(request):
                 out = out.argmax(axis=0)
             return out.astype(np.float32)
 
-        # Generator for streaming progress
         async def tile_generator():
             nonlocal processed_tiles
-            yield "data: {}\n\n"  # force initial flush
+            yield "data: {}\n\n"
 
             loop = asyncio.get_running_loop()
             try:
@@ -199,12 +194,10 @@ def run_UNet_stream(request):
 
                         tile = img.crop((x0, y0, x1, y1))
                         tile_np = np.array(tile) / 255.0
-                        tile_np = np.transpose(tile_np, (2,0,1))[np.newaxis,:,:,:].astype(np.float32)
+                        tile_np = np.transpose(tile_np, (2, 0, 1))[np.newaxis, :, :, :].astype(np.float32)
 
-                        # CPU-bound ONNX call in separate thread
                         tile_pred = await loop.run_in_executor(None, model_predict_fn, tile_np)
 
-                        # compute output bounds
                         out_y0 = y0 if y0 == 0 else y0 + overlap // 2
                         out_x0 = x0 if x0 == 0 else x0 + overlap // 2
                         out_y1 = y1 if y1 == img_h else y1 - overlap // 2
@@ -223,17 +216,13 @@ def run_UNet_stream(request):
 
                         output_img[out_y0:out_y1, out_x0:out_x1] = tile_pred[tile_y0:tile_y1, tile_x0:tile_x1]
 
-                        # send progress
                         processed_tiles += 1
                         yield f"data: {json.dumps({'current': processed_tiles, 'total': total_tiles})}\n\n"
-
-                        # allow event loop to process
                         await asyncio.sleep(0.01)
 
             except Exception as e:
                 yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
-            # After all tiles processed: create and save final image
             visual = 255 * np.ones((img_h, img_w, 1), dtype=np.uint8)
             map_object = SimpleNamespace(
                 impassable=0,
@@ -257,20 +246,33 @@ def run_UNet_stream(request):
             final_img_bytes = BytesIO()
             final_img.save(final_img_bytes, format="PNG")
             final_img_bytes.seek(0)
-            default_storage.save(mask_filename, final_img_bytes)
 
-            # Send final message
-            yield f"data: {json.dumps({'done': True, 'final_path': mask_filename})}\n\n"
+            mask_path = os.path.join(settings.MEDIA_ROOT, 'masks', mask_filename)
+            with open(mask_path, 'wb') as f:
+                f.write(final_img_bytes.read())
+
+            yield f"data: {json.dumps({'done': True, 'final_path': f'masks/{mask_filename}'})}\n\n"
             gc.collect()
 
+        def sync_tile_generator():
+            loop = asyncio.new_event_loop()
+            async_gen = tile_generator()
+            try:
+                while True:
+                    try:
+                        yield loop.run_until_complete(async_gen.__anext__())
+                    except StopAsyncIteration:
+                        break
+            finally:
+                loop.close()
+
         response = StreamingHttpResponse(
-            tile_generator(),
+            sync_tile_generator(),
             content_type="text/event-stream"
         )
         response["Cache-Control"] = "no-cache"
         response["X-Accel-Buffering"] = "no"
         return response
-
 
     except FileNotFoundError:
         return HttpResponseNotFound("Image file not found.")
@@ -463,41 +465,33 @@ def batch_pathfinding(request):
         filename = payload.get("filename")
         if not filename:
             return JsonResponse({"error": "Filename required"}, status=400)
-
         user_kader = request.user.userprofile.kader
         if not user_kader:
             return JsonResponse({"error": "User has no kader assigned"}, status=400)
-
         orig_unique_filename = f"{filename}_{user_kader.name}"
         try:
             pf = publishedFile.objects.get(unique_filename=orig_unique_filename)
         except publishedFile.DoesNotExist:
             return JsonResponse({"error": f"Original file not found: {orig_unique_filename}"}, status=404)
-
         data = pf.data
         if not data or "cP" not in data or "mapFile" not in data:
             return JsonResponse({"error": "Invalid file data: missing cP or mapFile"}, status=400)
-
         map_basename = os.path.splitext(os.path.basename(data["mapFile"]))[0]
-        
+
         author = request.user.first_name or request.user.username
+        mask_path = os.path.join(settings.MEDIA_ROOT, 'masks', f'mask_{map_basename}.png')
+        if not os.path.exists(mask_path):
+            return JsonResponse({"error": "Keine Maske gefunden"}, status=400)
 
-        mask_path = f"masks/mask_{map_basename}.png"
-
-        if not default_storage.exists(mask_path):
-            return JsonResponse({"error": f"Keine Maske gefunden"}, status=400)
-        
         thread = threading.Thread(
             target=run_batch_async,
             args=(data, map_basename, filename, user_kader, author),
             daemon=True
         )
         thread.start()
-
         return JsonResponse({
             "message": "Batch pathfinding started in background",
             "filename": f"{filename}_batchGen_{user_kader.name}"
         })
-
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=500)

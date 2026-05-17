@@ -1,21 +1,16 @@
 from pathlib import Path
 import os
 import dj_database_url
-
 from dotenv import load_dotenv
 
-# Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 FILES_DIR = os.path.join(BASE_DIR, 'jsonfiles')
 MAPS_DIR = os.path.join(BASE_DIR, 'maps')
 
-DEBUG = False
+DEBUG = os.environ.get('DEBUG', 'False') == 'True'
 
 if DEBUG:
     load_dotenv()
-
-# Quick-start development settings - unsuitable for production
-# See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
 SECRET_KEY = os.environ.get('SECRET_KEY')
 
@@ -31,7 +26,6 @@ CSRF_TRUSTED_ORIGINS = [
     'https://cqcpathfinder.up.railway.app',
 ]
 
-# Application definition
 INSTALLED_APPS = [
     "django.contrib.admin",
     "django.contrib.auth",
@@ -80,13 +74,8 @@ TEMPLATES = [
     },
 ]
 
-#WSGI_APPLICATION = "CQCPathfinder.wsgi.application"
-
-EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'  # For development
+EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
 DEFAULT_FROM_EMAIL = 'webmaster@localhost'
-
-# Database
-# https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
 if DEBUG:
     DATABASES = {
@@ -102,22 +91,11 @@ if not DEBUG:
         )
     }
 
-# Password validation
-# https://docs.djangoproject.com/en/5.2/ref/settings/#auth-password-validators
-
 AUTH_PASSWORD_VALIDATORS = [
-    {
-        "NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator",
-    },
-    {
-        "NAME": "django.contrib.auth.password_validation.MinimumLengthValidator",
-    },
-    {
-        "NAME": "django.contrib.auth.password_validation.CommonPasswordValidator",
-    },
-    {
-        "NAME": "django.contrib.auth.password_validation.NumericPasswordValidator",
-    },
+    {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
+    {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator"},
+    {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
+    {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
 ]
 
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
@@ -127,47 +105,27 @@ SESSION_COOKIE_SECURE = not DEBUG
 
 LOGIN_URL = '/login/'
 LOGIN_REDIRECT_URL = '/'
-
-LOGOUT_REDIRECT_URL = 'login'  # Redirects to the URL pattern named 'login'
-
-# Internationalization
-# https://docs.djangoproject.com/en/5.2/topics/i18n/
+LOGOUT_REDIRECT_URL = 'login'
 
 LANGUAGE_CODE = "en-us"
-
 TIME_ZONE = "CET"
-
 USE_I18N = True
-
 USE_TZ = True
-
-# Default primary key field type
-# https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-INSTALLED_APPS += ['storages']
-
-AWS_ACCESS_KEY_ID = os.environ.get('AWS_ACCESS_KEY_ID')
-AWS_SECRET_ACCESS_KEY = os.environ.get('AWS_SECRET_ACCESS_KEY')
-AWS_STORAGE_BUCKET_NAME = os.environ.get('AWS_STORAGE_BUCKET_NAME')
-AWS_S3_REGION_NAME = 'eu-north-1'
-
-AWS_S3_CUSTOM_DOMAIN = '%s.S3.AMAZONAWS.COM' % AWS_STORAGE_BUCKET_NAME
-
-AWS_S3_FILE_OVERWRITE = True
-AWS_DEFAULT_ACL = None
-AWS_S3_ADDRESSING_STYLE = "virtual"
-
 STATIC_URL = '/static/'
 STATICFILES_DIRS = [os.path.join(BASE_DIR, 'static')]
-STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')  # used in collectstatic for prod
+STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
 
 STORAGES = {
     'default': {
-        'BACKEND': 'storages.backends.s3boto3.S3Boto3Storage',
+        'BACKEND': 'django.core.files.storage.FileSystemStorage',
     },
     'staticfiles': {
-        "BACKEND": "servestatic.storage.CompressedManifestStaticFilesStorage",
+        'BACKEND': 'servestatic.storage.CompressedManifestStaticFilesStorage',
     },
 }
+
+MEDIA_ROOT = os.environ.get('MEDIA_ROOT', '/app/media')
+MEDIA_URL = '/media/'

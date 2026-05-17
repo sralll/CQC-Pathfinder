@@ -1,18 +1,15 @@
 import os
 import json
-import boto3
+import mimetypes
 from django.shortcuts import render
 from django.conf import settings
-from django.http import JsonResponse, HttpResponseNotFound, HttpResponseBadRequest, HttpResponse, StreamingHttpResponse
+from django.http import JsonResponse, HttpResponseNotFound, HttpResponseBadRequest, FileResponse
 from django.views.decorators.http import require_GET, require_POST
 from django.contrib.auth.decorators import login_required
 from django.utils.timezone import now
 from django.contrib.auth.decorators import user_passes_test
 from .models import publishedFile
-from django.core.files.storage import default_storage
-from botocore.exceptions import ClientError
 from urllib.parse import unquote
-import gc
 from accounts.models import UserProfile
 
 def get_gamefile_by_public_name(request, filename):
@@ -45,29 +42,12 @@ def index(request):
 
 @login_required
 def get_map_file(request, filename):
-    s3 = boto3.client(
-        's3',
-        aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
-        aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
-        region_name=settings.AWS_S3_REGION_NAME
-    )
-
-    bucket = settings.AWS_STORAGE_BUCKET_NAME
-    key = f'maps/{filename}'
-
-    try:
-        s3_object = s3.get_object(Bucket=bucket, Key=key)
-        response = StreamingHttpResponse(
-            s3_object['Body'], 
-            content_type=s3_object['ContentType']
-        )
-        return response
-
-    except ClientError as e:
-        if e.response['Error']['Code'] == 'NoSuchKey':
-            return HttpResponseNotFound(f"Map file '{filename}' not found.")
-        else:
-            return HttpResponse(f"Error: {str(e)}", status=500)
+    filepath = os.path.join(settings.MEDIA_ROOT, 'maps', filename)
+    if not os.path.exists(filepath):
+        return HttpResponseNotFound(f"Map file '{filename}' not found.")
+    content_type, _ = mimetypes.guess_type(filepath)
+    content_type = content_type or 'application/octet-stream'
+    return FileResponse(open(filepath, 'rb'), content_type=content_type)
 
 @group_required('Trainer')
 @require_GET
@@ -135,21 +115,18 @@ def load_file(request, filename):
         gamefile = get_gamefile_by_public_name(request, filename)
     except publishedFile.DoesNotExist:
         return HttpResponseNotFound("File not found")
-
     try:
         file_data = gamefile.data or {}
         file_name = gamefile.filename or "unknown"
         map_path = file_data.get("mapFile", "")
         if map_path:
             basename = os.path.splitext(os.path.basename(map_path))[0]
-            mask_filename = f"masks/mask_{basename}.png"
-            file_data["has_mask"] = default_storage.exists(mask_filename)
-
+            mask_path = os.path.join(settings.MEDIA_ROOT, 'masks', f'mask_{basename}.png')
+            file_data["has_mask"] = os.path.exists(mask_path)
         return JsonResponse({
             "metadata": {"filename": file_name},
             "content": file_data
         })
-
     except Exception as e:
         return JsonResponse(
             {"message": "Error loading file", "error": str(e)},
@@ -261,31 +238,28 @@ def delete_file(request, filename):
 
     return JsonResponse({'message': 'File deleted successfully!'})
 
-
 @group_required('Trainer')
 def upload_map(request):
     if request.method == 'POST' and request.FILES.get('file'):
         uploaded_file = request.FILES['file']
         allowed_types = ['image/png', 'image/jpeg']
-
         if uploaded_file.content_type not in allowed_types:
             return JsonResponse({'success': False, 'message': 'Unsupported file type'}, status=400)
 
-        # Generate timestamped filename
         timestamp = now().strftime('%Y%m%d_%H%M%S')
         ext = os.path.splitext(uploaded_file.name)[1]
-        filename = f"maps/{timestamp}{ext}"
+        filename = f"{timestamp}{ext}"
+        dest_path = os.path.join(settings.MEDIA_ROOT, 'maps', filename)
 
         try:
-            # Save using the file's chunk generator
-            file_path = default_storage.save(filename, uploaded_file)
-            
-            map_url = default_storage.url(file_path)
-            
+            with open(dest_path, 'wb') as f:
+                for chunk in uploaded_file.chunks():
+                    f.write(chunk)
+
             return JsonResponse({
                 'success': True,
-                'mapFile': map_url,
-                'filename': os.path.basename(file_path),
+                'mapFile': f'/coursesetter/get_map/{filename}',
+                'filename': filename,
                 'scaled': False
             })
         except Exception as e:
