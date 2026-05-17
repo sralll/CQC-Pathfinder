@@ -18,3 +18,5 @@ venv/
 # VS Code / IDE
 .vscode/
 .idea/
+
+upload_to_railway.py

@@ -301,26 +301,37 @@ from django.views.decorators.csrf import csrf_exempt
 def bulk_upload(request):
     if request.method != 'POST':
         return HttpResponseBadRequest('POST required')
-    
+
     token = request.headers.get('X-Upload-Token')
     valid_token = cache.get('upload_token')
     if not token or token != valid_token:
         return HttpResponse('Unauthorized', status=401)
 
-    folder = request.POST.get('folder', 'maps')  # 'maps' or 'masks'
+    folder = request.POST.get('folder', 'maps')
     if folder not in ('maps', 'masks'):
         return HttpResponseBadRequest('Invalid folder')
 
     uploaded_file = request.FILES.get('file')
-    if not uploaded_file:
-        return HttpResponseBadRequest('No file')
+    filename = request.POST.get('filename', uploaded_file.name)
+    chunk_index = int(request.POST.get('chunk_index', 0))
+    total_chunks = int(request.POST.get('total_chunks', 1))
 
     dest_dir = os.path.join(settings.MEDIA_ROOT, folder)
     os.makedirs(dest_dir, exist_ok=True)
-    dest_path = os.path.join(dest_dir, uploaded_file.name)
+    dest_path = os.path.join(dest_dir, filename)
+    tmp_path = dest_path + f'.part{chunk_index}'
 
-    with open(dest_path, 'wb') as f:
+    with open(tmp_path, 'wb') as f:
         for chunk in uploaded_file.chunks():
             f.write(chunk)
 
-    return JsonResponse({'status': 'ok', 'file': uploaded_file.name})
+    # If all chunks received, assemble the file
+    all_parts = [dest_path + f'.part{i}' for i in range(total_chunks)]
+    if all(os.path.exists(p) for p in all_parts):
+        with open(dest_path, 'wb') as final:
+            for part in all_parts:
+                with open(part, 'rb') as p:
+                    final.write(p.read())
+                os.remove(part)
+
+    return JsonResponse({'status': 'ok', 'chunk': chunk_index})
