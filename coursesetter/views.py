@@ -335,3 +335,17 @@ def bulk_upload(request):
                 os.remove(part)
 
     return JsonResponse({'status': 'ok', 'chunk': chunk_index})
+
+from django.contrib.admin.views.decorators import staff_member_required
+@staff_member_required
+def debug_media(request):
+    import os
+    from django.conf import settings
+    maps_dir = os.path.join(settings.MEDIA_ROOT, 'maps')
+    files = os.listdir(maps_dir) if os.path.exists(maps_dir) else []
+    return JsonResponse({
+        'MEDIA_ROOT': settings.MEDIA_ROOT,
+        'maps_dir_exists': os.path.exists(maps_dir),
+        'file_count': len(files),
+        'first_5': sorted(files)[:5],
+    })

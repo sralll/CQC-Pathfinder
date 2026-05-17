@@ -4,7 +4,7 @@ import math
 
 TOKEN = '40f0c49fefefeb1bdb85f6429e4658a7ec8aa59f91e89691065ac247bb033a1f'
 BASE_URL = 'https://cqc-pathfinder.ch/bulk-upload/'
-CHUNK_SIZE = 5 * 1024 * 1024  # 5MB chunks
+CHUNK_SIZE = 1 * 1024 * 1024  # 5MB chunks
 
 def upload_file(filepath, remote_folder):
     filename = os.path.basename(filepath)
