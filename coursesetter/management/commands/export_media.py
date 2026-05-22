@@ -1,34 +1,40 @@
-import sys
+import os
 import zipfile
-from django.core.management.base import BaseCommand
-from django.apps import apps
+import tempfile
+from django.http import FileResponse, Http404
+from django.conf import settings
+from django.contrib.auth.decorators import user_passes_test
 
-class Command(BaseCommand):
-    help = "Packages all database-linked media assets into a zip stream sent to stdout"
+# Security Check: Ensure only logged-in superusers can download your entire media library
+@user_passes_test(lambda u: u.is_superuser)
+def download_media_archive(request):
+    # Use your app's configured MEDIA_ROOT path
+    media_root = getattr(settings, 'MEDIA_ROOT', '/app/media')
 
-    def handle(self, *args, **options):
-        # Target standard out buffer for safe binary streaming
-        stdout_buffer = sys.stdout.buffer
+    if not os.path.exists(media_root):
+        raise Http404("Media directory does not exist on the server configuration.")
 
-        with zipfile.ZipFile(stdout_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
-            # Crawl all models for file and image attachment fields
-            for model in apps.get_models():
-                file_fields = [f for f in model._meta.fields if f.get_internal_type() in ['FileField', 'ImageField']]
-                if not file_fields:
-                    continue
+    # Create a secure temporary file on the server to build the archive
+    temp_zip = tempfile.NamedTemporaryFile(delete=False, suffix='.zip')
+    
+    try:
+        with zipfile.ZipFile(temp_zip.name, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+            for root, dirs, files in os.walk(media_root):
+                for file in files:
+                    file_path = os.path.join(root, file)
+                    # Calculate relative path inside the zip so it doesn't look like /app/media/...
+                    arcname = os.path.relpath(file_path, media_root)
+                    zip_file.write(file_path, arcname)
 
-                for item in model.objects.all():
-                    for field in file_fields:
-                        file_attr = getattr(item, field.name)
-                        # Ensure the record has an actual file attached
-                        if file_attr and file_attr.name:
-                            file_name = file_attr.name
-                            try:
-                                # Use Django's storage abstraction layer to open the file securely
-                                with file_attr.open('rb') as active_file:
-                                    # Write the binary data directly into the archive bundle
-                                    zip_file.write_message = active_file.read()
-                                    zip_file.writestr(file_name, zip_file.write_message)
-                            except Exception as e:
-                                # Send errors to stderr so they don't corrupt our binary stream
-                                self.stderr.write(f"Skipping {file_name}: {str(e)}")
+        # Open the compiled zip to stream it back to your browser
+        response = FileResponse(
+            open(temp_zip.name, 'rb'), 
+            content_type='application/zip',
+            as_attachment=True,
+            filename='production_media.zip'
+        )
+        
+        return response
+
+    except Exception as e:
+        raise Http404(f"Error generating media archive: {str(e)}")
