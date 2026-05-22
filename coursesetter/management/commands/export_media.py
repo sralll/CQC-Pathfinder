@@ -1,24 +1,34 @@
-import os
+import sys
 import zipfile
 from django.core.management.base import BaseCommand
-from django.conf import settings
+from django.apps import apps
 
 class Command(BaseCommand):
-    help = "Packages all media files into a single zip output streamed to stdout"
+    help = "Packages all database-linked media assets into a zip stream sent to stdout"
 
     def handle(self, *args, **options):
-        media_root = settings.MEDIA_ROOT
-        
-        if not os.path.exists(media_root):
-            self.stderr.write(f"MEDIA_ROOT does not exist at {media_root}")
-            return
+        # Target standard out buffer for safe binary streaming
+        stdout_buffer = sys.stdout.buffer
 
-        # Write the zip file directly to the standard output stream (sys.stdout.buffer)
-        import sys
-        with zipfile.ZipFile(sys.stdout.buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
-            for root, dirs, files in os.walk(media_root):
-                for file in files:
-                    file_path = os.path.join(root, file)
-                    # Calculate relative path inside the zip archive
-                    arcname = os.path.relpath(file_path, media_root)
-                    zip_file.write(file_path, arcname)
+        with zipfile.ZipFile(stdout_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+            # Crawl all models for file and image attachment fields
+            for model in apps.get_models():
+                file_fields = [f for f in model._meta.fields if f.get_internal_type() in ['FileField', 'ImageField']]
+                if not file_fields:
+                    continue
+
+                for item in model.objects.all():
+                    for field in file_fields:
+                        file_attr = getattr(item, field.name)
+                        # Ensure the record has an actual file attached
+                        if file_attr and file_attr.name:
+                            file_name = file_attr.name
+                            try:
+                                # Use Django's storage abstraction layer to open the file securely
+                                with file_attr.open('rb') as active_file:
+                                    # Write the binary data directly into the archive bundle
+                                    zip_file.write_message = active_file.read()
+                                    zip_file.writestr(file_name, zip_file.write_message)
+                            except Exception as e:
+                                # Send errors to stderr so they don't corrupt our binary stream
+                                self.stderr.write(f"Skipping {file_name}: {str(e)}")
