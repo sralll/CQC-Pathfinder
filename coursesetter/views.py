@@ -15,46 +15,36 @@ from urllib.parse import unquote
 from accounts.models import UserProfile
 
 import os
-import tarfile
+import mimetypes
 from django.conf import settings
 from django.contrib.admin.views.decorators import staff_member_required
-from django.http import StreamingHttpResponse
+from django.http import FileResponse, HttpResponseNotFound, JsonResponse
 
 
 @staff_member_required
-def export_media(request):
+def list_media_json(request):
     media_root = settings.MEDIA_ROOT
+    files = []
+    for root, dirs, filenames in os.walk(media_root):
+        for filename in sorted(filenames):
+            filepath = os.path.join(root, filename)
+            rel = os.path.relpath(filepath, media_root)
+            size = os.path.getsize(filepath)
+            files.append({'path': rel, 'size': size})
+    return JsonResponse({'files': files})
 
-    def tar_generator():
-        import io
 
-        class ChunkedStream(io.RawIOBase):
-            def __init__(self):
-                self.chunks = []
-
-            def write(self, b):
-                self.chunks.append(bytes(b))
-                return len(b)
-
-            def pop_chunks(self):
-                data = b''.join(self.chunks)
-                self.chunks = []
-                return data
-
-        stream = ChunkedStream()
-        with tarfile.open(fileobj=stream, mode='w|') as tf:
-            for root, dirs, files in os.walk(media_root):
-                for file in sorted(files):
-                    file_path = os.path.join(root, file)
-                    arcname = os.path.relpath(file_path, media_root)
-                    tf.add(file_path, arcname=arcname)
-                    yield stream.pop_chunks()
-        yield stream.pop_chunks()
-
-    response = StreamingHttpResponse(tar_generator(), content_type='application/x-tar')
-    response['Content-Disposition'] = 'attachment; filename="media_export.tar"'
-    response['X-Accel-Buffering'] = 'no'
-    return response
+@staff_member_required
+def download_media_file(request, filepath):
+    full_path = os.path.join(settings.MEDIA_ROOT, filepath)
+    # Prevent path traversal
+    if not os.path.abspath(full_path).startswith(os.path.abspath(settings.MEDIA_ROOT)):
+        return HttpResponseNotFound('Invalid path')
+    if not os.path.exists(full_path):
+        return HttpResponseNotFound('File not found')
+    content_type, _ = mimetypes.guess_type(full_path)
+    content_type = content_type or 'application/octet-stream'
+    return FileResponse(open(full_path, 'rb'), content_type=content_type, as_attachment=True)
 
 
 
