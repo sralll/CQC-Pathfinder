@@ -14,41 +14,6 @@ from .models import publishedFile
 from urllib.parse import unquote
 from accounts.models import UserProfile
 
-
-from django.views.decorators.csrf import csrf_exempt
-from django.http import JsonResponse
-import os
-from django.conf import settings
-from django.contrib.admin.views.decorators import staff_member_required
-
-@csrf_exempt
-@staff_member_required
-def upload_media_file(request):
-    if request.method != 'POST':
-        return JsonResponse({'error': 'POST only'}, status=405)
-    
-    file = request.FILES.get('file')
-    filepath = request.POST.get('path')  # relative path e.g. maps/foo.jpg
-    
-    if not file or not filepath:
-        return JsonResponse({'error': 'Missing file or path'}, status=400)
-    
-    full_path = os.path.join(settings.MEDIA_ROOT, filepath)
-    
-    # Prevent path traversal
-    if not os.path.abspath(full_path).startswith(os.path.abspath(settings.MEDIA_ROOT)):
-        return JsonResponse({'error': 'Invalid path'}, status=400)
-    
-    os.makedirs(os.path.dirname(full_path), exist_ok=True)
-    
-    with open(full_path, 'wb') as f:
-        for chunk in file.chunks():
-            f.write(chunk)
-    
-    return JsonResponse({'ok': True, 'path': filepath})
-
-
-
 def get_gamefile_by_public_name(request, filename):
     from .models import publishedFile
     from accounts.models import UserProfile

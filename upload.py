@@ -1,7 +1,7 @@
 import os
 import requests
 
-BASE_URL = 'https://cqcpathfinder-staging.up.railway.app/.railway.app'
+BASE_URL = 'https://cqcpathfinder-staging.up.railway.app/'
 MEDIA_DIR = './media'
 SESSION_COOKIE = 'ps7809h8thif8z3p2a0ms61jm9fsqc0z'  # grab from browser devtools
 
