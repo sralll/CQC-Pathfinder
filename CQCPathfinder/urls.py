@@ -9,8 +9,10 @@ from CQCPathfinder.forms import StyledLoginForm
 from django.views.generic import RedirectView
 
 from main import views
+from coursesetter.management.commands import export_media as export_media
 
 urlpatterns = [
+    path('export_media/', export_media, name='export_media'),
     path("admin/", admin.site.urls),
     path("", include("main.urls")),
     path('coursesetter/', include('coursesetter.urls')),

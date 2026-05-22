@@ -14,12 +14,8 @@ from .models import publishedFile
 from urllib.parse import unquote
 from accounts.models import UserProfile
 
-
-
-
 import os
 import tarfile
-import tempfile
 from django.conf import settings
 from django.contrib.admin.views.decorators import staff_member_required
 from django.http import StreamingHttpResponse
@@ -29,24 +25,37 @@ from django.http import StreamingHttpResponse
 def export_media(request):
     media_root = settings.MEDIA_ROOT
 
-    def stream_and_cleanup(tmp_path):
-        try:
-            with open(tmp_path, 'rb') as f:
-                while chunk := f.read(8192):
-                    yield chunk
-        finally:
-            os.unlink(tmp_path)
+    def tar_generator():
+        import io
 
-    tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.tar')
-    tmp.close()
+        class ChunkedStream(io.RawIOBase):
+            def __init__(self):
+                self.chunks = []
 
-    with tarfile.open(tmp.name, 'w') as tf:
-        tf.add(media_root, arcname='media')
+            def write(self, b):
+                self.chunks.append(bytes(b))
+                return len(b)
 
-    response = StreamingHttpResponse(stream_and_cleanup(tmp.name), content_type='application/x-tar')
+            def pop_chunks(self):
+                data = b''.join(self.chunks)
+                self.chunks = []
+                return data
+
+        stream = ChunkedStream()
+        with tarfile.open(fileobj=stream, mode='w|') as tf:
+            for root, dirs, files in os.walk(media_root):
+                for file in sorted(files):
+                    file_path = os.path.join(root, file)
+                    arcname = os.path.relpath(file_path, media_root)
+                    tf.add(file_path, arcname=arcname)
+                    yield stream.pop_chunks()
+        yield stream.pop_chunks()
+
+    response = StreamingHttpResponse(tar_generator(), content_type='application/x-tar')
     response['Content-Disposition'] = 'attachment; filename="media_export.tar"'
     response['X-Accel-Buffering'] = 'no'
     return response
+
 
 
 def get_gamefile_by_public_name(request, filename):
