@@ -12,8 +12,8 @@ from main import views
 from coursesetter.views import download_media_file, list_media_json
 
 urlpatterns = [
-    path('export_media/', download_media_file, name='export_media'),
-    path('media_list/', list_media_json, name='media_list'),
+    path('export_media/list/', list_media_json, name='list_media_json'),
+    path('export_media/file/<path:filepath>', download_media_file, name='download_media_file'),
     path("admin/", admin.site.urls),
     path("", include("main.urls")),
     path('coursesetter/', include('coursesetter.urls')),
