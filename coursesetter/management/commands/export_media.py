@@ -1,5 +1,5 @@
 import os
-import zipfile
+import tarfile
 import tempfile
 from django.conf import settings
 from django.contrib.admin.views.decorators import staff_member_required
@@ -10,24 +10,20 @@ from django.http import StreamingHttpResponse
 def export_media(request):
     media_root = settings.MEDIA_ROOT
 
-    def stream_zip(tmp_path):
+    def stream_tar(tmp_path):
         with open(tmp_path, 'rb') as f:
             while chunk := f.read(8192):
                 yield chunk
 
-    tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.zip')
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.tar.gz')
     tmp.close()
 
     try:
-        with zipfile.ZipFile(tmp.name, 'w', zipfile.ZIP_DEFLATED, allowZip64=True) as zf:
-            for root, dirs, files in os.walk(media_root):
-                for file in files:
-                    file_path = os.path.join(root, file)
-                    arcname = os.path.relpath(file_path, media_root)
-                    zf.write(file_path, arcname)
+        with tarfile.open(tmp.name, 'w:gz') as tf:
+            tf.add(media_root, arcname='media')
 
-        response = StreamingHttpResponse(stream_zip(tmp.name), content_type='application/zip')
-        response['Content-Disposition'] = 'attachment; filename="media_export.zip"'
+        response = StreamingHttpResponse(stream_tar(tmp.name), content_type='application/gzip')
+        response['Content-Disposition'] = 'attachment; filename="media_export.tar.gz"'
         response['X-Accel-Buffering'] = 'no'
         return response
 
