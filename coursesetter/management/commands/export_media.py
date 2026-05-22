@@ -1,42 +1,28 @@
 import os
-import shutil
-import tempfile
-from django.http import FileResponse, Http404
+import zipfile
+import zipstream
 from django.conf import settings
-from django.contrib.auth.decorators import user_passes_test
+from django.contrib.admin.views.decorators import staff_member_required
+from django.http import StreamingHttpResponse
 
-@user_passes_test(lambda u: u.is_superuser)
-def download_media_archive(request):
-    # Use your app's configured MEDIA_ROOT path (usually /app/media on Railway)
-    media_root = getattr(settings, 'MEDIA_ROOT', '/app/media')
 
-    # Sanity check: Ensure directory exists and isn't completely empty
-    if not os.path.exists(media_root) or not os.listdir(media_root):
-        raise Http404("Media directory is missing or empty on the cloud volume server.")
+@staff_member_required
+def export_media(request):
+    media_root = settings.MEDIA_ROOT
 
-    # Create a secure temporary directory to hold the output zip
-    temp_dir = tempfile.mkdtemp()
-    output_zip_base = os.path.join(temp_dir, 'production_media')
+    def file_iterator(path):
+        for root, dirs, files in os.walk(path):
+            for file in files:
+                file_path = os.path.join(root, file)
+                arcname = os.path.relpath(file_path, media_root)
+                yield file_path, arcname
 
-    try:
-        # shutil.make_archive handles all threading, file locks, and structures perfectly
-        # It creates a file named: production_media.zip
-        archive_path = shutil.make_archive(
-            base_name=output_zip_base,
-            format='zip',
-            root_dir=media_root
-        )
+    zf = zipstream.ZipFile(mode='w', compression=zipstream.ZIP_DEFLATED, allowZip64=True)
 
-        # FileResponse natively blocks up files chunk-by-chunk under the hood.
-        # This keeps RAM light while entirely avoiding proxy timeout drops.
-        response = FileResponse(
-            open(archive_path, 'rb'),
-            content_type='application/x-zip-compressed',
-            as_attachment=True,
-            filename='production_media.zip'
-        )
-        
-        return response
+    for file_path, arcname in file_iterator(media_root):
+        zf.write(file_path, arcname)
 
-    except Exception as e:
-        raise Http404(f"Error compiling media archive: {str(e)}")
+    response = StreamingHttpResponse(zf, content_type='application/zip')
+    response['Content-Disposition'] = 'attachment; filename="media_export.zip"'
+    response['X-Accel-Buffering'] = 'no'  # Disable proxy buffering (Nginx/Railway)
+    return response
