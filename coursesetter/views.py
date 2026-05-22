@@ -29,25 +29,24 @@ from django.http import StreamingHttpResponse
 def export_media(request):
     media_root = settings.MEDIA_ROOT
 
-    def stream_tar(tmp_path):
-        with open(tmp_path, 'rb') as f:
-            while chunk := f.read(8192):
-                yield chunk
+    def stream_and_cleanup(tmp_path):
+        try:
+            with open(tmp_path, 'rb') as f:
+                while chunk := f.read(8192):
+                    yield chunk
+        finally:
+            os.unlink(tmp_path)
 
-    tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.tar.gz')
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.tar')
     tmp.close()
 
-    try:
-        with tarfile.open(tmp.name, 'w:gz') as tf:
-            tf.add(media_root, arcname='media')
+    with tarfile.open(tmp.name, 'w') as tf:
+        tf.add(media_root, arcname='media')
 
-        response = StreamingHttpResponse(stream_tar(tmp.name), content_type='application/gzip')
-        response['Content-Disposition'] = 'attachment; filename="media_export.tar.gz"'
-        response['X-Accel-Buffering'] = 'no'
-        return response
-
-    finally:
-        os.unlink(tmp.name)
+    response = StreamingHttpResponse(stream_and_cleanup(tmp.name), content_type='application/x-tar')
+    response['Content-Disposition'] = 'attachment; filename="media_export.tar"'
+    response['X-Accel-Buffering'] = 'no'
+    return response
 
 
 def get_gamefile_by_public_name(request, filename):
