@@ -20,24 +20,18 @@ from django.conf import settings
 from django.contrib.admin.views.decorators import staff_member_required
 from django.http import FileResponse, HttpResponseNotFound, JsonResponse
 
-@staff_member_required
+@staff_member_required  
 def debug_file(request, filename):
-    import os
-    media_root = settings.MEDIA_ROOT
-    maps_dir = os.path.join(media_root, 'maps')
-    exists_dir = os.path.exists(maps_dir)
-    exists_file = os.path.exists(os.path.join(maps_dir, filename))
-    files = os.listdir(maps_dir) if exists_dir else []
+    maps_dir = os.path.join(settings.MEDIA_ROOT, 'maps')
     return JsonResponse({
-        'media_root': media_root,
-        'maps_dir_exists': exists_dir,
-        'file_exists': exists_file,
-        'files_in_maps': files[:10],  # first 10
+        'pid': os.getpid(),
+        'maps_dir_exists': os.path.exists(maps_dir),
+        'files': os.listdir(maps_dir) if os.path.exists(maps_dir) else []
     })
-
 
 @staff_member_required
 def list_media_json(request):
+    import os
     media_root = settings.MEDIA_ROOT
     files = []
     for root, dirs, filenames in os.walk(media_root):
@@ -46,7 +40,7 @@ def list_media_json(request):
             rel = os.path.relpath(filepath, media_root)
             size = os.path.getsize(filepath)
             files.append({'path': rel, 'size': size})
-    return JsonResponse({'files': files})
+    return JsonResponse({'pid': os.getpid(), 'files': files})
 
 
 def get_gamefile_by_public_name(request, filename):
