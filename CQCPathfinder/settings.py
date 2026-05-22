@@ -16,7 +16,7 @@ SECRET_KEY = os.environ.get('SECRET_KEY')
 ALLOWED_HOSTS = ['cqc-pathfinder.ch',
                  'www.cqc-pathfinder.ch',
                  'cqcpathfinder.up.railway.app',
-                 'cqcpathfinder-staging.up.railway.app',
+                 'cqc-pathfinder-staging.up.railway.app',
                  'localhost',
                  '127.0.0.1']
 
@@ -24,7 +24,7 @@ CSRF_TRUSTED_ORIGINS = [
     'https://cqc-pathfinder.ch',
     'https://www.cqc-pathfinder.ch',
     'https://cqcpathfinder.up.railway.app',
-    'https://cqcpathfinder-staging.up.railway.app',
+    'https://cqc-pathfinder-staging.up.railway.app',
                         
 ]
 
