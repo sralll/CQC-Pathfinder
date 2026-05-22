@@ -1,6 +1,6 @@
 import os
 import zipfile
-import zipstream
+import tempfile
 from django.conf import settings
 from django.contrib.admin.views.decorators import staff_member_required
 from django.http import StreamingHttpResponse
@@ -10,19 +10,26 @@ from django.http import StreamingHttpResponse
 def export_media(request):
     media_root = settings.MEDIA_ROOT
 
-    def file_iterator(path):
-        for root, dirs, files in os.walk(path):
-            for file in files:
-                file_path = os.path.join(root, file)
-                arcname = os.path.relpath(file_path, media_root)
-                yield file_path, arcname
+    def stream_zip(tmp_path):
+        with open(tmp_path, 'rb') as f:
+            while chunk := f.read(8192):
+                yield chunk
 
-    zf = zipstream.ZipFile(mode='w', compression=zipstream.ZIP_DEFLATED, allowZip64=True)
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.zip')
+    tmp.close()
 
-    for file_path, arcname in file_iterator(media_root):
-        zf.write(file_path, arcname)
+    try:
+        with zipfile.ZipFile(tmp.name, 'w', zipfile.ZIP_DEFLATED, allowZip64=True) as zf:
+            for root, dirs, files in os.walk(media_root):
+                for file in files:
+                    file_path = os.path.join(root, file)
+                    arcname = os.path.relpath(file_path, media_root)
+                    zf.write(file_path, arcname)
 
-    response = StreamingHttpResponse(zf, content_type='application/zip')
-    response['Content-Disposition'] = 'attachment; filename="media_export.zip"'
-    response['X-Accel-Buffering'] = 'no'  # Disable proxy buffering (Nginx/Railway)
-    return response
+        response = StreamingHttpResponse(stream_zip(tmp.name), content_type='application/zip')
+        response['Content-Disposition'] = 'attachment; filename="media_export.zip"'
+        response['X-Accel-Buffering'] = 'no'
+        return response
+
+    finally:
+        os.unlink(tmp.name)
