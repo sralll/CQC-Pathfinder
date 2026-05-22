@@ -19,6 +19,7 @@ import mimetypes
 from django.conf import settings
 from django.contrib.admin.views.decorators import staff_member_required
 from django.http import FileResponse, HttpResponseNotFound, JsonResponse
+from django.views.decorators.csrf import csrf_exempt
 
 @staff_member_required  
 def debug_file(request, filename):
@@ -41,6 +42,35 @@ def list_media_json(request):
             size = os.path.getsize(filepath)
             files.append({'path': rel, 'size': size})
     return JsonResponse({'pid': os.getpid(), 'files': files})
+
+@csrf_exempt
+@staff_member_required
+def upload_media_file(request):
+    if request.method != 'POST':
+        return JsonResponse({'error': 'POST only'}, status=405)
+    
+    file = request.FILES.get('file')
+    filepath = request.POST.get('path')
+    
+    if not file or not filepath:
+        return JsonResponse({'error': 'Missing file or path'}, status=400)
+    
+    # Normalize Windows backslashes to forward slashes
+    filepath = filepath.replace('\\', '/')
+    
+    full_path = os.path.join(settings.MEDIA_ROOT, filepath)
+    
+    # Prevent path traversal
+    if not os.path.abspath(full_path).startswith(os.path.abspath(settings.MEDIA_ROOT)):
+        return JsonResponse({'error': 'Invalid path'}, status=400)
+    
+    os.makedirs(os.path.dirname(full_path), exist_ok=True)
+    
+    with open(full_path, 'wb') as f:
+        for chunk in file.chunks():
+            f.write(chunk)
+    
+    return JsonResponse({'ok': True, 'path': filepath})
 
 
 def get_gamefile_by_public_name(request, filename):

@@ -11,8 +11,8 @@ session.cookies.set('sessionid', SESSION_COOKIE, domain='cqcpathfinder-staging.u
 for root, dirs, files in os.walk(MEDIA_DIR):
     for filename in files:
         local_path = os.path.join(root, filename)
-        rel_path = os.path.relpath(local_path, MEDIA_DIR)
-        
+        rel_path = os.path.relpath(local_path, MEDIA_DIR).replace('\\', '/')     
+           
         print(f'Uploading {rel_path}...', end=' ')
         with open(local_path, 'rb') as f:
             r = session.post(
