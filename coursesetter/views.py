@@ -14,6 +14,26 @@ from .models import publishedFile
 from urllib.parse import unquote
 from accounts.models import UserProfile
 
+import os
+import mimetypes
+from django.conf import settings
+from django.contrib.admin.views.decorators import staff_member_required
+from django.http import FileResponse, HttpResponseNotFound, JsonResponse
+
+
+@staff_member_required
+def list_media_json(request):
+    media_root = settings.MEDIA_ROOT
+    files = []
+    for root, dirs, filenames in os.walk(media_root):
+        for filename in sorted(filenames):
+            filepath = os.path.join(root, filename)
+            rel = os.path.relpath(filepath, media_root)
+            size = os.path.getsize(filepath)
+            files.append({'path': rel, 'size': size})
+    return JsonResponse({'files': files})
+
+
 def get_gamefile_by_public_name(request, filename):
     from .models import publishedFile
     from accounts.models import UserProfile
