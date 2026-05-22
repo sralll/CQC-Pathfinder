@@ -20,6 +20,21 @@ from django.conf import settings
 from django.contrib.admin.views.decorators import staff_member_required
 from django.http import FileResponse, HttpResponseNotFound, JsonResponse
 
+@staff_member_required
+def debug_file(request, filename):
+    import os
+    media_root = settings.MEDIA_ROOT
+    maps_dir = os.path.join(media_root, 'maps')
+    exists_dir = os.path.exists(maps_dir)
+    exists_file = os.path.exists(os.path.join(maps_dir, filename))
+    files = os.listdir(maps_dir) if exists_dir else []
+    return JsonResponse({
+        'media_root': media_root,
+        'maps_dir_exists': exists_dir,
+        'file_exists': exists_file,
+        'files_in_maps': files[:10],  # first 10
+    })
+
 
 @staff_member_required
 def list_media_json(request):
