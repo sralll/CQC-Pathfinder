@@ -40,6 +40,10 @@ INSTALLED_APPS = [
     "play",
     "main",
     "accounts",
+    "debug",
+    "account",
+    "project",
+    #"admin_reorder",
 ]
 
 MIDDLEWARE = [
@@ -51,7 +55,30 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    #"admin_reorder.middleware.ModelAdminReorder",
 ]
+
+ADMIN_REORDER = (
+    {
+        'app': 'auth',
+        'label': 'Account',
+        'models': (
+            'auth.User',
+            'account.Profile',
+            'account.Team',
+            'account.Role',
+            'account.Device',
+            'account.Feedback',
+        )
+    },
+    {
+        'app': 'project',
+        'label': 'Editor',
+        'models': (
+            'project.File',
+        )
+    }
+)
 
 ROOT_URLCONF = "CQCPathfinder.urls"
 

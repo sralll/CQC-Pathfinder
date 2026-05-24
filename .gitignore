@@ -19,4 +19,4 @@ venv/
 .vscode/
 .idea/
 
-upload_to_railway.py
+upload.py
