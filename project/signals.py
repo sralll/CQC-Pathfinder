@@ -6,4 +6,4 @@ from .models import EditorSettings
 @receiver(post_save, sender=Profile)
 def create_editor_settings(sender, instance, created, **kwargs):
     if created:
-        EditorSettings.objects.create(profile=instance)
+        EditorSettings.objects.get_or_create(profile=instance)

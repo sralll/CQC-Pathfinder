@@ -11,6 +11,11 @@ from django.views.generic import RedirectView
 from main import views
 
 urlpatterns = [
+    path('editor/', include('project.urls')),
+    path('account/', include('account.urls')),
+
+
+
     path("admin/", admin.site.urls),
     path("", include("main.urls")),
     path('coursesetter/', include('coursesetter.urls')),

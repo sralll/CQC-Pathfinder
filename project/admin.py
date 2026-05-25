@@ -2,7 +2,7 @@ from django.contrib import admin
 from django.contrib.admin.views.decorators import staff_member_required
 from django.shortcuts import render, redirect
 from django.urls import path
-from .models import File, ControlPair
+from .models import File, ControlPair, Label
 from django.db.models import Count
 from account.models import Profile
 
@@ -43,3 +43,22 @@ class FileAdmin(admin.ModelAdmin):
         return request.user.is_superuser
     def has_delete_permission(self, request, obj=None):
         return request.user.is_superuser
+    
+@admin.register(Label)
+class LabelAdmin(admin.ModelAdmin):
+    list_display = (
+        'id',
+        'name',
+        'team',
+    )
+    search_fields = (
+        'name',
+        'team__name',
+    )
+    list_filter = (
+        'team',
+    )
+    ordering = (
+        'team',
+        'name',
+    )

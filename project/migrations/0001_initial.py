@@ -2,7 +2,7 @@
 
 import django.db.models.deletion
 from django.db import migrations, models
-
+from django.utils import timezone
 
 class Migration(migrations.Migration):
 
@@ -58,8 +58,9 @@ class Migration(migrations.Migration):
                 ("map_file", models.CharField(blank=True, max_length=255)),
                 ("has_mask", models.BooleanField(default=False)),
                 ("blocked_terrain", models.JSONField(blank=True, null=True)),
-                ("last_edited", models.DateTimeField(auto_now=True)),
+                ("last_edited", models.DateTimeField(default=timezone.now)),
                 ("batch_progress", models.JSONField(blank=True, null=True)),
+                ("deleted", models.BooleanField(default=False)),
                 (
                     "team",
                     models.ForeignKey(

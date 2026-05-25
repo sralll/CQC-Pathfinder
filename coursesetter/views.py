@@ -46,6 +46,7 @@ def index(request):
 def get_map_file(request, filename):
     filepath = os.path.join(settings.MEDIA_ROOT, 'maps', filename)
     if not os.path.exists(filepath):
+        print(f"Map file '{filename}' not found at {filepath}")
         return HttpResponseNotFound(f"Map file '{filename}' not found. Looked at: {filepath}")
     content_type, _ = mimetypes.guess_type(filepath)
     content_type = content_type or 'application/octet-stream'

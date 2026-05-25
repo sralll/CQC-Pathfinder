@@ -26,6 +26,12 @@ class File(models.Model):
     last_edited = models.DateTimeField(auto_now=True)
     batch_progress = models.JSONField(null=True, blank=True)
 
+    deleted = models.BooleanField(default=False)
+    
+    def soft_delete(self):
+        self.deleted = True
+        self.save()
+
     class Meta:
         unique_together = ('name', 'team')
 
@@ -90,3 +96,22 @@ class EditorSettings(models.Model):
 
     def __str__(self):
         return f"{self.profile.user.username} - Editor Settings"
+    
+class FileSnapshot(models.Model):
+    file = models.ForeignKey(File, on_delete=models.CASCADE, related_name='snapshots')
+    created_at = models.DateTimeField(auto_now_add=True)
+    created_by = models.ForeignKey('auth.User', on_delete=models.SET_NULL, null=True)
+    trigger = models.CharField(max_length=100, blank=True)  # e.g. "autosave", "manual save", "before delete"
+    
+    # Snapshot of the full state at this point
+    scale = models.FloatField(null=True, blank=True)
+    map_file = models.CharField(max_length=255, blank=True)
+    has_mask = models.BooleanField(default=False)
+    blocked_terrain = models.JSONField(null=True, blank=True)
+    control_pairs = models.JSONField()  # full CP+route data as JSON blob
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.file.name} — {self.label} — {self.created_at}"

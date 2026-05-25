@@ -1,0 +1,186 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block styles %}
+<link rel="stylesheet" href="{% static 'project/css/editor.css' %}">
+{% endblock %}
+
+{% block scripts %}
+<script defer src="{% static 'project/js/editor.js' %}"></script>
+{% endblock %}
+
+{% block navbar %}
+    <nav id="navbar">
+        <!-- Left: menu items -->
+        <div class="nav-menu-item" id="menu-project">
+        Projekte...
+            <div class="nav-dropdown">
+                <div onclick="openFileModal()">
+                    <span>Liste</span>
+                    <span class="menu-shortcut">(P)</span>
+                </div>
+                <div onclick="createFile()">
+                    <span>Neu</span>
+                    <span class="menu-shortcut">(Ctrl+N)</span>
+                </div>
+                <div onclick="saveFile()">
+                    <span>Speichern</span>
+                    <span class="menu-shortcut">(Ctrl+S)</span>
+                </div>
+            </div>
+        </div>
+
+    <div class="nav-menu-item" id="menu-karte" onclick="toggleMenu('menu-karte')">
+        Karte
+        <div class="nav-dropdown">
+            <div onclick="">Maske bearbeiten</div>
+            <div onclick="">Sperrgebiete</div>
+        </div>
+    </div>
+
+    <div class="nav-menu-item" id="menu-einstellungen" onclick="toggleMenu('menu-einstellungen')">
+        Einstellungen
+        <div class="nav-dropdown">
+            <div onclick="">Auto-Pathfind</div>
+            <div onclick="">Auto-Jump</div>
+        </div>
+    </div>
+</nav>
+{% endblock %}
+
+{% block content %}
+<div id="editor-wrap">
+    <div id="map-container">
+        <svg id="symbol-svg">
+            <g id="transform-group"></g>
+        </svg>
+    </div>
+</div>
+
+<div id="modal-project" class="modal">
+    <div class="modal-box">
+        <div class="modal-header">
+
+            <!-- LEFT -->
+            <div class="modal-header-left">
+
+                <button title="Neues Projekt (Ctrl+N)" class="toolbar-btn" onclick="createFile()">
+                    <i class="fa-solid fa-file-circle-plus"></i>
+                </button>
+
+                <div class="save-group">
+
+                    <input
+                        type="text"
+                        id="project-title-input"
+                        value="Neues Projekt"
+                    >
+
+                    <button title="Speichern (Ctrl+S)" class="toolbar-btn save-btn" onclick="saveFile()">
+                        <i class="fa-solid fa-floppy-disk"></i>
+                    </button>
+                </div>
+            </div>
+
+            <!-- CENTER -->
+             <div class="modal-header-center">
+                <div class="search-wrapper">
+                    <input
+                        type="text"
+                        id="project-search"
+                        placeholder="Suchen..."
+                    >
+                    <button class="search-clear" onclick="clearSearch()" type="button">×</button>
+                </div>
+            </div>
+
+            <!-- RIGHT -->
+            <div class="modal-header-right">
+
+                <div class="label-dropdown">
+
+                    <button
+                        class="toolbar-btn label-dropdown-btn"
+                        onclick="toggleLabelDropdown()"
+                    >
+                        <i class="fa-solid fa-tags"></i>
+                    </button>
+
+                    <div id="label-dropdown-menu" class="label-dropdown-menu">
+
+                        <!-- CREATE NEW -->
+                        <div class="label-dropdown-create">
+
+                            <input
+                                type="text"
+                                id="new-label-input"
+                                placeholder="Neues Label..."
+                            >
+
+                            <button onclick="createLabel()">
+                                <i class="fa-solid fa-plus"></i>
+                            </button>
+
+                        </div>
+
+                        <!-- LABELS -->
+                        <div id="label-list"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="modal-table-wrap">
+            <table id="file-table">
+
+                <colgroup>
+                    <col class="col-publish">
+                    <col class="col-name">
+                    <col class="col-label">
+                    <col class="col-cp">
+                    <col class="col-version">
+                    <col class="col-date">
+                    <col class="col-author">
+                    <col class="col-actions">
+                </colgroup>
+
+                <thead>
+                    <tr>
+                        <th class="col-publish"></th>
+
+                        <th class="sortable col-name" onclick="setSort('name')">
+                            Projekt <span id="sort-name" class="sort-indicator"></span>
+                        </th>
+
+                        <th class="filterable col-label" onclick="toggleLabelFilter(event)">
+                            Label <span class="filter-indicator"><i class="fa-solid fa-filter active-filter-icon"></i></span>
+                        </th>
+
+                        <th class="sortable col-cp" onclick="setSort('cp_count')" style="text-align:center;">
+                            Posten <span id="sort-cp_count" class="sort-indicator"></span>
+                        </th>
+
+                        <th class="col-version" style="text-align:center;">
+                            <i class="fa-solid fa-clock-rotate-left"></i>
+                        </th>
+
+                        <th class="sortable col-date" onclick="setSort('last_edited')">
+                            Geändert <span id="sort-last_edited" class="sort-indicator"></span>
+                        </th>
+
+                        <th class="filterable col-author" onclick="toggleAuthorFilter(event)">
+                            Autor <span class="filter-indicator"><i class="fa-solid fa-filter active-filter-icon"></i></span>
+                        </th>
+
+                        <th class="col-actions"></th>
+                    </tr>
+                </thead>
+
+                <tbody id="file-tbody"></tbody>
+            </table>
+            <div id="label-filter-dropdown" class="table-filter-dropdown"></div>
+            <div id="author-filter-dropdown" class="table-filter-dropdown"></div>
+        </div>
+    </div>
+</div>
+{% endblock %}
