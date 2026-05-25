@@ -213,11 +213,10 @@ body {
     justify-content: center;
     align-items: flex-start;
 
-    padding: 3% 5%;
-
     background: rgba(0,0,0,0.6);
 
     z-index: 100;
+    padding: 35px 5vw;
 }
 
 .modal.open {
@@ -226,7 +225,8 @@ body {
 
 .modal-box {
     width: 100%;
-    max-height: calc(100vh - 40px);
+    
+    max-height: calc(100vh - 70px);
 
     display: flex;
     flex-direction: column;
