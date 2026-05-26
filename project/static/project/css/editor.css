@@ -367,14 +367,16 @@ body {
     border: 0.5px solid #333;
     border-radius: 6px;
 
-    color: #666;
+    background: #2d333b;
+    color: #8b949e;
 
     cursor: pointer;
 
     transition:
-        background 0.15s ease,
-        border-color 0.15s ease,
-        color 0.15s ease;
+        background 0.15s,
+        color 0.15s,
+        border-color 0.15s,
+        opacity 0.15s,
 }
 
 .toolbar-btn {
@@ -399,8 +401,7 @@ body {
     font-size: 14px;
 }
 
-.action-btn:hover,
-.publish-btn:hover {
+.action-btn:hover {
     color: #378ADD;
     border-color: #378ADD;
 }
@@ -408,17 +409,6 @@ body {
 .danger-btn:hover {
     color: #ff6666;
     border-color: #cc5555;
-}
-
-.publish-btn-active {
-    background: rgba(255, 140, 0, 0.18);
-
-    border-color: #ff9800;
-    color: #ffb347;
-}
-
-.publish-btn-active:hover {
-    background: rgba(255, 140, 0, 0.28);
 }
 
 .close-btn {
@@ -591,25 +581,28 @@ body {
 
 #file-table {
     width: 100%;
+    min-width: 1050px;
 
     border-collapse: collapse;
 
-    table-layout: auto;
+    table-layout: fixed;
+}
+
+#file-table.hide-team-column .col-team {
+    display: none;
 }
 
 .col-publish  { width: 40px; }
 .col-cp       { width: 70px; }
-.col-version  { width: 40px; }
-.col-date     { width: 170px; }
+.col-history  { width: 40px; }
+.col-date     { width: 150px; }
 .col-author   { width: 120px; }
-.col-actions  { width: 90px; }
+.col-actions  { width: 85px; }
+.col-team     { width: 120px; }
+.col-label    { width: 100px; }
 
 .col-name {
-    min-width: 350px;
-}
-
-.col-label {
-    min-width: 180px;
+    width: auto;
 }
 
 th,
@@ -663,6 +656,10 @@ tr:hover td {
 .filterable {
     cursor: pointer;
     user-select: none;
+
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
 }
 
 .sortable:hover,
@@ -671,7 +668,7 @@ tr:hover td {
 }
 
 .sort-indicator {
-    margin-left: 6px;
+    margin-left: 3px;
 
     color: #888;
     font-size: 10px;
@@ -687,7 +684,7 @@ tr:hover td {
 
     margin-left: 4px;
 
-    background: #2a2a2a;
+    background: #2d333b;
 
     border-radius: 3px;
 
@@ -898,4 +895,89 @@ tr:hover td {
         width: 100%;
         max-width: 100%;
     }
+}
+
+/* =========================================
+   OWN PROJECT — NOT PUBLISHED
+========================================= */
+
+.publish-btn:not(.publish-btn-active):not(.publish-btn-disabled) {
+
+    border-color: #59616d;
+
+    color: #c2c8cf;
+}
+
+.publish-btn:not(.publish-btn-active):not(.publish-btn-disabled):hover {
+
+
+    border-color: #727b88;
+
+    color: #ffffff;
+}
+
+/* =========================================
+   OWN PROJECT — PUBLISHED
+========================================= */
+
+.publish-btn-active {
+
+    background: rgba(255, 140, 0, 0.18);
+
+    border-color: #ff9800;
+
+    color: #ffb347;
+
+    box-shadow:
+        0 0 0 1px rgba(255, 152, 0, 0.15);
+}
+
+.publish-btn-active:hover {
+
+    background: rgba(255, 140, 0, 0.28);
+
+    border-color: #ffb347;
+
+    color: #ffd08a;
+}
+
+/* =========================================
+   OTHER PROJECT — NOT PUBLISHED
+========================================= */
+
+.publish-btn-disabled {
+
+    opacity: 0.5;
+
+    cursor: default !important;
+    pointer-events: none;
+
+    border-color: #2f353d;
+
+    color: #59616d;
+}
+
+/* =========================================
+   OTHER PROJECT — PUBLISHED
+========================================= */
+
+.publish-btn-disabled.publish-btn-active {
+
+    background: rgba(255, 140, 0, 0.10);
+
+    border-color: rgba(255, 152, 0, 0.3);
+
+    color: rgba(255, 179, 71, 0.5);
+}
+
+.foreign-file-row {
+
+    filter:
+        brightness(0.67)
+        saturate(0.67);
+}
+
+
+.user-active-team {
+    font-weight: 700;
 }

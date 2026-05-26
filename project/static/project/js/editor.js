@@ -1,270 +1,233 @@
+import { FileTable } from './file_table.js';
+
+/* =========================================================
+    GLOBAL STATE
+========================================================= */
+
 let projectFiles = [];
 let filteredFiles = [];
 let filesLoadingPromise = null;
+
 let currentProjectName = "Neues Projekt";
 let openVersionsFileId = null;
 
 let activeLabelFilter = null;
 let activeAuthorFilters = [];
+let activeTeamFilters = [];
+
 let sortState = {
     key: null,
-    dir: -1 // 1 = asc, -1 = desc
+    dir: 1
 };
 
-let filterState = {
-    label: null,
-    author: null
-};
+const table =
+    new FileTable(
+        document.getElementById('file-tbody')
+    );
 
-loadFiles(); openFileModal();
+/* =========================================================
+    INIT
+========================================================= */
 
-function toggleLabelFilter(event) {
+document.addEventListener("DOMContentLoaded", async () => {
 
-    const dropdown = document.getElementById("label-filter-dropdown");
+    initProjectTitle();
+    initSearch();
+    initMenus();
+    initModal();
+    initDropdownProtection();
 
-    // close if already open
-    if (dropdown.classList.contains("open")) {
-        dropdown.classList.remove("open");
-        return;
+    await loadFiles();
+
+    renderAfterLoad(); 
+
+    openFileModal();
+});
+/* =========================================================
+    LOAD FILES
+========================================================= */
+
+async function loadFiles() {
+
+    if (filesLoadingPromise) {
+        return filesLoadingPromise;
     }
 
-    closeAllFilters();
+    filesLoadingPromise = (async () => {
 
-    dropdown.innerHTML = `
-        <div class="filter-clear"
-            onclick="clearLabelFilter()">
-            <b>Alle</b>
-        </div>
-    ` + getAllLabels().map(label => `
-        <div class="filter-option"
-            onclick="setLabelFilter(${label.id})">
+        try {
 
-            ${label.name}
+            const res = await fetch('/editor/files/');
+            const data = await res.json();
 
-            ${
-                activeLabelFilter === label.id
-                    ? '<i class="fa-solid fa-square-check"></i>'
-                    : '<i class="fa-regular fa-square"></i>'
-            }
-        </div>
-    `).join('');
+            window.activeTeam = data.active_team;
+            projectFiles = data.files || [];
+            filteredFiles = [...projectFiles];
 
-    positionFilterDropdown(dropdown, event.currentTarget);
+        } catch (err) {
 
-    dropdown.classList.add("open");
+            console.error("Failed to load files:", err);
+
+        } finally {
+            filesLoadingPromise = null;
+        }
+
+    })();
+
+    return filesLoadingPromise;
 }
 
-function clearAuthorFilters() {
-    activeAuthorFilters = [];
-    applyFilters();
-    closeAllFilters();
+function renderAfterLoad() {
+
+    renderTableHeader();
+    table.setFiles(filteredFiles);
+
+    updateSortIndicators();
     updateFilterIcons();
-    update();
+    updateClearButton?.();
 }
 
-function clearLabelFilter() {
-    activeLabelFilter = null;
-    applyFilters();
-    closeAllFilters();
+function getTableConfig(projectFiles) {
+
+    return {
+        showTeamColumn: (projectFiles || []).some(f => f.team_shared_pool)
+    };
+}
+
+/* =========================================================
+    TABLE HEADER
+========================================================= */
+
+function renderTableHeader() {
+
+    const thead = document.getElementById("file-thead");
+
+    const { showTeamColumn } = getTableConfig(projectFiles);
+
+    thead.innerHTML = `
+        <tr>
+
+            <th class="col-publish"></th>
+
+            <th class="col-name" data-sort="name">
+                <span class="sortable">
+                    Projekt
+                    <span id="sort-name" class="sort-indicator"></span>
+                </span>
+            </th>
+
+            <th class="col-label">
+                <span class="filterable" id="label-filter-btn">
+                    Label
+                    <span class="filter-indicator">
+                        <i class="fa-solid fa-filter active-filter-icon"></i>
+                    </span>
+                </span>
+            </th>
+
+            <th class="col-cp" data-sort="cp_count" style="text-align:center;">
+                <span class="sortable">
+                    Posten
+                    <span id="sort-cp_count" class="sort-indicator"></span>
+                </span>
+            </th>
+
+            <th class="col-author">
+                <span class="filterable" id="author-filter-btn">
+                    Autor
+                    <span class="filter-indicator">
+                        <i class="fa-solid fa-filter active-filter-icon"></i>
+                    </span>
+                </span>
+            </th>
+
+            ${showTeamColumn ? `
+                <th class="col-team">
+                    <span class="filterable" id="team-filter-btn">
+                        Kader
+                        <span class="filter-indicator">
+                            <i class="fa-solid fa-filter active-filter-icon"></i>
+                        </span>
+                    </span>
+                </th>
+            ` : ""}
+
+            <th class="col-history" style="text-align:center;">
+                <i class="fa-solid fa-clock-rotate-left"></i>
+            </th>
+
+            <th class="col-date" data-sort="last_edited">
+                <span class="sortable">
+                    Geändert
+                    <span id="sort-last_edited" class="sort-indicator"></span>
+                </span>
+            </th>
+
+            <th class="col-actions"></th>
+
+        </tr>
+    `;
+
+    const table = document.getElementById("file-table");
+
+    table.classList.toggle("hide-team-column", !showTeamColumn);
+
+    attachHeaderEvents();
+    updateSortIndicators();
     updateFilterIcons();
-    update();
 }
 
+/* =========================================================
+    HEADER EVENTS
+========================================================= */
 
-function updateFilterIcons() {
+function attachHeaderEvents() {
 
-    // AUTHOR
-    document
-        .querySelector(".col-author .active-filter-icon")
-        ?.classList.toggle(
-            "active",
-            activeAuthorFilters.length > 0
-        );
+    document.querySelectorAll("[data-sort]").forEach(el => {
+        el.onclick = () => setSort(el.dataset.sort);
+    });
 
-    // LABEL
-    document
-        .querySelector(".col-label .active-filter-icon")
-        ?.classList.toggle(
-            "active",
-            !!activeLabelFilter
-        );
-}
+    document.getElementById("label-filter-btn")
+        ?.addEventListener("click", toggleLabelFilter);
 
-function toggleAuthorFilter(event) {
+    document.getElementById("author-filter-btn")
+        ?.addEventListener("click", toggleAuthorFilter);
 
-    const dropdown = document.getElementById("author-filter-dropdown");
-
-    // toggle only if already open on same button
-    if (dropdown.classList.contains("open")) {
-        dropdown.classList.remove("open");
-        return;
+    const teamBtn = document.getElementById("team-filter-btn");
+    if (teamBtn) {
+        teamBtn.addEventListener("click", toggleTeamFilter);
     }
-
-    closeAllFilters();
-
-    dropdown.innerHTML = `
-    <div class="filter-clear"
-        onclick="clearAuthorFilters()">
-        <b>Alle</b>
-    </div>
-    ` + getAllAuthors().map(author => `
-        <div class="filter-option"
-            onclick="toggleAuthorSelection('${author.replace(/'/g, "\\'")}')">
-
-            ${author}
-
-            ${
-                activeAuthorFilters.includes(author)
-                    ? '<i class="fa-solid fa-square-check"></i>'
-                    : '<i class="fa-regular fa-square"></i>'
-            }
-        </div>
-    `).join('');
-    
-    positionFilterDropdown(dropdown, event.currentTarget);
-
-    dropdown.classList.add("open");
 }
 
-function toggleAuthorSelection(author) {
+/* =========================================================
+    SORTING
+========================================================= */
 
-    if (activeAuthorFilters.includes(author)) {
+function setSort(key) {
 
-        activeAuthorFilters =
-            activeAuthorFilters.filter(a => a !== author);
+    if (sortState.key === key) {
+
+        sortState.dir *= -1;
 
     } else {
 
-        activeAuthorFilters.push(author);
+        sortState.key = key;
+        sortState.dir = -1;
     }
 
     applyFilters();
-
-    // rerender dropdown to update checkboxes
-    const dropdown = document.getElementById("author-filter-dropdown");
-
-    dropdown.innerHTML = `
-        <div class="filter-clear"
-            onclick="clearAuthorFilters()">
-            <b>Alle</b>
-        </div>
-        ` + getAllAuthors().map(a => `
-        <div class="filter-option"
-            onclick="toggleAuthorSelection('${a}')">
-
-            ${a}
-
-            ${
-                activeAuthorFilters.includes(a)
-                    ? '<i class="fa-solid fa-square-check"></i>'
-                    : '<i class="fa-regular fa-square"></i>'
-            }
-        </div>
-    `).join('');
-    updateFilterIcons();
-    update();
 }
 
-function getAllLabels() {
+function applySorting(data) {
 
-    return projectFiles
-        .map(f => f.label)
-        .filter(Boolean)
-        .filter((label, index, self) =>
-            index === self.findIndex(l => l.id === label.id)
-        )
-        .sort((a, b) => a.name.localeCompare(b.name));
-}
-
-function getAllAuthors() {
-
-    return [...new Set(
-        projectFiles
-            .map(f => (f.author || "").trim())
-            .filter(Boolean)
-    )].sort();
-}
-
-function closeAllFilters() {
-
-    document
-        .querySelectorAll(".table-filter-dropdown")
-        .forEach(el => el.classList.remove("open"));
-    
-    updateFilterIcons();
-    update();
-}
-
-function positionFilterDropdown(dropdown, target) {
-
-    const rect = target.getBoundingClientRect();
-
-    dropdown.style.left = `${rect.left}px`;
-    dropdown.style.top = `${rect.bottom + 4}px`;
-}
-
-function setLabelFilter(labelId) {
-
-    activeLabelFilter =
-        activeLabelFilter === labelId
-            ? null
-            : labelId;
-
-    applyFilters();
-    update();
-
-    // rerender dropdown checkboxes
-    const dropdown = document.getElementById("label-filter-dropdown");
-
-    dropdown.innerHTML = `
-        <div class="filter-clear"
-            onclick="clearLabelFilter()">
-            <b>Alle</b>
-        </div>
-    ` + getAllLabels().map(label => `
-        <div class="filter-option"
-            onclick="setLabelFilter(${label.id})">
-
-            ${label.name}
-
-            ${
-                activeLabelFilter === label.id
-                    ? '<i class="fa-solid fa-square-check"></i>'
-                    : '<i class="fa-regular fa-square"></i>'
-            }
-        </div>
-    `).join('');
-}
-
-document.addEventListener("click", (e) => {
-
-    // clicked inside filter dropdown or filter button
-    if (
-        e.target.closest(".table-filter-dropdown") ||
-        e.target.closest(".filterable")
-    ) {
-        return;
-    }
-
-    closeAllFilters();
-});
-
-document.querySelectorAll(".table-filter-dropdown")
-    .forEach(dropdown => {
-
-        dropdown.addEventListener("click", (e) => {
-            e.stopPropagation();
-        });
-
-    });
-
-function sortFiles(data) {
     const { key, dir } = sortState;
+
     if (!key) return data;
 
     return [...data].sort((a, b) => {
 
         const get = (f) => {
+
             switch (key) {
 
                 case "name":
@@ -274,90 +237,67 @@ function sortFiles(data) {
                     return f.cp_count || 0;
 
                 case "last_edited":
-                    return new Date(f.last_edited || 0).getTime();
-
-                case "author":
-                    return (f.author || "").toLowerCase();
+                    return new Date(
+                        f.last_edited || 0
+                    ).getTime();
 
                 default:
-                    return 0;
+                    return "";
             }
         };
 
-        let va = get(a);
-        let vb = get(b);
+        const va = get(a);
+        const vb = get(b);
 
         if (va < vb) return -1 * dir;
         if (va > vb) return 1 * dir;
+
         return 0;
     });
 }
 
-function setSort(key) {
+function getSortIcon(k) {
 
-    if (sortState.key === key) {
-        sortState.dir *= -1; // toggle direction
-    } else {
-        sortState.key = key;
-        sortState.dir = 1;
+    const isNameColumn = (k === "name");
+
+    const dir = sortState.dir;
+
+    if (sortState.key !== k) return "";
+
+    // date behaves normally
+    if (isNameColumn) {
+
+        return dir === 1
+            ? '<span class="sort-icon-box"><i class="fa-solid fa-chevron-down"></i></span>'
+            : '<span class="sort-icon-box"><i class="fa-solid fa-chevron-up"></i></span>';
     }
-    closeAllVersions();
-    renderFiles();
-}
 
+    // other columns inverted
+    return dir === -1
+        ? '<span class="sort-icon-box"><i class="fa-solid fa-chevron-down"></i></span>'
+        : '<span class="sort-icon-box"><i class="fa-solid fa-chevron-up"></i></span>';
+}
 function updateSortIndicators() {
 
-    const keys = ["name", "cp_count", "last_edited", "author"];
+    const keys = [
+        "name",
+        "cp_count",
+        "last_edited"
+    ];
 
     keys.forEach(k => {
 
         const el = document.getElementById(`sort-${k}`);
+
         if (!el) return;
 
-        el.innerHTML =
-            sortState.key === k
-                ? (
-                    sortState.dir === 1
-                        ? '<span class="sort-icon-box"><i class="fa-solid fa-chevron-down"></i></span>'
-                        : '<span class="sort-icon-box"><i class="fa-solid fa-chevron-up"></i></span>'
-                )
-                : "";
+        el.innerHTML = getSortIcon(k);
     });
 }
 
-function closeAllVersions() {
-    openVersionsFileId = null;
-
-    filteredFiles = filteredFiles.map(f => ({
-        ...f,
-        showVersions: false
-    }));
-}
-
-function toggleMenu(id) {
-    document.querySelectorAll('.nav-menu-item').forEach(el => {
-        if (el.id !== id) el.classList.remove('open');
-    });
-    document.getElementById(id).classList.toggle('open');
-}
-
-function toggleTeamDropdown() {
-    var d = document.getElementById('teamDropdown');
-    d.style.display = d.style.display === 'block' ? 'none' : 'block';
-}
-
-document.addEventListener('click', function(e) {
-    if (!e.target.closest('.nav-menu-item')) {
-        document.querySelectorAll('.nav-menu-item').forEach(el => el.classList.remove('open'));
-    }
-    if (!e.target.closest('.team-btn') && !e.target.closest('#teamDropdown')) {
-        var d = document.getElementById('teamDropdown');
-        if (d) d.style.display = 'none';
-    }
-});
-
-document.getElementById("project-search")
-    .addEventListener("input", applyFilters);
+/* =========================================================
+    FILTERING
+========================================================= */
 
 function applyFilters() {
 
@@ -367,410 +307,650 @@ function applyFilters() {
             .value
             .toLowerCase();
 
-    filteredFiles = projectFiles.filter(f => {
+    filteredFiles =
+        projectFiles.filter(f => {
 
-        const matchesSearch =
-            (f.name || "").toLowerCase().includes(search) ||
-            (f.author || "").toLowerCase().includes(search) ||
-            (f.label?.name || "").toLowerCase().includes(search);
+            const matchesSearch =
+                (f.name || "")
+                    .toLowerCase()
+                    .includes(search)
 
-        const matchesLabel =
-            !activeLabelFilter ||
-            f.label?.id === activeLabelFilter;
+                ||
 
-        const matchesAuthor =
-            activeAuthorFilters.length === 0 ||
-            activeAuthorFilters.includes(
-                (f.author || "").trim()
+                (f.author || "")
+                    .toLowerCase()
+                    .includes(search)
+
+                ||
+
+                (f.label?.name || "")
+                    .toLowerCase()
+                    .includes(search);
+
+            const matchesLabel =
+                !activeLabelFilter
+                ||
+                f.label?.id === activeLabelFilter;
+
+            const matchesAuthor =
+                activeAuthorFilters.length === 0
+                ||
+                activeAuthorFilters.includes(
+                    (f.author || "").trim()
+                );
+
+            const matchesTeam =
+                activeTeamFilters.length === 0 ||
+                activeTeamFilters.includes(
+                    (f.team_name || "").trim()
+                );
+
+            return (
+                matchesSearch
+                &&
+                matchesLabel
+                &&
+                matchesAuthor
+                &&
+                matchesTeam
             );
-
-        return (
-            matchesSearch &&
-            matchesLabel &&
-            matchesAuthor
-        );
-    });
-
-    openVersionsFileId = null;
-
-    renderFiles();
-}
-
-async function loadFiles() {
-
-    // already loading → reuse same promise
-    if (filesLoadingPromise) {
-        return filesLoadingPromise;
-    }
-
-    filesLoadingPromise = (async () => {
-
-        try {
-            const res = await fetch('/editor/files/');
-            const data = await res.json();
-
-            projectFiles = data.files;
-            filteredFiles = [...projectFiles];
-
-        } catch (err) {
-            console.error("Failed to load files:", err);
-        } finally {
-
-            // loading finished
-            filesLoadingPromise = null;
-        }
-
-    })();
-
-    return filesLoadingPromise;
-}
-
-const projectMenu = document.getElementById("menu-project");
-
-projectMenu.addEventListener("click", () => {
-    openFileModal();
-});
-
-const menuItems = document.querySelectorAll(".nav-menu-item");
-
-menuItems.forEach(menu => {
-
-    // Open hovered menu
-    menu.addEventListener("mouseenter", () => {
-
-        // Close all others
-        menuItems.forEach(other => {
-            if (other !== menu) {
-                other.classList.remove("open");
-            }
         });
 
-        // Open current
-        menu.classList.add("open");
-    });
+    filteredFiles =
+        applySorting(filteredFiles);
 
-    // Close when mouse leaves
-    menu.addEventListener("mouseleave", () => {
-        menu.classList.remove("open");
-    });
+    table.setFiles(filteredFiles);
 
-});
-
-
-const modal = document.getElementById("modal-project");
-
-modal.addEventListener("click", (event) => {
-
-    if (event.target === modal) {
-        closeFileModal();
-    }
-});
-
-function lockTableWidths() {
-    const table = document.getElementById("file-table");
-    const cols = table.querySelectorAll("th");
-
-    const widths = Array.from(cols).map(th => th.getBoundingClientRect().width);
-
-    const colElements = table.querySelectorAll("colgroup col");
-
-    widths.forEach((w, i) => {
-        if (colElements[i]) {
-            colElements[i].style.width = `${w}px`;
-        }
-    });
-
-    table.style.tableLayout = "fixed";
-}
-
-function renderFiles() {
-
-    const tbody = document.getElementById('file-tbody');
-
-    const data = sortFiles(filteredFiles);
-
-    tbody.innerHTML = data.map(f => `
-        <tr>
-            <td>
-                <button
-                    class="publish-btn ${f.published ? 'publish-btn-active' : ''}"
-                    title="Publizieren"
-                    onclick="togglePublish(${f.id})">
-                    <i class="fa-solid fa-globe"></i>
-                </button>
-            </td>
-
-            <td class="file-name-cell">${f.name}</td>
-
-            <td>${f.label ? `<span class="table-label-chip">${f.label.name}</span>` : ''}</td>
-
-            <td style="text-align:center;">${f.cp_count}</td>
-
-            <td style="text-align:center;">
-                <button class="action-btn"
-                    title="Versionen"
-                    onclick="toggleVersions(${f.id})">
-                    <i class="fa-solid fa-angles-down"></i>
-                </button>
-            </td>
-
-            <td>
-                ${new Date(f.last_edited).toLocaleString('de-CH', {
-                    day: '2-digit',
-                    month: '2-digit',
-                    year: 'numeric',
-                    hour: '2-digit',
-                    minute: '2-digit'
-                })}
-            </td>
-
-            <td>${f.author}</td>
-
-            <td>
-                <div class="file-action-group">
-
-                    <button class="action-btn danger-btn"
-                        title="Löschen"
-                        onclick="deleteFile(${f.id})">
-                        <i class="fa-solid fa-trash"></i>
-                    </button>
-
-                    <button class="action-btn"
-                        title="Batch-Pathfinding">
-                        <i class="fa-solid fa-industry"></i>
-                    </button>
-
-                </div>
-            </td>
-        </tr>
-
-        ${
-            f.showVersions && f.versions
-                ? f.versions.map(v => `
-                    <tr class="version-row">
-
-                        <td></td>
-
-                        <td class="version-cell">↳ ${v.name}</td>
-
-                        <td></td>
-
-                        <td style="text-align:center;" class="version-cell">
-                            ${v.cp_count}
-                        </td>
-
-                        <td></td>
-
-                        <td class="version-cell">
-                            ${new Date(v.last_edited).toLocaleString('de-CH', {
-                                day: '2-digit',
-                                month: '2-digit',
-                                year: 'numeric',
-                                hour: '2-digit',
-                                minute: '2-digit'
-                            })}
-                        </td>
-
-                        <td class="version-cell">
-                            ${v.author}
-                        </td>
-
-                        <td></td>
-
-                    </tr>
-                `).join('')
-                : ''
-        }
-
-    `).join('');
-
+    updateFilterIcons();
+    updateClearButton();
     updateSortIndicators();
 }
 
-function toggleVersions(fileId) {
+/* =========================================================
+    LABEL FILTER
+========================================================= */
 
-    // toggle currently open row
-    openVersionsFileId =
-        openVersionsFileId === fileId
-            ? null
-            : fileId;
+function toggleLabelFilter(event) {
 
-    filteredFiles = filteredFiles.map(f => {
+    const dropdown =
+        document.getElementById(
+            "label-filter-dropdown"
+        );
 
-        const isOpen = f.id === openVersionsFileId;
+    if (
+        dropdown.classList.contains("open")
+    ) {
 
-        // temporary dummy data
-        if (isOpen) {
-            f.versions = [
-                {
-                    name: `${f.name} v1`,
-                    cp_count: Math.floor(Math.random() * 20) + 5,
-                    last_edited: new Date(),
-                    author: "Lars"
-                },
-                {
-                    name: `${f.name} v2`,
-                    cp_count: Math.floor(Math.random() * 20) + 5,
-                    last_edited: new Date(Date.now() - 86400000),
-                    author: "Anna"
-                },
-                {
-                    name: `${f.name} Backup`,
-                    cp_count: Math.floor(Math.random() * 20) + 5,
-                    last_edited: new Date(Date.now() - 86400000 * 3),
-                    author: "System"
-                }
-            ];
-        }
-
-        return {
-            ...f,
-            showVersions: isOpen
-        };
-    });
-
-    renderFiles();
-}
-function selectFile(id, name) {
-    document.getElementById('nav-filename').textContent = name;
-    closeFileModal();
-}
-
-function clearSearch() {
-
-    const input = document.getElementById("project-search");
-
-    input.value = "";
-    input.focus();
-
-    // clear filters
-    activeLabelFilter = null;
-    activeAuthorFilters = [];
+        dropdown.classList.remove("open");
+        return;
+    }
 
     closeAllFilters();
 
-    applyFilters();
+    renderLabelFilterDropdown();
 
-    updateFilterIndicators();
+    positionFilterDropdown(
+        dropdown,
+        event.currentTarget
+    );
+
+    dropdown.classList.add("open");
 }
 
-const input = document.getElementById("project-search");
-const clearBtn = document.querySelector(".search-clear");
+function renderLabelFilterDropdown() {
 
-const update = () => {
+    const dropdown =
+        document.getElementById(
+            "label-filter-dropdown"
+        );
 
-    const hasSearch = !!input.value.trim();
+    dropdown.innerHTML = `
+        <div class="filter-clear"
+            onclick="clearLabelFilter()">
+            <b>Alle</b>
+        </div>
+
+        ${getAllLabels().map(label => `
+            <div class="filter-option"
+                onclick="event.stopPropagation(); setLabelFilter(${label.id})">
+
+                ${label.name}
+
+                ${
+                    activeLabelFilter === label.id
+                        ? '<i class="fa-solid fa-square-check"></i>'
+                        : '<i class="fa-regular fa-square"></i>'
+                }
+
+            </div>
+        `).join('')}
+    `;
+}
+
+window.setLabelFilter = function(labelId) {
+
+    activeLabelFilter =
+        activeLabelFilter === labelId
+            ? null
+            : labelId;
+
+    applyFilters();
+    renderLabelFilterDropdown();
+};
+
+window.clearLabelFilter = function() {
+
+    activeLabelFilter = null;
+
+    applyFilters();
+
+    closeAllFilters();
+};
+
+/* =========================================================
+    AUTHOR FILTER
+========================================================= */
+
+function toggleAuthorFilter(event) {
+
+    const dropdown =
+        document.getElementById(
+            "author-filter-dropdown"
+        );
+
+    if (
+        dropdown.classList.contains("open")
+    ) {
+
+        dropdown.classList.remove("open");
+        return;
+    }
+
+    closeAllFilters();
+
+    renderAuthorFilterDropdown();
+
+    positionFilterDropdown(
+        dropdown,
+        event.currentTarget
+    );
+
+    dropdown.classList.add("open");
+}
+
+
+function renderAuthorFilterDropdown() {
+
+    const dropdown =
+        document.getElementById(
+            "author-filter-dropdown"
+        );
+
+    dropdown.innerHTML = `
+        <div class="filter-clear"
+            onclick="event.stopPropagation(); clearAuthorFilters()">
+
+            <b>Alle</b>
+
+        </div>
+
+        ${getAllAuthors().map(author => `
+
+            <div class="filter-option"
+                onclick="event.stopPropagation(); toggleAuthorSelection('${author.replace(/'/g, "\\'")}')">
+
+                ${author}
+
+                ${
+                    activeAuthorFilters.includes(author)
+                        ? '<i class="fa-solid fa-square-check"></i>'
+                        : '<i class="fa-regular fa-square"></i>'
+                }
+
+            </div>
+
+        `).join('')}
+    `;
+}
+
+window.toggleAuthorSelection = function(author) {
+
+    if (
+        activeAuthorFilters.includes(author)
+    ) {
+
+        activeAuthorFilters =
+            activeAuthorFilters.filter(
+                a => a !== author
+            );
+
+    } else {
+
+        activeAuthorFilters.push(author);
+    }
+
+    applyFilters();
+
+    renderAuthorFilterDropdown();
+};
+
+window.clearAuthorFilters = function() {
+
+    activeAuthorFilters = [];
+
+    applyFilters();
+
+    closeAllFilters();
+};
+
+/* =========================================================
+    TEAM FILTER
+========================================================= */
+
+function toggleTeamFilter(event) {
+
+    const dropdown =
+        document.getElementById(
+            "team-filter-dropdown"
+        );
+
+    if (
+        dropdown.classList.contains("open")
+    ) {
+
+        dropdown.classList.remove("open");
+        return;
+    }
+
+    closeAllFilters();
+
+    renderTeamFilterDropdown();
+
+    positionFilterDropdown(
+        dropdown,
+        event.currentTarget
+    );
+
+    dropdown.classList.add("open");
+}
+
+function renderTeamFilterDropdown() {
+
+    const dropdown =
+        document.getElementById("team-filter-dropdown");
+
+    const allTeams = getAllTeams();
+
+    const userTeam = window.activeTeam;
+
+    // remove it from list (avoid duplicates)
+    const otherTeams = allTeams.filter(t => t !== userTeam);
+
+    const orderedTeams = userTeam
+        ? [userTeam, ...otherTeams]
+        : otherTeams;
+
+    dropdown.innerHTML = `
+        <div class="filter-clear"
+            onclick="event.stopPropagation(); clearTeamFilters()">
+
+            <b>Alle</b>
+
+        </div>
+
+        ${orderedTeams.map(team => {
+
+            const isActiveFilter =
+                activeTeamFilters.includes(team);
+
+            const isUserTeam =
+                team === userTeam;
+
+            return `
+                <div class="filter-option"
+                    onclick="event.stopPropagation(); toggleTeamSelection('${team.replace(/'/g, "\\'")}')">
+
+                    <span class="${isUserTeam ? 'user-active-team' : ''}">
+                        ${team}
+                    </span>
+
+                    ${
+                        isActiveFilter
+                            ? '<i class="fa-solid fa-square-check"></i>'
+                            : '<i class="fa-regular fa-square"></i>'
+                    }
+
+                </div>
+            `;
+        }).join('')}
+    `;
+}
+
+window.toggleTeamSelection = function(team) {
+
+    if (
+        activeTeamFilters.includes(team)
+    ) {
+
+        activeTeamFilters =
+            activeTeamFilters.filter(
+                t => t !== team
+            );
+
+    } else {
+
+        activeTeamFilters.push(team);
+    }
+
+    applyFilters();
+
+    renderTeamFilterDropdown();
+};
+
+
+window.clearTeamFilters = function() {
+
+    activeTeamFilters = [];
+
+    applyFilters();
+
+    closeAllFilters();
+};
+
+
+/* =========================================================
+    GET ALL TEAMS
+========================================================= */
+
+function getAllTeams() {
+    return [...new Set(projectFiles
+        .filter(f => f.team_name)
+        .map(f => f.team_name)
+    )].sort();
+}
+
+/* =========================================================
+    FILTER HELPERS
+========================================================= */
+
+function getAllLabels() {
+
+    return projectFiles
+        .map(f => f.label)
+        .filter(Boolean)
+        .filter((label, index, self) =>
+            index === self.findIndex(
+                l => l.id === label.id
+            )
+        )
+        .sort((a, b) =>
+            a.name.localeCompare(b.name)
+        );
+}
+
+function getAllAuthors() {
+
+    return [...new Set(
+        projectFiles
+            .map(f =>
+                (f.author || "").trim()
+            )
+            .filter(Boolean)
+    )].sort();
+}
+
+function updateFilterIcons() {
+
+    document
+        .querySelector(".col-author .active-filter-icon")
+        ?.classList.toggle(
+            "active",
+            activeAuthorFilters.length > 0
+        );
+
+    document
+        .querySelector(".col-label .active-filter-icon")
+        ?.classList.toggle(
+            "active",
+            !!activeLabelFilter
+        );
+
+    document
+    .querySelector(".col-team .active-filter-icon")
+    ?.classList.toggle(
+        "active",
+        activeTeamFilters.length > 0
+    );
+}
+
+function closeAllFilters() {
+
+    document
+        .querySelectorAll(
+            ".table-filter-dropdown"
+        )
+        .forEach(el =>
+            el.classList.remove("open")
+        );
+}
+
+function positionFilterDropdown(
+    dropdown,
+    target
+) {
+
+    const rect =
+        target.getBoundingClientRect();
+
+    dropdown.style.left =
+        `${rect.left}px`;
+
+    dropdown.style.top =
+        `${rect.bottom + 4}px`;
+}
+
+/* =========================================================
+    SEARCH
+========================================================= */
+
+function initSearch() {
+
+    const input =
+        document.getElementById(
+            "project-search"
+        );
+
+    input.addEventListener(
+        "input",
+        applyFilters
+    );
+
+    input.addEventListener(
+        "input",
+        updateClearButton
+    );
+
+    updateClearButton();
+}
+
+window.clearSearch = function() {
+
+    const input =
+        document.getElementById(
+            "project-search"
+        );
+
+    input.value = "";
+
+    activeLabelFilter = null;
+    activeAuthorFilters = [];
+    activeTeamFilters = [];
+
+    applyFilters();
+};
+
+function updateClearButton() {
+
+    const input =
+        document.getElementById(
+            "project-search"
+        );
+
+    const clearBtn =
+        document.querySelector(
+            ".search-clear"
+        );
+
+    const hasSearch =
+        !!input.value.trim();
 
     const hasFilters =
-        activeLabelFilter !== null ||
-        activeAuthorFilters.length > 0;
+        activeLabelFilter !== null
+        ||
+        activeAuthorFilters.length > 0
+        ||
+        activeTeamFilters.length > 0;
 
     clearBtn.style.display =
         (hasSearch || hasFilters)
             ? "block"
             : "none";
-};
+}
 
-input.addEventListener("input", update);
-update(); // initial state
+/* =========================================================
+    MODAL
+========================================================= */
 
-async function openFileModal() {
+function initModal() {
 
-    const modal = document.getElementById('modal-project');
+    const modal =
+        document.getElementById(
+            "modal-project"
+        );
 
-    modal.classList.add('open');
+    modal.addEventListener(
+        "click",
+        (event) => {
 
-    // optional loading indicator
-    document.getElementById('file-tbody').innerHTML = `
-        <tr>
-            <td colspan="8" style="text-align:center;">
-                <i class="fa-solid fa-spinner fa-spin-pulse" style="padding: 10px; font-size: 1.5rem"></i>
-            </td>
-        </tr>
-    `;
+            if (event.target === modal) {
+                closeFileModal();
+            }
+        }
+    );
+}
 
-    // wait if still loading
-    if (filesLoadingPromise) {
-        await loadFiles();
-    }
+function openFileModal() {
 
-    renderFiles();
+    document
+        .getElementById("modal-project")
+        .classList.add("open");
 }
 
 function closeFileModal() {
-    document.getElementById('modal-project').classList.remove('open');
-}
-
-function renderLabels() {
-
-    const container = document.getElementById("label-list");
-
-    container.innerHTML = labels.map(label => `
-        <div class="label-row">
-
-            <span>${label.name}</span>
-
-            <button
-                class="label-delete-btn"
-                onclick="deleteLabel(${label.id})"
-            >
-                <i class="fa-solid fa-xmark"></i>
-            </button>
-
-        </div>
-    `).join('');
-}
-
-function toggleLabelDropdown() {
 
     document
-        .getElementById("label-dropdown-menu")
-        .classList
-        .toggle("open");
+        .getElementById("modal-project")
+        .classList.remove("open");
 }
 
-const projectTitleInput = document.getElementById("project-title-input");
+/* =========================================================
+    MENUS
+========================================================= */
 
-function setProjectName(name) {
-    currentProjectName = name?.trim() || "Neues Projekt";
+function initMenus() {
 
-    if (projectTitleInput) {
-        projectTitleInput.value = currentProjectName;
-    }
+    const menuItems =
+        document.querySelectorAll(
+            ".nav-menu-item"
+        );
+
+    menuItems.forEach(menu => {
+
+        menu.addEventListener(
+            "mouseenter",
+            () => {
+
+                menuItems.forEach(other => {
+
+                    if (other !== menu) {
+                        other.classList.remove("open");
+                    }
+                });
+
+                menu.classList.add("open");
+            }
+        );
+
+        menu.addEventListener(
+            "mouseleave",
+            () => {
+                menu.classList.remove("open");
+            }
+        );
+    });
 }
 
-function syncProjectNameFromInput() {
-    if (!projectTitleInput) return;
+/* =========================================================
+    DROPDOWN PROTECTION
+========================================================= */
 
-    currentProjectName = projectTitleInput.value;
+function initDropdownProtection() {
+
+    document.addEventListener(
+        "click",
+        (e) => {
+
+            if (
+                e.target.closest(".table-filter-dropdown")
+                ||
+                e.target.closest(".filterable")
+            ) {
+                return;
+            }
+
+            closeAllFilters();
+        }
+    );
 }
 
-function normalizeProjectName() {
-    if (!projectTitleInput) return;
+/* =========================================================
+    PROJECT TITLE
+========================================================= */
 
-    if (!projectTitleInput.value.trim()) {
-        currentProjectName = "Neues Projekt";
-        projectTitleInput.value = currentProjectName;
-    }
-}
+function initProjectTitle() {
 
-function getProjectName() {
-    return currentProjectName.trim() || "Neues Projekt";
-}
+    const input =
+        document.getElementById(
+            "project-title-input"
+        );
 
-document.addEventListener("DOMContentLoaded", () => {
+    if (!input) return;
 
-    setProjectName(currentProjectName);
+    input.value = currentProjectName;
 
-    // allow empty while typing
-    projectTitleInput.addEventListener(
+    input.addEventListener(
         "input",
-        syncProjectNameFromInput
+        () => {
+
+            currentProjectName =
+                input.value;
+        }
     );
 
-    // restore default only after leaving field
-    projectTitleInput.addEventListener(
+    input.addEventListener(
         "blur",
-        normalizeProjectName
+        () => {
+
+            if (
+                !input.value.trim()
+            ) {
+
+                currentProjectName =
+                    "Neues Projekt";
+
+                input.value =
+                    currentProjectName;
+            }
+        }
     );
-})
+}

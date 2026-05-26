@@ -6,7 +6,7 @@
 {% endblock %}
 
 {% block scripts %}
-<script defer src="{% static 'project/js/editor.js' %}"></script>
+<script type="module" defer src="{% static 'project/js/editor.js' %}"></script>
 {% endblock %}
 
 {% block navbar %}
@@ -138,48 +138,20 @@
                     <col class="col-name">
                     <col class="col-label">
                     <col class="col-cp">
-                    <col class="col-version">
-                    <col class="col-date">
                     <col class="col-author">
+                    <col class="col-team">
+                    <col class="col-history">
+                    <col class="col-date">
                     <col class="col-actions">
                 </colgroup>
 
-                <thead>
-                    <tr>
-                        <th class="col-publish"></th>
-
-                        <th class="sortable col-name" onclick="setSort('name')">
-                            Projekt <span id="sort-name" class="sort-indicator"></span>
-                        </th>
-
-                        <th class="filterable col-label" onclick="toggleLabelFilter(event)">
-                            Label <span class="filter-indicator"><i class="fa-solid fa-filter active-filter-icon"></i></span>
-                        </th>
-
-                        <th class="sortable col-cp" onclick="setSort('cp_count')" style="text-align:center;">
-                            Posten <span id="sort-cp_count" class="sort-indicator"></span>
-                        </th>
-
-                        <th class="col-version" style="text-align:center;">
-                            <i class="fa-solid fa-clock-rotate-left"></i>
-                        </th>
-
-                        <th class="sortable col-date" onclick="setSort('last_edited')">
-                            Geändert <span id="sort-last_edited" class="sort-indicator"></span>
-                        </th>
-
-                        <th class="filterable col-author" onclick="toggleAuthorFilter(event)">
-                            Autor <span class="filter-indicator"><i class="fa-solid fa-filter active-filter-icon"></i></span>
-                        </th>
-
-                        <th class="col-actions"></th>
-                    </tr>
-                </thead>
+                <thead id="file-thead"></thead>
 
                 <tbody id="file-tbody"></tbody>
             </table>
             <div id="label-filter-dropdown" class="table-filter-dropdown"></div>
             <div id="author-filter-dropdown" class="table-filter-dropdown"></div>
+            <div id="team-filter-dropdown" class="table-filter-dropdown"></div>
         </div>
     </div>
 </div>

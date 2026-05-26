@@ -1,5 +1,5 @@
 from django.db import models
-
+from django.utils import timezone
 
 class Label(models.Model):
     name = models.CharField(max_length=100)
@@ -23,7 +23,7 @@ class File(models.Model):
     map_file = models.CharField(max_length=255, blank=True)
     has_mask = models.BooleanField(default=False)
     blocked_terrain = models.JSONField(null=True, blank=True)
-    last_edited = models.DateTimeField(auto_now=True)
+    last_edited = models.DateTimeField(default=timezone.now)
     batch_progress = models.JSONField(null=True, blank=True)
 
     deleted = models.BooleanField(default=False)
