@@ -72,11 +72,23 @@ export class FileTable {
 
         console.log("delete", id);
     }
-}
 
-function getCSRFToken() {
+    async openFile(id) {
 
-    return document
-        .querySelector('meta[name="csrf-token"]')
-        .getAttribute('content');
+        const res = await fetch(`/editor/open/${id}/`);
+        const data = await res.json();
+
+        if (data.error) {
+            console.error('Error loading file:', data.error);
+            return;
+        }
+
+        project = data.project;
+        applyProjectScale();
+        updateCameraTransform({x: 0, y: 0, zoom: 0.67});
+        loadMap(project.map_file);
+        drawCourse();
+
+        closeFileModal();
+    }
 }

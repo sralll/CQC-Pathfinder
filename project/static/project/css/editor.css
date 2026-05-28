@@ -234,7 +234,7 @@ body {
     overflow: hidden;
 
     background: #1a1a1a;
-
+    padding-bottom: 33px;
     border: 0.5px solid #333;
     border-radius: 10px;
 }
@@ -756,22 +756,6 @@ tr:hover td {
     text-align: center;
 }
 
-.filter-clear {
-    margin-bottom: 6px;
-    padding: 8px 10px;
-
-    border-bottom: 1px solid #333;
-
-    color: #888;
-
-    cursor: pointer;
-}
-
-.filter-clear:hover {
-    color: #fff;
-}
-
-
 /* =========================================================
    TABLE CONTENT
 ========================================================= */
@@ -981,3 +965,308 @@ tr:hover td {
 .user-active-team {
     font-weight: 700;
 }
+
+
+.filter-clear-left {
+    margin-bottom: 6px;
+    padding: 6px 10px;
+
+    border-bottom: 1px solid #333;
+
+    color: #888;
+
+    cursor: pointer;
+    flex: 1;
+
+}
+
+.filter-clear-left:hover {
+    color: #fff;
+}
+
+.filter-close-btn {
+
+    position: absolute;
+
+    top: 1px;
+    right: 3px;
+
+    background: transparent;
+    border: none;
+
+    color: #888;
+
+    cursor: pointer;
+
+    font-size: 15px;
+    line-height: 1;
+
+    padding-left: 2px;
+
+    transition:
+        color 0.15s,
+        background 0.15s;
+}
+
+.filter-close-btn:hover {
+
+    color: #ffffff;
+}
+
+.filter-clear {
+    position: relative;
+
+    display: flex;
+
+    align-items: center;
+    justify-content: space-between;
+}
+
+.file-table-loading {
+
+    display: none;
+
+    align-items: center;
+    justify-content: center;
+
+    height: 240px;
+
+    font-size: 36px;
+
+    color: #888;
+}
+
+
+.modal-map-box {
+    max-width: 700px;
+}
+
+.map-upload-wrap {
+    padding: 40px;
+    padding-bottom: 0px;
+}
+
+.map-upload-title {
+
+    font-size: 18px;
+
+    font-weight: 600;
+
+    color: #fff;
+}
+
+.map-upload-subtitle {
+
+    font-size: 13px;
+
+    color: #888;
+}
+
+.browse-btn {
+
+    margin-top: 10px;
+
+    padding: 10px 18px;
+
+    border: 1px solid #444;
+    border-radius: 8px;
+
+    background: #2d333b;
+
+    color: #ddd;
+
+    cursor: pointer;
+
+    transition:
+        background 0.15s,
+        border-color 0.15s;
+}
+
+.browse-btn:hover {
+
+    background: #363d46;
+
+    border-color: #666;
+}
+
+.modal-map-box {
+    max-width: 700px;
+}
+
+.map-upload-wrap {
+    padding: 30px;
+}
+
+.map-dropzone {
+
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+
+    gap: 14px;
+
+    min-height: 260px;
+
+    border: 2px dashed #555;
+    border-radius: 6px;
+
+    background: #1f242b;
+
+    transition:
+        border-color 0.15s,
+        background 0.15s;
+}
+
+.map-dropzone.dragover {
+
+    border-color: #ff9800;
+
+    background: #2a2f37;
+}
+
+.map-dropzone i {
+
+    font-size: 42px;
+
+    color: #ff9800;
+}
+
+.map-upload-title {
+
+    font-size: 18px;
+    font-weight: 600;
+}
+
+.map-upload-subtitle {
+
+    color: #888;
+}
+
+.map-browse-btn {
+
+    padding: 10px 18px;
+
+    border: 1px solid #555;
+    border-radius: 8px;
+
+    background: #2d333b;
+    color: #ddd;
+
+    cursor: pointer;
+}
+
+.map-browse-btn:hover {
+
+    background: #363d46;
+}
+
+.selected-map-info {
+
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.selected-map-name {
+
+    color: #ddd;
+    font-weight: 500;
+}
+
+.selected-map-info {
+
+    display: flex;
+
+    align-items: center;
+    margin-top: 12px;
+    gap: 12px;
+
+    width: 100%;
+}
+
+.selected-map-name {
+
+    display: flex;
+    align-items: center;
+
+    flex: 1;
+    min-width: 0;
+    height: 42px;
+
+    padding: 7px 12px;
+
+    border-radius: 6px;
+    border: 1px solid #444;
+
+    background: #2b2b2b;
+
+    color: #c9d1d9;
+
+    font-size: 14px;
+    font-weight: 500;
+
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.selected-map-name-box {
+
+    min-width: 0;
+
+    flex: 1;
+
+    padding: 10px 14px;
+
+    border: 1px solid #333;
+
+    border-radius: 8px;
+
+    background: #2d333b;
+}
+
+.selected-map-name {
+
+    color: #d0d7de;
+
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+#file-tbody tr {
+
+    transition:
+        background 0.15s ease,
+        transform 0.15s ease;
+}
+
+#file-tbody tr:hover {
+
+    background: #1f242b;
+}
+
+#file-tbody tr:hover .file-name-cell {
+
+    color: #ffffff;
+
+    transform: translateX(4px);
+}
+
+.file-name-cell {
+    cursor: pointer;
+}
+
+
+#editor-wrap {
+
+    position: relative;
+
+    width: 100vw;
+    height: 100vh;
+
+    overflow: hidden;
+}
+
+/*STOP*/

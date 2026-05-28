@@ -41,7 +41,7 @@ def migrate_data(apps, schema_editor):
             scale=to_float(data.get('scale')),
             scaled=data.get('scaled', False),
             map_file=map_file,
-            has_mask=False,
+            has_mask=data.get('has_mask', False),
             blocked_terrain=data.get('blockedTerrain'),
             batch_progress=old.batch_progress,
             last_edited=old.last_edited,

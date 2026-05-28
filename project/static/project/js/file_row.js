@@ -53,7 +53,6 @@ export class FileRow {
                 ${this.file.author}
             </td>
 
-            <!-- ALWAYS PRESENT -->
             <td class="col-team">
                 ${this.file.team_name || ''}
             </td>
@@ -73,6 +72,7 @@ export class FileRow {
                     this.file.can_edit
                         ? `
                             <div class="file-action-group">
+
                                 <button class="action-btn danger-btn delete-btn">
                                     <i class="fa-solid fa-trash"></i>
                                 </button>
@@ -80,6 +80,7 @@ export class FileRow {
                                 <button class="action-btn">
                                     <i class="fa-solid fa-industry"></i>
                                 </button>
+
                             </div>
                         `
                         : ''
@@ -88,26 +89,45 @@ export class FileRow {
         `;
 
         this.attachEvents(tr);
+
         return tr;
     }
 
     attachEvents(tr) {
 
+        // publish
         const publishBtn =
             tr.querySelector(`#publish-btn-${this.file.id}`);
 
         if (publishBtn && this.file.can_edit) {
+
             publishBtn.addEventListener('click', () => {
+
                 this.table.togglePublish(this);
             });
         }
 
+        // delete
         const deleteBtn =
             tr.querySelector('.delete-btn');
 
         if (deleteBtn) {
+
             deleteBtn.addEventListener('click', () => {
+
                 this.table.deleteFile(this.file.id);
+            });
+        }
+
+        // open project
+        const nameCell =
+            tr.querySelector('.file-name-cell');
+
+        if (nameCell) {
+
+            nameCell.addEventListener('click', () => {
+
+                this.table.openFile(this.file.id);
             });
         }
     }
@@ -117,7 +137,9 @@ export class FileRow {
         this.file.published = published;
 
         const btn =
-            this.element.querySelector(`#publish-btn-${this.file.id}`);
+            this.element.querySelector(
+                `#publish-btn-${this.file.id}`
+            );
 
         if (!btn) return;
 

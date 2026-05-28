@@ -1,11 +1,14 @@
 from django.shortcuts import get_object_or_404, render
-from django.http import JsonResponse
+from django.http import JsonResponse, FileResponse, HttpResponseNotFound
 from django.views.decorators.http import require_GET, require_POST
 from django.db.models import Count, Q
-from .models import File, Label
+from .models import File, Label, ControlPair, Route
 from account.decorators import role_required
+from django.db.models import Prefetch
 import traceback
-
+from django.conf import settings
+import os
+import mimetypes
 
 # open editor
 def editor(request):
@@ -83,7 +86,89 @@ def get_files(request):
     except Exception as e:
         traceback.print_exc()
         return JsonResponse({'error': str(e)}, status=500)
-    
+
+@role_required('Trainer')
+@require_GET
+def open_file(request, file_id):
+    try:
+        profile = request.user.profile
+        active_team = profile.active_team
+
+        file = get_object_or_404(
+            File.objects
+            .select_related('team', 'label')
+            .prefetch_related(
+                Prefetch(
+                    'control_pairs',
+                    queryset=ControlPair.objects.prefetch_related(
+                        Prefetch('routes', queryset=Route.objects.order_by('order'))
+                    ).order_by('order')
+                )
+            ),
+            id=file_id,
+            deleted=False
+        )
+
+        if not request.user.is_superuser:
+            if not active_team:
+                return JsonResponse({'error': 'No active team'}, status=403)
+
+            own = file.team == active_team
+            shared = active_team.shared_pool and file.team and file.team.shared_pool
+
+            if not (own or shared):
+                return JsonResponse({'error': 'Permission denied'}, status=403)
+
+        return JsonResponse({
+            'project': {
+                'id': file.id,
+                'name': file.name,
+                'scale': file.scale,
+                'scaled': file.scaled,
+                'map_file': file.map_file,
+                'has_mask': file.has_mask,
+                'blocked_terrain': file.blocked_terrain,
+                'control_pairs': [
+                    {
+                        'id': cp.id,
+                        'order': cp.order,
+                        'ziel': cp.ziel,
+                        'start': cp.start,
+                        'complex': cp.complex,
+                        'routes': [
+                            {
+                                'id': r.id,
+                                'order': r.order,
+                                'rP': r.rP,
+                                'noA': r.noA,
+                                'pos': r.pos,
+                                'length': r.length,
+                                'run_time': r.run_time,
+                                'elevation': r.elevation,
+                            }
+                            for r in cp.routes.all()
+                        ]
+                    }
+                    for cp in file.control_pairs.all()
+                ]
+            }
+        })
+
+    except Exception as e:
+        traceback.print_exc()
+        return JsonResponse({'error': str(e)}, status=500)
+
+@role_required('Trainer')
+@require_GET
+def get_map(request, filename):
+    filepath = os.path.join(settings.MEDIA_ROOT, 'maps', filename)
+    if not os.path.exists(filepath):
+        return HttpResponseNotFound(f"Map '{filename}' not found.")
+    content_type, _ = mimetypes.guess_type(filepath)
+    content_type = content_type or 'application/octet-stream'
+    return FileResponse(open(filepath, 'rb'), content_type=content_type)
+
+
 @role_required('Trainer')
 @require_POST
 def toggle_publish(request, file_id):

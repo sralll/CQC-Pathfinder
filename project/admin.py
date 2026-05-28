@@ -17,7 +17,7 @@ class ControlPairInline(admin.TabularInline):
 
 @admin.register(File)
 class FileAdmin(admin.ModelAdmin):
-    list_display = ("name", "published", "get_ncP", "author", "team", "label", "last_edited")
+    list_display = ("name", "published", "get_ncP", "author", "team", "label", "last_edited", "has_mask")
     search_fields = ("name", "author")
     list_filter = ("published", "team", "label")
     inlines = [ControlPairInline]
