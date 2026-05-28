@@ -13,240 +13,112 @@
 
 {% block navbar %}
 <nav id="navbar">
-
-    <!-- PROJECT -->
     <div id="menu-project" class="nav-menu-item">
-
         Projekte...
-
         <div class="nav-dropdown" id="project-dropdown" onclick="event.stopPropagation();">
-
             <div id="nav-open-projects">
                 <span>Liste</span>
                 <span class="menu-shortcut">(P)</span>
             </div>
-
             <div id="nav-create-project">
                 <span>Neu</span>
                 <span class="menu-shortcut">(Ctrl+N)</span>
             </div>
-
             <div id="nav-copy-project">
                 <span>Kopieren</span>
                 <span class="menu-shortcut">(Ctrl+C)</span>
             </div>
-
             <div id="nav-save-project">
                 <span>Speichern</span>
                 <span class="menu-shortcut">(Ctrl+S)</span>
             </div>
-
         </div>
     </div>
 
-    <!-- KARTE -->
     <div id="menu-karte" class="nav-menu-item">
-
         Karte
-
         <div class="nav-dropdown">
-
-            <div id="nav-edit-mask">
-                Maske bearbeiten
-            </div>
-
-            <div id="nav-blocked-areas">
-                Sperrgebiete
-            </div>
-
+            <div id="nav-edit-mask">Maske bearbeiten</div>
+            <div id="nav-blocked-areas">Sperrgebiete</div>
         </div>
     </div>
 
-    <!-- SETTINGS -->
     <div id="menu-einstellungen" class="nav-menu-item">
-
         Einstellungen
-
         <div class="nav-dropdown">
-
-            <div id="nav-auto-pathfind">
-                Auto-Pathfind
-            </div>
-
-            <div id="nav-auto-jump">
-                Auto-Jump
-            </div>
-
+            <div id="nav-auto-pathfind">Auto-Pathfind</div>
+            <div id="nav-auto-jump">Auto-Jump</div>
         </div>
     </div>
-
 </nav>
 {% endblock %}
 
 {% block content %}
-
 <div id="editor-wrap">
-
     <div id="map-container">
-
+        <div id="map-background"></div>
         <div id="camera">
-
-            <div id="map-background"></div>
-
             <div id="map-scale-layer">
-
                 <img id="map-img" draggable="false">
-
             </div>
-
             <svg id="overlay-svg">
-
-                    <g id="viewport">
-
-                        <g id="route-layer"></g>
-                        <g id="blocked-layer"></g>
-                        <g id="line-layer"></g>
-                        <g id="control-layer"></g>
-                        <g id="drag-crosshair">
-                            <line x1="-4" y1="-4" x2="4" y2="4"></line>
-                            <line x1="-4" y1="4" x2="4" y2="-4"></line>
-                        </g>
-
+                <g id="viewport">
+                    <g id="route-layer"></g>
+                    <g id="blocked-layer"></g>
+                    <g id="line-layer"></g>
+                    <g id="control-layer"></g>
+                    <g id="drag-crosshair">
+                        <line x1="-4" y1="-4" x2="4" y2="4"></line>
+                        <line x1="-4" y1="4" x2="4" y2="-4"></line>
                     </g>
-
-                </svg>
-
+                </g>
+            </svg>
         </div>
-
     </div>
-
 </div>
 
-<!-- ===================================================== -->
 <!-- PROJECT MODAL -->
-<!-- ===================================================== -->
-
 <div id="modal-project" class="modal">
-
     <div class="modal-box">
-
         <div class="modal-header">
-
-            <!-- LEFT -->
             <div class="modal-header-left">
-
-                <button
-                    id="create-project-btn"
-                    title="Neues Projekt (Ctrl+N)"
-                    class="toolbar-btn">
-
+                <button id="create-project-btn" title="Neues Projekt (Ctrl+N)" class="toolbar-btn">
                     <i class="fa-solid fa-file-circle-plus"></i>
-
                 </button>
-
                 <div class="save-group">
-
-                    <input
-                        type="text"
-                        id="project-title-input"
-                        value="Neues Projekt"
-                    >
-
-                    <button
-                        id="save-project-btn"
-                        title="Speichern (Ctrl+S)"
-                        class="toolbar-btn save-btn">
-
+                    <input type="text" id="project-title-input" value="Neues Projekt">
+                    <button id="save-project-btn" title="Speichern (Ctrl+S)" class="toolbar-btn save-btn">
                         <i class="fa-solid fa-floppy-disk"></i>
-
                     </button>
-
                 </div>
-
             </div>
-
-            <!-- CENTER -->
             <div class="modal-header-center">
-
                 <div class="search-wrapper">
-
-                    <input
-                        type="text"
-                        id="project-search"
-                        placeholder="Suchen..."
-                    >
-
-                    <button
-                        id="clear-search-btn"
-                        class="search-clear"
-                        type="button">
-
-                        ×
-
-                    </button>
-
+                    <input type="text" id="project-search" placeholder="Suchen...">
+                    <button id="clear-search-btn" class="search-clear" type="button">×</button>
                 </div>
-
             </div>
-
-            <!-- RIGHT -->
             <div class="modal-header-right">
-
                 <div class="label-dropdown">
-
-                    <button
-                        id="label-dropdown-btn"
-                        class="toolbar-btn label-dropdown-btn">
-
+                    <button id="label-dropdown-btn" class="toolbar-btn label-dropdown-btn">
                         <i class="fa-solid fa-tags"></i>
-
                     </button>
-
                     <div id="label-dropdown-menu" class="label-dropdown-menu">
-
-                        <!-- CREATE NEW -->
                         <div class="label-dropdown-create">
-
-                            <input
-                                type="text"
-                                id="new-label-input"
-                                placeholder="Neues Label..."
-                            >
-
-                            <button id="create-label-btn">
-
-                                <i class="fa-solid fa-plus"></i>
-
-                            </button>
-
+                            <input type="text" id="new-label-input" placeholder="Neues Label...">
+                            <button id="create-label-btn"><i class="fa-solid fa-plus"></i></button>
                         </div>
-
-                        <!-- LABELS -->
                         <div id="label-list"></div>
-
                     </div>
-
                 </div>
-
             </div>
-
         </div>
-
-        <!-- TABLE -->
         <div class="modal-table-wrap">
-
-            <!-- LOADING -->
             <div id="file-table-loading" class="file-table-loading">
-
                 <i class="fa-solid fa-spinner fa-spin"></i>
-
             </div>
-
-            <!-- TABLE -->
             <table id="file-table">
-
                 <colgroup>
-
                     <col class="col-publish">
                     <col class="col-name">
                     <col class="col-label">
@@ -256,122 +128,45 @@
                     <col class="col-history">
                     <col class="col-date">
                     <col class="col-actions">
-
                 </colgroup>
-
                 <thead id="file-thead"></thead>
-
                 <tbody id="file-tbody"></tbody>
-
             </table>
-
-            <!-- FILTER DROPDOWNS -->
             <div id="label-filter-dropdown" class="table-filter-dropdown"></div>
-
             <div id="author-filter-dropdown" class="table-filter-dropdown"></div>
-
             <div id="team-filter-dropdown" class="table-filter-dropdown"></div>
-
         </div>
-
     </div>
-
 </div>
 
-<!-- ===================================================== -->
 <!-- MAP MODAL -->
-<!-- ===================================================== -->
-
 <div id="modal-map" class="modal">
-
     <div class="modal-box modal-map-box">
-
         <div class="modal-header">
-
-            <!-- LEFT -->
             <div class="modal-header-left">
-
                 <h2>Karte hochladen</h2>
-
             </div>
-
-            <!-- RIGHT -->
             <div class="modal-header-right">
-
-                <button
-                    id="close-map-modal-btn"
-                    class="toolbar-btn">
-
+                <button id="close-map-modal-btn" class="toolbar-btn">
                     <i class="fa-solid fa-xmark"></i>
-
                 </button>
-
             </div>
-
         </div>
-
-        <!-- BODY -->
         <div class="map-upload-wrap">
-
-            <!-- DROPZONE -->
             <div id="map-dropzone" class="map-dropzone">
-
                 <i class="fa-solid fa-cloud-arrow-up"></i>
-
-                <div class="map-upload-title">
-                    Karte ablegen
-                </div>
-
-                <div class="map-upload-subtitle">
-                    PNG oder JPEG • max. 15 MB
-                </div>
-
-                <button
-                    id="browse-map-btn"
-                    type="button"
-                    class="browse-btn">
-
-                    Durchsuchen
-
-                </button>
-
-                <input
-                    type="file"
-                    id="map-file-input"
-                    accept="image/*"
-                    hidden
-                >
-
+                <div class="map-upload-title">Karte ablegen</div>
+                <div class="map-upload-subtitle">PNG oder JPEG • max. 15 MB</div>
+                <button id="browse-map-btn" type="button" class="browse-btn">Durchsuchen</button>
+                <input type="file" id="map-file-input" accept="image/*" hidden>
             </div>
-
-            <!-- SELECTED FILE -->
-            <div
-                id="selected-map-info"
-                class="selected-map-info"
-                style="display:none;">
-
-                <div class="selected-map-name">
-
-                    Keine Datei gewählt
-
-                </div>
-
-                <button
-                    id="upload-map-btn"
-                    class="toolbar-btn"
-                    disabled
-                    title="Karte hochladen">
-
+            <div id="selected-map-info" class="selected-map-info" style="display:none;">
+                <div class="selected-map-name">Keine Datei gewählt</div>
+                <button id="upload-map-btn" class="toolbar-btn" disabled title="Karte hochladen">
                     <i class="fa-solid fa-upload"></i>
-
                 </button>
-
             </div>
-
         </div>
-
     </div>
-
 </div>
-
 {% endblock %}
