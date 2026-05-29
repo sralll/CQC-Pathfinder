@@ -47,11 +47,25 @@ export class FileTable {
         const res = await fetch(`/editor/open/${id}/`);
         const data = await res.json();
         if (data.error) { console.error('Error loading file:', data.error); return; }
+
+        closeFileModal();
         project = data.project;
         applyProjectScale();
         updateCameraTransform({ x: 0, y: 0, zoom: 0.67 });
-        loadMap(project.map_file);
-        drawCourse();
-        closeFileModal();
+
+        showMapSpinner();
+
+        const img = document.getElementById('map-img');
+        img.style.display = 'none';
+        img.onload = () => {
+            hideMapSpinner();
+            img.style.display = 'block';
+            drawCourse();
+        };
+
+        img.onerror = () => {
+            hideMapSpinner();
+        };
+        img.src = `/editor/map/${project.map_file}`;
     }
 }

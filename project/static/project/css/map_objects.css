@@ -5,13 +5,10 @@
     overflow: hidden;
     isolation: isolate;
 }
-#map-container.panning,
-#map-container.dragging {
-    cursor: grabbing;
-}
+
 #map-container.panning *,
 #map-container.dragging * {
-    cursor: inherit;
+    cursor: grabbing !important;
 }
 
 #camera {
@@ -31,9 +28,8 @@
     z-index: 0;
     pointer-events: none;
     background-image:
-        radial-gradient(circle, rgba(120,120,120,1) 2px, transparent 2px),
         radial-gradient(circle, rgba(120,120,120,1) 1.5px, transparent 1.5px);
-    background-size: 250px 250px, 50px 50px;
+    background-size: 50px 50px;
     background-repeat: repeat;
 }
 
@@ -59,29 +55,33 @@
     opacity: 0.8;
 }
 
-.control-pair-group {
-    cursor: pointer;
-}
-.control-pair-group.selected {
-    cursor: default;
-}
-.control-pair-group.selected circle {
-    cursor: grab;
-}
-#map-container.panning .control-pair-group.selected circle {
-    cursor: grabbing;
-}
 .control-pair-element {
     pointer-events: all;
-    transition: stroke-width 0.12s, filter 0.12s, opacity 0.12s;
+    transition: stroke 0.12s
 }
-.control-pair-group.selected,
-#map-container:not(.dragging) .control-pair-group:hover {
-    filter:
-        drop-shadow(0 0 2px rgba(160, 51, 240, 0.9))
-        drop-shadow(0 0 6px rgba(160, 51, 240, 0.45))
-        brightness(1.25);
+
+.control-pair-group:hover .control-circle,
+.control-pair-group.selected .control-circle,
+.control-pair-group:hover line:not(.hit):not(.arrow),
+.control-pair-group.selected line:not(.hit) {
+    stroke: rgb(183, 54, 255);
+    stroke-width: 4px;
 }
+
+#map-container.editing-route .control-pair-group:not(.selected):hover .control-circle,
+#map-container.editing-route .control-pair-group:not(.selected):hover line:not(.hit):not(.arrow) {
+    stroke: rgb(160, 51, 240);
+    stroke-width: 3px;
+}
+
+.control-pair-group.selected line.arrow {
+    stroke: rgb(183, 54, 255);
+}
+
+.control-pair-group:not(.selected) line.arrow {
+    stroke: transparent;
+}
+
 
 #drag-crosshair {
     display: none;
@@ -92,4 +92,35 @@
     stroke-width: 1;
     stroke-linecap: round;
     vector-effect: non-scaling-stroke;
+}
+
+#ui-elements {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 3;
+}
+
+/* =========================================================
+   ROUTES
+========================================================= */
+
+.route-polyline.cp-selected {
+    opacity: 0.8;
+    stroke-width: 1.5;
+}
+
+.route-polyline.route-selected {
+    opacity: 1;
+    stroke: yellow;
+}
+
+#editor-wrap {
+
+    display: flex;
+
+    width: 100%;
+    height: calc(100vh - 28px);
 }

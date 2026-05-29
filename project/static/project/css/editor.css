@@ -765,3 +765,122 @@ tr:hover td { background: #222; }
         max-width: 100%;
     }
 }
+
+/*SIDEBAR*/
+
+#overview-sidebar {
+
+    position: absolute;
+
+    width: 300px;
+    height: 100%;
+
+    display: flex;
+    flex-direction: column;
+
+    padding: 5px;
+
+    background: rgba(30,30,30,0.9);
+
+    backdrop-filter: blur(12px);
+
+    box-shadow:
+        0 8px 30px rgba(0,0,0,0.35);
+
+    color: #ddd;
+
+    z-index: 50;
+}
+#sidebar-top {
+
+    flex: 1;
+
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+
+    overflow-y: auto;
+}
+
+#sidebar-bottom {
+    margin-top: 18px;
+}
+
+#radial-toolbar-wrap {
+
+    display: flex;
+    justify-content: center;
+    align-items: center;
+
+    padding: 10px;
+}
+
+#radial-toolbar {
+
+    width: 260px;
+    height: 260px;
+
+    overflow: visible;
+}
+
+#toolbar-wheel {
+
+    transition:
+        transform 0.5s cubic-bezier(0.2, 0.9, 0.2, 1);
+    
+    will-change: transform;
+}
+
+.segment-bg {
+
+    fill: #333333;
+
+    stroke: #444444;
+    stroke-width: 1;
+
+    transition:
+        fill 0.5s;
+}
+
+.tool-segment {
+    isolation: isolate;
+}
+
+.tool-segment.active .segment-bg {
+
+    fill: #ff9800;
+}
+
+.tool-segment:hover .segment-bg {
+
+    fill: rgba(255,255,255,0.14);
+
+    cursor: pointer;
+}
+
+.segment-label {
+
+    fill: white;
+
+    font-size: 10px;
+    font-weight: 700;
+
+    dominant-baseline: middle;
+    text-anchor: middle;
+
+    pointer-events: none;
+
+    user-select: none;
+}
+
+.tool-icon {
+
+    fill: #dddddd;
+
+    pointer-events: none;
+}
+
+.tool-segment.active .tool-icon {
+
+    fill: black;
+}
