@@ -20,3 +20,5 @@ venv/
 .idea/
 
 upload.py
+
+svg_icons/

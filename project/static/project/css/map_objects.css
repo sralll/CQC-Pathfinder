@@ -74,6 +74,14 @@
     stroke-width: 3px;
 }
 
+#map-container.placing-control .control-pair-group:hover .control-circle,
+#map-container.placing-control .control-pair-group:hover line:not(.hit):not(.arrow),
+#map-container.drawing-route .control-pair-group:not(.selected):hover .control-circle,
+#map-container.drawing-route .control-pair-group:not(.selected):hover line:not(.hit):not(.arrow) {
+    stroke: rgb(160, 51, 240);
+    stroke-width: 3px;
+}
+
 .control-pair-group.selected line.arrow {
     stroke: rgb(183, 54, 255);
 }
@@ -82,6 +90,28 @@
     stroke: transparent;
 }
 
+
+/* ---- Route tool cursors ---- */
+
+#map-container.mode-route .control-pair-group:not(.selected) .control-circle,
+#map-container.mode-route .control-pair-group:not(.selected) line:not(.hit) {
+    cursor: pointer;
+    pointer-events: all;
+}
+
+/* New-route drawing: suppress pointer cursors from route mode */
+#map-container.drawing-route .control-pair-group .control-circle,
+#map-container.drawing-route .control-pair-group line,
+#map-container.drawing-route .route-hit {
+    cursor: default !important;
+}
+
+/* ---- Control pair tool cursors (handled via JS onMouseMove) ---- */
+
+#map-container.mode-cp .control-pair-group.selected .control-circle {
+    cursor: grab; /* fallback */
+    pointer-events: all;
+}
 
 #drag-crosshair {
     display: none;

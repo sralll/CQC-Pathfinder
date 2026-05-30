@@ -8,6 +8,19 @@
     padding: 0;
 }
 
+::selection {
+    background: #ff9800;
+    color: #1a1000;
+}
+
+body.cp-drag-active, body.cp-drag-active * {
+    cursor: grabbing !important;
+}
+
+body.cp-drag-active #navbar {
+    pointer-events: none;
+}
+
 /* =========================================================
    PAGE
 ========================================================= */
@@ -682,7 +695,7 @@ tr:hover td { background: #222; }
 }
 
 .map-dropzone.dragover { border-color: #ff9800; background: #2a2f37; }
-.map-dropzone i { font-size: 42px; color: #ff9800; }
+.map-dropzone x-icon { font-size: 1.5rem; color: #ff9800; }
 
 .map-upload-title { font-size: 18px; font-weight: 600; color: #fff; }
 .map-upload-subtitle { font-size: 13px; color: #888; }
@@ -778,11 +791,7 @@ tr:hover td { background: #222; }
     display: flex;
     flex-direction: column;
 
-    padding: 5px;
-
     background: rgba(30,30,30,0.9);
-
-    backdrop-filter: blur(12px);
 
     box-shadow:
         0 8px 30px rgba(0,0,0,0.35);
@@ -806,19 +815,360 @@ tr:hover td { background: #222; }
     margin-top: 18px;
 }
 
+/* =========================================================
+   CP LIST
+========================================================= */
+
+#cp-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    padding: 4px 0;
+}
+
+.cp-row {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 6px;
+    height: 28px;
+    padding: 0 8px;
+    border-radius: 0;
+    border: none;
+    cursor: pointer;
+    user-select: none;
+    color: #999;
+    font-size: 12px;
+    transition: background 0.1s, color 0.1s;
+}
+
+.cp-row + .cp-row { border-top: 1px solid #252525; }
+
+.cp-row:hover { background: #2a2a2a; color: #ddd; }
+#cp-list.cp-dragging .cp-row:hover { background: unset; color: unset; }
+.cp-row.selected { background: #2c2c2c; color: #fff; box-shadow: inset 3px 0 0 #ff9800; }
+
+.cp-delete-btn {
+    flex-shrink: 0;
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    background: transparent;
+    border: none;
+    border-radius: 3px;
+    color: #444;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.1s, color 0.1s;
+}
+
+.cp-row:hover .cp-delete-btn { opacity: 1; }
+.cp-delete-btn:hover { color: #ff6666; }
+
+.cp-row-pending {
+    color: #ff9800 !important;
+    font-style: italic;
+    padding-left: 22px;
+}
+
+.cp-add-btn {
+    width: 100%;
+    padding: 7px 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    background: transparent;
+    border: none;
+    border-top: 1px solid #252525;
+    color: #555;
+    font-size: 11px;
+    cursor: pointer;
+    transition: background 0.1s, color 0.1s;
+}
+
+.cp-add-btn:hover { background: #2a2a2a; color: #ccc; }
+
+.cp-drag-spacer {
+    border-radius: 5px;
+    background: #2a2a2a;
+    border: 1px dashed #555;
+    flex-shrink: 0;
+    margin: 1px 4px;
+}
+.cp-row.cp-drop-above { border-top: 2px solid #ff9800; }
+#cp-list.cp-drop-end .cp-row:last-child { border-bottom: 2px solid #ff9800; }
+
+.cp-grip {
+    width: 8px;
+    height: 14px;
+    flex-shrink: 0;
+    cursor: grab;
+    background-image:
+        radial-gradient(circle, #666 1.5px, transparent 1.5px),
+        radial-gradient(circle, #666 1.5px, transparent 1.5px);
+    background-size: 4px 5px;
+    background-position: 0 0, 4px 0;
+    background-repeat: repeat-y;
+    opacity: 0.6;
+}
+
+.cp-grip:active { cursor: grabbing; }
+.cp-row:hover .cp-grip { opacity: 1; }
+#cp-list.cp-dragging .cp-row:hover .cp-grip { opacity: 0.6; }
+
+.cp-row-label {
+    flex: 1;
+    font-weight: 600;
+    font-size: 12px;
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: flex;
+    align-items: baseline;
+    gap: 4px;
+}
+
+.cp-original-label {
+    font-size: 10px;
+    font-weight: 400;
+    color: #555;
+    letter-spacing: 0;
+}
+
+.cp-posten-text {
+    display: inline-block;
+    min-width: 62px;
+}
+
+.cp-route-count {
+    font-size: 10px;
+    font-weight: 400;
+    color: #777;
+    letter-spacing: 0;
+}
+
+@keyframes route-count-flash {
+    0%   { color: #ff6666; }
+    100% { color: #777; }
+}
+
+.cp-route-count-flash {
+    animation: route-count-flash 5s ease-out forwards;
+}
+
+.cp-row-btns {
+    display: flex;
+    flex-shrink: 0;
+    gap: 3px;
+}
+
+.cp-mode-btn {
+    width: 22px;
+    height: 22px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: 1px solid #3a3a3a;
+    border-radius: 4px;
+    color: #666;
+    font-size: 11px;
+    cursor: pointer;
+    transition: color 0.12s, background 0.12s, border-color 0.12s;
+}
+
+.cp-mode-btn:hover { border-color: #777; color: #ccc; }
+
+.cp-row.selected { color: #999; }
+
+.cp-mode-btn.active {
+    background: #ff9800;
+    border-color: #ff9800;
+    color: #1a1000;
+}
+
+.cp-route-list {
+    display: flex;
+    flex-direction: column;
+    background: #1a1a1a;
+    border-bottom: 1px solid #2a2a2a;
+}
+
+.cp-route-row {
+    height: 24px;
+    padding: 0 8px 0 22px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: #888;
+    cursor: pointer;
+    user-select: none;
+    transition: background 0.1s, color 0.1s;
+    border-top: 1px solid #222;
+}
+
+.cp-route-row:hover { background: #242424; color: #ccc; }
+.cp-route-row:hover .cp-delete-btn { opacity: 1; }
+
+.cp-route-row.selected {
+    color: #eee;
+    background: #272727;
+    box-shadow: inset 2px 0 0 #ff9800;
+}
+
+.cp-route-row-new {
+    color: #777;
+    font-style: italic;
+    border-top: 1px dashed #2e2e2e;
+}
+
+.cp-route-row-new.drawing {
+    color: #ff9800;
+}
+
+.route-name {
+    flex-shrink: 0;
+    font-weight: 600;
+    color: inherit;
+}
+
+.route-stats {
+    flex: 1;
+    display: flex;
+    gap: 8px;
+}
+
+.route-stat {
+    color: #666;
+    font-size: 10px;
+    white-space: nowrap;
+}
+
+.route-length { color: #bbb; }
+.cp-route-row.selected .route-length { color: #fff; }
+
+.route-runtime-fastest { color: #4caf50; }
+
+.tier-warn   { color: rgb(255, 193, 7); }
+.tier-alert  { color: rgb(255, 152, 0); }
+.tier-danger { color: rgb(244,  67, 54); }
+
+.route-runtime-pct {
+    font-size: 9px;
+    opacity: 0.75;
+}
+
+.route-elevation-label {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    flex-shrink: 0;
+    font-size: 10px;
+    color: #555;
+    cursor: default;
+}
+
+.cp-route-row.selected .route-elevation-label { color: #777; }
+
+.route-elevation-input {
+    width: 36px;
+    height: 18px;
+    padding: 0 3px;
+    background: #1e1e1e;
+    border: 1px solid #333;
+    border-radius: 3px;
+    color: #bbb;
+    font-size: 10px;
+    text-align: right;
+    outline: none;
+    -moz-appearance: textfield;
+}
+
+.route-elevation-input::-webkit-outer-spin-button,
+.route-elevation-input::-webkit-inner-spin-button { -webkit-appearance: none; }
+
+.route-elevation-input:focus { border-color: #555; background: #252525; }
+
+.route-elevation-input:focus {
+    border-color: #555;
+    background: #2d2d2d;
+}
+
 #radial-toolbar-wrap {
 
     display: flex;
+    flex-direction: row-reverse;
     justify-content: center;
     align-items: center;
 
     padding: 10px;
+    gap: 12px;
+}
+
+#subtool-panel {
+
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    gap: 6px;
+
+    width: 46px;
+    height: 111px;
+    flex-shrink: 0;
+}
+
+.subtool-btn {
+
+    width: 33px;
+    height: 33px;
+    flex-shrink: 0;
+
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    background: #2a2a2a;
+    border: 1px solid #484848;
+    border-radius: 7px;
+    color: #777;
+    font-size: 14px;
+
+    cursor: pointer;
+    transition: color 0.15s, background 0.15s, border-color 0.15s;
+}
+
+.subtool-btn:hover {
+    background: #383838;
+    color: #ccc;
+    border-color: #666;
+}
+
+.subtool-btn.active {
+    color: #1a1000;
+    border-color: #ff9800;
+    background: #ff9800;
+}
+
+.subtool-info {
+
+    color: #888;
+    font-size: 10px;
+    text-align: center;
+    line-height: 1.4;
+    padding: 2px 0;
 }
 
 #radial-toolbar {
 
-    width: 260px;
-    height: 260px;
+    width: 111px;
+    height: 111px;
 
     overflow: visible;
 }

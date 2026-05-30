@@ -1,3 +1,5 @@
+const icon = (...args) => window.icon(...args);
+
 export class FileRow {
     constructor(file, table, showTeamColumn) {
         this.file = file;
@@ -15,7 +17,7 @@ export class FileRow {
                 <button id="publish-btn-${this.file.id}"
                     class="publish-btn ${this.file.published ? 'publish-btn-active' : ''} ${!this.file.can_edit ? 'publish-btn-disabled' : ''}"
                     ${!this.file.can_edit ? 'disabled' : ''}>
-                    <i class="fa-solid fa-globe"></i>
+                    ${icon("broadcast")}
                 </button>
             </td>
             <td class="file-name-cell">${this.file.name}</td>
@@ -25,7 +27,7 @@ export class FileRow {
             <td class="col-team">${this.file.team_name || ''}</td>
             <td style="text-align:center;">
                 <button class="action-btn version-btn">
-                    <i class="fa-solid fa-angles-down"></i>
+                    ${icon("angles-down")}
                 </button>
             </td>
             <td>${this.formatDate(this.file.last_edited)}</td>
@@ -33,10 +35,10 @@ export class FileRow {
                 ${this.file.can_edit ? `
                     <div class="file-action-group">
                         <button class="action-btn danger-btn delete-btn">
-                            <i class="fa-solid fa-trash"></i>
+                            ${icon("trash")}
                         </button>
                         <button class="action-btn">
-                            <i class="fa-solid fa-industry"></i>
+                            ${icon("industry")}
                         </button>
                     </div>` : ''}
             </td>

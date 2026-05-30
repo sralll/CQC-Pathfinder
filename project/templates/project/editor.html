@@ -7,7 +7,7 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="{% static 'project/js/editor.js' %}"></script>
+<script defer src="{% static 'project/js/editor.js' %}"></script>
 <script type="module" src="{% static 'project/js/projecttable.js' %}"></script>
 {% endblock %}
 
@@ -57,114 +57,86 @@
 <div id="editor-wrap">
     <aside id="overview-sidebar">
         <div id="sidebar-top">
-
-
+            <div id="cp-list"></div>
         </div>
 
         <div id="sidebar-bottom">
             <div id="radial-toolbar-wrap">
 
-    <svg id="radial-toolbar"
-         viewBox="-140 -140 280 280">
+                <div id="subtool-panel"></div>
 
-        <!-- ROTATING PART -->
-        <g id="toolbar-wheel">
+                <svg id="radial-toolbar"
+                    width="124" height="124"
+                    viewBox="-62 -62 124 124">
 
-            <g class="tool-segment"
-                data-tool="control_pair"
-                data-index="1">
+                    <!-- ROTATING PART -->
+                    <g id="toolbar-wheel">
 
-                    <path class="segment-bg"></path>
+                        <g class="tool-segment"
+                            data-tool="control_pair"
+                            data-index="1">
 
-                    <g class="label-wrap">
+                                <path class="segment-bg"></path>
 
-                        <path
-                            class="tool-icon"
-                            transform="
-                                scale(0.05)
-                                translate(-256 -256)
-                            "
-                            d="M0 188.6C0 84.4 86 0 192 0S384 84.4 384 188.6c0 119.3-120.2 262.3-170.4 316.8-11.8 12.8-31.5 12.8-43.3 0-50.2-54.5-170.4-197.5-170.4-316.8zM192 256a64 64 0 1 0 0-128 64 64 0 1 0 0 128z"/>
+                                <g class="label-wrap">
+
+                                    <path class="tool-icon"/>
+                                </g>
+
+                            </g>
+
+                        <g class="tool-segment"
+                            data-tool="route"
+                            data-index="2">
+
+                                <path class="segment-bg"></path>
+
+                                <g class="label-wrap">
+
+                                    <path class="tool-icon"/>
+                                </g>
+                            </g>
+
+                        <g class="tool-segment"
+                            data-tool="mask"
+                            data-index="3">
+
+                                <path class="segment-bg"></path>
+
+                                <g class="label-wrap">
+
+                                    <path class="tool-icon"/>
+                                </g>
+                            </g>
+
+                        <g class="tool-segment"
+                            data-tool="block"
+                            data-index="4">
+
+                                <path class="segment-bg"></path>
+
+                                <g class="label-wrap">
+
+                                    <path class="tool-icon"/>
+                                </g>
+                            </g>
+
+                        <g class="tool-segment"
+                            data-tool="no_tool"
+                            data-index="5">
+
+                                <path class="segment-bg"></path>
+
+                                <g class="label-wrap">
+
+                                    <path class="tool-icon"/>
+                                </g>
+                            </g>
                     </g>
 
-                </g>
+                </svg>
 
-            <g class="tool-segment"
-                data-tool="route"
-                data-index="2">
-
-                    <path class="segment-bg"></path>
-
-                    <g class="label-wrap">
-
-                        <path
-                            class="tool-icon"
-                            transform="
-                                scale(0.05)
-                                translate(-256 -256)
-                            "
-                            d="M512 96c0 50.2-59.1 125.1-84.6 155-3.8 4.4-9.4 6.1-14.5 5L320 256c-17.7 0-32 14.3-32 32s14.3 32 32 32l96 0c53 0 96 43 96 96s-43 96-96 96l-276.4 0c8.7-9.9 19.3-22.6 30-36.8 6.3-8.4 12.8-17.6 19-27.2L416 448c17.7 0 32-14.3 32-32s-14.3-32-32-32l-96 0c-53 0-96-43-96-96s43-96 96-96l39.8 0c-21-31.5-39.8-67.7-39.8-96 0-53 43-96 96-96s96 43 96 96zM117.1 489.1c-3.8 4.3-7.2 8.1-10.1 11.3l-1.8 2-.2-.2c-6 4.6-14.6 4-20-1.8-25.2-27.4-85-97.9-85-148.4 0-53 43-96 96-96s96 43 96 96c0 30-21.1 67-43.5 97.9-10.7 14.7-21.7 28-30.8 38.5l-.6 .7zM128 352a32 32 0 1 0 -64 0 32 32 0 1 0 64 0zM416 128a32 32 0 1 0 0-64 32 32 0 1 0 0 64z"/>
-                    </g>
-                </g>
-
-            <g class="tool-segment"
-                data-tool="mask"
-                data-index="3">
-
-                    <path class="segment-bg"></path>
-
-                    <g class="label-wrap">
-
-                        <path
-                            class="tool-icon"
-                            transform="
-                                scale(0.05)
-                                translate(-256 -256)
-                            "
-                            d="M288 32c-80.8 0-145.5 36.8-192.6 80.6-46.8 43.5-78.1 95.4-93 131.1-3.3 7.9-3.3 16.7 0 24.6 14.9 35.7 46.2 87.7 93 131.1 47.1 43.7 111.8 80.6 192.6 80.6s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1 3.3-7.9 3.3-16.7 0-24.6-14.9-35.7-46.2-87.7-93-131.1-47.1-43.7-111.8-80.6-192.6-80.6zM144 256a144 144 0 1 1 288 0 144 144 0 1 1 -288 0zm144-64c0 35.3-28.7 64-64 64-11.5 0-22.3-3-31.7-8.4-1 10.9-.1 22.1 2.9 33.2 13.7 51.2 66.4 81.6 117.6 67.9s81.6-66.4 67.9-117.6c-12.2-45.7-55.5-74.8-101.1-70.8 5.3 9.3 8.4 20.1 8.4 31.7z"/>
-                    </g>
-                </g>
-
-            <g class="tool-segment"
-                data-tool="block"
-                data-index="4">
-
-                    <path class="segment-bg"></path>
-
-                    <g class="label-wrap">
-
-                        <path
-                            class="tool-icon"
-                            transform="
-                                scale(0.05)
-                                translate(-256 -256)
-                            "
-                            d="M367.2 412.5L99.5 144.8c-22.4 31.4-35.5 69.8-35.5 111.2 0 106 86 192 192 192 41.5 0 79.9-13.1 111.2-35.5zm45.3-45.3c22.4-31.4 35.5-69.8 35.5-111.2 0-106-86-192-192-192-41.5 0-79.9 13.1-111.2 35.5L412.5 367.2zM0 256a256 256 0 1 1 512 0 256 256 0 1 1 -512 0z"/>
-                    </g>
-                </g>
-
-            <g class="tool-segment"
-                data-tool="no_tool"
-                data-index="5">
-
-                    <path class="segment-bg"></path>
-
-                    <g class="label-wrap">
-
-                        <path
-                            class="tool-icon"
-                            transform="
-                                scale(0.05)
-                                translate(-256 -256)
-                            "
-                            d="M288 32c0-17.7-14.3-32-32-32s-32 14.3-32 32l0 208c0 8.8-7.2 16-16 16s-16-7.2-16-16l0-176c0-17.7-14.3-32-32-32s-32 14.3-32 32l0 272c0 1.5 0 3.1 .1 4.6L67.6 283c-16-15.2-41.3-14.6-56.6 1.4S-3.6 325.7 12.4 341L124.8 448c43.1 41.1 100.4 64 160 64l19.2 0c97.2 0 176-78.8 176-176l0-208c0-17.7-14.3-32-32-32s-32 14.3-32 32l0 112c0 8.8-7.2 16-16 16s-16-7.2-16-16l0-176c0-17.7-14.3-32-32-32s-32 14.3-32 32l0 176c0 8.8-7.2 16-16 16s-16-7.2-16-16l0-208z"/>
-                    </g>
-                </g>
-        </g>
-
-    </svg>
-
-</div>
+            </div>
 
         </div>
 
@@ -200,12 +172,12 @@
         <div class="modal-header">
             <div class="modal-header-left">
                 <button id="create-project-btn" title="Neues Projekt (Ctrl+N)" class="toolbar-btn">
-                    <i class="fa-solid fa-file-circle-plus"></i>
+                    <x-icon name="file-circle-plus" size="1.5rem"></x-icon>
                 </button>
                 <div class="save-group">
                     <input type="text" id="project-title-input" value="Neues Projekt">
                     <button id="save-project-btn" title="Speichern (Ctrl+S)" class="toolbar-btn save-btn">
-                        <i class="fa-solid fa-floppy-disk"></i>
+                        <x-icon name="floppy-disk" size="1.5rem"></x-icon>
                     </button>
                 </div>
             </div>
@@ -218,12 +190,12 @@
             <div class="modal-header-right">
                 <div class="label-dropdown">
                     <button id="label-dropdown-btn" class="toolbar-btn label-dropdown-btn">
-                        <i class="fa-solid fa-tags"></i>
+                        <x-icon name="tags" size="1.5rem"></x-icon>
                     </button>
                     <div id="label-dropdown-menu" class="label-dropdown-menu">
                         <div class="label-dropdown-create">
                             <input type="text" id="new-label-input" placeholder="Neues Label...">
-                            <button id="create-label-btn"><i class="fa-solid fa-plus"></i></button>
+                            <button id="create-label-btn"><x-icon name="plus"></x-icon></button>
                         </div>
                         <div id="label-list"></div>
                     </div>
@@ -232,7 +204,7 @@
         </div>
         <div class="modal-table-wrap">
             <div id="file-table-loading" class="file-table-loading">
-                <i class="fa-solid fa-spinner fa-spin"></i>
+                <x-icon name="spinner" class="spin"></x-icon>
             </div>
             <table id="file-table">
                 <colgroup>
@@ -265,13 +237,13 @@
             </div>
             <div class="modal-header-right">
                 <button id="close-map-modal-btn" class="toolbar-btn">
-                    <i class="fa-solid fa-xmark"></i>
+                    <x-icon name="xmark" size="1.5rem"></x-icon>
                 </button>
             </div>
         </div>
         <div class="map-upload-wrap">
             <div id="map-dropzone" class="map-dropzone">
-                <i class="fa-solid fa-cloud-arrow-up"></i>
+                <x-icon name="cloud-arrow-up" size="3rem"></x-icon>
                 <div class="map-upload-title">Karte ablegen</div>
                 <div class="map-upload-subtitle">PNG oder JPEG • max. 15 MB</div>
                 <button id="browse-map-btn" type="button" class="browse-btn">Durchsuchen</button>
@@ -280,7 +252,7 @@
             <div id="selected-map-info" class="selected-map-info" style="display:none;">
                 <div class="selected-map-name">Keine Datei gewählt</div>
                 <button id="upload-map-btn" class="toolbar-btn" disabled title="Karte hochladen">
-                    <i class="fa-solid fa-upload"></i>
+                    <x-icon name="upload" size="1.5rem"></x-icon>
                 </button>
             </div>
         </div>

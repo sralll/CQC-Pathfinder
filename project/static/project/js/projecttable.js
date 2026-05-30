@@ -1,4 +1,5 @@
 import { FileTable } from './file_table.js';
+const icon = (...args) => window.icon(...args);
 
 /* =========================================================
     STATE
@@ -84,7 +85,7 @@ function renderTableHeader() {
             </th>
             <th class="col-label">
                 <span class="filterable" id="label-filter-btn">Label
-                    <span class="filter-indicator"><i class="fa-solid fa-filter active-filter-icon"></i></span>
+                    <span class="filter-indicator active-filter-icon">${icon("filter", "0.8em")}</span>
                 </span>
             </th>
             <th class="col-cp" data-sort="cp_count" style="text-align:center;">
@@ -92,16 +93,16 @@ function renderTableHeader() {
             </th>
             <th class="col-author">
                 <span class="filterable" id="author-filter-btn">Autor
-                    <span class="filter-indicator"><i class="fa-solid fa-filter active-filter-icon"></i></span>
+                    <span class="filter-indicator active-filter-icon">${icon("filter", "0.8em")}</span>
                 </span>
             </th>
             ${showTeamColumn ? `
             <th class="col-team">
                 <span class="filterable" id="team-filter-btn">Kader
-                    <span class="filter-indicator"><i class="fa-solid fa-filter active-filter-icon"></i></span>
+                    <span class="filter-indicator active-filter-icon">${icon("filter", "0.8em")}</span>
                 </span>
             </th>` : ''}
-            <th class="col-history" style="text-align:center;"><i class="fa-solid fa-clock-rotate-left"></i></th>
+            <th class="col-history" style="text-align:center;">${icon("history")}</th>
             <th class="col-date" data-sort="last_edited">
                 <span class="sortable">Geändert <span id="sort-last_edited" class="sort-indicator"></span></span>
             </th>
@@ -159,8 +160,8 @@ function applySorting(data) {
 
 function getSortIcon(k) {
     if (sortState.key !== k) return "";
-    const down = '<span class="sort-icon-box"><i class="fa-solid fa-chevron-down"></i></span>';
-    const up = '<span class="sort-icon-box"><i class="fa-solid fa-chevron-up"></i></span>';
+    const down = `<span class="sort-icon-box">${icon("chevron-down", "0.7em")}</span>`;
+    const up   = `<span class="sort-icon-box">${icon("chevron-up",   "0.7em")}</span>`;
     return (k === "name") ? (sortState.dir === 1 ? down : up) : (sortState.dir === -1 ? down : up);
 }
 
@@ -217,7 +218,7 @@ function renderLabelFilterDropdown() {
         ${getAllLabels().map(label => `
             <div class="filter-option" onclick="event.stopPropagation(); setLabelFilter(${label.id})">
                 ${label.name}
-                ${activeLabelFilter === label.id ? '<i class="fa-solid fa-square-check"></i>' : '<i class="fa-regular fa-square"></i>'}
+                ${activeLabelFilter === label.id ? icon("square-check") : icon("square")}
             </div>
         `).join('')}
     `;
@@ -252,7 +253,7 @@ function renderAuthorFilterDropdown() {
         ${getAllAuthors().map(author => `
             <div class="filter-option" onclick="event.stopPropagation(); toggleAuthorSelection('${author.replace(/'/g, "\\'")}')">
                 ${author}
-                ${activeAuthorFilters.includes(author) ? '<i class="fa-solid fa-square-check"></i>' : '<i class="fa-regular fa-square"></i>'}
+                ${activeAuthorFilters.includes(author) ? icon("square-check") : icon("square")}
             </div>
         `).join('')}
     `;
@@ -292,7 +293,7 @@ function renderTeamFilterDropdown() {
         ${orderedTeams.map(team => `
             <div class="filter-option" onclick="event.stopPropagation(); toggleTeamSelection('${team.replace(/'/g, "\\'")}')">
                 <span class="${team === userTeam ? 'user-active-team' : ''}">${team}</span>
-                ${activeTeamFilters.includes(team) ? '<i class="fa-solid fa-square-check"></i>' : '<i class="fa-regular fa-square"></i>'}
+                ${activeTeamFilters.includes(team) ? icon("square-check") : icon("square")}
             </div>
         `).join('')}
     `;
