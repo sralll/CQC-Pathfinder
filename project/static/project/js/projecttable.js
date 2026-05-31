@@ -30,14 +30,37 @@ document.addEventListener("DOMContentLoaded", () => {
     FILE MODAL
 ========================================================= */
 
+const snapshotsCache = new Map();
+window.snapshotsCache = snapshotsCache;
+
+async function prefetchSnapshots(files) {
+    await Promise.all(files.map(async f => {
+        if (snapshotsCache.has(f.id)) return;
+        try {
+            const res      = await fetch(`/editor/snapshots/${f.id}/`);
+            const data     = await res.json();
+            const snaps    = data.snapshots ?? [];
+            snapshotsCache.set(f.id, snaps);
+            snapshotsCache.set(`${f.id}_has_more`, data.has_more ?? false);
+            if (snaps.length === 0) {
+                const btn = document.querySelector(`.version-btn[data-file-id="${f.id}"]`);
+                if (btn) btn.disabled = true;
+            }
+        } catch (_) {}
+    }));
+}
+
 async function openFileModal() {
     document.getElementById("modal-project").classList.add("open");
+    snapshotsCache.clear();
     showTableLoading();
     try {
         await loadFiles();
         sortState = { key: null, dir: 1 };
         applyFilters();
         renderAfterLoad();
+        // Prefetch snapshots in background — don't await, table is already shown
+        prefetchSnapshots(projectFiles);
     } catch (err) {
         console.error(err);
     } finally {

@@ -19,6 +19,281 @@ let filesLoadingPromise = null;
 let currentProjectName = "Neues Projekt";
 
 /* =========================================================
+    UNDO / REDO & AUTOSAVE
+========================================================= */
+
+const UNDO_MAX       = 50;
+const SNAPSHOT_EVERY = 10;
+
+let undoStack   = [];
+let redoStack   = [];
+let actionCount = 0;
+
+function captureState() {
+    return {
+        project:       structuredClone(project),
+        selection:     { ncp: selection.ncp, nr: selection.nr },
+        toolMode:      currentToolMode,
+        subtools:      structuredClone(activeSubtool),
+        inNewRoute:    activeTool === NewRouteTool,
+        newRouteCpNcp: activeTool === NewRouteTool ? selection.ncp : null,
+    };
+}
+
+function pushUndoState(trigger = "action") {
+    undoStack.push(captureState());
+    if (undoStack.length > UNDO_MAX) undoStack.shift();
+    redoStack = [];
+    actionCount++;
+    if (actionCount % SNAPSHOT_EVERY === 0) saveSnapshot();
+}
+
+function restoreState(state) {
+    activeTool.onExit?.();
+    project = structuredClone(state.project);
+    selection.ncp = state.selection.ncp;
+    selection.nr  = state.selection.nr;
+    Object.assign(activeSubtool, state.subtools ?? {});
+    setTool(state.toolMode);
+    drawCourse();
+    drawBlockedTerrain();
+    updateCPList();
+    if (state.inNewRoute) {
+        const cp = project.control_pairs.find(c => c.order === state.newRouteCpNcp);
+        if (cp) { selection.ncp = cp.order; startNewRoute(); }
+    }
+}
+
+function undo() {
+    if (!undoStack.length) return;
+    redoStack.push(captureState());
+    restoreState(undoStack.pop());
+    saveFile("undo");
+}
+
+function redo() {
+    if (!redoStack.length) return;
+    undoStack.push(captureState());
+    restoreState(redoStack.pop());
+    saveFile("redo");
+}
+
+let _saveQueue    = Promise.resolve();
+let _pendingSaves = 0;
+
+window.addEventListener("beforeunload", e => {
+    if (_pendingSaves > 0) {
+        e.preventDefault();
+        e.returnValue = "Autosave noch nicht abgeschlossen. Bitte auf der Seite bleiben.";
+    }
+});
+
+function _projectBody() {
+    const cps = project.control_pairs;
+    return {
+        id:              project.id,
+        name:            project.name,
+        scale:           project.scale,
+        scaled:          project.scaled,
+        map_file:        project.map_file,
+        has_mask:        project.has_mask,
+        blocked_terrain: project.blocked_terrain,
+        control_pairs:   cps,
+        last_edited:     project.last_edited ?? null,
+        n_control_pairs: cps.length,
+        n_routes:        cps.reduce((s, cp) => s + (cp.routes?.length ?? 0), 0),
+    };
+}
+
+function saveFile(trigger = "save") {
+    _pendingSaves++;
+    _saveQueue = _saveQueue.then(async () => {
+        const csrf = document.cookie.match(/csrftoken=([^;]+)/)?.[1] ?? "";
+        try {
+            const res  = await fetch("/editor/save/", {
+                method:  "POST",
+                headers: { "Content-Type": "application/json", "X-CSRFToken": csrf },
+                body:    JSON.stringify(_projectBody()),
+            });
+            const data = await res.json();
+            if (res.status === 409) {
+                // Another user modified the file — warn and pause further saves
+                if (!document.getElementById("conflict-warning")) {
+                    const bar = document.createElement("div");
+                    bar.id = "conflict-warning";
+                    bar.style.cssText = `
+                        position:fixed;top:28px;left:50%;transform:translateX(-50%);
+                        background:#7a1010;color:#fff;padding:8px 16px;border-radius:0 0 6px 6px;
+                        font-size:12px;z-index:9999;display:flex;align-items:center;gap:10px;
+                    `;
+                    bar.innerHTML = `<span>${data.message}</span>
+                        <button onclick="this.closest('#conflict-warning').remove();location.reload();"
+                            style="background:#fff;color:#7a1010;border:none;border-radius:4px;
+                                   padding:2px 8px;cursor:pointer;font-size:11px;">
+                            Neu laden
+                        </button>
+                        <button onclick="this.closest('#conflict-warning').remove();"
+                            style="background:transparent;color:#ccc;border:none;cursor:pointer;font-size:14px;">✕</button>`;
+                    document.body.appendChild(bar);
+                }
+                return; // stop this save; future saves will retry with new last_edited after reload
+            }
+            if (data.id)          project.id          = data.id;
+            if (data.last_edited) project.last_edited = data.last_edited;
+            // Write back DB ids so subsequent granular saves update rather than create
+            if (data.id_map) {
+                data.id_map.forEach(cpMap => {
+                    const cp = project.control_pairs.find(c => c.order === cpMap.order);
+                    if (!cp) return;
+                    cp.id = cpMap.id;
+                    cpMap.routes.forEach(rMap => {
+                        const r = cp.routes.find(r => r.order === rMap.order);
+                        if (r) r.id = rMap.id;
+                    });
+                });
+            }
+            _clearSaveFailedWarning();
+        } catch (e) {
+            console.warn("saveFile failed:", e);
+            _showSaveFailedWarning();
+        }
+        finally { _pendingSaves = Math.max(0, _pendingSaves - 1); }
+    });
+    return _saveQueue;
+}
+
+let _saveFailed = false;
+
+function _showSaveFailedWarning() {
+    if (_saveFailed) return;
+    _saveFailed = true;
+    if (document.getElementById("save-failed-warning")) return;
+    const bar = document.createElement("div");
+    bar.id = "save-failed-warning";
+    bar.style.cssText = `
+        position:fixed;top:28px;left:50%;transform:translateX(-50%);
+        background:#5a4000;color:#ffd;padding:8px 16px;border-radius:0 0 6px 6px;
+        font-size:12px;z-index:9999;display:flex;align-items:center;gap:10px;
+    `;
+    bar.innerHTML = `<span>⚠ Verbindung unterbrochen — Änderungen werden nicht gespeichert</span>`;
+    document.body.appendChild(bar);
+}
+
+function _clearSaveFailedWarning() {
+    if (!_saveFailed) return;
+    _saveFailed = false;
+    document.getElementById("save-failed-warning")?.remove();
+}
+
+window.addEventListener("online", () => {
+    console.log("[online] event fired, _saveFailed:", _saveFailed);
+    if (_saveFailed) {
+        saveFile("reconnect");
+    }
+});
+
+function saveSnapshot(trigger = "autosave") {
+    _saveQueue = _saveQueue.then(async () => {
+        const csrf = document.cookie.match(/csrftoken=([^;]+)/)?.[1] ?? "";
+        try {
+            await fetch("/editor/save-snapshot/", {
+                method:  "POST",
+                headers: { "Content-Type": "application/json", "X-CSRFToken": csrf },
+                body:    JSON.stringify({ ..._projectBody(), trigger }),
+            });
+        } catch (e) { console.warn("saveSnapshot failed:", e); _showSaveFailedWarning(); }
+    });
+    return _saveQueue;
+}
+
+/* =========================================================
+    GRANULAR ELEMENT SAVES
+========================================================= */
+
+function _saveElement(payloadOrFn) {
+    if (!project.id) return Promise.resolve(null);
+    _pendingSaves++;
+    _saveQueue = _saveQueue.then(async () => {
+        // Resolve payload lazily so callers can reference cp.id / route.id
+        // that may have been written by an earlier queued save
+        const payload = typeof payloadOrFn === 'function' ? payloadOrFn() : payloadOrFn;
+        const csrf = document.cookie.match(/csrftoken=([^;]+)/)?.[1] ?? "";
+        try {
+            const res  = await fetch("/editor/save-element/", {
+                method:  "POST",
+                headers: { "Content-Type": "application/json", "X-CSRFToken": csrf },
+                body:    JSON.stringify({ file_id: project.id, ...payload }),
+            });
+            const d = await res.json();
+            if (d?.last_edited) project.last_edited = d.last_edited;
+            _clearSaveFailedWarning();
+            return d;
+        } catch (e) { console.warn("saveElement failed:", e); _showSaveFailedWarning(); return null; }
+        finally    { _pendingSaves = Math.max(0, _pendingSaves - 1); }
+    });
+    return _saveQueue;
+}
+
+function saveControlPair(cp) {
+    // Pass a function so cp.id is read at execution time (after any prior saves set it)
+    _saveQueue = _saveElement(() => ({
+        type: 'control_pair',
+        control_pair: { db_id: cp.id ?? null, order: cp.order,
+                        start: cp.start, ziel: cp.ziel, complex: cp.complex },
+    })).then(data => { if (data?.db_id) cp.id = data.db_id; });
+}
+
+function saveRoute(cp, route) {
+    // Lazy: cp.id may be set by a preceding saveControlPair in the queue
+    _saveQueue = _saveElement(() => ({
+        type: 'route', cp_db_id: cp.id ?? null,
+        route: { db_id: route.id ?? null, order: route.order,
+                 rP: route.rP, noA: route.noA, pos: route.pos,
+                 length: route.length, run_time: route.run_time, elevation: route.elevation },
+    })).then(data => { if (data?.db_id) route.id = data.db_id; });
+}
+
+function saveBlockedTerrain() {
+    return _saveElement(() => ({ type: 'blocked_terrain', blocked_terrain: project.blocked_terrain }));
+}
+
+function _deleteElement(payloadOrFn) {
+    if (!project.id) return;
+    _pendingSaves++;
+    _saveQueue = _saveQueue.then(async () => {
+        const payload = typeof payloadOrFn === 'function' ? payloadOrFn() : payloadOrFn;
+        if (!payload) { _pendingSaves = Math.max(0, _pendingSaves - 1); return; } // nothing to delete
+        const csrf = document.cookie.match(/csrftoken=([^;]+)/)?.[1] ?? "";
+        try {
+            const res = await fetch("/editor/delete-element/", {
+                method:  "POST",
+                headers: { "Content-Type": "application/json", "X-CSRFToken": csrf },
+                body:    JSON.stringify({ file_id: project.id, ...payload }),
+            });
+            const d = await res.json();
+            if (d?.last_edited) project.last_edited = d.last_edited;
+            _clearSaveFailedWarning();
+        } catch (e) { console.warn("deleteElement failed:", e); _showSaveFailedWarning(); }
+        finally    { _pendingSaves = Math.max(0, _pendingSaves - 1); }
+    });
+}
+
+function deleteControlPair(cp) {
+    _deleteElement(() => cp.id ? { type: 'control_pair', db_id: cp.id } : null);
+}
+
+function deleteRoute(cp, route) {
+    _deleteElement(() => (route.id && cp.id) ? { type: 'route', db_id: route.id, cp_db_id: cp.id } : null);
+}
+
+// Keyboard shortcuts for undo/redo
+window.addEventListener("keydown", e => {
+    if (!(e.ctrlKey || e.metaKey)) return;
+    if (e.key === "z" && !e.shiftKey) { e.preventDefault(); undo(); }
+    if (e.key === "y" || (e.key === "z" && e.shiftKey)) { e.preventDefault(); redo(); }
+}, true);  // capture phase so it fires before tool keydown handlers
+
+/* =========================================================
     CAMERA STATE
 ========================================================= */
 
@@ -171,11 +446,13 @@ const ControlPairTool = (() => {
         const pointType = drag.pointType;
         const point     = cp[pointType];
         const moved     = Math.hypot(point.x - drag.originX, point.y - drag.originY);
+        if (moved > 0) pushUndoState();
         drag = null;
         mapContainer.classList.remove("dragging");
         mapContainer.style.cursor = "default";
         hideCrosshair();
         if (moved > CP_MOVE_THRESHOLD) {
+            cp.routes.forEach(r => deleteRoute(cp, r));
             cp.routes = [];
         } else if (cp.routes.length) {
             const isStart = pointType === "start";
@@ -191,6 +468,10 @@ const ControlPairTool = (() => {
         drawRoutes();
         updateRoutes();
         updateCPList();
+        if (moved > 0) {
+            saveControlPair(cp);
+            if (moved <= CP_MOVE_THRESHOLD) cp.routes.forEach(r => saveRoute(cp, r));
+        }
     }
 
     const gesture = makePendingGesture({
@@ -256,12 +537,14 @@ const ControlPairTool = (() => {
 
 const RouteEditTool = (() => {
     let route        = null;
+    let cpRef        = null;
     let continuation = null;
     let originalPts  = null;
     let previewPt    = null;
 
     function reset() {
         route = null;
+        cpRef = null;
         continuation = null;
         originalPts  = null;
         previewPt    = null;
@@ -335,6 +618,7 @@ const RouteEditTool = (() => {
             if (!r) return this;
 
             route       = r;
+            cpRef       = cp;
             originalPts = structuredClone(r.rP);
 
             r.rP.splice(segmentIndex + 1, 0, { x: insertPoint.x, y: insertPoint.y });
@@ -356,7 +640,11 @@ const RouteEditTool = (() => {
             mapContainer.classList.remove("editing-route");
             clearEditLayer();
             hideCrosshair();
-            if (route) { calcRouteLength(route); calcRouteRunTime(route); }
+            if (route) {
+                calcRouteLength(route); calcRouteRunTime(route);
+                pushUndoState("route-edit");
+                if (cpRef) saveRoute(cpRef, route);
+            }
             reset();
             drawRoutes();
             updateRoutes();
@@ -451,10 +739,12 @@ const NewRouteTool = (() => {
     }
 
     function completeRoute() {
+        pushUndoState();
         calcRouteLength(route);
         route.elevation = 0;
         calcRouteRunTime(route);
         cp.routes.push(route);
+        saveRoute(cp, route);
         selection.nr = route.order;
         drawRoutes();
         updateRoutes();
@@ -627,42 +917,630 @@ const RouteTool = (() => {
 })();
 
 /* =========================================================
-    TOOL: MASK (stub — drag always pans)
+    MASK LAYER
+    Isolated module — no other tool touches this.
+    Loads mask PNG, renders black→red, supports draw/erase.
+========================================================= */
+
+const MaskLayer = (() => {
+    let brushR = 5;
+    const BRUSH_MIN = 1;
+    const BRUSH_MAX = 25;
+
+    let canvas      = null;   // display canvas (#mask-canvas)
+    let ctx         = null;
+    let maskData    = null;   // ImageData holding real greyscale mask values
+    let loaded      = false;
+    let lastMapFile = null;
+    let lastPx      = null;
+
+    function ensureCanvas() {
+        if (!canvas) {
+            canvas = document.getElementById("mask-canvas");
+            ctx    = canvas?.getContext("2d");
+        }
+    }
+
+    // Re-render display canvas from maskData (black→red, rest→transparent)
+    function renderDisplay() {
+        if (!ctx || !maskData) return;
+        const disp = ctx.createImageData(maskData.width, maskData.height);
+        const s = maskData.data, d = disp.data;
+        for (let i = 0; i < s.length; i += 4) {
+            if (s[i] < 10) {   // black = impassable
+                d[i] = 220; d[i+1] = 0; d[i+2] = 0; d[i+3] = 255;
+            } else {
+                d[i+3] = 0;    // transparent
+            }
+        }
+        ctx.putImageData(disp, 0, 0);
+    }
+
+    function loadMask(mapFile) {
+        ensureCanvas();
+        if (!ctx || mapFile === lastMapFile) return;
+        lastMapFile = mapFile;
+        loaded = false;
+        const stem = mapFile.replace(/\.[^.]+$/, "");
+        const img  = new Image();
+        img.crossOrigin = "anonymous";
+        img.onload = () => {
+            canvas.width  = img.naturalWidth;
+            canvas.height = img.naturalHeight;
+            applyMapDimensions();
+            // Store original greyscale mask data
+            const tmp = document.createElement("canvas");
+            tmp.width = img.naturalWidth; tmp.height = img.naturalHeight;
+            const tc = tmp.getContext("2d");
+            tc.drawImage(img, 0, 0);
+            maskData = tc.getImageData(0, 0, img.naturalWidth, img.naturalHeight);
+            renderDisplay();
+            loaded = true;
+        };
+        img.onerror = () => { loaded = false; };
+        img.src = `/pathfinding/get_mask/mask_${stem}.png`;
+    }
+
+    function screenToMaskPx(clientX, clientY) {
+        const w      = screenToWorld(clientX, clientY);
+        const sc     = project.scale || 1;
+        const mapImg = document.getElementById("map-img");
+        const mapX = w.x / sc;
+        const mapY = w.y / sc;
+        const ratioX = canvas.width  / (mapImg.naturalWidth  || canvas.width);
+        const ratioY = canvas.height / (mapImg.naturalHeight || canvas.height);
+        return { x: mapX * ratioX, y: mapY * ratioY };
+    }
+
+    // Edit maskData pixels in a circle, then re-render display
+    function editCircle(cx, cy, maskValue) {
+        if (!maskData) return;
+        const W  = maskData.width, H = maskData.height;
+        const x0 = Math.max(0,   Math.floor(cx - brushR));
+        const x1 = Math.min(W-1, Math.ceil (cx + brushR));
+        const y0 = Math.max(0,   Math.floor(cy - brushR));
+        const y1 = Math.min(H-1, Math.ceil (cy + brushR));
+        const r2 = brushR * brushR;
+        const d  = maskData.data;
+        for (let y = y0; y <= y1; y++) {
+            for (let x = x0; x <= x1; x++) {
+                if ((x-cx)*(x-cx) + (y-cy)*(y-cy) <= r2) {
+                    const i = (y * W + x) * 4;
+                    d[i] = d[i+1] = d[i+2] = maskValue;
+                    d[i+3] = 255;
+                }
+            }
+        }
+        // Re-render only the affected region
+        const patch = ctx.createImageData(x1-x0+1, y1-y0+1);
+        const pd = patch.data;
+        for (let y = y0; y <= y1; y++) {
+            for (let x = x0; x <= x1; x++) {
+                const si = (y * W + x) * 4;
+                const pi = ((y-y0)*(x1-x0+1) + (x-x0)) * 4;
+                if (d[si] < 10) {
+                    pd[pi] = 220; pd[pi+1] = 0; pd[pi+2] = 0; pd[pi+3] = 255;
+                } else {
+                    pd[pi+3] = 0;
+                }
+            }
+        }
+        ctx.putImageData(patch, x0, y0);
+    }
+
+    function strokeLine(clientX, clientY, maskValue) {
+        const cur = screenToMaskPx(clientX, clientY);
+        if (!lastPx) {
+            editCircle(cur.x, cur.y, maskValue);
+        } else {
+            const dx   = cur.x - lastPx.x;
+            const dy   = cur.y - lastPx.y;
+            const dist = Math.hypot(dx, dy);
+            const step = Math.max(1, brushR * 0.5);
+            const n    = Math.ceil(dist / step);
+            for (let i = 0; i <= n; i++) {
+                const t = n === 0 ? 1 : i / n;
+                editCircle(lastPx.x + dx * t, lastPx.y + dy * t, maskValue);
+            }
+        }
+        lastPx = cur;
+    }
+
+    function applyMapDimensions() {
+        if (!canvas) return;
+        const mapImg = document.getElementById("map-img");
+        if (mapImg.naturalWidth) {
+            canvas.style.width  = mapImg.naturalWidth  + "px";
+            canvas.style.height = mapImg.naturalHeight + "px";
+        } else {
+            mapImg.addEventListener("load", applyMapDimensions, { once: true });
+        }
+    }
+
+    return {
+        clearMask() {
+            ensureCanvas();
+            if (ctx && canvas.width && canvas.height)
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+            maskData    = null;
+            loaded      = false;
+            lastMapFile = null;
+        },
+        loadMask,
+        applyMapDimensions,
+        screenToMaskPx,
+        isLoaded:    () => loaded,
+        resetStroke: ()  => { lastPx = null; },
+        getBrush:    ()      => brushR,
+        getBrushMin: ()      => BRUSH_MIN,
+        getBrushMax: ()      => BRUSH_MAX,
+        setBrush:    (r)     => { brushR = Math.max(BRUSH_MIN, Math.min(BRUSH_MAX, r)); },
+        adjustBrush: (delta) => { brushR = Math.max(BRUSH_MIN, Math.min(BRUSH_MAX, brushR - delta)); },
+        brushScreenRadius() {
+            if (!canvas) return 0;
+            const mapImg = document.getElementById("map-img");
+            const ratioX = canvas.width / (mapImg.naturalWidth || canvas.width);
+            return brushR / ratioX * (project.scale || 1) * camera.zoom;
+        },
+        draw(clientX, clientY)  { strokeLine(clientX, clientY, 0);   },   // 0 = black = impassable
+        erase(clientX, clientY) { strokeLine(clientX, clientY, 241); },   // 241 = fast terrain
+
+        saveMask(mapFile) {
+            if (!maskData) return;
+            // Write maskData to an offscreen canvas and save as PNG
+            const off  = document.createElement("canvas");
+            off.width  = maskData.width;
+            off.height = maskData.height;
+            off.getContext("2d").putImageData(maskData, 0, 0);
+            const csrf = document.cookie.match(/csrftoken=([^;]+)/)?.[1] ?? "";
+            off.toBlob(blob => {
+                const form = new FormData();
+                form.append("filename", mapFile);
+                const stem = mapFile.replace(/\.[^.]+$/, "");
+                form.append("file", blob, `mask_${stem}.png`);
+                fetch("/editor/save-mask/", {
+                    method:  "POST",
+                    headers: { "X-CSRFToken": csrf },
+                    body:    form,
+                });
+            }, "image/png");
+        },
+    };
+})();
+
+/* =========================================================
+    TOOL: MASK
 ========================================================= */
 
 const MaskTool = (() => {
-    const gesture = makePendingGesture({
-        onDrag(downEvent) { pan.start(downEvent.clientX, downEvent.clientY); },
-        onClick(e, pt)    { /* TODO */ },
-    });
+    let painting = false;
+
+    function sub() { return getSubtool(ToolMode.MASK); }
+    function brushCursorEl() { return document.getElementById("mask-brush-cursor"); }
+
     return {
-        defaultCursor: "crosshair",
-        onEnter() { mapContainer.style.cursor = this.defaultCursor; },
-        onExit()  { gesture.cancel(); },
-        onMouseDown(e, pt) { gesture.down(e, pt); },
-        onMouseMove(e, pt) { gesture.move(pt); },
-        onMouseUp(e, pt)   { gesture.up(e, pt); },
+        defaultCursor: "grab",
+
+        onEnter() {
+            mapContainer.style.cursor = this.defaultCursor;
+            mapContainer.classList.add("mode-mask");
+            document.body.classList.add("mode-mask");
+            showMaskGenBarIfActive();
+
+            const maskCanvas    = document.getElementById("mask-canvas");
+            const opacitySlider = document.getElementById("mask-opacity-slider");
+            const sizeSlider    = document.getElementById("mask-size-slider");
+
+            if (opacitySlider) {
+                if (!maskCanvas.style.opacity) maskCanvas.style.opacity = "0.67";
+                opacitySlider.value   = maskCanvas.style.opacity;
+                opacitySlider.oninput = () => { maskCanvas.style.opacity = opacitySlider.value; };
+            }
+            if (sizeSlider) {
+                sizeSlider.min   = MaskLayer.getBrushMin();
+                sizeSlider.max   = MaskLayer.getBrushMax();
+                sizeSlider.value = MaskLayer.getBrush();
+                sizeSlider.oninput = () => {
+                    MaskLayer.setBrush(Number(sizeSlider.value));
+                    const el = document.getElementById("mask-brush-cursor");
+                    if (el && el.style.display === "block") {
+                        const r = MaskLayer.brushScreenRadius();
+                        el.style.width  = r * 2 + "px";
+                        el.style.height = r * 2 + "px";
+                    }
+                };
+            }
+        },
+
+        onExit() {
+            mapContainer.classList.remove("mode-mask", "mask-editing");
+            document.body.classList.remove("mode-mask");
+            hideMaskGenBar();
+            painting = false;
+            MaskLayer.resetStroke();
+            brushCursorEl().style.display = "none";
+        },
+
+        onMouseDown(e, pt) {
+            if (!mapContainer.contains(e.target)) return;
+            if (e.button !== 0) return;
+            if (sub() === "pan") { pan.start(e.clientX, e.clientY); return; }
+            painting = true;
+            MaskLayer.resetStroke();
+            if (sub() === "draw")  MaskLayer.draw(e.clientX, e.clientY);
+            if (sub() === "erase") MaskLayer.erase(e.clientX, e.clientY);
+        },
+
+        onMouseMove(e, pt) {
+            if (pan.update(e)) return;
+            const s = sub();
+            if (s === "draw" || s === "erase") {
+                mapContainer.style.cursor = "default";
+                mapContainer.classList.add("mask-editing");
+                const r  = MaskLayer.brushScreenRadius();
+                const el = brushCursorEl();
+                el.style.display = "block";
+                el.style.left    = e.clientX + "px";
+                el.style.top     = e.clientY + "px";
+                el.style.width   = r * 2 + "px";
+                el.style.height  = r * 2 + "px";
+                if (painting) {
+                    if (s === "draw")  MaskLayer.draw(e.clientX, e.clientY);
+                    if (s === "erase") MaskLayer.erase(e.clientX, e.clientY);
+                }
+            } else {
+                mapContainer.style.cursor = "grab";
+                mapContainer.classList.remove("mask-editing");
+                brushCursorEl().style.display = "none";
+            }
+        },
+
+        onMouseUp(e, pt) {
+            if (pan.stop()) return;
+            const wasPainting = painting;
+            painting = false;
+            MaskLayer.resetStroke();
+            if (wasPainting && project.map_file) {
+                pushUndoState("mask-edit");
+                MaskLayer.saveMask(project.map_file);
+                project.has_mask = true;
+            }
+        },
+
         onKeyDown(e) {},
     };
 })();
 
 /* =========================================================
-    TOOL: BLOCK (stub — drag always pans)
+    TOOL: BLOCK
 ========================================================= */
 
+const BLOCK_COLOR  = "rgb(160,51,240)";
+const BLOCK_SNAP   = 8;   // world-space snap distance (SVG units)
+
+function ensureBlockedTerrain() {
+    if (!project.blocked_terrain || typeof project.blocked_terrain !== "object") {
+        project.blocked_terrain = { lines: [], areas: [] };
+    }
+    project.blocked_terrain.lines = project.blocked_terrain.lines || [];
+    project.blocked_terrain.areas = project.blocked_terrain.areas || [];
+}
+
+function centerOnBlockObject(pts) {
+    // pts = [{x,y}, ...]
+    const padding = 80;
+    const minX = Math.min(...pts.map(p => p.x));
+    const maxX = Math.max(...pts.map(p => p.x));
+    const minY = Math.min(...pts.map(p => p.y));
+    const maxY = Math.max(...pts.map(p => p.y));
+    const midX = (minX + maxX) / 2;
+    const midY = (minY + maxY) / 2;
+    const rect  = mapContainer.getBoundingClientRect();
+    const w = Math.max(maxX - minX, 1);
+    const h = Math.max(maxY - minY, 1);
+    const newZoom = Math.min(Math.max(Math.min(
+        rect.width  / (w + padding * 2),
+        rect.height / (h + padding * 2)
+    ), zoomMin), zoomMax);
+    animateCamera({
+        x:    rect.width  / 2 - midX * newZoom,
+        y:    rect.height / 2 - midY * newZoom,
+        zoom: newZoom,
+    });
+}
+
+function updateBlockList() {
+    const list = document.getElementById("block-list");
+    if (!list) return;
+    list.innerHTML = "";
+    ensureBlockedTerrain();
+    const bt = project.blocked_terrain;
+
+    const makeRow = (label, pts, onDelete) => {
+        const row = document.createElement("div");
+        row.className = "cp-row";
+        row.style.cssText = "cursor:pointer;";
+        row.innerHTML = `
+            <span class="cp-row-label" style="color:#a050e8;font-style:italic;">${label}</span>
+            <button class="cp-delete-btn" title="Löschen">${icon("trash", "11px")}</button>
+        `;
+        row.addEventListener("click", e => {
+            if (e.target.closest(".cp-delete-btn")) return;
+            centerOnBlockObject(pts);
+        });
+        row.querySelector(".cp-delete-btn").addEventListener("click", e => {
+            e.stopPropagation();
+            onDelete();
+            drawBlockedTerrain();
+            updateBlockList();
+        });
+        list.appendChild(row);
+    };
+
+    bt.lines.forEach((seg, idx) => {
+        makeRow("Linie", [seg.start, seg.end], () => bt.lines.splice(idx, 1));
+    });
+
+    bt.areas.forEach((area, idx) => {
+        makeRow("Fläche", area.points, () => bt.areas.splice(idx, 1));
+    });
+}
+
+function drawBlockedTerrain() {
+    const layer = document.getElementById("blocked-layer");
+    if (!layer) return;
+    layer.innerHTML = "";
+    ensureBlockedTerrain();
+    const bt = project.blocked_terrain;
+    updateBlockList();
+
+    bt.lines.forEach((seg, idx) => {
+        // Wide hit strip
+        const hit = document.createElementNS("http://www.w3.org/2000/svg", "line");
+        hit.setAttribute("x1", seg.start.x); hit.setAttribute("y1", seg.start.y);
+        hit.setAttribute("x2", seg.end.x);   hit.setAttribute("y2", seg.end.y);
+        hit.setAttribute("stroke", "transparent");
+        hit.setAttribute("stroke-width", "10");
+        hit.setAttribute("pointer-events", "stroke");
+        hit.dataset.blockIdx = idx; hit.dataset.blockType = "line";
+        hit.classList.add("block-hit");
+        // Visual line
+        const vis = document.createElementNS("http://www.w3.org/2000/svg", "line");
+        vis.setAttribute("x1", seg.start.x); vis.setAttribute("y1", seg.start.y);
+        vis.setAttribute("x2", seg.end.x);   vis.setAttribute("y2", seg.end.y);
+        vis.setAttribute("stroke", BLOCK_COLOR);
+        vis.setAttribute("stroke-width", "5");
+        vis.setAttribute("stroke-linecap", "butt");
+        vis.setAttribute("vector-effect", "non-scaling-stroke");
+        layer.appendChild(vis);
+        layer.appendChild(hit);
+    });
+
+    bt.areas.forEach((area, idx) => {
+        if (area.points.length < 3) return;
+        const pts = area.points.map(p => `${p.x},${p.y}`).join(" ");
+        // Fill with hatch
+        const fill = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
+        fill.setAttribute("points", pts);
+        fill.setAttribute("fill", "url(#block-hatch)");
+        fill.setAttribute("fill-opacity", "1");
+        fill.setAttribute("stroke", BLOCK_COLOR);
+        fill.setAttribute("stroke-width", "1");
+        fill.setAttribute("stroke-linejoin", "miter");
+        fill.setAttribute("vector-effect", "non-scaling-stroke");
+        fill.setAttribute("pointer-events", "fill");
+        fill.dataset.blockIdx = idx; fill.dataset.blockType = "area";
+        fill.classList.add("block-hit");
+        layer.appendChild(fill);
+    });
+}
+
 const BlockTool = (() => {
+    let lineStart  = null;   // {x,y} world — line mode first point
+    let polyPoints = [];     // [{x,y}] world — polygon points so far
+    let previewPt  = null;   // current cursor in world coords
+
+    function sub() { return getSubtool(ToolMode.BLOCK); }
+
+    function snapToBlockSnap(pt) {
+        ensureBlockedTerrain();
+        const bt = project.blocked_terrain;
+
+        // Collect all candidate snap points
+        const candidates = [];
+
+        // Polygon close-snap: first point of current in-progress polygon
+        if (sub() === "polygon" && polyPoints.length >= 2)
+            candidates.push(polyPoints[0]);
+
+        // Existing line endpoints
+        bt.lines.forEach(seg => {
+            candidates.push(seg.start, seg.end);
+        });
+
+        // Existing polygon vertices
+        bt.areas.forEach(area => {
+            area.points.forEach(p => candidates.push(p));
+        });
+
+        // In-progress polygon points (other than first, already added)
+        if (sub() === "polygon" && polyPoints.length > 1) {
+            polyPoints.slice(1).forEach(p => candidates.push(p));
+        }
+
+        // Find closest within BLOCK_SNAP screen pixels
+        let best = null, bestDist = BLOCK_SNAP;
+        candidates.forEach(c => {
+            const d = Math.hypot(pt.x - c.x, pt.y - c.y);
+            if (d < bestDist) { bestDist = d; best = c; }
+        });
+
+        return best ?? pt;
+    }
+
+    function drawPreview() {
+        clearEditLayer();
+        if (!previewPt) return;
+        const layer = document.getElementById("edit-layer");
+        const S = sub();
+
+        if (S === "line" && lineStart) {
+            const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+            line.setAttribute("x1", lineStart.x);  line.setAttribute("y1", lineStart.y);
+            line.setAttribute("x2", previewPt.x);  line.setAttribute("y2", previewPt.y);
+            line.setAttribute("stroke", BLOCK_COLOR);
+            line.setAttribute("stroke-width", "5");
+            line.setAttribute("stroke-linecap", "butt");
+            line.setAttribute("vector-effect", "non-scaling-stroke");
+            layer.appendChild(line);
+        }
+
+        if (S === "polygon" && polyPoints.length > 0) {
+            const allPts = [...polyPoints, previewPt];
+            const pts    = allPts.map(p => `${p.x},${p.y}`).join(" ");
+
+            if (polyPoints.length >= 2) {
+                const fill = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
+                fill.setAttribute("points", pts);
+                fill.setAttribute("fill", "url(#block-hatch)");
+                fill.setAttribute("fill-opacity", "1");
+                fill.setAttribute("stroke", BLOCK_COLOR);
+                fill.setAttribute("stroke-width", "1");
+                fill.setAttribute("stroke-linejoin", "miter");
+                fill.setAttribute("vector-effect", "non-scaling-stroke");
+                layer.appendChild(fill);
+            } else {
+                const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+                line.setAttribute("x1", polyPoints[0].x); line.setAttribute("y1", polyPoints[0].y);
+                line.setAttribute("x2", previewPt.x);     line.setAttribute("y2", previewPt.y);
+                line.setAttribute("stroke", BLOCK_COLOR);
+                line.setAttribute("stroke-width", "1");
+                line.setAttribute("vector-effect", "non-scaling-stroke");
+                layer.appendChild(line);
+            }
+
+            // Circle around start point — indicates where to click to close
+            const c = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+            c.setAttribute("cx", polyPoints[0].x);
+            c.setAttribute("cy", polyPoints[0].y);
+            c.setAttribute("r",  BLOCK_SNAP);
+            c.setAttribute("fill", "none");
+            c.setAttribute("stroke", BLOCK_COLOR);
+            c.setAttribute("stroke-width", "1");
+            c.setAttribute("stroke-dasharray", "3 2");
+            c.setAttribute("vector-effect", "non-scaling-stroke");
+            layer.appendChild(c);
+        }
+    }
+
+    function handleClick(pt, evtTarget) {
+        const S = sub();
+        ensureBlockedTerrain();
+        pt = snapToBlockSnap(pt);  // always use snapped coords
+
+        if (S === "line") {
+            if (!lineStart) {
+                lineStart = { x: pt.x, y: pt.y };
+            } else {
+                pushUndoState();
+                project.blocked_terrain.lines.push({ start: lineStart, end: { x: pt.x, y: pt.y } });
+                lineStart = null;
+                clearEditLayer();
+                drawBlockedTerrain();
+                saveBlockedTerrain();
+            }
+        }
+
+        if (S === "polygon") {
+            if (polyPoints.length >= 3 && pt === polyPoints[0]) {
+                pushUndoState();
+                project.blocked_terrain.areas.push({ points: [...polyPoints] });
+                polyPoints = [];
+                clearEditLayer();
+                drawBlockedTerrain();
+                saveBlockedTerrain();
+            } else {
+                polyPoints.push({ x: pt.x, y: pt.y });
+            }
+        }
+
+        if (S === "erase") {
+            const hit = evtTarget?.closest?.(".block-hit");
+            if (hit) {
+                const idx  = Number(hit.dataset.blockIdx);
+                const type = hit.dataset.blockType;
+                pushUndoState();
+                if (type === "line")  project.blocked_terrain.lines.splice(idx, 1);
+                if (type === "area")  project.blocked_terrain.areas.splice(idx, 1);
+                drawBlockedTerrain();
+                saveBlockedTerrain();
+            }
+        }
+    }
+
     const gesture = makePendingGesture({
         onDrag(downEvent) { pan.start(downEvent.clientX, downEvent.clientY); },
-        onClick(e, pt)    { /* TODO */ },
+        onClick(e, pt)    {
+            if (!mapContainer.contains(e.target)) return;
+            handleClick(pt, e.target);
+        },
     });
+
     return {
-        defaultCursor: "crosshair",
-        onEnter() { mapContainer.style.cursor = this.defaultCursor; },
-        onExit()  { gesture.cancel(); },
-        onMouseDown(e, pt) { gesture.down(e, pt); },
-        onMouseMove(e, pt) { gesture.move(pt); },
-        onMouseUp(e, pt)   { gesture.up(e, pt); },
-        onKeyDown(e) {},
+        defaultCursor: "default",
+
+        onEnter() {
+            mapContainer.style.cursor = this.defaultCursor;
+            mapContainer.classList.add("mode-block");
+            document.body.classList.add("mode-block");
+            selection.ncp = -1;
+            mapContainer.querySelectorAll(".control-pair-group.selected")
+                .forEach(el => el.classList.remove("selected"));
+            drawBlockedTerrain();
+        },
+
+        onExit() {
+            mapContainer.classList.remove("mode-block");
+            document.body.classList.remove("mode-block");
+            gesture.cancel();
+            clearEditLayer();
+            hideCrosshair();
+            lineStart = null; polyPoints = []; previewPt = null;
+        },
+
+        onMouseDown(e, pt) { if (e.button !== 0) return; gesture.down(e, pt); },
+        onMouseUp(e, pt)   { if (e.button !== 0) return; gesture.up(e, pt); },
+
+        onMouseMove(e, pt) {
+            if (gesture.move(pt)) return;
+            const S = sub();
+            if (S === "erase") {
+                hideCrosshair();
+                const hit = e.target?.closest?.(".block-hit");
+                mapContainer.style.cursor = hit ? "pointer" : "default";
+                return;
+            }
+            if (S === "line" || S === "polygon") {
+                mapContainer.style.cursor = "default";
+                if (!mapContainer.contains(e.target)) {
+                    hideCrosshair();
+                    clearEditLayer();
+                    return;
+                }
+                previewPt = snapToBlockSnap(pt);
+                updateCrosshair(previewPt.x, previewPt.y);
+                if ((S === "line" && lineStart) || (S === "polygon" && polyPoints.length > 0)) {
+                    drawPreview();
+                }
+            }
+        },
+
+        onKeyDown(e) {
+            if (e.key === "Escape") {
+                lineStart = null; polyPoints = [];
+                clearEditLayer();
+            }
+        },
     };
 })();
 
@@ -802,14 +1680,17 @@ const PlaceControlTool = (() => {
                 updateCPList();
             } else {
                 const snapped = snapToControlPoints(pt);
+                pushUndoState();
                 cp.start = tempStart;
                 cp.ziel  = { x: snapped.x, y: snapped.y };
                 if (!isOverwrite) {
                     cp.order = project.control_pairs.length;
                     project.control_pairs.push(cp);
                 } else {
+                    cp.routes.forEach(r => deleteRoute(cp, r));
                     cp.routes = [];
                 }
+                saveControlPair(cp);
                 clearEditLayer();
                 document.getElementById("control-layer")
                     .querySelector(`.control-pair-group[data-ncp="${cp.order}"]`)?.remove();
@@ -942,6 +1823,7 @@ function initInput() {
 }
 
 function onMouseDown(e) {
+    if (e.button !== 0) return;
     if (!mapContainer.contains(e.target)) return;
     activeTool.onMouseDown(e, screenToWorld(e.clientX, e.clientY));
 }
@@ -952,6 +1834,7 @@ function onMouseMove(e) {
 }
 
 function onMouseUp(e) {
+    if (e.button !== 0) return;
     if (pan.stop()) return;
     activeTool.onMouseUp(e, screenToWorld(e.clientX, e.clientY));
 }
@@ -1272,6 +2155,14 @@ function onWheel(e) {
     camera.x     = mouseX - worldX * camera.zoom;
     camera.y     = mouseY - worldY * camera.zoom;
     updateCameraTransform();
+
+    // Update brush cursor size if mask draw/erase is active
+    const brushEl = document.getElementById("mask-brush-cursor");
+    if (brushEl && brushEl.style.display === "block") {
+        const r = MaskLayer.brushScreenRadius();
+        brushEl.style.width  = r * 2 + "px";
+        brushEl.style.height = r * 2 + "px";
+    }
 }
 
 /* =========================================================
@@ -1328,11 +2219,100 @@ async function loadFiles() {
     return filesLoadingPromise;
 }
 
+/* =========================================================
+    MASK GENERATION PIPELINE
+========================================================= */
+
+let maskGenController  = null;
+let maskGenInProgress  = false;
+
+function startMaskGeneration(mapFile, scale) {
+    const bar    = document.getElementById("mask-gen-bar");
+    const text   = document.getElementById("mask-gen-text");
+    const cancel = document.getElementById("mask-gen-cancel");
+    if (!bar) return;
+
+    const prog = document.getElementById("mask-gen-progress");
+    maskGenInProgress = true;
+    if (currentToolMode === ToolMode.MASK) bar.style.display = "flex";
+    text.textContent  = "Maske wird generiert…";
+    if (prog) prog.value = 0;
+
+    maskGenController = new AbortController();
+    cancel.onclick = () => { bar.style.display = "none"; }; // hide only, fetch continues
+
+    const csrfToken = document.cookie.match(/csrftoken=([^;]+)/)?.[1] ?? "";
+
+    fetch("/editor/generate-mask/", {
+        method:  "POST",
+        headers: { "Content-Type": "application/json", "X-CSRFToken": csrfToken },
+        body:    JSON.stringify({ filename: mapFile, scale }),
+        signal:  maskGenController.signal,
+    })
+        .then(res => {
+            if (!res.ok) return res.text().then(t => { throw new Error(t); });
+            const reader  = res.body.getReader();
+            const decoder = new TextDecoder("utf-8");
+            let buffer    = "";
+
+            function read() {
+                return reader.read().then(({ done, value }) => {
+                    if (done) return;
+                    buffer += decoder.decode(value, { stream: true });
+                    const parts = buffer.split("\n\n");
+                    buffer = parts.pop();
+                    for (const part of parts) {
+                        const line = part.split("\n").find(l => l.startsWith("data: "));
+                        if (!line) continue;
+                        try {
+                            const d = JSON.parse(line.slice(5).trim());
+                            if (d.current !== undefined) {
+                                const pct = Math.round((d.current / d.total) * 100);
+                                text.textContent = `Generiere Maske… ${d.current}/${d.total} (${pct}%)`;
+                                if (prog) prog.value = pct;
+                            } else if (d.done) {
+                                maskGenInProgress = false;
+                                if (project.map_file === mapFile) {
+                                    project.has_mask = true;
+                                    if (prog) prog.value = 100;
+                                    text.textContent = "Maske fertig — wird geladen…";
+                                    MaskLayer.loadMask(mapFile);
+                                    MaskLayer.applyMapDimensions();
+                                    setTimeout(hideMaskGenBar, 2000);
+                                } else {
+                                    hideMaskGenBar();
+                                }
+                            } else if (d.error) {
+                                text.innerHTML = `<span style="color:#ff6666">Fehler: ${d.error}</span>`;
+                            }
+                        } catch (_) {}
+                    }
+                    return read();
+                });
+            }
+            return read();
+        })
+        .catch(err => {
+            if (err.name !== "AbortError")
+                text.innerHTML = `<span style="color:#ff6666">Fehler: ${err.message}</span>`;
+        });
+}
+
+function hideMaskGenBar() {
+    const bar = document.getElementById("mask-gen-bar");
+    if (bar) bar.style.display = "none";
+}
+
+function showMaskGenBarIfActive() {
+    if (!maskGenInProgress) return;
+    const bar = document.getElementById("mask-gen-bar");
+    if (bar) bar.style.display = "flex";
+}
+
 function loadMap(filename) {
     document.getElementById('map-img').src = `/editor/map/${filename}`;
 }
 
-function saveFile()          { alert("Datei speichern (noch nicht implementiert)"); }
 function copyFile()          { alert("Datei kopieren (noch nicht implementiert)"); }
 function createLabel()       { alert("Label erstellen (noch nicht implementiert)"); }
 function uploadSelectedMap() { alert("Map hochladen (noch nicht implementiert)"); }
@@ -1476,6 +2456,7 @@ function drawCourse() {
     if (!project?.control_pairs) return;
     project.control_pairs.forEach(cp => drawControlPairGroup(cp));
     drawRoutes();
+    drawBlockedTerrain();
     const selectedCp = project.control_pairs.find(c => c.order === selection.ncp);
     if (selectedCp) updateControlPairGroup(selectedCp);
     updateRoutes();
@@ -1535,6 +2516,8 @@ function updateCPList() {
 
         row.querySelector(".cp-delete-btn").addEventListener("click", e => {
             e.stopPropagation();
+            pushUndoState();
+            deleteControlPair(cp);
             project.control_pairs = project.control_pairs.filter(c => c !== cp);
             project.control_pairs.forEach((c, i) => { c.order = i; });
             if (selection.ncp >= project.control_pairs.length) {
@@ -1557,7 +2540,9 @@ function updateCPList() {
                     }
                     return;
                 }
+                pushUndoState();
                 cp.complex = complex;
+                saveControlPair(cp);
                 updateCPList();
             });
         });
@@ -1606,6 +2591,8 @@ function updateCPList() {
 
                 rRow.querySelector(".cp-delete-btn").addEventListener("click", e => {
                     e.stopPropagation();
+                    pushUndoState();
+                    deleteRoute(cp, route);
                     cp.routes = cp.routes.filter(r => r !== route);
                     cp.routes.forEach((r, i) => { r.order = i; });
                     if (selection.nr >= cp.routes.length) selection.nr = null;
@@ -1632,6 +2619,7 @@ function updateCPList() {
                     const parsed = Number(val);
                     route.elevation = (val === "" || isNaN(parsed)) ? 0 : parsed;
                     calcRouteRunTime(route);
+                    saveRoute(cp, route);
                     updateCPList();
                 });
 
@@ -1775,6 +2763,23 @@ function onCPDragEnd() {
     arr.splice(insertIndex, 0, cp);
     arr.forEach((c, i) => { c.order = i; });
 
+    // Bulk-reorder atomically (sequential saves would clash on the unique constraint)
+    const orderPairs = arr.filter(c => c.id).map(c => ({ db_id: c.id, order: c.order }));
+    if (orderPairs.length && project.id) {
+        _pendingSaves++;
+        _saveQueue = _saveQueue.then(async () => {
+            const csrf = document.cookie.match(/csrftoken=([^;]+)/)?.[1] ?? "";
+            try {
+                await fetch("/editor/save-cp-order/", {
+                    method:  "POST",
+                    headers: { "Content-Type": "application/json", "X-CSRFToken": csrf },
+                    body:    JSON.stringify({ file_id: project.id, order: orderPairs }),
+                });
+            } catch (e) { console.warn("save-cp-order failed:", e); }
+            finally    { _pendingSaves = Math.max(0, _pendingSaves - 1); }
+        });
+    }
+
     if (cp.order !== fromOrder) {
         lastDraggedCp        = cp;
         lastDraggedFromOrder = fromOrder;
@@ -1790,6 +2795,15 @@ function onCPDragEnd() {
 function clearCourseLayers() {
     document.getElementById("control-layer").innerHTML = "";
     document.getElementById("route-layer").innerHTML   = "";
+}
+
+function clearAllLayers() {
+    ["control-layer","route-layer","edit-layer","blocked-layer","line-layer","ui-layer"]
+        .forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.innerHTML = "";
+        });
+    hideCrosshair();
 }
 
 function updateControlPairGroup(controlPair) {
@@ -2009,10 +3023,11 @@ const SUBTOOL_DEFS = {
         { id: "add",  icon: "circle-xmark-r", title: "Add control pair", transform: "rotate(45deg)" },
     ],
     [ToolMode.ROUTE]: [
-        { id: "select", icon: "no_tool", title: "Select route" },
+        { id: "select", icon: "pencil", title: "Select route" },
         { id: "new",    icon: "plus",    title: "New route" },
     ],
     [ToolMode.MASK]: [
+        { id: "pan",   icon: "no_tool",      title: "Pan" },
         { id: "draw",  icon: "pencil",       title: "Draw" },
         { id: "erase", icon: "eraser",       title: "Erase" },
     ],
@@ -2026,7 +3041,7 @@ const SUBTOOL_DEFS = {
 const activeSubtool = {
     [ToolMode.CONTROL_PAIR]: "drag",
     [ToolMode.ROUTE]:        "select",
-    [ToolMode.MASK]:         "draw",
+    [ToolMode.MASK]:         "pan",
     [ToolMode.BLOCK]:        "line",
 };
 
@@ -2037,6 +3052,12 @@ function getSubtool(mode) {
 function setSubtool(mode, id) {
     activeSubtool[mode] = id;
     updateSubtoolPanel(mode);
+    if (mode === ToolMode.MASK && activeTool === MaskTool) {
+        const editing = id === "draw" || id === "erase";
+        mapContainer.style.cursor = editing ? "default" : "grab";
+        mapContainer.classList.toggle("mask-editing", editing);
+        if (!editing) document.getElementById("mask-brush-cursor").style.display = "none";
+    }
 }
 
 function updateSubtoolPanel(mode) {
@@ -2089,6 +3110,22 @@ function updateSubtoolPanel(mode) {
 
 buildToolbar();
 setTool(currentToolMode);
+
+subtoolPanel.addEventListener("wheel", e => {
+    const s = getSubtool(ToolMode.MASK);
+    if (currentToolMode !== ToolMode.MASK || (s !== "draw" && s !== "erase")) return;
+    e.preventDefault();
+    e.stopPropagation();
+    MaskLayer.adjustBrush(e.deltaY > 0 ? 1 : -1);
+    const sizeSlider = document.getElementById("mask-size-slider");
+    if (sizeSlider) sizeSlider.value = MaskLayer.getBrush();
+    const brushEl = document.getElementById("mask-brush-cursor");
+    if (brushEl && brushEl.style.display === "block") {
+        const r = MaskLayer.brushScreenRadius();
+        brushEl.style.width  = r * 2 + "px";
+        brushEl.style.height = r * 2 + "px";
+    }
+}, { passive: false });
 
 function setTool(mode) {
     currentToolMode = mode;

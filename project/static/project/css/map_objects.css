@@ -44,6 +44,51 @@
     -webkit-user-drag: none;
 }
 
+#mask-canvas {
+    position: absolute;
+    top: 0;
+    left: 0;
+    z-index: 2;
+    display: none;
+    pointer-events: none;
+    image-rendering: pixelated;
+    image-rendering: crisp-edges; /* Firefox fallback */
+}
+
+#map-container.mode-mask #mask-canvas {
+    display: block;
+    pointer-events: auto;
+}
+
+#map-container.mode-mask #control-layer,
+#map-container.mode-mask #route-layer { display: none; }
+
+body.mode-mask #cp-list,
+body.mode-mask .cp-add-btn { display: none; }
+
+#block-list { display: none; }
+body.mode-block #cp-list,
+body.mode-block .cp-add-btn { display: none; }
+body.mode-block #block-list { display: flex; flex-direction: column; }
+
+#mask-controls { display: none; }
+body.mode-mask #mask-controls { display: flex; flex-direction: column; gap: 10px; padding: 12px 10px; }
+
+#mask-brush-cursor {
+    display: none;
+    position: fixed;
+    border: 1.5px solid black;
+    border-radius: 50%;
+    pointer-events: none;
+    transform: translate(-50%, -50%);
+    z-index: 9999;
+    box-shadow: 0 0 0 1px rgba(255,255,255,0.6);
+}
+
+#map-container.mode-mask.mask-editing #mask-canvas {
+    cursor: none;
+}
+
 #overlay-svg {
     position: absolute;
     top: 0;
@@ -77,7 +122,9 @@
 #map-container.placing-control .control-pair-group:hover .control-circle,
 #map-container.placing-control .control-pair-group:hover line:not(.hit):not(.arrow),
 #map-container.drawing-route .control-pair-group:not(.selected):hover .control-circle,
-#map-container.drawing-route .control-pair-group:not(.selected):hover line:not(.hit):not(.arrow) {
+#map-container.drawing-route .control-pair-group:not(.selected):hover line:not(.hit):not(.arrow),
+#map-container.mode-block .control-pair-group:hover .control-circle,
+#map-container.mode-block .control-pair-group:hover line:not(.hit):not(.arrow) {
     stroke: rgb(160, 51, 240);
     stroke-width: 3px;
 }

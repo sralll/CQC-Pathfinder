@@ -600,7 +600,7 @@ tr:hover td { background: #222; }
     background: #181818;
     color: #777;
     font-size: 0.95em;
-    animation: slideDownFade 0.25s ease;
+    animation: slideDownFade 1s ease;
 }
 
 .version-row:hover td { background: #202020; }
@@ -610,6 +610,133 @@ tr:hover td { background: #222; }
     white-space: nowrap;
     text-overflow: ellipsis;
 }
+
+.version-cell { padding: 0 !important; }
+
+.version-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.88em;
+}
+
+.version-table th {
+    padding: 5px 8px;
+    color: #555;
+    font-weight: 600;
+    font-size: 0.85em;
+    background: #141414;
+    border-bottom: 1px solid #252525;
+    text-align: left;
+}
+
+.version-table td {
+    padding: 5px 8px;
+    color: #888;
+    background: #181818;
+    border-bottom: 1px solid #1e1e1e;
+}
+
+.version-table tr:hover td { background: #1f1f1f; color: #bbb; }
+
+.version-loading, .version-empty {
+    padding: 8px 14px !important;
+    color: #555;
+    font-style: italic;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.version-trigger {
+    font-size: 10px;
+    color: #444;
+    background: #222;
+    border-radius: 3px;
+    padding: 1px 5px;
+}
+
+.version-btn-open svg { transform: rotate(180deg); }
+
+.version-load-more {
+    text-align: center;
+    padding: 6px !important;
+    color: #555;
+    font-size: 11px;
+    cursor: pointer;
+    font-style: italic;
+    border-top: 1px solid #222 !important;
+}
+.version-load-more:hover { color: #999 !important; background: #1e1e1e !important; }
+
+@keyframes spin { to { transform: rotate(360deg); } }
+x-icon.spin svg { animation: spin 1s linear infinite; }
+
+/* =========================================================
+   MASK GENERATION PROGRESS BAR
+========================================================= */
+
+#mask-gen-bar {
+    position: absolute;
+    top: 14px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 360px;
+    z-index: 500;
+    background: #111;
+    border: 1px solid #333;
+    border-radius: 8px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+    display: flex;
+    align-items: center;
+    padding: 10px 12px;
+    gap: 10px;
+    font-size: 12px;
+    color: #ccc;
+}
+
+#mask-gen-content {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    min-width: 0;
+}
+
+#mask-gen-text {
+    font-size: 11px;
+    color: #aaa;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+#mask-gen-progress {
+    width: 100%;
+    height: 6px;
+    appearance: none;
+    border: none;
+    border-radius: 3px;
+    background: #2a2a2a;
+    accent-color: #ff9800;
+}
+
+#mask-gen-progress::-webkit-progress-bar       { background: #2a2a2a; border-radius: 3px; }
+#mask-gen-progress::-webkit-progress-value     { background: #ff9800; border-radius: 3px; }
+#mask-gen-progress::-moz-progress-bar          { background: #ff9800; border-radius: 3px; }
+
+#mask-gen-cancel {
+    background: transparent;
+    border: 1px solid #444;
+    border-radius: 4px;
+    color: #888;
+    font-size: 11px;
+    padding: 2px 7px;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: color 0.12s, border-color 0.12s;
+}
+
+#mask-gen-cancel:hover { color: #ff6666; border-color: #ff6666; }
 
 @keyframes slideDownFade {
     from { opacity: 0; transform: translateY(-8px) scaleY(0.96); }
@@ -874,6 +1001,25 @@ tr:hover td { background: #222; }
     padding-left: 22px;
 }
 
+.mask-slider-row {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.mask-slider-label {
+    font-size: 16px;
+    color: #888;
+}
+
+.mask-slider-row input[type="range"] {
+    flex: 1;
+    accent-color: #ff9800;
+    cursor: pointer;
+}
+
+.mask-slider-row input[type="range"]:active { cursor: grabbing; }
+
 .cp-add-btn {
     width: 100%;
     padding: 7px 8px;
@@ -964,7 +1110,6 @@ tr:hover td { background: #222; }
 .cp-row-btns {
     display: flex;
     flex-shrink: 0;
-    gap: 3px;
 }
 
 .cp-mode-btn {
@@ -973,14 +1118,17 @@ tr:hover td { background: #222; }
     display: flex;
     align-items: center;
     justify-content: center;
-    background: transparent;
+    background: #181818;
     border: 1px solid #3a3a3a;
-    border-radius: 4px;
+    border-radius: 0;
     color: #666;
     font-size: 11px;
     cursor: pointer;
-    transition: color 0.12s, background 0.12s, border-color 0.12s;
+    transition: color 0.2s, background 0.2s, border-color 0.2s;
 }
+
+.cp-mode-btn:first-child { border-radius: 4px 0 0 4px; }
+.cp-mode-btn:last-child  { border-radius: 0 4px 4px 0; border-left: none; }
 
 .cp-mode-btn:hover { border-color: #777; color: #ccc; }
 
@@ -1077,7 +1225,7 @@ tr:hover td { background: #222; }
 .cp-route-row.selected .route-elevation-label { color: #777; }
 
 .route-elevation-input {
-    width: 36px;
+    width: 25px;
     height: 18px;
     padding: 0 3px;
     background: #1e1e1e;

@@ -11,7 +11,7 @@ class Migration(migrations.Migration):
     initial = True
 
     dependencies = [
-        ("project", "0004_create_editor_settings_for_existing_users"),
+        ("project", "0003_create_editor_settings_for_existing_users"),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]
 

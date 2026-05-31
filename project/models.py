@@ -108,10 +108,12 @@ class FileSnapshot(models.Model):
     map_file = models.CharField(max_length=255, blank=True)
     has_mask = models.BooleanField(default=False)
     blocked_terrain = models.JSONField(null=True, blank=True)
-    control_pairs = models.JSONField()  # full CP+route data as JSON blob
+    control_pairs   = models.JSONField()  # full CP+route data as JSON blob
+    n_control_pairs = models.IntegerField(default=0)
+    n_routes        = models.IntegerField(default=0)
 
     class Meta:
         ordering = ['-created_at']
 
     def __str__(self):
-        return f"{self.file.name} — {self.label} — {self.created_at}"
+        return f"{self.file.name} — {self.created_at}"

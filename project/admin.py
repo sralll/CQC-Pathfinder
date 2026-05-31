@@ -2,7 +2,7 @@ from django.contrib import admin
 from django.contrib.admin.views.decorators import staff_member_required
 from django.shortcuts import render, redirect
 from django.urls import path
-from .models import File, ControlPair, Label
+from .models import File, ControlPair, Label, FileSnapshot
 from django.db.models import Count
 from account.models import Profile
 
@@ -44,6 +44,27 @@ class FileAdmin(admin.ModelAdmin):
     def has_delete_permission(self, request, obj=None):
         return request.user.is_superuser
     
+@admin.register(FileSnapshot)
+class FileSnapshotAdmin(admin.ModelAdmin):
+    list_display  = ("file", "trigger", "n_control_pairs", "n_routes", "created_at", "created_by")
+    list_filter   = ("trigger",)
+    search_fields = ("file__name", "trigger", "created_by__username")
+    readonly_fields = (
+        "file", "created_at", "created_by",
+        "trigger", "scale", "map_file", "has_mask",
+        "blocked_terrain", "control_pairs",
+        "n_control_pairs", "n_routes",
+    )
+    ordering = ("-created_at",)
+
+    def has_add_permission(self, request):
+        return False
+    def has_change_permission(self, request, obj=None):
+        return False
+    def has_delete_permission(self, request, obj=None):
+        return request.user.is_superuser
+
+
 @admin.register(Label)
 class LabelAdmin(admin.ModelAdmin):
     list_display = (

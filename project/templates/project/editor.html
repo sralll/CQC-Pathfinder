@@ -58,6 +58,17 @@
     <aside id="overview-sidebar">
         <div id="sidebar-top">
             <div id="cp-list"></div>
+            <div id="block-list"></div>
+            <div id="mask-controls">
+                <div class="mask-slider-row">
+                    <label class="mask-slider-label">Füllung</label>
+                    <input type="range" id="mask-opacity-slider" min="0" max="1" step="0.01" value="0.8">
+                </div>
+                <div class="mask-slider-row">
+                    <label class="mask-slider-label">Tool-Grösse</label>
+                    <input type="range" id="mask-size-slider" min="1" max="15" step="1" value="5">
+                </div>
+            </div>
         </div>
 
         <div id="sidebar-bottom">
@@ -143,12 +154,29 @@
     </aside>
 
     <div id="map-container">
+        <div id="mask-gen-bar" style="display:none">
+            <x-icon name="spinner" class="spin" size="14px"></x-icon>
+            <div id="mask-gen-content">
+                <span id="mask-gen-text">Maske wird generiert…</span>
+                <progress id="mask-gen-progress" value="0" max="100"></progress>
+            </div>
+            <button id="mask-gen-cancel" title="Abbrechen">✕</button>
+        </div>
         <div id="map-background"></div>
         <div id="camera">
             <div id="map-scale-layer">
                 <img id="map-img" draggable="false">
+                <canvas id="mask-canvas"></canvas>
             </div>
             <svg id="overlay-svg">
+                <defs>
+                    <pattern id="block-hatch" x="0" y="0" width="8" height="8"
+                             patternUnits="userSpaceOnUse"
+                             patternTransform="rotate(45 0 0)">
+                        <line x1="0" y1="0" x2="0" y2="8" stroke="rgb(160, 51, 240)" stroke-width="3"/>
+                        <line x1="0" y1="0" x2="8" y2="0" stroke="rgb(160, 51, 240)" stroke-width="3"/>
+                    </pattern>
+                </defs>
                 <g id="viewport">
                     <g id="route-layer"></g>
                     <g id="edit-layer"></g>
@@ -165,6 +193,8 @@
         </div>
     </div>
 </div>
+
+<div id="mask-brush-cursor"></div>
 
 <!-- PROJECT MODAL -->
 <div id="modal-project" class="modal">

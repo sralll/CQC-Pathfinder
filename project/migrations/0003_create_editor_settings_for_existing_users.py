@@ -8,7 +8,7 @@ def create_settings(apps, schema_editor):
 
 class Migration(migrations.Migration):
     dependencies = [
-        ('project', '0003_change_last_edited_field_to_autonow'),
+        ('project', '0002_migrate_data_from_publishedfile'),
         ('account', '0002_migrate_data_from_accounts'),
     ]
     operations = [

@@ -47,7 +47,7 @@ class Migration(migrations.Migration):
     dependencies = [
         ('results', '0001_initial'),
         ('play', '0006_userresult_longest_route_runtime'),
-        ('project', '0004_create_editor_settings_for_existing_users'),
+        ('project', '0003_create_editor_settings_for_existing_users'),
     ]
 
     operations = [

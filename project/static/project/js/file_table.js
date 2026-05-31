@@ -43,15 +43,21 @@ export class FileTable {
         console.log("delete", id);
     }
 
-    async openFile(id) {
-        const res = await fetch(`/editor/open/${id}/`);
-        const data = await res.json();
-        if (data.error) { console.error('Error loading file:', data.error); return; }
-
+    _applyProject(data) {
         closeFileModal();
+        clearAllLayers();
+        MaskLayer.clearMask();
+        maskGenInProgress = false;
+        hideMaskGenBar();
         project = data.project;
         applyProjectScale();
         updateCameraTransform({ x: 0, y: 0, zoom: 0.67 });
+
+        if (project.has_mask) {
+            MaskLayer.loadMask(project.map_file);
+        } else if (project.map_file && project.scale) {
+            startMaskGeneration(project.map_file, project.scale);
+        }
 
         showMapSpinner();
 
@@ -60,12 +66,26 @@ export class FileTable {
         img.onload = () => {
             hideMapSpinner();
             img.style.display = 'block';
+            MaskLayer.applyMapDimensions();
             drawCourse();
+            undoStack = []; redoStack = []; actionCount = 0;
+            pushUndoState();
         };
-
-        img.onerror = () => {
-            hideMapSpinner();
-        };
+        img.onerror = () => { hideMapSpinner(); };
         img.src = `/editor/map/${project.map_file}`;
+    }
+
+    async openFile(id) {
+        const res = await fetch(`/editor/open/${id}/`);
+        const data = await res.json();
+        if (data.error) { console.error('Error loading file:', data.error); return; }
+        this._applyProject(data);
+    }
+
+    async loadSnapshot(snapshotId) {
+        const res  = await fetch(`/editor/snapshots/${snapshotId}/load/`);
+        const data = await res.json();
+        if (data.error) { console.error('Error loading snapshot:', data.error); return; }
+        this._applyProject(data);
     }
 }
