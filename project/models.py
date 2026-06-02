@@ -2,8 +2,9 @@ from django.db import models
 from django.utils import timezone
 
 class Label(models.Model):
-    name = models.CharField(max_length=100)
-    team = models.ForeignKey('account.Team', on_delete=models.CASCADE, related_name='labels')
+    name  = models.CharField(max_length=100)
+    team  = models.ForeignKey('account.Team', on_delete=models.CASCADE, related_name='labels')
+    color = models.CharField(max_length=7, default='#5b8db8')
 
     class Meta:
         unique_together = ('name', 'team')
@@ -25,6 +26,9 @@ class File(models.Model):
     blocked_terrain = models.JSONField(null=True, blank=True)
     last_edited = models.DateTimeField(default=timezone.now)
     batch_progress = models.JSONField(null=True, blank=True)
+    locked_by  = models.ForeignKey('auth.User', on_delete=models.SET_NULL,
+                                    null=True, blank=True, related_name='locked_files')
+    locked_at  = models.DateTimeField(null=True, blank=True)
 
     deleted = models.BooleanField(default=False)
     
@@ -101,8 +105,13 @@ class FileSnapshot(models.Model):
     file = models.ForeignKey(File, on_delete=models.CASCADE, related_name='snapshots')
     created_at = models.DateTimeField(auto_now_add=True)
     created_by = models.ForeignKey('auth.User', on_delete=models.SET_NULL, null=True)
-    trigger = models.CharField(max_length=100, blank=True)  # e.g. "autosave", "manual save", "before delete"
-    
+    trigger = models.CharField(max_length=100, blank=True)
+
+    # File metadata at snapshot time
+    name   = models.CharField(max_length=255, blank=True)
+    label  = models.ForeignKey(Label, on_delete=models.SET_NULL, null=True, blank=True, related_name='+')
+    author = models.CharField(max_length=255, blank=True)
+
     # Snapshot of the full state at this point
     scale = models.FloatField(null=True, blank=True)
     map_file = models.CharField(max_length=255, blank=True)

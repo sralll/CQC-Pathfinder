@@ -19,6 +19,137 @@ let filesLoadingPromise = null;
 let currentProjectName = "Neues Projekt";
 
 /* =========================================================
+    EDITOR SETTINGS
+========================================================= */
+
+let editorSettings = { auto_pathfind: false, auto_jump: true };
+
+/* =========================================================
+    READ-ONLY STATE
+========================================================= */
+
+let readOnly = false;
+
+function setReadOnly(isReadOnly, lockedByName) {
+    readOnly = !!isReadOnly;
+    document.getElementById("read-only-banner")?.remove();
+
+    // Keep filename input in sync with read-only state
+    updateFilenameInput();
+
+    // Fade and disable write-only menu items in Projekte dropdown
+    const disabledIds = ["nav-save-project"];
+    disabledIds.forEach(id => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.style.opacity        = readOnly ? "0.35" : "";
+        el.style.pointerEvents  = readOnly ? "none" : "";
+        el.style.cursor         = readOnly ? "default" : "";
+    });
+
+    if (readOnly) {
+        setTool(ToolMode.NONE);
+        const bar = document.createElement("div");
+        bar.id = "read-only-banner";
+        bar.style.cssText = `
+            position:fixed;top:28px;left:50%;transform:translateX(-50%);
+            background:#5a3a00;color:#ffd;padding:6px 16px;border-radius:0 0 6px 6px;
+            font-size:12px;z-index:9999;display:flex;align-items:center;gap:8px;pointer-events:none;
+        `;
+        bar.innerHTML = `<span>🔒 Schreibgeschützt — ${lockedByName || 'jemand anderes'} bearbeitet diese Datei</span>`;
+        document.body.appendChild(bar);
+    }
+}
+window.setReadOnly = setReadOnly;
+
+/* =========================================================
+    NAVBAR FILENAME INPUT (rename)
+========================================================= */
+
+function initFilenameInput() {
+    const input = document.getElementById("navbar-filename-input");
+    if (!input) return;
+
+    // Sync project.name on every keystroke
+    input.addEventListener("input", () => {
+        if (project.id) project.name = input.value;
+    });
+
+    // Confirm rename on Enter
+    input.addEventListener("keydown", e => {
+        if (e.key === "Enter") { e.preventDefault(); input.blur(); }
+    });
+
+    // Save on blur — validate uniqueness first
+    input.addEventListener("blur", () => {
+        if (!project.id) return;
+        const newName = input.value.trim();
+        if (!newName) {
+            // Empty — revert
+            input.value = project.name;
+            return;
+        }
+        // Check for name collision with another file
+        const conflict = (projectFiles || []).some(
+            f => f.name === newName && f.id !== project.id
+        );
+        if (conflict) {
+            input.classList.add("input-error");
+            input.value  = project.name;           // revert display
+            // revert json too (project.name was set on input event)
+            // find original name from projectFiles
+            const original = (projectFiles || []).find(f => f.id === project.id);
+            if (original) project.name = original.name;
+            input.value = project.name;
+            setTimeout(() => input.classList.remove("input-error"), 1200);
+            return;
+        }
+        project.name = newName;
+        input.value  = newName;
+        saveFile("rename");  // server creates snapshot via _trigger = "rename"
+    });
+}
+
+function updateFilenameInput() {
+    const input = document.getElementById("navbar-filename-input");
+    if (!input) return;
+    input.value    = project.id ? (project.name || "") : "";
+    input.disabled = !project.id || readOnly;
+}
+window.updateFilenameInput = updateFilenameInput;
+
+async function loadEditorSettings() {
+    try {
+        const res  = await fetch('/editor/settings/');
+        const data = await res.json();
+        if (data.auto_pathfind !== undefined) editorSettings.auto_pathfind = data.auto_pathfind;
+        if (data.auto_jump     !== undefined) editorSettings.auto_jump     = data.auto_jump;
+        _applySettingsUI();
+    } catch (e) { console.warn('Failed to load editor settings', e); }
+}
+
+function _applySettingsUI() {
+    const apEl = document.getElementById('toggle-auto-pathfind');
+    const ajEl = document.getElementById('toggle-auto-jump');
+    if (apEl) apEl.checked = editorSettings.auto_pathfind;
+    if (ajEl) ajEl.checked = editorSettings.auto_jump;
+}
+
+async function toggleEditorSetting(setting) {
+    const csrf = document.cookie.match(/csrftoken=([^;]+)/)?.[1] ?? "";
+    try {
+        const res  = await fetch('/editor/settings/toggle/', {
+            method:  'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf },
+            body:    JSON.stringify({ setting }),
+        });
+        const data = await res.json();
+        if (data.auto_pathfind !== undefined) editorSettings.auto_pathfind = data.auto_pathfind;
+        if (data.auto_jump     !== undefined) editorSettings.auto_jump     = data.auto_jump;
+    } catch (e) { console.warn('Failed to toggle setting', e); }
+}
+
+/* =========================================================
     UNDO / REDO & AUTOSAVE
 ========================================================= */
 
@@ -29,7 +160,7 @@ let undoStack   = [];
 let redoStack   = [];
 let actionCount = 0;
 
-function captureState() {
+function captureState(label = "") {
     return {
         project:       structuredClone(project),
         selection:     { ncp: selection.ncp, nr: selection.nr },
@@ -37,15 +168,17 @@ function captureState() {
         subtools:      structuredClone(activeSubtool),
         inNewRoute:    activeTool === NewRouteTool,
         newRouteCpNcp: activeTool === NewRouteTool ? selection.ncp : null,
+        label,
     };
 }
 
-function pushUndoState(trigger = "action") {
-    undoStack.push(captureState());
+function pushUndoState(label = "Aktion") {
+    undoStack.push(captureState(label));
     if (undoStack.length > UNDO_MAX) undoStack.shift();
     redoStack = [];
     actionCount++;
-    if (actionCount % SNAPSHOT_EVERY === 0) saveSnapshot();
+    if (actionCount % SNAPSHOT_EVERY === 0) saveSnapshot(label);
+    updateUndoMenu();
 }
 
 function restoreState(state) {
@@ -66,22 +199,110 @@ function restoreState(state) {
 
 function undo() {
     if (!undoStack.length) return;
-    redoStack.push(captureState());
+    redoStack.push(captureState("Rückgängig"));
     restoreState(undoStack.pop());
     saveFile("undo");
+    updateUndoMenu();
 }
 
 function redo() {
     if (!redoStack.length) return;
-    undoStack.push(captureState());
+    undoStack.push(captureState("Wiederholen"));
     restoreState(redoStack.pop());
     saveFile("redo");
+    updateUndoMenu();
 }
+
+function updateUndoMenu() {
+    const el = document.getElementById("undo-dropdown");
+    if (!el) return;
+    if (!undoStack.length) {
+        el.innerHTML = `<div style="color:#555;font-style:italic;padding:7px 14px;">Keine Aktionen</div>`;
+        return;
+    }
+    el.innerHTML = [...undoStack].reverse().map((state, i) => `
+        <div class="undo-entry" data-undo-index="${i}"
+             style="padding:5px 14px;color:${i === 0 ? '#ddd' : '#888'};font-size:12px;cursor:pointer;white-space:nowrap;">
+            ${state.label || '—'}
+        </div>`).join('');
+}
+
+// Jump to a specific point in the undo stack (reversedIndex = 0 is most recent)
+function jumpToUndoState(reversedIndex) {
+    if (reversedIndex < 0 || reversedIndex >= undoStack.length) return;
+    const targetIndex = undoStack.length - 1 - reversedIndex;
+    const targetState = undoStack[targetIndex];
+    undoStack = undoStack.slice(0, targetIndex);   // remove target + everything above it
+    redoStack = [];
+    restoreState(targetState);
+    saveFile("jump");
+    updateUndoMenu();
+}
+
+// Delegate clicks on undo entries + scroll to top when menu opens
+document.addEventListener("DOMContentLoaded", () => {
+    // ── Undo dropdown ─────────────────────────────────────
+    const dropdown = document.getElementById("undo-dropdown");
+    if (dropdown) {
+        const menuItem = document.getElementById("menu-history");
+        if (menuItem) {
+            menuItem.addEventListener("mouseenter", () => { dropdown.scrollTop = 0; });
+        }
+        dropdown.addEventListener("click", e => {
+            const entry = e.target.closest(".undo-entry");
+            if (!entry) return;
+            const idx = parseInt(entry.dataset.undoIndex, 10);
+            if (!isNaN(idx)) jumpToUndoState(idx);
+        });
+        dropdown.addEventListener("mouseover", e => {
+            const entry = e.target.closest(".undo-entry");
+            if (!entry) return;
+            dropdown.querySelectorAll(".undo-entry").forEach(el => el.style.background = "");
+            entry.style.background = "#2a2a2a";
+        });
+        dropdown.addEventListener("mouseleave", () => {
+            dropdown.querySelectorAll(".undo-entry").forEach(el => el.style.background = "");
+        });
+    }
+
+    // ── Filename rename input ─────────────────────────────
+    initFilenameInput();
+
+    // ── Settings toggles ──────────────────────────────────
+    loadEditorSettings();
+    document.getElementById('toggle-auto-pathfind')?.addEventListener('change', () => {
+        toggleEditorSetting('auto_pathfind');
+    });
+    document.getElementById('toggle-auto-jump')?.addEventListener('change', () => {
+        toggleEditorSetting('auto_jump');
+    });
+
+    // ── P key → open file modal ───────────────────────────
+    window.addEventListener("keydown", e => {
+        if (e.ctrlKey || e.metaKey || e.altKey) return;
+        if (e.target.matches('input, textarea, select')) return;
+        if (e.key === 'p' || e.key === 'P') {
+            e.preventDefault();
+            if (typeof window.openFileModal === 'function') window.openFileModal();
+        }
+    }, true);
+});
 
 let _saveQueue    = Promise.resolve();
 let _pendingSaves = 0;
 
+function checkinCurrentFile() {
+    if (!project?.id) return;
+    const csrf = document.cookie.match(/csrftoken=([^;]+)/)?.[1] ?? "";
+    const fd = new FormData();
+    fd.append('file_id', project.id);
+    fd.append('csrfmiddlewaretoken', csrf);
+    navigator.sendBeacon('/editor/checkin/', fd);
+}
+window.checkinCurrentFile = checkinCurrentFile;
+
 window.addEventListener("beforeunload", e => {
+    checkinCurrentFile();
     if (_pendingSaves > 0) {
         e.preventDefault();
         e.returnValue = "Autosave noch nicht abgeschlossen. Bitte auf der Seite bleiben.";
@@ -106,6 +327,7 @@ function _projectBody() {
 }
 
 function saveFile(trigger = "save") {
+    if (readOnly) return;
     _pendingSaves++;
     _saveQueue = _saveQueue.then(async () => {
         const csrf = document.cookie.match(/csrftoken=([^;]+)/)?.[1] ?? "";
@@ -113,7 +335,7 @@ function saveFile(trigger = "save") {
             const res  = await fetch("/editor/save/", {
                 method:  "POST",
                 headers: { "Content-Type": "application/json", "X-CSRFToken": csrf },
-                body:    JSON.stringify(_projectBody()),
+                body:    JSON.stringify({ ..._projectBody(), _trigger: trigger }),
             });
             const data = await res.json();
             if (res.status === 409) {
@@ -153,6 +375,9 @@ function saveFile(trigger = "save") {
                 });
             }
             _clearSaveFailedWarning();
+            if (trigger === "save" || trigger === "manual") {
+                window.refreshFileTable?.();
+            }
         } catch (e) {
             console.warn("saveFile failed:", e);
             _showSaveFailedWarning();
@@ -192,7 +417,9 @@ window.addEventListener("online", () => {
     }
 });
 
+window.saveSnapshot = saveSnapshot;
 function saveSnapshot(trigger = "autosave") {
+    if (readOnly) return;
     _saveQueue = _saveQueue.then(async () => {
         const csrf = document.cookie.match(/csrftoken=([^;]+)/)?.[1] ?? "";
         try {
@@ -211,7 +438,7 @@ function saveSnapshot(trigger = "autosave") {
 ========================================================= */
 
 function _saveElement(payloadOrFn) {
-    if (!project.id) return Promise.resolve(null);
+    if (readOnly || !project.id) return Promise.resolve(null);
     _pendingSaves++;
     _saveQueue = _saveQueue.then(async () => {
         // Resolve payload lazily so callers can reference cp.id / route.id
@@ -258,7 +485,7 @@ function saveBlockedTerrain() {
 }
 
 function _deleteElement(payloadOrFn) {
-    if (!project.id) return;
+    if (readOnly || !project.id) return;
     _pendingSaves++;
     _saveQueue = _saveQueue.then(async () => {
         const payload = typeof payloadOrFn === 'function' ? payloadOrFn() : payloadOrFn;
@@ -287,11 +514,48 @@ function deleteRoute(cp, route) {
 }
 
 // Keyboard shortcuts for undo/redo
+async function duplicateFile() {
+    if (!project.id) return;
+
+    // Generate a unique name: "Name Kopie", "Name Kopie 2", etc.
+    const baseName = project.name.replace(/ Kopie( \d+)?$/, "");
+    const existing = new Set((projectFiles || []).map(f => f.name));
+    let dupName = `${baseName} Kopie`;
+    let counter = 2;
+    while (existing.has(dupName)) { dupName = `${baseName} Kopie ${counter++}`; }
+
+    const csrf = document.cookie.match(/csrftoken=([^;]+)/)?.[1] ?? "";
+    try {
+        const body = { ..._projectBody(), id: null, last_edited: null, name: dupName };
+        const res  = await fetch("/editor/save/", {
+            method:  "POST",
+            headers: { "Content-Type": "application/json", "X-CSRFToken": csrf },
+            body:    JSON.stringify(body),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.id) { console.error("Duplicate failed", data); return; }
+
+        // Switch the editor to the new duplicate
+        const openRes  = await fetch(`/editor/open/${data.id}/`);
+        const openData = await openRes.json();
+        if (openData.error) { console.error("Open duplicate failed", openData); return; }
+
+        // Use file_table's _applyProject via the table instance
+        window._fileTable?._applyProject(openData);
+        window.refreshFileTable?.();
+    } catch (e) {
+        console.error("duplicateFile failed:", e);
+    }
+}
+
 window.addEventListener("keydown", e => {
     if (!(e.ctrlKey || e.metaKey)) return;
     if (e.key === "z" && !e.shiftKey) { e.preventDefault(); undo(); }
     if (e.key === "y" || (e.key === "z" && e.shiftKey)) { e.preventDefault(); redo(); }
-}, true);  // capture phase so it fires before tool keydown handlers
+    if (e.key === "s") { e.preventDefault(); if (!readOnly) saveFile("manual"); }
+    if (e.key === "n") { e.preventDefault(); if (!readOnly) createFile(); }
+    if (e.key === "d") { e.preventDefault(); duplicateFile(); }
+}, true);  // capture phase so it fires before tool keydown handlers and overrides browser defaults
 
 /* =========================================================
     CAMERA STATE
@@ -446,7 +710,7 @@ const ControlPairTool = (() => {
         const pointType = drag.pointType;
         const point     = cp[pointType];
         const moved     = Math.hypot(point.x - drag.originX, point.y - drag.originY);
-        if (moved > 0) pushUndoState();
+        if (moved > 0) pushUndoState("Posten verschoben");
         drag = null;
         mapContainer.classList.remove("dragging");
         mapContainer.style.cursor = "default";
@@ -642,7 +906,7 @@ const RouteEditTool = (() => {
             hideCrosshair();
             if (route) {
                 calcRouteLength(route); calcRouteRunTime(route);
-                pushUndoState("route-edit");
+                pushUndoState("Route bearbeitet");
                 if (cpRef) saveRoute(cpRef, route);
             }
             reset();
@@ -739,7 +1003,7 @@ const NewRouteTool = (() => {
     }
 
     function completeRoute() {
-        pushUndoState();
+        pushUndoState("Route erstellt");
         calcRouteLength(route);
         route.elevation = 0;
         calcRouteRunTime(route);
@@ -1201,7 +1465,7 @@ const MaskTool = (() => {
             painting = false;
             MaskLayer.resetStroke();
             if (wasPainting && project.map_file) {
-                pushUndoState("mask-edit");
+                pushUndoState("Maske bearbeitet");
                 MaskLayer.saveMask(project.map_file);
                 project.has_mask = true;
             }
@@ -1227,6 +1491,7 @@ function ensureBlockedTerrain() {
 }
 
 function centerOnBlockObject(pts) {
+    if (!editorSettings.auto_jump) return;
     // pts = [{x,y}, ...]
     const padding = 80;
     const minX = Math.min(...pts.map(p => p.x));
@@ -1442,7 +1707,7 @@ const BlockTool = (() => {
             if (!lineStart) {
                 lineStart = { x: pt.x, y: pt.y };
             } else {
-                pushUndoState();
+                pushUndoState("Sperrlinie hinzugefügt");
                 project.blocked_terrain.lines.push({ start: lineStart, end: { x: pt.x, y: pt.y } });
                 lineStart = null;
                 clearEditLayer();
@@ -1453,7 +1718,7 @@ const BlockTool = (() => {
 
         if (S === "polygon") {
             if (polyPoints.length >= 3 && pt === polyPoints[0]) {
-                pushUndoState();
+                pushUndoState("Sperrgebiet hinzugefügt");
                 project.blocked_terrain.areas.push({ points: [...polyPoints] });
                 polyPoints = [];
                 clearEditLayer();
@@ -1469,7 +1734,7 @@ const BlockTool = (() => {
             if (hit) {
                 const idx  = Number(hit.dataset.blockIdx);
                 const type = hit.dataset.blockType;
-                pushUndoState();
+                pushUndoState("Sperrelement gelöscht");
                 if (type === "line")  project.blocked_terrain.lines.splice(idx, 1);
                 if (type === "area")  project.blocked_terrain.areas.splice(idx, 1);
                 drawBlockedTerrain();
@@ -1680,7 +1945,7 @@ const PlaceControlTool = (() => {
                 updateCPList();
             } else {
                 const snapped = snapToControlPoints(pt);
-                pushUndoState();
+                pushUndoState(isOverwrite ? "Posten neu gezeichnet" : "Posten erstellt");
                 cp.start = tempStart;
                 cp.ziel  = { x: snapped.x, y: snapped.y };
                 if (!isOverwrite) {
@@ -2210,6 +2475,7 @@ async function loadFiles() {
             window.activeTeam = data.active_team;
             projectFiles  = data.files || [];
             filteredFiles = [...projectFiles];
+            window.allLabels  = data.labels || [];
         } catch (err) {
             console.error("Failed to load files:", err);
         } finally {
@@ -2313,7 +2579,6 @@ function loadMap(filename) {
     document.getElementById('map-img').src = `/editor/map/${filename}`;
 }
 
-function copyFile()          { alert("Datei kopieren (noch nicht implementiert)"); }
 function createLabel()       { alert("Label erstellen (noch nicht implementiert)"); }
 function uploadSelectedMap() { alert("Map hochladen (noch nicht implementiert)"); }
 
@@ -2435,13 +2700,20 @@ function startNewPlacement() {
 }
 
 function startNewRoute() {
-    const cp = project.control_pairs.find(c => c.order === selection.ncp);
+    let cp = project.control_pairs.find(c => c.order === selection.ncp);
+    if (!cp && project.control_pairs.length) {
+        // Fall back to the last control pair if none is selected
+        cp = project.control_pairs[project.control_pairs.length - 1];
+        selection.ncp = cp.order;
+        updateCPList();
+    }
     if (!cp) return;
     setTool(ToolMode.ROUTE);
     activateTool(NewRouteTool.init(cp));
 }
 
 function addAndPlaceControlPair() {
+    if (readOnly) return;
     const selectedCp = project.control_pairs.find(c => c.order === selection.ncp);
     if (selectedCp) {
         setTool(ToolMode.CONTROL_PAIR);
@@ -2479,23 +2751,25 @@ function updateCPList() {
         row.dataset.ncp = cp.order;
 
         row.innerHTML = `
-            <span class="cp-grip" title="Drag to reorder"></span>
+            ${readOnly ? '' : `<span class="cp-grip" title="Drag to reorder"></span>`}
             <span class="cp-row-label">
-                <span class="cp-posten-text">Posten ${cp.order + 1}${cp === lastDraggedCp ? `<span class="cp-original-label">${lastDraggedFromOrder + 1}</span>` : ""}</span>
+                <span class="cp-posten-text">Posten ${cp.order + 1}</span>
                 <span class="cp-route-count">${cp.routes.length} Routen</span>
             </span>
             <div class="cp-row-btns">
-                <button class="cp-mode-btn ${cp.complex ? "active" : ""}" data-mode="multi" title="Multi-Route">
+                <button class="cp-mode-btn ${cp.complex ? "active" : ""}" data-mode="multi" title="Multi-Route"
+                    ${readOnly ? 'disabled' : ''}>
                     ${icon("m")}
                 </button>
-                <button class="cp-mode-btn ${!cp.complex ? "active" : ""}" data-mode="lr" title="Links/Rechts">
+                <button class="cp-mode-btn ${!cp.complex ? "active" : ""}" data-mode="lr" title="Links/Rechts"
+                    ${readOnly ? 'disabled' : ''}>
                     ${icon("arrows-split", undefined, "scaleY(-1)")}
                 </button>
             </div>
-            <button class="cp-delete-btn" title="Posten löschen">${icon("trash", "11px")}</button>
+            ${readOnly ? '' : `<button class="cp-delete-btn" title="Posten löschen">${icon("trash", "11px")}</button>`}
         `;
 
-        row.querySelector(".cp-grip").addEventListener("mousedown", e => {
+        row.querySelector(".cp-grip")?.addEventListener("mousedown", e => {
             e.preventDefault();
             e.stopPropagation();
             startCPDrag(e, cp);
@@ -2514,9 +2788,9 @@ function updateCPList() {
             }
         });
 
-        row.querySelector(".cp-delete-btn").addEventListener("click", e => {
+        row.querySelector(".cp-delete-btn")?.addEventListener("click", e => {
             e.stopPropagation();
-            pushUndoState();
+            pushUndoState("Posten gelöscht");
             deleteControlPair(cp);
             project.control_pairs = project.control_pairs.filter(c => c !== cp);
             project.control_pairs.forEach((c, i) => { c.order = i; });
@@ -2540,7 +2814,7 @@ function updateCPList() {
                     }
                     return;
                 }
-                pushUndoState();
+                pushUndoState("Postentyp geändert");
                 cp.complex = complex;
                 saveControlPair(cp);
                 updateCPList();
@@ -2591,7 +2865,7 @@ function updateCPList() {
 
                 rRow.querySelector(".cp-delete-btn").addEventListener("click", e => {
                     e.stopPropagation();
-                    pushUndoState();
+                    pushUndoState("Route gelöscht");
                     deleteRoute(cp, route);
                     cp.routes = cp.routes.filter(r => r !== route);
                     cp.routes.forEach((r, i) => { r.order = i; });
@@ -2619,6 +2893,7 @@ function updateCPList() {
                     const parsed = Number(val);
                     route.elevation = (val === "" || isNaN(parsed)) ? 0 : parsed;
                     calcRouteRunTime(route);
+                    pushUndoState("Höhe geändert");
                     saveRoute(cp, route);
                     updateCPList();
                 });
@@ -2667,10 +2942,8 @@ function updateCPList() {
 ========================================================= */
 
 let cpDrag              = null;
-let cpGhost             = null;
-let cpSpacer            = null;
-let lastDraggedCp       = null;
-let lastDraggedFromOrder = null;
+let cpGhost  = null;
+let cpSpacer = null;
 
 function startCPDrag(e, cp) {
     const selectedCp  = project.control_pairs.find(c => c.order === selection.ncp);
@@ -2763,6 +3036,8 @@ function onCPDragEnd() {
     arr.splice(insertIndex, 0, cp);
     arr.forEach((c, i) => { c.order = i; });
 
+    if (fromIndex !== insertIndex) pushUndoState("Postenreihenfolge geändert");
+
     // Bulk-reorder atomically (sequential saves would clash on the unique constraint)
     const orderPairs = arr.filter(c => c.id).map(c => ({ db_id: c.id, order: c.order }));
     if (orderPairs.length && project.id) {
@@ -2778,11 +3053,6 @@ function onCPDragEnd() {
             } catch (e) { console.warn("save-cp-order failed:", e); }
             finally    { _pendingSaves = Math.max(0, _pendingSaves - 1); }
         });
-    }
-
-    if (cp.order !== fromOrder) {
-        lastDraggedCp        = cp;
-        lastDraggedFromOrder = fromOrder;
     }
 
     if (selectedCp) selection.ncp = selectedCp.order;
@@ -2815,6 +3085,7 @@ function updateControlPairGroup(controlPair) {
 }
 
 function centerOnControlPair(order) {
+    if (!editorSettings.auto_jump) return;
     const cp = project.control_pairs.find(cp => cp.order === order);
     if (!cp?.start || !cp?.ziel) return;
 
@@ -3128,6 +3399,7 @@ subtoolPanel.addEventListener("wheel", e => {
 }, { passive: false });
 
 function setTool(mode) {
+    if (readOnly && mode !== ToolMode.NONE) return;
     currentToolMode = mode;
     activateTool(TOOLS[mode] ?? ViewTool);
 

@@ -10,6 +10,32 @@ from django.conf import settings
 import os
 import mimetypes
 
+
+def _create_db_snapshot(file, user, trigger):
+    """Create a FileSnapshot from the current DB state of a File."""
+    from .models import FileSnapshot
+    cps_qs   = file.control_pairs.prefetch_related('routes').order_by('order')
+    cp_data  = []
+    n_routes = 0
+    for cp in cps_qs:
+        routes = list(cp.routes.order_by('order'))
+        n_routes += len(routes)
+        cp_data.append({
+            'id': cp.id, 'order': cp.order,
+            'start': cp.start, 'ziel': cp.ziel, 'complex': cp.complex,
+            'routes': [{'id': r.id, 'order': r.order, 'rP': r.rP,
+                         'noA': r.noA, 'pos': r.pos, 'length': r.length,
+                         'run_time': r.run_time, 'elevation': r.elevation}
+                        for r in routes],
+        })
+    FileSnapshot.objects.create(
+        file=file, created_by=user, trigger=trigger,
+        name=file.name, label=file.label, author=file.author or '',
+        scale=file.scale, map_file=file.map_file, has_mask=file.has_mask,
+        blocked_terrain=file.blocked_terrain, control_pairs=cp_data,
+        n_control_pairs=len(cp_data), n_routes=n_routes,
+    )
+
 # open editor
 def editor(request):
     return render(request, 'project/editor.html')
@@ -35,7 +61,7 @@ def get_files(request):
             else:
                 qs = File.objects.none()
 
-        qs = qs.annotate(cp_count=Count('control_pairs'))
+        qs = qs.select_related('locked_by').annotate(cp_count=Count('control_pairs'))
         labels = Label.objects.filter(team=active_team)
 
         team_qs = File.objects.filter(deleted=False)
@@ -57,8 +83,18 @@ def get_files(request):
             .distinct()
         )
 
+        from django.utils import timezone as tz
+        from datetime import timedelta
+        LOCK_TIMEOUT = timedelta(minutes=15)
+
         files = []
         for obj in qs:
+            is_locked = bool(
+                obj.locked_by and
+                obj.locked_by != request.user and
+                obj.locked_at and
+                (tz.now() - obj.locked_at) < LOCK_TIMEOUT
+            )
             files.append({
                 'id': obj.id,
                 'name': obj.name,
@@ -68,8 +104,10 @@ def get_files(request):
                 'author': obj.author or '',
                 'team': obj.team.name if obj.team else '',
                 'editable': obj.team == active_team,
-                'label': {'id': obj.label.id, 'name': obj.label.name} if obj.label else None,
+                'label': {'id': obj.label.id, 'name': obj.label.name, 'color': obj.label.color} if obj.label else None,
                 'batch_progress': obj.batch_progress,
+                'is_locked': is_locked,
+                'locked_by_name': (obj.locked_by.first_name or obj.locked_by.username) if is_locked else None,
                 "can_edit": obj.team == request.user.profile.active_team,
                 'team_name': obj.team.name if obj.team else '',
                 'team_shared_pool': obj.team.shared_pool if obj.team else False,
@@ -79,7 +117,7 @@ def get_files(request):
             'files': files,
             'active_team': active_team.name if active_team else '',
             'shared_pool': active_team.shared_pool if active_team else False,
-            'labels': [{'id': l.id, 'name': l.name} for l in labels],
+            'labels': [{'id': l.id, 'name': l.name, 'color': l.color} for l in labels],
             'teams': list(filter(None, available_teams)),
         })
 
@@ -96,7 +134,7 @@ def open_file(request, file_id):
 
         file = get_object_or_404(
             File.objects
-            .select_related('team', 'label')
+            .select_related('team', 'label', 'locked_by')
             .prefetch_related(
                 Prefetch(
                     'control_pairs',
@@ -119,11 +157,33 @@ def open_file(request, file_id):
             if not (own or shared):
                 return JsonResponse({'error': 'Permission denied'}, status=403)
 
+        # Acquire the file lock — unless someone else holds a fresh lock
+        from django.utils import timezone as tz
+        from datetime import timedelta
+        LOCK_TIMEOUT = timedelta(minutes=15)
+        locked_by_other = (
+            file.locked_by and
+            file.locked_by != request.user and
+            file.locked_at and
+            (tz.now() - file.locked_at) < LOCK_TIMEOUT
+        )
+        if locked_by_other:
+            read_only      = True
+            locked_by_name = file.locked_by.first_name or file.locked_by.username
+        else:
+            read_only      = False
+            locked_by_name = None
+            file.locked_by = request.user
+            file.locked_at = tz.now()
+            file.save(update_fields=['locked_by', 'locked_at'])
+
         return JsonResponse({
             'project': {
                 'id': file.id,
                 'name':        file.name,
                 'last_edited': file.last_edited.isoformat() if file.last_edited else None,
+                'read_only':      read_only,
+                'locked_by_name': locked_by_name,
                 'scale': file.scale,
                 'scaled': file.scaled,
                 'map_file': file.map_file,
@@ -181,7 +241,10 @@ def toggle_publish(request, file_id):
         )
 
         file.published = not file.published
-        file.save()
+        file.save(update_fields=['published'])
+
+        _create_db_snapshot(file, request.user,
+                             'Veröffentlicht' if file.published else 'Verborgen')
 
         return JsonResponse({
             'published': file.published
@@ -250,6 +313,8 @@ def get_snapshots(request, file_id):
             'id', 'trigger', 'n_control_pairs', 'n_routes',
             'created_at', 'created_by__first_name',
             'map_file', 'scale',
+            'name', 'author',
+            'label__name', 'label__color',
         )
         return JsonResponse({'snapshots': list(snaps), 'has_more': not show_all and total > 10})
     except Exception as e:
@@ -303,21 +368,25 @@ def save_file(request):
         profile     = request.user.profile
         active_team = profile.active_team
         file_id     = data.get('id')
+        client_trigger = data.get('_trigger', '')
 
         # Decide: update existing or create new
-        client_last_edited = data.get('last_edited')
         file = None
         if file_id:
             try:
-                existing = File.objects.get(id=file_id, deleted=False)
+                existing = File.objects.select_related('locked_by').get(id=file_id, deleted=False)
                 if existing.team == active_team:
-                    # Optimistic locking: reject if file was modified since client opened it
-                    if client_last_edited and existing.last_edited:
-                        if existing.last_edited.isoformat() != client_last_edited:
-                            return JsonResponse({
-                                'error': 'conflict',
-                                'message': 'Diese Datei wurde von jemand anderem geändert. Bitte lade sie neu.',
-                            }, status=409)
+                    # Lock-based conflict: reject if someone else holds a fresh lock
+                    from datetime import timedelta
+                    LOCK_TIMEOUT = timedelta(minutes=15)
+                    if (existing.locked_by and existing.locked_by != request.user
+                            and existing.locked_at
+                            and (tz.now() - existing.locked_at) < LOCK_TIMEOUT):
+                        locker = existing.locked_by.first_name or existing.locked_by.username
+                        return JsonResponse({
+                            'error': 'conflict',
+                            'message': f'Diese Datei wird gerade von {locker} bearbeitet.',
+                        }, status=409)
                     file = existing          # same team → overwrite
                 # else: different team → fall through and create new
             except File.DoesNotExist:
@@ -327,13 +396,15 @@ def save_file(request):
             file = File(team=active_team,
                         author=request.user.first_name or request.user.username)
 
-        file.name           = data.get('name', 'Neues Projekt')
-        file.scale          = data.get('scale')
-        file.scaled         = data.get('scaled', False)
-        file.map_file       = data.get('map_file', '')
-        file.has_mask       = data.get('has_mask', False)
+        file.name            = data.get('name', 'Neues Projekt')
+        file.scale           = data.get('scale')
+        file.scaled          = data.get('scaled', False)
+        file.map_file        = data.get('map_file', '')
+        file.has_mask        = data.get('has_mask', False)
         file.blocked_terrain = data.get('blocked_terrain')
-        file.last_edited    = tz.now()
+        file.last_edited     = tz.now()
+        file.locked_by       = request.user   # refresh lock
+        file.locked_at       = tz.now()
         file.save()
 
         # Rebuild control pairs (delete → recreate)
@@ -361,6 +432,9 @@ def save_file(request):
                 )
                 route_ids.append({'order': r.order, 'id': r.id})
             id_map.append({'order': cp.order, 'id': cp.id, 'routes': route_ids})
+
+        if client_trigger == 'rename':
+            _create_db_snapshot(file, request.user, 'Name geändert')
 
         return JsonResponse({
             'status': 'ok',
@@ -391,9 +465,11 @@ def delete_element(request):
             return JsonResponse({'error': 'Permission denied'}, status=403)
 
         def _touch_file():
-            file.author = request.user.first_name or request.user.username
+            file.author      = request.user.first_name or request.user.username
             file.last_edited = tz.now()
-            file.save(update_fields=['author', 'last_edited'])
+            file.locked_by   = request.user
+            file.locked_at   = tz.now()
+            file.save(update_fields=['author', 'last_edited', 'locked_by', 'locked_at'])
             return file.last_edited.isoformat()
 
         if element_type == 'control_pair':
@@ -476,9 +552,11 @@ def save_element(request):
             cp.ziel    = cp_data.get('ziel')
             cp.complex = cp_data.get('complex', False)
             cp.save()
-            file.author = request.user.first_name or request.user.username
+            file.author      = request.user.first_name or request.user.username
             file.last_edited = tz.now()
-            file.save(update_fields=['author', 'last_edited'])
+            file.locked_by   = request.user
+            file.locked_at   = tz.now()
+            file.save(update_fields=['author', 'last_edited', 'locked_by', 'locked_at'])
             return JsonResponse({'db_id': cp.id, 'last_edited': file.last_edited.isoformat()})
 
         # ── Route ─────────────────────────────────────────────────────────
@@ -502,9 +580,11 @@ def save_element(request):
             route.run_time  = route_data.get('run_time')
             route.elevation = route_data.get('elevation')
             route.save()
-            file.author = request.user.first_name or request.user.username
+            file.author      = request.user.first_name or request.user.username
             file.last_edited = tz.now()
-            file.save(update_fields=['author', 'last_edited'])
+            file.locked_by   = request.user
+            file.locked_at   = tz.now()
+            file.save(update_fields=['author', 'last_edited', 'locked_by', 'locked_at'])
             return JsonResponse({'db_id': route.id, 'last_edited': file.last_edited.isoformat()})
 
         # ── Blocked terrain ───────────────────────────────────────────────
@@ -512,7 +592,9 @@ def save_element(request):
             file.blocked_terrain = data.get('blocked_terrain')
             file.author      = request.user.first_name or request.user.username
             file.last_edited = tz.now()
-            file.save(update_fields=['author', 'blocked_terrain', 'last_edited'])
+            file.locked_by   = request.user
+            file.locked_at   = tz.now()
+            file.save(update_fields=['author', 'blocked_terrain', 'last_edited', 'locked_by', 'locked_at'])
             return JsonResponse({'status': 'ok', 'last_edited': file.last_edited.isoformat()})
 
         return JsonResponse({'error': f'Unknown type: {element_type}'}, status=400)
@@ -543,6 +625,9 @@ def save_snapshot(request):
             file            = file,
             created_by      = request.user,
             trigger         = trigger,
+            name            = file.name,
+            label           = file.label,
+            author          = file.author or '',
             scale           = data.get('scale'),
             map_file        = data.get('map_file', ''),
             has_mask        = data.get('has_mask', False),
@@ -725,3 +810,158 @@ def generate_mask(request):
     except Exception as e:
         traceback.print_exc()
         return HttpResponse(str(e), status=500)
+
+
+@role_required('Trainer')
+@require_POST
+def assign_label(request, file_id):
+    import json as _json
+    try:
+        data        = _json.loads(request.body)
+        label_id    = data.get('label_id')
+        active_team = request.user.profile.active_team
+        file = get_object_or_404(File, id=file_id, deleted=False)
+        if file.team != active_team:
+            return JsonResponse({'error': 'Permission denied'}, status=403)
+        if label_id:
+            label      = get_object_or_404(Label, id=label_id, team=active_team)
+            file.label = label
+            file.save(update_fields=['label'])
+            _create_db_snapshot(file, request.user, 'Label')
+        else:
+            file.label = None
+            file.save(update_fields=['label'])
+            _create_db_snapshot(file, request.user, 'Label')
+        return JsonResponse({'status': 'ok'})
+    except Exception as e:
+        traceback.print_exc()
+        return JsonResponse({'error': str(e)}, status=500)
+
+
+@role_required('Trainer')
+@require_POST
+def create_label(request):
+    import json as _json
+    try:
+        data        = _json.loads(request.body)
+        name        = data.get('name', '').strip()[:25]
+        active_team = request.user.profile.active_team
+        if not name:
+            return JsonResponse({'error': 'Name erforderlich'}, status=400)
+        if not active_team:
+            return JsonResponse({'error': 'Kein aktives Team'}, status=403)
+        label, created = Label.objects.get_or_create(name=name, team=active_team,
+                                                     defaults={'color': '#5b8db8'})
+        if not created:
+            return JsonResponse({'error': 'Label existiert bereits'}, status=400)
+        return JsonResponse({'id': label.id, 'name': label.name, 'color': label.color})
+    except Exception as e:
+        traceback.print_exc()
+        return JsonResponse({'error': str(e)}, status=500)
+
+
+@role_required('Trainer')
+@require_POST
+def delete_label(request, label_id):
+    try:
+        active_team = request.user.profile.active_team
+        label = get_object_or_404(Label, id=label_id, team=active_team)
+        label.delete()
+        return JsonResponse({'status': 'ok'})
+    except Exception as e:
+        traceback.print_exc()
+        return JsonResponse({'error': str(e)}, status=500)
+
+
+@role_required('Trainer')
+@require_POST
+def update_label_color(request, label_id):
+    import json as _json
+    ALLOWED = {'#5b8db8','#5baa7a','#c2824a','#8a5bc2','#c2a24a',
+               '#4abac2','#c24a7a','#6b82c2','#7ac24a','#c24ab8'}
+    try:
+        data        = _json.loads(request.body)
+        color       = data.get('color', '')
+        active_team = request.user.profile.active_team
+        if color not in ALLOWED:
+            return JsonResponse({'error': 'Ungültige Farbe'}, status=400)
+        label = get_object_or_404(Label, id=label_id, team=active_team)
+        label.color = color
+        label.save(update_fields=['color'])
+        return JsonResponse({'status': 'ok', 'color': label.color})
+    except Exception as e:
+        traceback.print_exc()
+        return JsonResponse({'error': str(e)}, status=500)
+
+
+@role_required('Trainer')
+@require_POST
+def delete_project_file(request, file_id):
+    try:
+        file = get_object_or_404(File, id=file_id, deleted=False)
+        if file.team != request.user.profile.active_team:
+            return JsonResponse({'error': 'Permission denied'}, status=403)
+        file.soft_delete()
+        return JsonResponse({'status': 'ok'})
+    except Exception as e:
+        traceback.print_exc()
+        return JsonResponse({'error': str(e)}, status=500)
+
+
+@role_required('Trainer')
+@require_GET
+def get_editor_settings(request):
+    s = request.user.profile.editor_settings
+    return JsonResponse({
+        'auto_pathfind': s.auto_pathfind,
+        'auto_jump':     s.auto_jump,
+    })
+
+
+@role_required('Trainer')
+@require_POST
+def toggle_editor_setting(request):
+    import json as _json
+    try:
+        data    = _json.loads(request.body)
+        setting = data.get('setting')
+        s = request.user.profile.editor_settings
+        if setting == 'auto_pathfind':
+            s.auto_pathfind = not s.auto_pathfind
+            s.save(update_fields=['auto_pathfind'])
+            return JsonResponse({'auto_pathfind': s.auto_pathfind})
+        elif setting == 'auto_jump':
+            s.auto_jump = not s.auto_jump
+            s.save(update_fields=['auto_jump'])
+            return JsonResponse({'auto_jump': s.auto_jump})
+        return JsonResponse({'error': 'unknown setting'}, status=400)
+    except Exception as e:
+        traceback.print_exc()
+        return JsonResponse({'error': str(e)}, status=500)
+
+
+@role_required('Trainer')
+@require_POST
+def checkin(request):
+    """Release the file lock held by the current user.
+    Accepts either JSON body or multipart form data (for sendBeacon compatibility)."""
+    from django.utils import timezone as tz
+    try:
+        # sendBeacon sends FormData; normal fetch sends JSON
+        if request.content_type and 'application/json' in request.content_type:
+            import json as _json
+            data = _json.loads(request.body or '{}')
+            file_id = data.get('file_id')
+        else:
+            file_id = request.POST.get('file_id')
+
+        if not file_id:
+            return JsonResponse({'status': 'ok', 'note': 'no file_id'})
+
+        File.objects.filter(id=file_id, locked_by=request.user).update(
+            locked_by=None, locked_at=None
+        )
+        return JsonResponse({'status': 'ok'})
+    except Exception as e:
+        traceback.print_exc()
+        return JsonResponse({'error': str(e)}, status=500)

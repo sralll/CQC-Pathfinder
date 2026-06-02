@@ -16,5 +16,13 @@ urlpatterns = [
     path('save-snapshot/',          views.save_snapshot,   name='save_snapshot'),
     path('snapshots/<int:file_id>/',          views.get_snapshots,      name='get_snapshots'),
     path('snapshots/<int:snapshot_id>/load/', views.load_snapshot,      name='load_snapshot'),
+    path('files/<int:file_id>/label/',        views.assign_label,        name='assign_label'),
+    path('labels/create/',                    views.create_label,        name='create_label'),
+    path('labels/<int:label_id>/delete/',     views.delete_label,        name='delete_label'),
+    path('labels/<int:label_id>/color/',      views.update_label_color,  name='update_label_color'),
+    path('delete/<int:file_id>/',    views.delete_project_file,  name='delete_project_file'),
+    path('settings/',                views.get_editor_settings,  name='get_editor_settings'),
+    path('settings/toggle/',         views.toggle_editor_setting, name='toggle_editor_setting'),
+    path('checkin/',                 views.checkin,        name='checkin'),
     path('debug/sync-has-mask/', views.sync_has_mask, name='sync_has_mask'),
 ]

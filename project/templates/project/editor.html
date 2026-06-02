@@ -20,13 +20,9 @@
                 <span>Liste</span>
                 <span class="menu-shortcut">(P)</span>
             </div>
-            <div id="nav-create-project">
-                <span>Neu</span>
-                <span class="menu-shortcut">(Ctrl+N)</span>
-            </div>
             <div id="nav-copy-project">
-                <span>Kopieren</span>
-                <span class="menu-shortcut">(Ctrl+C)</span>
+                <span>Duplizieren</span>
+                <span class="menu-shortcut">(Ctrl+D)</span>
             </div>
             <div id="nav-save-project">
                 <span>Speichern</span>
@@ -35,19 +31,32 @@
         </div>
     </div>
 
-    <div id="menu-karte" class="nav-menu-item">
-        Karte
-        <div class="nav-dropdown">
-            <div id="nav-edit-mask">Maske bearbeiten</div>
-            <div id="nav-blocked-areas">Sperrgebiete</div>
-        </div>
+    <div class="nav-center">
+        <input type="text" id="navbar-filename-input" placeholder="—" autocomplete="off" spellcheck="false">
+    </div>
+
+    <div id="menu-history" class="nav-menu-item">
+        <x-icon name="history" size="13px"></x-icon>
+        <div id="undo-dropdown" class="nav-dropdown" style="min-width:220px;max-height:320px;overflow-y:auto;"></div>
     </div>
 
     <div id="menu-einstellungen" class="nav-menu-item">
         Einstellungen
-        <div class="nav-dropdown">
-            <div id="nav-auto-pathfind">Auto-Pathfind</div>
-            <div id="nav-auto-jump">Auto-Jump</div>
+        <div class="nav-dropdown" onclick="event.stopPropagation();">
+            <div class="settings-toggle-row">
+                <span>Auto-Pathfind</span>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="toggle-auto-pathfind">
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+            <div class="settings-toggle-row">
+                <span>Auto-Jump</span>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="toggle-auto-jump">
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
         </div>
     </div>
 </nav>
@@ -201,13 +210,13 @@
     <div class="modal-box">
         <div class="modal-header">
             <div class="modal-header-left">
-                <button id="create-project-btn" title="Neues Projekt (Ctrl+N)" class="toolbar-btn">
-                    <x-icon name="file-circle-plus" size="1.5rem"></x-icon>
+                <button id="label-manage-btn" title="Labels" class="toolbar-btn">
+                    <x-icon name="tags" size="1.5rem"></x-icon>
                 </button>
                 <div class="save-group">
-                    <input type="text" id="project-title-input" value="Neues Projekt">
-                    <button id="save-project-btn" title="Speichern (Ctrl+S)" class="toolbar-btn save-btn">
-                        <x-icon name="floppy-disk" size="1.5rem"></x-icon>
+                    <input type="text" id="project-title-input" placeholder="Projektname…">
+                    <button id="new-project-btn" title="Neues Projekt erstellen (Ctrl+N)" class="toolbar-btn save-btn">
+                        <x-icon name="file-circle-plus" size="1.5rem"></x-icon>
                     </button>
                 </div>
             </div>
@@ -219,7 +228,7 @@
             </div>
             <div class="modal-header-right">
                 <div class="label-dropdown">
-                    <button id="label-dropdown-btn" class="toolbar-btn label-dropdown-btn">
+                    <button id="label-dropdown-btn" class="toolbar-btn label-dropdown-btn" style="display:none;">
                         <x-icon name="tags" size="1.5rem"></x-icon>
                     </button>
                     <div id="label-dropdown-menu" class="label-dropdown-menu">
@@ -230,6 +239,9 @@
                         <div id="label-list"></div>
                     </div>
                 </div>
+                <button id="close-file-modal-btn" class="toolbar-btn" title="Schliessen" onclick="closeFileModal()">
+                    <x-icon name="xmark" size="1.5rem"></x-icon>
+                </button>
             </div>
         </div>
         <div class="modal-table-wrap">

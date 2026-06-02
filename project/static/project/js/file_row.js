@@ -15,15 +15,24 @@ export class FileRow {
         tr.innerHTML = `
             <td>
                 <button id="publish-btn-${this.file.id}"
-                    class="publish-btn ${this.file.published ? 'publish-btn-active' : ''} ${!this.file.can_edit ? 'publish-btn-disabled' : ''}"
-                    ${!this.file.can_edit ? 'disabled' : ''}>
+                    class="publish-btn ${this.file.published ? 'publish-btn-active' : ''} ${!this.file.can_edit || this.file.is_locked ? 'publish-btn-disabled' : ''}"
+                    ${!this.file.can_edit || this.file.is_locked ? 'disabled' : ''}
+                    ${this.file.is_locked ? 'title="Datei wird gerade bearbeitet"' : ''}>
                     ${icon("broadcast")}
                 </button>
             </td>
             <td class="file-name-cell">${this.file.name}</td>
-            <td>${this.file.label ? `<span class="table-label-chip">${this.file.label.name}</span>` : ''}</td>
+            <td class="label-cell">${this.file.label ? `
+                <div class="label-chip-wrap">
+                    <span class="table-label-chip" style="background:${this.file.label.color}22;color:${this.file.label.color};border-color:${this.file.label.color}55;">${this.file.label.name}</span>
+                    ${this.file.can_edit ? `<button class="label-remove-btn" title="Label entfernen">×</button>` : ''}
+                </div>` : ''}
+            </td>
             <td style="text-align:center;">${this.file.cp_count}</td>
-            <td>${this.file.author}</td>
+            <td>
+                ${this.file.author || ''}
+                ${this.file.is_locked ? `<span class="file-lock-warning" title="${this.file.locked_by_name} bearbeitet gerade">${icon("lock", "1em")}</span>` : ''}
+            </td>
             <td class="col-team">${this.file.team_name || ''}</td>
             <td style="text-align:center;">
                 <button class="action-btn version-btn" data-file-id="${this.file.id}">
@@ -34,10 +43,10 @@ export class FileRow {
             <td>
                 ${this.file.can_edit ? `
                     <div class="file-action-group">
-                        <button class="action-btn danger-btn delete-btn">
+                        <button class="action-btn danger-btn delete-btn" ${this.file.is_locked ? 'disabled title="Datei wird gerade bearbeitet"' : ''}>
                             ${icon("trash")}
                         </button>
-                        <button class="action-btn">
+                        <button class="action-btn" ${this.file.is_locked ? 'disabled title="Datei wird gerade bearbeitet"' : ''}>
                             ${icon("industry")}
                         </button>
                     </div>` : ''}
@@ -50,12 +59,12 @@ export class FileRow {
 
     attachEvents(tr) {
         const publishBtn = tr.querySelector(`#publish-btn-${this.file.id}`);
-        if (publishBtn && this.file.can_edit) {
+        if (publishBtn && this.file.can_edit && !this.file.is_locked) {
             publishBtn.addEventListener('click', () => this.table.togglePublish(this));
         }
 
         const deleteBtn = tr.querySelector('.delete-btn');
-        if (deleteBtn) {
+        if (deleteBtn && !this.file.is_locked) {
             deleteBtn.addEventListener('click', () => this.table.deleteFile(this.file.id));
         }
 
@@ -68,19 +77,45 @@ export class FileRow {
         if (versionBtn) {
             versionBtn.addEventListener('click', () => this.toggleHistory(tr));
         }
+
+        // ── Label remove button ──────────────────────────────
+        const labelRemoveBtn = tr.querySelector('.label-remove-btn');
+        if (labelRemoveBtn) {
+            labelRemoveBtn.addEventListener('click', e => {
+                e.stopPropagation();
+                window.removeLabelFromFile?.(this.file.id);
+            });
+        }
+
+        // ── Label drop target (only editable files without a label) ──
+        const labelCell = tr.querySelector('.label-cell');
+        if (labelCell && this.file.can_edit && !this.file.label) {
+            labelCell.addEventListener('dragover', e => {
+                if (!window._draggedLabel) return;
+                e.preventDefault();
+                e.dataTransfer.dropEffect = "copy";
+                labelCell.classList.add("label-drop-zone");
+            });
+            labelCell.addEventListener('dragleave', () => {
+                labelCell.classList.remove("label-drop-zone");
+            });
+            labelCell.addEventListener('drop', e => {
+                e.preventDefault();
+                labelCell.classList.remove("label-drop-zone");
+                const label = window._draggedLabel;
+                if (!label || typeof label.id === 'string') return; // ignore temp labels
+                window.assignLabelToFile?.(this.file.id, label);
+            });
+        }
     }
 
-    async toggleHistory(tr) {
+    async toggleHistory(tr, preloadedSnapshots = null, hasMore = null) {
         const existing = tr.nextElementSibling;
         if (existing?.classList.contains('version-row')) {
             existing.remove();
             tr.querySelector('.version-btn').classList.remove('version-btn-open');
             return;
         }
-
-        // Block if cache already knows there are no snapshots
-        const cached = window.snapshotsCache?.get(this.file.id);
-        if (cached && cached.length === 0) return;
 
         // Close any other open version rows
         document.querySelectorAll('.version-row').forEach(r => r.remove());
@@ -91,33 +126,30 @@ export class FileRow {
         const colCount = tr.cells.length;
         const loadingRow = document.createElement('tr');
         loadingRow.className = 'version-row';
-        loadingRow.innerHTML = `<td colspan="${colCount}" class="version-loading">
-            <x-icon name="spinner" class="spin" size="12px"></x-icon> Wird geladen…
+        loadingRow.innerHTML = `<td colspan="${colCount}" style="text-align:center;padding:10px;">
+            <x-icon name="spinner" class="spin" size="16px"></x-icon>
         </td>`;
         tr.after(loadingRow);
 
         try {
-            let snapshots;
-            if (window.snapshotsCache?.has(this.file.id)) {
-                snapshots = window.snapshotsCache.get(this.file.id);
+            let snapshots, fetchedHasMore;
+            if (preloadedSnapshots !== null) {
+                snapshots = preloadedSnapshots;
+                fetchedHasMore = hasMore ?? false;
                 loadingRow.remove();
             } else {
                 const res     = await fetch(`/editor/snapshots/${this.file.id}/`);
                 const fetched = await res.json();
                 snapshots = fetched.snapshots ?? [];
-                if (window.snapshotsCache) {
-                    window.snapshotsCache.set(this.file.id, snapshots);
-                    window.snapshotsCache.set(`${this.file.id}_has_more`, fetched.has_more ?? false);
-                }
+                fetchedHasMore = fetched.has_more ?? false;
                 loadingRow.remove();
             }
-            const hasMore = window.snapshotsCache?.get(`${this.file.id}_has_more`) ?? snapshots.length >= 10;
-            const data = { snapshots, has_more: hasMore };
+            const data = { snapshots, has_more: fetchedHasMore };
 
             if (!data.snapshots?.length) {
                 const emptyRow = document.createElement('tr');
                 emptyRow.className = 'version-row';
-                emptyRow.innerHTML = `<td colspan="${colCount}" class="version-empty">Keine Snapshots vorhanden</td>`;
+                emptyRow.innerHTML = `<td colspan="${colCount}" class="version-empty">Keine Versionen</td>`;
                 tr.after(emptyRow);
                 return;
             }
@@ -143,11 +175,13 @@ export class FileRow {
                 </tr></thead>
                 <tbody>${data.snapshots.map(s => `
                     <tr class="snapshot-row" data-snapshot-id="${s.id}" style="cursor:pointer;" title="Klicken zum Wiederherstellen">
-                        <td>${this.file.name}</td>
-                        <td>${this.file.label ? `<span class="table-label-chip">${this.file.label.name}</span>` : ''}</td>
+                        <td>${s.name || this.file.name}</td>
+                        <td>${s.label__name
+                            ? `<span class="table-label-chip" style="background:${s.label__color}22;color:${s.label__color};border-color:${s.label__color}55;">${s.label__name}</span>`
+                            : ''}</td>
                         <td style="text-align:center;">${s.n_control_pairs}</td>
                         <td style="text-align:center;">${s.n_routes}</td>
-                        <td>${s.created_by__first_name || '—'}</td>
+                        <td>${s.author || s.created_by__first_name || '—'}</td>
                         <td class="col-team">${this.file.team_name || ''}</td>
                         <td><span class="version-trigger">${s.trigger || ''}</span></td>
                         <td>${this.formatDate(s.created_at)}</td>
@@ -158,17 +192,13 @@ export class FileRow {
                 const moreRow = document.createElement('tr');
                 moreRow.innerHTML = `<td colspan="7" class="version-load-more">Alle Versionen anzeigen</td>`;
                 moreRow.querySelector('td').addEventListener('click', async () => {
-                    moreRow.querySelector('td').textContent = '…';
-                    const res  = await fetch(`/editor/snapshots/${this.file.id}/?all=1`);
-                    const all  = await res.json();
-                    if (window.snapshotsCache) {
-                        window.snapshotsCache.set(this.file.id, all.snapshots ?? []);
-                        window.snapshotsCache.set(`${this.file.id}_has_more`, false);
-                    }
-                    // Re-open to show all
+                    moreRow.querySelector('td').innerHTML =
+                        `<x-icon name="spinner" class="spin" size="12px"></x-icon>`;
+                    const res = await fetch(`/editor/snapshots/${this.file.id}/?all=1`);
+                    const all = await res.json();
                     container.remove();
                     tr.querySelector('.version-btn').classList.remove('version-btn-open');
-                    this.toggleHistory(tr);
+                    this.toggleHistory(tr, all.snapshots ?? [], false);
                 });
                 table.querySelector('tbody').appendChild(moreRow);
             }

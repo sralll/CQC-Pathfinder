@@ -30,26 +30,53 @@ export class FileTable {
         this.render();
     }
 
-    async togglePublish(row) {
-        const res = await fetch(`/editor/publish/${row.file.id}/`, {
+    togglePublish(row) {
+        // Optimistic: flip state immediately
+        row.updatePublishState(!row.file.published);
+        // Fire & forget — snapshot creation happens server-side
+        fetch(`/editor/publish/${row.file.id}/`, {
             method: 'POST',
             headers: { 'X-CSRFToken': getCSRFToken() }
+        }).catch(err => {
+            // Revert on network failure
+            console.warn('togglePublish failed:', err);
+            row.updatePublishState(!row.file.published);
         });
-        const data = await res.json();
-        row.updatePublishState(data.published);
     }
 
-    deleteFile(id) {
-        console.log("delete", id);
+    async deleteFile(id) {
+        if (!confirm('Projekt löschen — Sicher?')) return;
+        const csrf = document.cookie.match(/csrftoken=([^;]+)/)?.[1] ?? "";
+        try {
+            const res = await fetch(`/editor/delete/${id}/`, {
+                method: 'POST',
+                headers: { 'X-CSRFToken': csrf },
+            });
+            if (!res.ok) {
+                const d = await res.json().catch(() => ({}));
+                alert(d.error || 'Löschen fehlgeschlagen.');
+                return;
+            }
+            await window.refreshFileTable?.();
+        } catch (e) {
+            console.error('deleteFile failed:', e);
+            alert('Löschen fehlgeschlagen.');
+        }
     }
 
     _applyProject(data) {
+        // Release lock on the previously open file before switching
+        if (typeof window.checkinCurrentFile === 'function') {
+            window.checkinCurrentFile();
+        }
         closeFileModal();
         clearAllLayers();
         MaskLayer.clearMask();
         maskGenInProgress = false;
         hideMaskGenBar();
         project = data.project;
+        window.setReadOnly?.(data.project.read_only, data.project.locked_by_name);
+        window.updateFilenameInput?.();
         applyProjectScale();
         updateCameraTransform({ x: 0, y: 0, zoom: 0.67 });
 
