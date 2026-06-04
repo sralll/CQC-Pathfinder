@@ -36,6 +36,8 @@ window.refreshFileTable = async function() {
     await loadFiles();
     applyFilters();
 };
+window.showTableLoading = showTableLoading;
+window.hideTableLoading = hideTableLoading;
 async function openFileModal() {
     document.getElementById("modal-project").classList.add("open");
     resetProjectTitleInput();
@@ -148,21 +150,29 @@ function setSort(key) {
 
 function applySorting(data) {
     const { key, dir } = sortState;
-    if (!key) return data;
-    return [...data].sort((a, b) => {
-        const get = f => {
-            switch (key) {
-                case "name": return (f.name || "").toLowerCase();
-                case "cp_count": return f.cp_count || 0;
-                case "last_edited": return new Date(f.last_edited || 0).getTime();
-                default: return "";
-            }
-        };
-        const va = get(a), vb = get(b);
-        if (va < vb) return -1 * dir;
-        if (va > vb) return 1 * dir;
-        return 0;
-    });
+
+    const sortGroup = arr => {
+        if (!key) return arr;
+        return [...arr].sort((a, b) => {
+            const get = f => {
+                switch (key) {
+                    case "name":        return (f.name || "").toLowerCase();
+                    case "cp_count":    return f.cp_count || 0;
+                    case "last_edited": return new Date(f.last_edited || 0).getTime();
+                    default: return "";
+                }
+            };
+            const va = get(a), vb = get(b);
+            if (va < vb) return -1 * dir;
+            if (va > vb) return 1 * dir;
+            return 0;
+        });
+    };
+
+    // Own team always comes first; each group sorted independently
+    const own   = data.filter(f => f.can_edit);
+    const other = data.filter(f => !f.can_edit);
+    return [...sortGroup(own), ...sortGroup(other)];
 }
 
 function getSortIcon(k) {
@@ -710,29 +720,8 @@ async function createFileWithTitle() {
     const duplicate = (projectFiles || []).some(f => f.name === name);
     if (duplicate) { markError("Ein Projekt mit diesem Namen existiert bereits."); input?.focus(); return; }
 
-    // ── Pre-create on server to reserve an ID ──────────────
-    const csrf = document.cookie.match(/csrftoken=([^;]+)/)?.[1] ?? "";
-    let newId;
-    try {
-        const res  = await fetch("/editor/save/", {
-            method:  "POST",
-            headers: { "Content-Type": "application/json", "X-CSRFToken": csrf },
-            body:    JSON.stringify({
-                id: null, last_edited: null, name,
-                scale: null, scaled: false, map_file: "",
-                has_mask: false, blocked_terrain: null, control_pairs: [],
-            }),
-        });
-        const data = await res.json();
-        if (!res.ok || !data.id) { markError("Serverfehler beim Erstellen."); return; }
-        newId = data.id;
-    } catch (e) {
-        console.error("createFileWithTitle:", e);
-        markError("Verbindungsfehler."); return;
-    }
-
-    // ── Reset project state with the new ID ─────────────────
-    project.id            = newId;
+    // ── Reset project state — server save happens after map is scaled ──
+    project.id            = null;   // assigned on first real save (after scaling)
     project.name          = name;
     project.scale         = null;
     project.scaled        = false;
@@ -740,7 +729,8 @@ async function createFileWithTitle() {
     project.has_mask      = false;
     project.blocked_terrain = null;
     project.control_pairs = [];
-    if (typeof window.updateFilenameInput === 'function') window.updateFilenameInput();
+
+    // Leftover state from previously opened files is cleared on map upload
 
     // ── Proceed to map upload ────────────────────────────────
     createFile();

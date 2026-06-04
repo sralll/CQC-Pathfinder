@@ -30,7 +30,7 @@ let editorSettings = { auto_pathfind: false, auto_jump: true };
 
 let readOnly = false;
 
-function setReadOnly(isReadOnly, lockedByName) {
+function setReadOnly(isReadOnly, lockedByName, reason) {
     readOnly = !!isReadOnly;
     document.getElementById("read-only-banner")?.remove();
 
@@ -56,7 +56,10 @@ function setReadOnly(isReadOnly, lockedByName) {
             background:#5a3a00;color:#ffd;padding:6px 16px;border-radius:0 0 6px 6px;
             font-size:12px;z-index:9999;display:flex;align-items:center;gap:8px;pointer-events:none;
         `;
-        bar.innerHTML = `<span>🔒 Schreibgeschützt — ${lockedByName || 'jemand anderes'} bearbeitet diese Datei</span>`;
+        const msg = reason === 'published'
+            ? 'Diese Datei ist veröffentlicht'
+            : `${lockedByName || 'jemand anderes'} bearbeitet diese Datei`;
+        bar.innerHTML = `<span>🔒 Schreibgeschützt — ${msg}</span>`;
         document.body.appendChild(bar);
     }
 }
@@ -177,7 +180,7 @@ function pushUndoState(label = "Aktion") {
     if (undoStack.length > UNDO_MAX) undoStack.shift();
     redoStack = [];
     actionCount++;
-    if (actionCount % SNAPSHOT_EVERY === 0) saveSnapshot(label);
+    if (actionCount % SNAPSHOT_EVERY === 0) saveSnapshot("autosave");
     updateUndoMenu();
 }
 
@@ -327,7 +330,7 @@ function _projectBody() {
 }
 
 function saveFile(trigger = "save") {
-    if (readOnly) return;
+    if (readOnly && trigger !== "duplicate") return;
     _pendingSaves++;
     _saveQueue = _saveQueue.then(async () => {
         const csrf = document.cookie.match(/csrftoken=([^;]+)/)?.[1] ?? "";
@@ -376,7 +379,10 @@ function saveFile(trigger = "save") {
             }
             _clearSaveFailedWarning();
             if (trigger === "save" || trigger === "manual") {
-                window.refreshFileTable?.();
+                saveSnapshot("Manuell gespeichert");
+                if (document.getElementById("modal-project")?.classList.contains("open")) {
+                    window.refreshFileTable?.();
+                }
             }
         } catch (e) {
             console.warn("saveFile failed:", e);
@@ -517,40 +523,55 @@ function deleteRoute(cp, route) {
 async function duplicateFile() {
     if (!project.id) return;
 
-    // Generate a unique name: "Name Kopie", "Name Kopie 2", etc.
-    const baseName = project.name.replace(/ Kopie( \d+)?$/, "");
-    const existing = new Set((projectFiles || []).map(f => f.name));
-    let dupName = `${baseName} Kopie`;
+    // Unique name: "Kopie von [original]", "Kopie von [original] 2", ...
+    // Strip any existing "Kopie von " prefix so we don't nest them.
+    const originalName = project.name.replace(/^Kopie von (.+?)( \d+)?$/, '$1');
+    const existing     = new Set((projectFiles || []).map(f => f.name));
+    let dupName = `Kopie von ${originalName}`;
     let counter = 2;
-    while (existing.has(dupName)) { dupName = `${baseName} Kopie ${counter++}`; }
+    while (existing.has(dupName)) { dupName = `Kopie von ${originalName} ${counter++}`; }
 
-    const csrf = document.cookie.match(/csrftoken=([^;]+)/)?.[1] ?? "";
-    try {
-        const body = { ..._projectBody(), id: null, last_edited: null, name: dupName };
-        const res  = await fetch("/editor/save/", {
-            method:  "POST",
-            headers: { "Content-Type": "application/json", "X-CSRFToken": csrf },
-            body:    JSON.stringify(body),
-        });
-        const data = await res.json();
-        if (!res.ok || !data.id) { console.error("Duplicate failed", data); return; }
+    // Mutate project in-place: clear all IDs so saveFile creates new records.
+    // Locked/published files must also be duplicatable — clear those states here.
+    project.id   = null;
+    project.name = dupName;
+    project.control_pairs.forEach(cp => {
+        cp.id = null;
+        (cp.routes || []).forEach(r => { r.id = null; });
+    });
 
-        // Switch the editor to the new duplicate
-        const openRes  = await fetch(`/editor/open/${data.id}/`);
-        const openData = await openRes.json();
-        if (openData.error) { console.error("Open duplicate failed", openData); return; }
+    // Clear read-only (lock/publish) — the duplicate is a fresh file owned by us
+    setReadOnly(false);
 
-        // Use file_table's _applyProject via the table instance
-        window._fileTable?._applyProject(openData);
-        window.refreshFileTable?.();
-    } catch (e) {
-        console.error("duplicateFile failed:", e);
+    // Show "Duplizieren…" placeholder while the DB write is in progress
+    const filenameInput = document.getElementById("navbar-filename-input");
+    if (filenameInput) {
+        filenameInput.value       = "duplizieren…";
+        filenameInput.style.fontStyle = "italic";
+        filenameInput.disabled    = true;
     }
+
+    // saveFile("duplicate") bypasses the readOnly guard and creates a fresh file.
+    // Await so subsequent calls have the new project.id.
+    await saveFile("duplicate");
+
+    // Restore normal input state now that project.id is set
+    if (filenameInput) filenameInput.style.fontStyle = "";
+    updateFilenameInput();
+    saveSnapshot("autosave");
+    window.refreshFileTable?.();
 }
 
 window.addEventListener("keydown", e => {
     if (!(e.ctrlKey || e.metaKey)) return;
-    if (e.key === "z" && !e.shiftKey) { e.preventDefault(); undo(); }
+    if (e.key === "z" && !e.shiftKey) {
+        e.preventDefault();
+        if (_scalingActive || _scaleP1 || document.getElementById("modal-scale")?.style.display === "flex") {
+            _undoScalePoint();
+        } else {
+            undo();
+        }
+    }
     if (e.key === "y" || (e.key === "z" && e.shiftKey)) { e.preventDefault(); redo(); }
     if (e.key === "s") { e.preventDefault(); if (!readOnly) saveFile("manual"); }
     if (e.key === "n") { e.preventDefault(); if (!readOnly) createFile(); }
@@ -565,7 +586,6 @@ const zoomMin = 0.2;
 const zoomMax = 8;
 const SNAP_DISTANCE_CONTROL_PAIR = 15;
 const SNAP_DISTANCE_ROUTE_EDIT   = 5;
-const CP_MOVE_THRESHOLD = 3;  // px — below: adjust route endpoints; above: clear routes
 const R_CONTROL = 25;
 const GAP = 8;
 const RUN_SPEED = 4.75;         // average running speed in m/s
@@ -609,6 +629,7 @@ const pan = (() => {
             camY = camera.y;
             mapContainer.classList.add("panning");
             mapContainer.style.cursor = "grabbing";
+            hideCrosshair();
         },
         update(e) {
             if (!active) return false;
@@ -698,7 +719,7 @@ const ControlPairTool = (() => {
         updateCrosshair(newX, newY);
 
         const moved   = Math.hypot(newX - drag.originX, newY - drag.originY);
-        const willDel = moved > CP_MOVE_THRESHOLD;
+        const willDel = moved > SNAP_DISTANCE_CONTROL_PAIR;
         const ncp     = drag.controlPair.order;
         mapContainer.querySelectorAll(`.route-polyline[data-ncp="${ncp}"], .route-bg[data-ncp="${ncp}"]`)
             .forEach(el => el.setAttribute("opacity", willDel ? "0.2" : "1"));
@@ -715,7 +736,7 @@ const ControlPairTool = (() => {
         mapContainer.classList.remove("dragging");
         mapContainer.style.cursor = "default";
         hideCrosshair();
-        if (moved > CP_MOVE_THRESHOLD) {
+        if (moved > SNAP_DISTANCE_CONTROL_PAIR) {
             cp.routes.forEach(r => deleteRoute(cp, r));
             cp.routes = [];
         } else if (cp.routes.length) {
@@ -734,7 +755,7 @@ const ControlPairTool = (() => {
         updateCPList();
         if (moved > 0) {
             saveControlPair(cp);
-            if (moved <= CP_MOVE_THRESHOLD) cp.routes.forEach(r => saveRoute(cp, r));
+            if (moved <= SNAP_DISTANCE_CONTROL_PAIR) cp.routes.forEach(r => saveRoute(cp, r));
         }
     }
 
@@ -2079,27 +2100,263 @@ function activateTool(toolObj) {
     gets pan for free without duplicating the logic.
 ========================================================= */
 
+/* =========================================================
+    RADIAL CONTEXT MENU
+    Right-click (quick) → no_tool
+    Right-click hold/drag → floating circular tool+subtool picker
+========================================================= */
+
+const RCM = (() => {
+    const IR1 = 28, IR2 = 75;          // inner ring radii (tool segments)
+    const OR1 = 80, OR2 = 128;         // outer ring radii (subtool segments)
+    const CLICK_MS = 200, MOVE_PX = 8; // thresholds for click vs drag
+
+    const MENU_TOOLS = [ToolMode.CONTROL_PAIR, ToolMode.ROUTE, ToolMode.MASK, ToolMode.BLOCK, ToolMode.NONE];
+    const TOOL_ICON  = {
+        [ToolMode.CONTROL_PAIR]: "control_pair",
+        [ToolMode.ROUTE]:        "route",
+        [ToolMode.MASK]:         "mask",
+        [ToolMode.BLOCK]:        "block",
+        [ToolMode.NONE]:         "no_tool",
+    };
+    const N      = MENU_TOOLS.length;
+    const SECTOR = 360 / N;
+
+    let menuEl = null, downAt = 0, downPos = null;
+    let hoveredTool = null, hoveredSub = null, open = false;
+
+    const rad   = d => d * Math.PI / 180;
+    const segA1 = i => -90 + i * SECTOR;
+    const segMid = i => segA1(i) + SECTOR / 2;
+
+    function slicePath(r1, r2, a1, a2) {
+        const large = (a2 - a1) > 180 ? 1 : 0;
+        const p = a => [r1 * Math.cos(rad(a)), r1 * Math.sin(rad(a)),
+                         r2 * Math.cos(rad(a)), r2 * Math.sin(rad(a))];
+        const [x1,y1,x2,y2] = p(a1), [x4,y4,x3,y3] = p(a2);
+        return `M${x1} ${y1} L${x2} ${y2} A${r2} ${r2} 0 ${large} 1 ${x3} ${y3} L${x4} ${y4} A${r1} ${r1} 0 ${large} 0 ${x1} ${y1}Z`;
+    }
+
+    const ns = "http://www.w3.org/2000/svg";
+    const el = (tag, attrs={}) => {
+        const e = document.createElementNS(ns, tag);
+        Object.entries(attrs).forEach(([k,v]) => e.setAttribute(k, v));
+        return e;
+    };
+
+    function iconFO(angleDeg, r, iconName, transform) {
+        const a = rad(angleDeg);
+        const x = r * Math.cos(a) - 10, y = r * Math.sin(a) - 10;
+        const fo = el("foreignObject", { x, y, width: 20, height: 20 });
+        const div = document.createElement("div");
+        div.style.cssText = "display:flex;align-items:center;justify-content:center;width:20px;height:20px;";
+        div.innerHTML = icon(iconName, "14px", transform);
+        fo.appendChild(div);
+        return fo;
+    }
+
+    function buildSegment(r1, r2, a1, a2, mid, iconName, transform, dataKey, dataVal, fill) {
+        const g = el("g"); g.dataset[dataKey] = dataVal;
+        const path = el("path", { d: slicePath(r1, r2, a1, a2), fill, stroke:"#444", "stroke-width":"1" });
+        g.appendChild(path);
+        g.appendChild(iconFO(mid, (r1+r2)/2, iconName, transform));
+        return g;
+    }
+
+    function buildMenu(x, y) {
+        const size = (OR2 + 20) * 2;
+        const svg = el("svg");
+        svg.id = "rcm";
+        svg.style.cssText = `position:fixed;left:${x-size/2}px;top:${y-size/2}px;width:${size}px;height:${size}px;pointer-events:none;z-index:99999;`;
+        svg.setAttribute("viewBox", `${-size/2} ${-size/2} ${size} ${size}`);
+
+        const innerG = el("g"); innerG.id = "rcm-inner";
+        MENU_TOOLS.forEach((mode, i) => {
+            const fill = mode === currentToolMode ? "#e07020" : "#222";
+            innerG.appendChild(buildSegment(IR1, IR2, segA1(i)+1.5, segA1(i)+SECTOR-1.5,
+                segMid(i), TOOL_ICON[mode] || "no_tool", undefined, "mode", mode, fill));
+        });
+        svg.appendChild(innerG);
+
+        const outerG = el("g"); outerG.id = "rcm-outer";
+        svg.appendChild(outerG);
+        return svg;
+    }
+
+    function rebuildOuter(mode) {
+        const outerG = menuEl?.querySelector("#rcm-outer");
+        if (!outerG) return;
+        outerG.innerHTML = "";
+        if (!mode || mode === ToolMode.NONE) return;
+        const defs = SUBTOOL_DEFS[mode];
+        if (!defs?.length) return;
+        const toolIdx = MENU_TOOLS.indexOf(mode);
+        const base = segA1(toolIdx);
+        const sub  = SECTOR / defs.length;
+        defs.forEach((def, si) => {
+            outerG.appendChild(buildSegment(OR1, OR2, base+si*sub+1, base+(si+1)*sub-1,
+                base+si*sub+sub/2, def.icon, def.transform, "sub", def.id, "#2a2a2a"));
+        });
+    }
+
+    function hitTest(cx, cy) {
+        if (!menuEl) return null;
+        const r = menuEl.getBoundingClientRect();
+        const dx = cx-(r.left+r.width/2), dy = cy-(r.top+r.height/2);
+        const dist = Math.hypot(dx, dy);
+        const normDeg = ((Math.atan2(dy, dx)*180/Math.PI)+90+360)%360;
+        if (dist >= IR1 && dist < IR2) {
+            return { ring:"inner", mode: MENU_TOOLS[Math.floor(normDeg/SECTOR)%N] };
+        }
+        if (dist >= OR1 && dist < OR2 && hoveredTool && hoveredTool !== ToolMode.NONE) {
+            const defs = SUBTOOL_DEFS[hoveredTool];
+            if (defs?.length) {
+                const toolIdx = MENU_TOOLS.indexOf(hoveredTool);
+                const rel = (normDeg - toolIdx*SECTOR + 360) % 360;
+                if (rel < SECTOR) {
+                    const si = Math.min(Math.floor(rel/(SECTOR/defs.length)), defs.length-1);
+                    return { ring:"outer", mode:hoveredTool, sub:defs[si].id };
+                }
+            }
+        }
+        return null;
+    }
+
+    function updateHover(cx, cy) {
+        if (!menuEl) return;
+        const hit = hitTest(cx, cy);
+        const newTool = hit?.ring==="inner" ? hit.mode : null;
+        const newSub  = hit?.ring==="outer" ? hit.sub  : null;
+
+        if (newTool !== hoveredTool) {
+            hoveredTool = newTool;
+            menuEl.querySelectorAll("[data-mode]").forEach(g => {
+                const path = g.querySelector("path");
+                if (!path) return;
+                const active = g.dataset.mode===hoveredTool || g.dataset.mode===currentToolMode;
+                path.setAttribute("fill",   active ? "#e07020" : "#222");
+                path.setAttribute("stroke", active ? "#e07020" : "#444");
+            });
+            rebuildOuter(hoveredTool);
+        }
+        hoveredSub = newSub;
+        menuEl.querySelectorAll("[data-sub]").forEach(g => {
+            const path = g.querySelector("path");
+            if (path) path.setAttribute("fill", g.dataset.sub===hoveredSub ? "#e07020" : "#2a2a2a");
+        });
+    }
+
+    function applySelection(tool, sub) {
+        if (!tool) { setTool(ToolMode.NONE); return; }
+        if (sub) {
+            activeSubtool[tool] = sub;
+            if (tool === ToolMode.CONTROL_PAIR && sub === "add") {
+                setTool(tool); startNewPlacement();
+            } else if (tool === ToolMode.ROUTE && sub === "new") {
+                startNewRoute();
+            } else {
+                setTool(tool);
+                setSubtool(tool, sub);
+            }
+        } else {
+            setTool(tool);
+        }
+    }
+
+    return {
+        onDown(e)   {
+            downAt = Date.now(); downPos = {x:e.clientX, y:e.clientY};
+            hoveredTool = null; hoveredSub = null; open = false;
+        },
+        onMove(e)   {
+            if (!downPos) return;
+            if (!open) {
+                const moved = Math.hypot(e.clientX-downPos.x, e.clientY-downPos.y);
+                if (moved > MOVE_PX || Date.now()-downAt > CLICK_MS) {
+                    open = true;
+                    menuEl = buildMenu(downPos.x, downPos.y);
+                    document.body.appendChild(menuEl);
+                }
+            }
+            if (open) updateHover(e.clientX, e.clientY);
+        },
+        onUp(e)     {
+            const wasOpen = open, _tool = hoveredTool, _sub = hoveredSub;
+            open = false; downPos = null;
+            if (menuEl) { menuEl.remove(); menuEl = null; }
+            hoveredTool = null; hoveredSub = null;
+            applySelection(wasOpen ? _tool : null, wasOpen ? _sub : null);
+        },
+        cancel()    {
+            open = false; downPos = null;
+            if (menuEl) { menuEl.remove(); menuEl = null; }
+        },
+    };
+})();
+
 function initInput() {
     window.addEventListener("mousedown", onMouseDown);
     window.addEventListener("mousemove", onMouseMove);
     window.addEventListener("mouseup",   onMouseUp);
     window.addEventListener("keydown",   onKeyDown);
     window.addEventListener("wheel",     onWheel, { passive: false });
+    window.addEventListener("contextmenu", e => e.preventDefault());
 }
 
+let _scaleDownPos    = null;   // screen pos at mousedown
+let _scalePanStarted = false;  // true once pan.start() has been called in this gesture
+const SCALE_PAN_THRESHOLD = 5;
+
 function onMouseDown(e) {
+    if (e.button === 2) { if (mapContainer.contains(e.target)) RCM.onDown(e); return; }
     if (e.button !== 0) return;
     if (!mapContainer.contains(e.target)) return;
+    // Scaling mode owns the mouse entirely — no tool sees these events
+    if (_scalingActive) {
+        _scaleDownPos    = { x: e.clientX, y: e.clientY };
+        _scalePanStarted = false;
+        return;
+    }
     activeTool.onMouseDown(e, screenToWorld(e.clientX, e.clientY));
 }
 
 function onMouseMove(e) {
+    RCM.onMove(e);
+    if (_scalingActive) {
+        // Click-vs-pan decision based on screen-pixel movement
+        if (_scaleDownPos && !_scalePanStarted) {
+            const moved = Math.hypot(e.clientX - _scaleDownPos.x, e.clientY - _scaleDownPos.y);
+            if (moved > SCALE_PAN_THRESHOLD) {
+                pan.start(_scaleDownPos.x, _scaleDownPos.y);
+                _scalePanStarted = true;
+            }
+        }
+        if (pan.update(e)) return;   // pan in progress; freeze ruler
+        _scaleHandleMove(e);
+        return;
+    }
+
     if (pan.update(e)) return;
     activeTool.onMouseMove(e, screenToWorld(e.clientX, e.clientY));
 }
 
 function onMouseUp(e) {
+    if (e.button === 2) { RCM.onUp(e); return; }
     if (e.button !== 0) return;
+
+    if (_scalingActive) {
+        if (_scalePanStarted) {
+            pan.stop();
+            // pan.stop sets cursor to activeTool.defaultCursor — restore default
+            mapContainer.style.cursor = "default";
+        } else if (_scaleDownPos && mapContainer.contains(e.target)) {
+            _scaleHandleUp(e);
+        }
+        _scaleDownPos    = null;
+        _scalePanStarted = false;
+        return;
+    }
+
     if (pan.stop()) return;
     activeTool.onMouseUp(e, screenToWorld(e.clientX, e.clientY));
 }
@@ -2540,6 +2797,15 @@ function startMaskGeneration(mapFile, scale) {
                                 maskGenInProgress = false;
                                 if (project.map_file === mapFile) {
                                     project.has_mask = true;
+                                    // Lightweight endpoint — works even for published/locked files
+                                    if (project.id) {
+                                        const _csrf = document.cookie.match(/csrftoken=([^;]+)/)?.[1] ?? "";
+                                        fetch("/editor/mark-has-mask/", {
+                                            method:  "POST",
+                                            headers: { "Content-Type": "application/json", "X-CSRFToken": _csrf },
+                                            body:    JSON.stringify({ file_id: project.id }),
+                                        }).catch(e => console.warn("mark_has_mask failed:", e));
+                                    }
                                     if (prog) prog.value = 100;
                                     text.textContent = "Maske fertig — wird geladen…";
                                     MaskLayer.loadMask(mapFile);
@@ -2579,8 +2845,264 @@ function loadMap(filename) {
     document.getElementById('map-img').src = `/editor/map/${filename}`;
 }
 
-function createLabel()       { alert("Label erstellen (noch nicht implementiert)"); }
-function uploadSelectedMap() { alert("Map hochladen (noch nicht implementiert)"); }
+function createLabel() { alert("Label erstellen (noch nicht implementiert)"); }
+
+async function uploadSelectedMap() {
+    const input = document.getElementById("map-file-input");
+    const file  = input?.files?.[0];
+    if (!file) return;
+
+    const btn  = document.getElementById("upload-map-btn");
+    const csrf = document.cookie.match(/csrftoken=([^;]+)/)?.[1] ?? "";
+
+    btn.disabled = true;   // keep the upload icon — spinner shown on the map itself
+
+    try {
+        const fd = new FormData();
+        fd.append("file", file);
+        const res  = await fetch("/editor/upload-map/", {
+            method: "POST",
+            headers: { "X-CSRFToken": csrf },
+            body: fd,
+        });
+        const data = await res.json();
+        if (!res.ok || !data.map_file) {
+            alert(data.error || "Upload fehlgeschlagen.");
+            btn.disabled = false;
+            return;
+        }
+
+        // Clear leftover state from previously open files now that we're committing
+        setReadOnly(false);
+        checkinCurrentFile();
+        updateFilenameInput();
+        // New map replaces any previous editor state — wipe undo history
+        undoStack = []; redoStack = []; actionCount = 0;
+        updateUndoMenu();
+
+        // Update project state and save so the file exists on the server
+        project.map_file = data.map_file;
+        project.scaled   = false;
+        project.scale    = null;
+        saveFile("map_upload");
+
+        // Close modal and load map in editor
+        closeMapModal();
+        _loadMapInEditor();
+
+    } catch (e) {
+        console.error("uploadSelectedMap:", e);
+        alert("Upload fehlgeschlagen.");
+        btn.disabled = false;
+    }
+}
+
+function _loadMapInEditor() {
+    const img = document.getElementById("map-img");
+    if (!img || !project.map_file) return;
+
+    // Clear all leftover SVG elements and the previous map image
+    clearAllLayers();
+    MaskLayer.clearMask?.();
+    img.style.display = "none";
+    img.src = "";
+
+    showMapSpinner();
+
+    img.onload = () => {
+        hideMapSpinner();
+        img.style.display = "block";
+        applyProjectScale();
+        MaskLayer.applyMapDimensions?.();
+        drawCourse();
+        _updateScalePanel();
+    };
+    img.onerror = () => { hideMapSpinner(); console.warn("Map image failed to load"); };
+    img.src = `/editor/map/${project.map_file}`;
+}
+
+/* =========================================================
+    SCALE / RULER TOOL
+========================================================= */
+
+let _scalingActive   = false;
+let _scaleP1         = null;
+let _scalePixelDist  = 0;
+
+window._updateScalePanel = _updateScalePanel;
+function _updateScalePanel() {
+    const panel    = document.getElementById("scale-panel");
+    const toolWrap = document.getElementById("radial-toolbar-wrap");
+    if (!panel || !toolWrap) return;
+
+    if (project.map_file && !project.scaled) {
+        panel.style.display    = "flex";
+        toolWrap.style.display = "none";
+        // Auto-activate — no button click needed
+        if (!_scalingActive && !_scaleP1) _startScaleDrawing();
+    } else {
+        panel.style.display    = "none";
+        toolWrap.style.display = "";
+        _cancelScaleDrawing();
+    }
+}
+
+function _startScaleDrawing() {
+    _scalingActive = true;
+    _scaleP1       = null;
+    _clearRuler();
+    mapContainer.style.cursor = "default";
+    _setScaleStatus("Klicke ersten Punkt auf der Karte…");
+}
+
+function _cancelScaleDrawing() {
+    _scalingActive = false;
+    _scaleP1       = null;
+    _clearRuler();
+    hideCrosshair();
+    mapContainer.style.cursor = "";
+}
+
+function _setScaleStatus(msg) {
+    const el = document.getElementById("scale-status");
+    if (el) el.textContent = msg;
+}
+
+// ── Ctrl+Z undo for scaling points ────────────────────────
+
+function _undoScalePoint() {
+    const modal = document.getElementById("modal-scale");
+    if (modal?.style.display === "flex") {
+        // Close modal, go back to waiting for second point
+        modal.style.display = "none";
+        _scalingActive = true;
+        mapContainer.style.cursor = "default";
+        if (_scaleP1) {
+            _drawRuler(_scaleP1, _scaleP1);
+            _setScaleStatus("Klicke zweiten Punkt…  (Ctrl+Z: zurück)");
+        }
+    } else if (_scaleP1) {
+        // Undo first point
+        _scaleP1 = null;
+        _clearRuler();
+        _scalingActive = true;
+        _setScaleStatus("Klicke ersten Punkt auf der Karte…");
+    }
+}
+
+// ── Ruler SVG ─────────────────────────────────────────────
+
+function _clearRuler() {
+    document.getElementById("scale-ruler")?.remove();
+}
+
+function _drawRuler(p1, p2) {
+    _clearRuler();
+    const ns  = "http://www.w3.org/2000/svg";
+    const uiL = document.getElementById("ui-layer");
+    if (!uiL) return;
+
+    const g = document.createElementNS(ns, "g");
+    g.id = "scale-ruler";
+
+    const attrs = (el, map) => { Object.entries(map).forEach(([k,v]) => el.setAttribute(k, v)); return el; };
+    const line  = (x1,y1,x2,y2,extra) => attrs(document.createElementNS(ns,"line"),
+        { x1,y1,x2,y2, "vector-effect":"non-scaling-stroke", ...extra });
+
+    // Baseline (semi-transparent)
+    g.appendChild(line(p1.x,p1.y,p2.x,p2.y,{
+        stroke:"#000", "stroke-width":"5", "stroke-opacity":"0.2" }));
+    // Minor ticks (every 6px cycle: 2px dash, 4px gap)
+    g.appendChild(line(p1.x,p1.y,p2.x,p2.y,{
+        stroke:"#111", "stroke-width":"8", "stroke-dasharray":"2 4" }));
+    // Major ticks (every 30px cycle — every 5th minor)
+    g.appendChild(line(p1.x,p1.y,p2.x,p2.y,{
+        stroke:"#000", "stroke-width":"15", "stroke-dasharray":"3 27" }));
+
+    uiL.appendChild(g);
+}
+
+// ── Scale modal ────────────────────────────────────────────
+
+function _openScaleModal() {
+    const modal = document.getElementById("modal-scale");
+    if (!modal) return;
+    modal.style.display = "flex";
+    hideCrosshair();
+
+    const distInp  = document.getElementById("scale-distance-m");
+    const ratioInp = document.getElementById("scale-ratio-input");
+    const submitBtn = document.getElementById("scale-submit-btn");
+
+    distInp.value  = "";
+    ratioInp.value = "4000";
+    submitBtn.disabled = true;
+
+    const check = () => { submitBtn.disabled = !(parseFloat(distInp.value) > 0); };
+    distInp.oninput  = check;
+    ratioInp.oninput = check;
+
+    const onEnter = e => { if (e.key === "Enter" && !submitBtn.disabled) submitBtn.click(); };
+    distInp.onkeydown  = onEnter;
+    ratioInp.onkeydown = onEnter;
+
+    setTimeout(() => distInp.focus(), 50);
+
+    submitBtn.onclick = () => {
+        const meters   = parseFloat(distInp.value);
+        const mapScale = parseFloat(ratioInp.value) || 4000;
+        if (!(meters > 0) || !(_scalePixelDist > 0)) return;
+
+        // Same formula as old coursesetter: inputValue * 4000 / mapScale / dist / 0.48
+        project.scale    = meters * 4000 / mapScale / _scalePixelDist / 0.48;
+        project.mapScale = mapScale;
+        project.scaled   = true;
+
+        modal.style.display = "none";
+        _clearRuler();
+        _cancelScaleDrawing();
+        applyProjectScale();
+        saveFile("scale");
+        saveSnapshot("autosave");
+        _updateScalePanel();
+        // Scaling is a point of no return — clear undo history
+        undoStack = []; redoStack = []; actionCount = 0;
+        updateUndoMenu();
+        // Start in add-control-pair mode
+        activeSubtool[ToolMode.CONTROL_PAIR] = "add";
+        setTool(ToolMode.CONTROL_PAIR);
+        startNewPlacement();
+        // Kick off mask generation silently in the background
+        startMaskGeneration(project.map_file, project.scale);
+    };
+}
+
+// ── Mouse interception for ruler drawing ───────────────────
+
+function _scaleHandleUp(e) {
+    const pt = screenToWorld(e.clientX, e.clientY);
+
+    if (!_scaleP1) {
+        // First point
+        _scaleP1 = pt;
+        _drawRuler(pt, pt);
+        _setScaleStatus("Klicke zweiten Punkt…  (Ctrl+Z: zurück)");
+    } else {
+        // Second point
+        _scalePixelDist = Math.hypot(pt.x - _scaleP1.x, pt.y - _scaleP1.y);
+        _drawRuler(_scaleP1, pt);
+        _scalingActive = false;
+        mapContainer.style.cursor = "";
+        _openScaleModal();
+    }
+}
+
+function _scaleHandleMove(e) {
+    if (!_scalingActive) return;
+    const pt = screenToWorld(e.clientX, e.clientY);
+    updateCrosshair(pt.x, pt.y);
+    if (_scaleP1) _drawRuler(_scaleP1, pt);
+}
 
 /* =========================================================
     MODALS
@@ -3294,8 +3816,8 @@ const SUBTOOL_DEFS = {
         { id: "add",  icon: "circle-xmark-r", title: "Add control pair", transform: "rotate(45deg)" },
     ],
     [ToolMode.ROUTE]: [
+        { id: "new",    icon: "plus",   title: "New route" },
         { id: "select", icon: "pencil", title: "Select route" },
-        { id: "new",    icon: "plus",    title: "New route" },
     ],
     [ToolMode.MASK]: [
         { id: "pan",   icon: "no_tool",      title: "Pan" },
@@ -3311,7 +3833,7 @@ const SUBTOOL_DEFS = {
 
 const activeSubtool = {
     [ToolMode.CONTROL_PAIR]: "drag",
-    [ToolMode.ROUTE]:        "select",
+    [ToolMode.ROUTE]:        "new",
     [ToolMode.MASK]:         "pan",
     [ToolMode.BLOCK]:        "line",
 };
@@ -3340,7 +3862,7 @@ function updateSubtoolPanel(mode) {
     if (mode === ToolMode.CONTROL_PAIR) {
         current = activeTool === PlaceControlTool ? activeSubtool[mode] : "drag";
     } else if (mode === ToolMode.ROUTE) {
-        current = activeTool === NewRouteTool ? "new" : "select";
+        current = (activeTool === RouteTool || activeTool === RouteEditTool) ? "select" : "new";
     } else {
         current = activeSubtool[mode];
     }
@@ -3400,7 +3922,14 @@ subtoolPanel.addEventListener("wheel", e => {
 
 function setTool(mode) {
     if (readOnly && mode !== ToolMode.NONE) return;
+    const prevMode  = currentToolMode;
     currentToolMode = mode;
+    // Route mode: auto-activate new-route when switching INTO this mode
+    // (prevMode guard prevents recursion since startNewRoute calls setTool again)
+    if (mode === ToolMode.ROUTE && prevMode !== ToolMode.ROUTE && activeSubtool[ToolMode.ROUTE] === "new") {
+        startNewRoute();
+        return;
+    }
     activateTool(TOOLS[mode] ?? ViewTool);
 
     document.querySelectorAll(".tool-segment").forEach(seg => {
@@ -3422,6 +3951,7 @@ function setTool(mode) {
     updateLabels();
     updateSubtoolPanel(mode);
     updateCPList();
+    updateRoutes();
 }
 
 document.querySelectorAll(".tool-segment").forEach(seg => {

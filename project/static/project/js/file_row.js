@@ -173,7 +173,7 @@ export class FileRow {
                     <th></th>
                     <th>Gespeichert</th>
                 </tr></thead>
-                <tbody>${data.snapshots.map(s => `
+                <tbody>${data.snapshots.filter((s, i) => i > 0 || s.trigger === 'autosave').map(s => `
                     <tr class="snapshot-row" data-snapshot-id="${s.id}" style="cursor:pointer;" title="Klicken zum Wiederherstellen">
                         <td>${s.name || this.file.name}</td>
                         <td>${s.label__name

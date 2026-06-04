@@ -157,7 +157,7 @@ def open_file(request, file_id):
             if not (own or shared):
                 return JsonResponse({'error': 'Permission denied'}, status=403)
 
-        # Acquire the file lock — unless someone else holds a fresh lock
+        # Determine read-only state: published takes priority, then active lock
         from django.utils import timezone as tz
         from datetime import timedelta
         LOCK_TIMEOUT = timedelta(minutes=15)
@@ -167,12 +167,18 @@ def open_file(request, file_id):
             file.locked_at and
             (tz.now() - file.locked_at) < LOCK_TIMEOUT
         )
-        if locked_by_other:
+        if file.published:
+            read_only      = True
+            locked_by_name = None
+            read_only_reason = 'published'
+        elif locked_by_other:
             read_only      = True
             locked_by_name = file.locked_by.first_name or file.locked_by.username
+            read_only_reason = 'locked'
         else:
             read_only      = False
             locked_by_name = None
+            read_only_reason = None
             file.locked_by = request.user
             file.locked_at = tz.now()
             file.save(update_fields=['locked_by', 'locked_at'])
@@ -182,8 +188,9 @@ def open_file(request, file_id):
                 'id': file.id,
                 'name':        file.name,
                 'last_edited': file.last_edited.isoformat() if file.last_edited else None,
-                'read_only':      read_only,
-                'locked_by_name': locked_by_name,
+                'read_only':       read_only,
+                'locked_by_name':  locked_by_name,
+                'read_only_reason': read_only_reason,
                 'scale': file.scale,
                 'scaled': file.scaled,
                 'map_file': file.map_file,
@@ -240,11 +247,45 @@ def toggle_publish(request, file_id):
             team=request.user.profile.active_team
         )
 
+        # Only validate when publishing (not when unpublishing)
+        if not file.published:
+            from django.db.models import Count as _Count
+            has_unrouted = (
+                ControlPair.objects
+                .filter(file=file)
+                .annotate(_n=_Count('routes'))
+                .filter(_n=0)
+                .exists()
+            )
+            if has_unrouted:
+                return JsonResponse(
+                    {'error': 'unrouted', 'message': 'Posten ohne Routen'},
+                    status=400,
+                )
+
         file.published = not file.published
         file.save(update_fields=['published'])
 
-        _create_db_snapshot(file, request.user,
-                             'Veröffentlicht' if file.published else 'Verborgen')
+        # Return immediately — snapshot is expensive, run it in a background thread
+        trigger   = 'Veröffentlicht' if file.published else 'Verborgen'
+        file_id_  = file.id
+        user_id_  = request.user.id
+
+        import threading
+        from django.db import connection as _db_conn
+
+        def _snapshot_thread():
+            from django.db import close_old_connections
+            close_old_connections()
+            try:
+                from django.contrib.auth import get_user_model
+                _file = File.objects.select_related('label').get(id=file_id_)
+                _user = get_user_model().objects.get(id=user_id_)
+                _create_db_snapshot(_file, _user, trigger)
+            except Exception:
+                traceback.print_exc()
+
+        threading.Thread(target=_snapshot_thread, daemon=True).start()
 
         return JsonResponse({
             'published': file.published
@@ -407,29 +448,45 @@ def save_file(request):
         file.locked_at       = tz.now()
         file.save()
 
-        # Rebuild control pairs (delete → recreate)
-        ControlPair.objects.filter(file=file).delete()
-        id_map = []   # [{order, id, routes: [{order, id}]}]
-        for cp_d in data.get('control_pairs', []):
-            cp = ControlPair.objects.create(
-                file    = file,
-                order   = cp_d['order'],
-                start   = cp_d.get('start'),
-                ziel    = cp_d.get('ziel'),
-                complex = cp_d.get('complex', False),
-            )
-            route_ids = []
-            for r_d in cp_d.get('routes', []):
-                r = Route.objects.create(
-                    control_pair = cp,
-                    order        = r_d['order'],
-                    rP           = r_d.get('rP'),
-                    noA          = r_d.get('noA'),
-                    pos          = r_d.get('pos'),
-                    length       = r_d.get('length'),
-                    run_time     = r_d.get('run_time'),
-                    elevation    = r_d.get('elevation'),
+        # Rebuild control pairs atomically using bulk_create (2 INSERTs vs N×M)
+        from django.db import transaction as _tx
+        cp_data_list = data.get('control_pairs', [])
+        with _tx.atomic():
+            ControlPair.objects.filter(file=file).delete()   # cascades to routes
+
+            created_cps = ControlPair.objects.bulk_create([
+                ControlPair(
+                    file    = file,
+                    order   = cp_d['order'],
+                    start   = cp_d.get('start'),
+                    ziel    = cp_d.get('ziel'),
+                    complex = cp_d.get('complex', False),
                 )
+                for cp_d in cp_data_list
+            ])
+
+            route_objects = []
+            for cp_d, cp in zip(cp_data_list, created_cps):
+                for r_d in cp_d.get('routes', []):
+                    route_objects.append(Route(
+                        control_pair = cp,
+                        order        = r_d['order'],
+                        rP           = r_d.get('rP'),
+                        noA          = r_d.get('noA'),
+                        pos          = r_d.get('pos'),
+                        length       = r_d.get('length'),
+                        run_time     = r_d.get('run_time'),
+                        elevation    = r_d.get('elevation'),
+                    ))
+            created_routes = Route.objects.bulk_create(route_objects)
+
+        # Build id_map from the bulk-created objects
+        id_map  = []
+        r_index = 0
+        for cp_d, cp in zip(cp_data_list, created_cps):
+            route_ids = []
+            for _ in cp_d.get('routes', []):
+                r = created_routes[r_index]; r_index += 1
                 route_ids.append({'order': r.order, 'id': r.id})
             id_map.append({'order': cp.order, 'id': cp.id, 'routes': route_ids})
 
@@ -506,6 +563,7 @@ def save_cp_order(request):
         if file.team != request.user.profile.active_team:
             return JsonResponse({'error': 'Permission denied'}, status=403)
 
+        from django.utils import timezone as tz
         with transaction.atomic():
             # Shift all to high temporary values to free constraint space
             offset = ControlPair.objects.filter(file=file).count() + 1000
@@ -515,6 +573,8 @@ def save_cp_order(request):
             for p in pairs:
                 ControlPair.objects.filter(id=p['db_id'], file=file).update(order=p['order'])
 
+        file.last_edited = tz.now()
+        file.save(update_fields=['last_edited'])
         return JsonResponse({'status': 'ok'})
     except Exception as e:
         traceback.print_exc()
@@ -645,18 +705,48 @@ def save_snapshot(request):
 
 @role_required('Trainer')
 @require_POST
+@role_required('Trainer')
+@require_POST
+def mark_has_mask(request):
+    """Set has_mask=True on a file. Works even for published/locked files
+    so that mask generation doesn't repeat on every open."""
+    import json as _json
+    try:
+        data    = _json.loads(request.body)
+        file_id = data.get('file_id')
+        file = get_object_or_404(File, id=file_id, deleted=False)
+        # Only require team membership — no lock/publish check needed for this field
+        if not request.user.is_superuser:
+            active_team = request.user.profile.active_team
+            own    = file.team == active_team
+            shared = active_team and active_team.shared_pool and file.team and file.team.shared_pool
+            if not (own or shared):
+                return JsonResponse({'error': 'Permission denied'}, status=403)
+        from django.utils import timezone as tz
+        file.has_mask    = True
+        file.last_edited = tz.now()
+        file.save(update_fields=['has_mask', 'last_edited'])
+        return JsonResponse({'status': 'ok'})
+    except Exception as e:
+        traceback.print_exc()
+        return JsonResponse({'error': str(e)}, status=500)
+
+
 def save_mask(request):
     """Receive a PNG blob and save it as the mask for the given map file."""
+    from django.utils import timezone as tz
     filename = request.POST.get('filename')
-    file     = request.FILES.get('file')
-    if not filename or not file:
+    file_obj = request.FILES.get('file')
+    if not filename or not file_obj:
         return JsonResponse({'error': 'Missing filename or file'}, status=400)
     basename, _ = os.path.splitext(filename)
     mask_path   = os.path.join(settings.MEDIA_ROOT, 'masks', f'mask_{basename}.png')
     os.makedirs(os.path.dirname(mask_path), exist_ok=True)
     with open(mask_path, 'wb') as f:
-        for chunk in file.chunks():
+        for chunk in file_obj.chunks():
             f.write(chunk)
+    # Update last_edited on the owning file
+    File.objects.filter(map_file=filename, deleted=False).update(last_edited=tz.now())
     return JsonResponse({'status': 'ok'})
 
 
@@ -901,8 +991,40 @@ def delete_project_file(request, file_id):
         file = get_object_or_404(File, id=file_id, deleted=False)
         if file.team != request.user.profile.active_team:
             return JsonResponse({'error': 'Permission denied'}, status=403)
-        file.soft_delete()
+        # Rename so the (name, team) unique constraint doesn't block reuse of the name
+        from django.utils import timezone as tz
+        suffix = f"_deleted_{file.id}"
+        if not file.name.endswith(suffix):
+            file.name = f"{file.name}{suffix}"[:255]
+        file.deleted     = True
+        file.last_edited = tz.now()
+        file.save(update_fields=['name', 'deleted', 'last_edited'])
         return JsonResponse({'status': 'ok'})
+    except Exception as e:
+        traceback.print_exc()
+        return JsonResponse({'error': str(e)}, status=500)
+
+
+@role_required('Trainer')
+@require_POST
+def upload_map(request):
+    uploaded = request.FILES.get('file')
+    if not uploaded:
+        return JsonResponse({'error': 'No file'}, status=400)
+    if uploaded.content_type not in ('image/png', 'image/jpeg', 'image/jpg'):
+        return JsonResponse({'error': 'Nur PNG oder JPEG erlaubt'}, status=400)
+    if uploaded.size > 15 * 1024 * 1024:
+        return JsonResponse({'error': 'Datei zu gross (max. 15 MB)'}, status=400)
+    try:
+        from django.utils.timezone import now
+        ext      = os.path.splitext(uploaded.name)[1].lower() or '.png'
+        filename = f"{now().strftime('%Y%m%d_%H%M%S')}{ext}"
+        dest     = os.path.join(settings.MEDIA_ROOT, 'maps', filename)
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        with open(dest, 'wb') as f:
+            for chunk in uploaded.chunks():
+                f.write(chunk)
+        return JsonResponse({'status': 'ok', 'map_file': filename})
     except Exception as e:
         traceback.print_exc()
         return JsonResponse({'error': str(e)}, status=500)

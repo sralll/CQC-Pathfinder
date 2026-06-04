@@ -80,6 +80,15 @@
             </div>
         </div>
 
+        <div id="scale-panel" style="display:none;">
+            <div class="scale-panel-info">
+                <div class="scale-step"><span class="scale-step-num">1</span>Zwei Punkte auf der Karte heraussuchen.</div>
+                <div class="scale-step"><span class="scale-step-num">2</span>Abstand messen (z.&nbsp;B. mit <a href="https://earth.google.com" target="_blank" rel="noopener noreferrer">Google Earth</a>).</div>
+                <div class="scale-step"><span class="scale-step-num">3</span>Punkte auf der Karte anklicken und Distanz eingeben.</div>
+            </div>
+            <div id="scale-status" class="scale-status">Klicke ersten Punkt auf der Karte…</div>
+        </div>
+
         <div id="sidebar-bottom">
             <div id="radial-toolbar-wrap">
 
@@ -297,6 +306,28 @@
                     <x-icon name="upload" size="1.5rem"></x-icon>
                 </button>
             </div>
+        </div>
+    </div>
+</div>
+
+<!-- SCALE MODAL (mandatory — no click-outside close, centered) -->
+<div id="modal-scale" style="display:none; position:fixed; inset:0; z-index:9998;
+     align-items:center; justify-content:center; pointer-events:none;">
+    <div class="modal-scale-box" style="pointer-events:auto;">
+        <div class="scale-modal-body">
+            <label class="scale-modal-label">
+                Gemessene Distanz
+                <input type="number" id="scale-distance-m" min="1" step="1" placeholder="Gemessene Distanz (m)">
+            </label>
+            <div class="scale-ratio-row">
+                <span class="scale-ratio-text">Massstab&nbsp;&nbsp;1 :</span>
+                <input type="number" id="scale-ratio-input" class="scale-ratio-inline" value="4000" step="500" min="100" max="10000">
+            </div>
+        </div>
+        <div class="scale-modal-footer">
+            <button id="scale-submit-btn" class="scale-check-btn" disabled>
+                <x-icon name="check" size="1.4rem"></x-icon>
+            </button>
         </div>
     </div>
 </div>

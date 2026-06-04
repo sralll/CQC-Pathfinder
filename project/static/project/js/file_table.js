@@ -30,23 +30,25 @@ export class FileTable {
         this.render();
     }
 
-    togglePublish(row) {
-        // Optimistic: flip state immediately
-        row.updatePublishState(!row.file.published);
-        // Fire & forget — snapshot creation happens server-side
-        fetch(`/editor/publish/${row.file.id}/`, {
+    async togglePublish(row) {
+        // Wait for DB confirmation before changing the button colour.
+        // The snapshot is created asynchronously on the server after the response.
+        const res  = await fetch(`/editor/publish/${row.file.id}/`, {
             method: 'POST',
             headers: { 'X-CSRFToken': getCSRFToken() }
-        }).catch(err => {
-            // Revert on network failure
-            console.warn('togglePublish failed:', err);
-            row.updatePublishState(!row.file.published);
         });
+        const data = await res.json();
+        if (!res.ok) {
+            alert(data.message || 'Fehler beim Veröffentlichen.');
+            return;
+        }
+        row.updatePublishState(data.published);
     }
 
     async deleteFile(id) {
         if (!confirm('Projekt löschen — Sicher?')) return;
         const csrf = document.cookie.match(/csrftoken=([^;]+)/)?.[1] ?? "";
+        window.showTableLoading?.();
         try {
             const res = await fetch(`/editor/delete/${id}/`, {
                 method: 'POST',
@@ -54,6 +56,7 @@ export class FileTable {
             });
             if (!res.ok) {
                 const d = await res.json().catch(() => ({}));
+                window.hideTableLoading?.();
                 alert(d.error || 'Löschen fehlgeschlagen.');
                 return;
             }
@@ -61,6 +64,8 @@ export class FileTable {
         } catch (e) {
             console.error('deleteFile failed:', e);
             alert('Löschen fehlgeschlagen.');
+        } finally {
+            window.hideTableLoading?.();
         }
     }
 
@@ -75,7 +80,7 @@ export class FileTable {
         maskGenInProgress = false;
         hideMaskGenBar();
         project = data.project;
-        window.setReadOnly?.(data.project.read_only, data.project.locked_by_name);
+        window.setReadOnly?.(data.project.read_only, data.project.locked_by_name, data.project.read_only_reason);
         window.updateFilenameInput?.();
         applyProjectScale();
         updateCameraTransform({ x: 0, y: 0, zoom: 0.67 });
@@ -97,6 +102,7 @@ export class FileTable {
             drawCourse();
             undoStack = []; redoStack = []; actionCount = 0;
             pushUndoState();
+            window._updateScalePanel?.();
         };
         img.onerror = () => { hideMapSpinner(); };
         img.src = `/editor/map/${project.map_file}`;
