@@ -750,20 +750,31 @@ def save_mask(request):
     return JsonResponse({'status': 'ok'})
 
 
-@role_required('Trainer')
-@require_POST
-def generate_mask(request):
-    """Stream UNet mask generation progress. Copied from pathfinding.run_UNet_stream."""
-    import asyncio, gc, math, json as _json
+async def generate_mask(request):
+    """Stream UNet mask generation progress via a true async generator.
+    Auth is checked inline because user_passes_test is not async-compatible.
+    The async generator is iterated directly by Django's ASGI handler, so each
+    yield is immediately flushed to the client without buffering."""
+    import asyncio, gc, math, json as _json, time
     import numpy as np
     from PIL import Image
     from io import BytesIO
     from types import SimpleNamespace
-    try:
-        import onnxruntime as ort
-    except ImportError:
-        return HttpResponse("onnxruntime not installed", status=500)
+    from asgiref.sync import sync_to_async
 
+    # ── Auth (sync_to_async so ORM thread-locals are set up correctly) ────
+    if request.method != "POST":
+        return HttpResponse(status=405)
+
+    def _check_auth():
+        if not request.user.is_authenticated:
+            return False
+        return request.user.groups.filter(name='Trainer').exists()
+
+    if not await sync_to_async(_check_auth)():
+        return JsonResponse({'error': 'Permission denied'}, status=403)
+
+    # ── Parse body ─────────────────────────────────────────────────────────
     try:
         body = _json.loads(request.body)
     except Exception:
@@ -771,135 +782,123 @@ def generate_mask(request):
 
     filename  = body.get('filename')
     cqc_scale = body.get('scale')
-
     if not filename or not cqc_scale:
         return HttpResponse("Missing filename or scale", status=400)
-
     try:
         scale = float(cqc_scale)
-        if scale <= 0:
-            raise ValueError()
+        if scale <= 0: raise ValueError()
     except ValueError:
         return HttpResponse("Invalid scale parameter", status=400)
 
-    basename, _ = os.path.splitext(filename)
+    basename, _   = os.path.splitext(filename)
     mask_filename = f"mask_{basename}.png"
-    map_path = os.path.join(settings.MEDIA_ROOT, 'maps', filename)
-
+    map_path      = os.path.join(settings.MEDIA_ROOT, 'maps', filename)
     if not os.path.exists(map_path):
         return HttpResponseNotFound(f"Map '{filename}' not found.")
 
-    Image.MAX_IMAGE_PIXELS = None
-    train_scale      = 0.710
-    train_omap_scale = 4000
-    omap_scale       = 4000
-    SCALE_FACTOR     = scale / train_scale * omap_scale / train_omap_scale
+    # ── Load image + model (sync I/O → run in executor) ───────────────────
+    try:
+        import onnxruntime as ort
+    except ImportError:
+        return HttpResponse("onnxruntime not installed", status=500)
 
-    import json
+    def _load():
+        Image.MAX_IMAGE_PIXELS = None
+        SCALE_FACTOR = scale / 0.710 * 4000 / 4000
+        with open(map_path, 'rb') as f:
+            img = Image.open(f); img.load(); img = img.convert("RGB")
+        new_size = (int(img.width * SCALE_FACTOR), int(img.height * SCALE_FACTOR))
+        if new_size[0] > 16000 or new_size[1] > 16000:
+            raise ValueError("Map too large for neural network. Check scale.")
+        img = img.resize(new_size, resample=Image.BICUBIC)
+        session = ort.InferenceSession("best_model_300dpi.onnx")
+        return img, session
 
     try:
-        with open(map_path, 'rb') as f:
-            img = Image.open(f)
-            img.load()
-            img = img.convert("RGB")
-            new_size = (int(img.width * SCALE_FACTOR), int(img.height * SCALE_FACTOR))
-            if new_size[0] > 16000 or new_size[1] > 16000:
-                return HttpResponse("Map too large for neural network. Check scale.", status=400)
-            img = img.resize(new_size, resample=Image.BICUBIC)
-
-        ort_session = ort.InferenceSession("best_model_300dpi.onnx")
-        img_w, img_h = img.size
-        output_img = np.zeros((img_h, img_w), dtype=np.float32)
-
-        TILE_SIZE    = 2048
-        OVERLAP_RATIO = 0.2
-        overlap      = int(TILE_SIZE * OVERLAP_RATIO)
-        step         = TILE_SIZE - overlap
-        tiles_y      = math.ceil((img_h - overlap) / step)
-        tiles_x      = math.ceil((img_w - overlap) / step)
-        total_tiles  = max(1, tiles_y * tiles_x)
-        processed_tiles = 0
-
-        def model_predict_fn(input_data):
-            out = ort_session.run(None, {"input": input_data})[0]
-            if out.ndim == 4: out = out[0]
-            if out.shape[0] > 1: out = out.argmax(axis=0)
-            return out.astype(np.float32)
-
-        async def tile_generator():
-            nonlocal processed_tiles
-            yield "data: {}\n\n"
-            loop = asyncio.get_running_loop()
-            try:
-                for y0 in range(0, img_h, step):
-                    for x0 in range(0, img_w, step):
-                        y1 = min(y0 + TILE_SIZE, img_h)
-                        x1 = min(x0 + TILE_SIZE, img_w)
-                        tile = img.crop((x0, y0, x1, y1))
-                        tile_np = np.array(tile) / 255.0
-                        tile_np = np.transpose(tile_np, (2, 0, 1))[np.newaxis].astype(np.float32)
-                        tile_pred = await loop.run_in_executor(None, model_predict_fn, tile_np)
-                        out_y0 = y0 if y0 == 0 else y0 + overlap // 2
-                        out_x0 = x0 if x0 == 0 else x0 + overlap // 2
-                        out_y1 = y1 if y1 == img_h else y1 - overlap // 2
-                        out_x1 = x1 if x1 == img_w else x1 - overlap // 2
-                        ty0, tx0 = out_y0 - y0, out_x0 - x0
-                        ty1 = min(ty0 + (out_y1 - out_y0), tile_pred.shape[0])
-                        tx1 = min(tx0 + (out_x1 - out_x0), tile_pred.shape[1])
-                        out_y1 = out_y0 + (ty1 - ty0)
-                        out_x1 = out_x0 + (tx1 - tx0)
-                        output_img[out_y0:out_y1, out_x0:out_x1] = tile_pred[ty0:ty1, tx0:tx1]
-                        processed_tiles += 1
-                        yield f"data: {json.dumps({'current': processed_tiles, 'total': total_tiles})}\n\n"
-                        await asyncio.sleep(0.01)
-            except Exception as e:
-                yield f"data: {json.dumps({'error': str(e)})}\n\n"
-                return
-
-            mo = SimpleNamespace(impassable=0, very_slow=135, slow=231, cross=241, fast=243)
-            visual = 255 * np.ones((img_h, img_w, 1), dtype=np.uint8)
-            visual[output_img < 10] = mo.impassable
-            visual[(output_img >= 10) & (output_img < 22)] = mo.very_slow
-            visual[(output_img >= 22) & (output_img < 26)] = mo.slow
-            visual[(output_img >= 26) & (output_img < 28)] = mo.cross
-            visual[(output_img >= 28) & (output_img < 32)] = mo.fast
-            visual[output_img == 32] = mo.cross
-            visual[output_img == 33] = mo.fast
-            visual[output_img == 34] = mo.impassable
-            final_img = Image.fromarray(np.repeat(visual, 3, axis=2).astype(np.uint8))
-            buf = BytesIO()
-            final_img.save(buf, format="PNG")
-            buf.seek(0)
-            mask_path = os.path.join(settings.MEDIA_ROOT, 'masks', mask_filename)
-            with open(mask_path, 'wb') as f:
-                f.write(buf.read())
-            yield f"data: {json.dumps({'done': True, 'mask_file': mask_filename})}\n\n"
-            gc.collect()
-
-        def sync_gen():
-            loop = asyncio.new_event_loop()
-            gen = tile_generator()
-            chunk_count = 0
-            try:
-                while True:
-                    try:
-                        chunk = loop.run_until_complete(gen.__anext__())
-                        chunk_count += 1
-                        yield chunk
-                    except StopAsyncIteration:
-                        break
-            finally:
-                loop.close()
-                print(f"[generate_mask] streamed {chunk_count} chunks for '{filename}' ({total_tiles} tiles)")
-
-        resp = StreamingHttpResponse(sync_gen(), content_type="text/event-stream")
-        resp["Cache-Control"] = "no-cache"
-        resp["X-Accel-Buffering"] = "no"
-        return resp
-
+        img, ort_session = await sync_to_async(_load)()
+    except ValueError as e:
+        return HttpResponse(str(e), status=400)
     except Exception as e:
         traceback.print_exc()
         return HttpResponse(str(e), status=500)
+
+    img_w, img_h   = img.size
+    output_img     = np.zeros((img_h, img_w), dtype=np.float32)
+    TILE_SIZE      = 2048
+    overlap        = int(TILE_SIZE * 0.2)
+    step           = TILE_SIZE - overlap
+    tiles_y        = math.ceil((img_h - overlap) / step)
+    tiles_x        = math.ceil((img_w - overlap) / step)
+    total_tiles    = max(1, tiles_y * tiles_x)
+
+    def _predict(tile_np):
+        out = ort_session.run(None, {"input": tile_np})[0]
+        if out.ndim == 4: out = out[0]
+        if out.shape[0] > 1: out = out.argmax(axis=0)
+        return out.astype(np.float32)
+
+    predict_async = sync_to_async(_predict)
+
+    # ── Async SSE generator — each yield is flushed immediately ────────────
+    async def sse_stream():
+        t0 = time.time()
+        processed = 0
+        print(f"[SSE] START  file={filename}  tiles={total_tiles}", flush=True)
+        yield f"data: {_json.dumps({'current': 0, 'total': total_tiles})}\n\n"
+
+        try:
+            for y0 in range(0, img_h, step):
+                for x0 in range(0, img_w, step):
+                    y1 = min(y0 + TILE_SIZE, img_h)
+                    x1 = min(x0 + TILE_SIZE, img_w)
+                    tile    = img.crop((x0, y0, x1, y1))
+                    tile_np = np.transpose(np.array(tile) / 255.0, (2,0,1))[np.newaxis].astype(np.float32)
+
+                    # ONNX inference via sync_to_async so the event loop stays free
+                    tile_pred = await predict_async(tile_np)
+
+                    oy0 = y0 if y0==0 else y0+overlap//2; oy1 = y1 if y1==img_h else y1-overlap//2
+                    ox0 = x0 if x0==0 else x0+overlap//2; ox1 = x1 if x1==img_w else x1-overlap//2
+                    ty0, tx0 = oy0-y0, ox0-x0
+                    ty1 = min(ty0+(oy1-oy0), tile_pred.shape[0])
+                    tx1 = min(tx0+(ox1-ox0), tile_pred.shape[1])
+                    output_img[oy0:oy0+(ty1-ty0), ox0:ox0+(tx1-tx0)] = tile_pred[ty0:ty1, tx0:tx1]
+
+                    processed += 1
+                    print(f"[SSE] tile {processed}/{total_tiles}  ({time.time()-t0:.1f}s)", flush=True)
+                    yield f"data: {_json.dumps({'current': processed, 'total': total_tiles})}\n\n"
+
+        except Exception as e:
+            print(f"[SSE] ERROR: {e}", flush=True)
+            yield f"data: {_json.dumps({'error': str(e)})}\n\n"
+            return
+
+        # ── Save mask ──────────────────────────────────────────────────────
+        def _save():
+            mo = SimpleNamespace(impassable=0, very_slow=135, slow=231, cross=241, fast=243)
+            vis = 255 * np.ones((img_h, img_w, 1), dtype=np.uint8)
+            vis[output_img < 10] = mo.impassable
+            vis[(output_img >= 10) & (output_img < 22)] = mo.very_slow
+            vis[(output_img >= 22) & (output_img < 26)] = mo.slow
+            vis[(output_img >= 26) & (output_img < 28)] = mo.cross
+            vis[(output_img >= 28) & (output_img < 32)] = mo.fast
+            vis[output_img == 32] = mo.cross
+            vis[output_img == 33] = mo.fast
+            vis[output_img == 34] = mo.impassable
+            final = Image.fromarray(np.repeat(vis, 3, axis=2).astype(np.uint8))
+            buf = BytesIO(); final.save(buf, format="PNG"); buf.seek(0)
+            mask_path = os.path.join(settings.MEDIA_ROOT, 'masks', mask_filename)
+            with open(mask_path, 'wb') as f: f.write(buf.read())
+            gc.collect()
+
+        await sync_to_async(_save)()
+        print(f"[SSE] DONE  {time.time()-t0:.1f}s", flush=True)
+        yield f"data: {_json.dumps({'done': True, 'mask_file': mask_filename})}\n\n"
+
+    resp = StreamingHttpResponse(sse_stream(), content_type="text/event-stream")
+    resp["Cache-Control"] = "no-cache"
+    resp["X-Accel-Buffering"] = "no"
+    return resp
 
 
 @role_required('Trainer')

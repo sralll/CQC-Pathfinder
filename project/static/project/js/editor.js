@@ -202,6 +202,13 @@ function restoreState(state) {
 
 function undo() {
     if (!undoStack.length) return;
+    if (undoStack[undoStack.length - 1].isMaskUndo) {
+        redoStack.push({ label: "Maske bearbeitet", isMaskUndo: true });
+        undoStack.pop();
+        undoMask();
+        updateUndoMenu();
+        return;
+    }
     redoStack.push(captureState("Rückgängig"));
     restoreState(undoStack.pop());
     saveFile("undo");
@@ -210,6 +217,13 @@ function undo() {
 
 function redo() {
     if (!redoStack.length) return;
+    if (redoStack[redoStack.length - 1].isMaskUndo) {
+        undoStack.push({ label: "Maske bearbeitet", isMaskUndo: true });
+        redoStack.pop();
+        redoMask();
+        updateUndoMenu();
+        return;
+    }
     undoStack.push(captureState("Wiederholen"));
     restoreState(redoStack.pop());
     saveFile("redo");
@@ -1212,12 +1226,13 @@ const MaskLayer = (() => {
     const BRUSH_MIN = 1;
     const BRUSH_MAX = 25;
 
-    let canvas      = null;   // display canvas (#mask-canvas)
-    let ctx         = null;
-    let maskData    = null;   // ImageData holding real greyscale mask values
-    let loaded      = false;
-    let lastMapFile = null;
-    let lastPx      = null;
+    let canvas        = null;
+    let ctx           = null;
+    let maskData      = null;
+    let loaded        = false;
+    let lastMapFile   = null;
+    let lastPx        = null;
+    let _strokeBefore = null;  // R-channel snapshot before current stroke (for diff)
 
     function ensureCanvas() {
         if (!canvas) {
@@ -1244,7 +1259,10 @@ const MaskLayer = (() => {
     function loadMask(mapFile) {
         ensureCanvas();
         if (!ctx || mapFile === lastMapFile) return;
-        lastMapFile = mapFile;
+        lastMapFile   = mapFile;
+        _strokeBefore = null;
+        // Clear stale diffs — they were computed for a different canvas
+        if (typeof clearMaskUndoStacks === "function") clearMaskUndoStacks();
         loaded = false;
         const stem = mapFile.replace(/\.[^.]+$/, "");
         const img  = new Image();
@@ -1347,9 +1365,10 @@ const MaskLayer = (() => {
             ensureCanvas();
             if (ctx && canvas.width && canvas.height)
                 ctx.clearRect(0, 0, canvas.width, canvas.height);
-            maskData    = null;
-            loaded      = false;
-            lastMapFile = null;
+            maskData      = null;
+            loaded        = false;
+            lastMapFile   = null;
+            _strokeBefore = null;
         },
         loadMask,
         applyMapDimensions,
@@ -1367,8 +1386,46 @@ const MaskLayer = (() => {
             const ratioX = canvas.width / (mapImg.naturalWidth || canvas.width);
             return brushR / ratioX * (project.scale || 1) * camera.zoom;
         },
-        draw(clientX, clientY)  { strokeLine(clientX, clientY, 0);   },   // 0 = black = impassable
-        erase(clientX, clientY) { strokeLine(clientX, clientY, 241); },   // 241 = fast terrain
+        draw(clientX, clientY)  { strokeLine(clientX, clientY, 0);   },
+        erase(clientX, clientY) { strokeLine(clientX, clientY, 241); },
+
+        // ── Diff-based undo support ────────────────────────────
+        startStroke() {
+            if (!maskData) return;
+            // Snapshot just the R channel (G=B=R, A=255 always)
+            const src = maskData.data, len = src.length / 4;
+            _strokeBefore = new Uint8Array(len);
+            for (let i = 0, j = 0; i < src.length; i += 4, j++) _strokeBefore[j] = src[i];
+        },
+        finishStroke() {
+            if (!_strokeBefore || !maskData) { _strokeBefore = null; return null; }
+            const src = maskData.data;
+            const idxBuf = [], oldBuf = [], newBuf = [];
+            for (let i = 0, j = 0; i < src.length; i += 4, j++) {
+                const o = _strokeBefore[j], n = src[i];
+                if (o !== n) { idxBuf.push(j); oldBuf.push(o); newBuf.push(n); }
+            }
+            _strokeBefore = null;
+            if (!idxBuf.length) return null;
+            return {
+                indices: new Uint32Array(idxBuf),
+                oldVals: new Uint8Array(oldBuf),
+                newVals: new Uint8Array(newBuf),
+            };
+        },
+        applyDiff(diff, reverse) {
+            if (!diff || !maskData) return;
+            const vals   = reverse ? diff.oldVals : diff.newVals;
+            const d      = maskData.data;
+            const maxIdx = maskData.width * maskData.height - 1;
+            for (let k = 0; k < diff.indices.length; k++) {
+                const j = diff.indices[k];
+                if (j > maxIdx) continue;   // skip stale indices from a different canvas size
+                const i = j * 4;
+                d[i] = d[i+1] = d[i+2] = vals[k];
+            }
+            renderDisplay();
+        },
 
         saveMask(mapFile) {
             if (!maskData) return;
@@ -1392,6 +1449,52 @@ const MaskLayer = (() => {
         },
     };
 })();
+
+/* =========================================================
+    MASK UNDO / REDO  (diff-based, independent of project undo)
+========================================================= */
+
+const MASK_UNDO_MAX  = 30;
+let maskUndoStack    = [];
+let maskRedoStack    = [];
+
+function clearMaskUndoStacks() {
+    maskUndoStack = [];
+    maskRedoStack = [];
+    // Also remove any mask sentinels from the main undo/redo stacks
+    undoStack = undoStack.filter(s => !s.isMaskUndo);
+    redoStack = redoStack.filter(s => !s.isMaskUndo);
+    updateUndoMenu();
+}
+window.clearMaskUndoStacks = clearMaskUndoStacks;
+
+function pushMaskDiff(diff) {
+    if (!diff) return;
+    maskUndoStack.push(diff);
+    if (maskUndoStack.length > MASK_UNDO_MAX) maskUndoStack.shift();
+    maskRedoStack = [];
+    // Mirror into main undo stack so it appears in the dropdown
+    undoStack.push({ label: "Maske bearbeitet", isMaskUndo: true });
+    if (undoStack.length > UNDO_MAX) undoStack.shift();
+    redoStack = [];
+    updateUndoMenu();
+}
+
+function undoMask() {
+    if (!maskUndoStack.length) return;
+    const diff = maskUndoStack.pop();
+    maskRedoStack.push(diff);
+    MaskLayer.applyDiff(diff, true);   // reverse: restore old values
+    MaskLayer.saveMask(project.map_file);
+}
+
+function redoMask() {
+    if (!maskRedoStack.length) return;
+    const diff = maskRedoStack.pop();
+    maskUndoStack.push(diff);
+    MaskLayer.applyDiff(diff, false);  // forward: restore new values
+    MaskLayer.saveMask(project.map_file);
+}
 
 /* =========================================================
     TOOL: MASK
@@ -1452,6 +1555,7 @@ const MaskTool = (() => {
             if (sub() === "pan") { pan.start(e.clientX, e.clientY); return; }
             painting = true;
             MaskLayer.resetStroke();
+            MaskLayer.startStroke();   // snapshot R channel before any painting
             if (sub() === "draw")  MaskLayer.draw(e.clientX, e.clientY);
             if (sub() === "erase") MaskLayer.erase(e.clientX, e.clientY);
         },
@@ -1486,7 +1590,8 @@ const MaskTool = (() => {
             painting = false;
             MaskLayer.resetStroke();
             if (wasPainting && project.map_file) {
-                pushUndoState("Maske bearbeitet");
+                const diff = MaskLayer.finishStroke();
+                pushMaskDiff(diff);              // mask-specific undo stack
                 MaskLayer.saveMask(project.map_file);
                 project.has_mask = true;
             }
@@ -1841,7 +1946,10 @@ const ViewTool = (() => {
     });
     return {
         defaultCursor: "grab",
-        onEnter() { mapContainer.style.cursor = this.defaultCursor; },
+        onEnter() {
+            mapContainer.style.cursor = this.defaultCursor;
+            updateRoutes();
+        },
         onExit()  { gesture.cancel(); },
         onMouseDown(e, pt) { gesture.down(e, pt); },
         onMouseUp(e, pt)   { gesture.up(e, pt); },
@@ -2107,79 +2215,126 @@ function activateTool(toolObj) {
 ========================================================= */
 
 const RCM = (() => {
-    const IR1 = 28, IR2 = 75;          // inner ring radii (tool segments)
-    const OR1 = 80, OR2 = 128;         // outer ring radii (subtool segments)
-    const CLICK_MS = 200, MOVE_PX = 8; // thresholds for click vs drag
+    // 4 tools in N/E/S/W positions; no_tool lives in the centre circle
+    const IR1 = 30, IR2 = 78;
+    const OR1 = IR2, OR2 = 130;          // outer ring directly attached (OR1 == IR2)
+    const CLICK_MS = 200, MOVE_PX = 8;
 
-    const MENU_TOOLS = [ToolMode.CONTROL_PAIR, ToolMode.ROUTE, ToolMode.MASK, ToolMode.BLOCK, ToolMode.NONE];
+    const MENU_TOOLS = [ToolMode.CONTROL_PAIR, ToolMode.ROUTE, ToolMode.MASK, ToolMode.BLOCK];
+    // Clockwise from North: CP(N) Route(E) Mask(S) Block(W)
     const TOOL_ICON  = {
         [ToolMode.CONTROL_PAIR]: "control_pair",
         [ToolMode.ROUTE]:        "route",
         [ToolMode.MASK]:         "mask",
         [ToolMode.BLOCK]:        "block",
-        [ToolMode.NONE]:         "no_tool",
     };
-    const N      = MENU_TOOLS.length;
-    const SECTOR = 360 / N;
+    const N = 4, SECTOR = 90;
+    // Segments start at -135° so each midpoint is exactly N/E/S/W
+    // N mid=-90°, E mid=0°, S mid=90°, W mid=180°
 
-    let menuEl = null, downAt = 0, downPos = null;
+    let menuEl = null, overlayEl = null;
+    let downAt = 0, downPos = null;
     let hoveredTool = null, hoveredSub = null, open = false;
 
-    const rad   = d => d * Math.PI / 180;
-    const segA1 = i => -90 + i * SECTOR;
+    const rad    = d => d * Math.PI / 180;
+    // Segments start at -135° → midpoints at -90(N), 0(E), 90(S), 180(W)
+    const segA1  = i => -135 + i * SECTOR;
     const segMid = i => segA1(i) + SECTOR / 2;
 
+    // Colors matching the sidebar tool wheel
+    const COL_DARK   = "#252525";
+    const COL_ORANGE = "#ff9800";
+    const COL_HOVER  = "#ffbb44"; // slightly brighter on hover-of-hover
+
     function slicePath(r1, r2, a1, a2) {
-        const large = (a2 - a1) > 180 ? 1 : 0;
-        const p = a => [r1 * Math.cos(rad(a)), r1 * Math.sin(rad(a)),
-                         r2 * Math.cos(rad(a)), r2 * Math.sin(rad(a))];
-        const [x1,y1,x2,y2] = p(a1), [x4,y4,x3,y3] = p(a2);
-        return `M${x1} ${y1} L${x2} ${y2} A${r2} ${r2} 0 ${large} 1 ${x3} ${y3} L${x4} ${y4} A${r1} ${r1} 0 ${large} 0 ${x1} ${y1}Z`;
+        const large = (a2 - a1) >= 180 ? 1 : 0;
+        const c = (r, a) => [r*Math.cos(rad(a)), r*Math.sin(rad(a))];
+        const [ax,ay] = c(r1,a1), [bx,by] = c(r2,a1);
+        const [cx2,cy2] = c(r2,a2), [dx,dy] = c(r1,a2);
+        return `M${ax} ${ay}L${bx} ${by}A${r2} ${r2} 0 ${large} 1 ${cx2} ${cy2}L${dx} ${dy}A${r1} ${r1} 0 ${large} 0 ${ax} ${ay}Z`;
     }
 
-    const ns = "http://www.w3.org/2000/svg";
-    const el = (tag, attrs={}) => {
-        const e = document.createElementNS(ns, tag);
+    const svgNS = "http://www.w3.org/2000/svg";
+    const svgEl = (tag, attrs={}) => {
+        const e = document.createElementNS(svgNS, tag);
         Object.entries(attrs).forEach(([k,v]) => e.setAttribute(k, v));
         return e;
     };
 
+    const ICON_SZ = 36;
     function iconFO(angleDeg, r, iconName, transform) {
-        const a = rad(angleDeg);
-        const x = r * Math.cos(a) - 10, y = r * Math.sin(a) - 10;
-        const fo = el("foreignObject", { x, y, width: 20, height: 20 });
+        const a  = rad(angleDeg);
+        const fo = svgEl("foreignObject", {
+            x: r*Math.cos(a) - ICON_SZ/2, y: r*Math.sin(a) - ICON_SZ/2,
+            width: ICON_SZ, height: ICON_SZ,
+        });
         const div = document.createElement("div");
-        div.style.cssText = "display:flex;align-items:center;justify-content:center;width:20px;height:20px;";
-        div.innerHTML = icon(iconName, "14px", transform);
+        div.style.cssText = `display:flex;align-items:center;justify-content:center;width:${ICON_SZ}px;height:${ICON_SZ}px;`;
+        div.innerHTML = icon(iconName, "26px", transform);
+        div.querySelectorAll("svg, path, rect, circle, polygon").forEach(e => e.style.fill = "white");
+        fo.appendChild(div);
+        return fo;
+    }
+    function centeredFO(iconName, transform) {
+        const sz = ICON_SZ;
+        const fo = svgEl("foreignObject", { x:-sz/2, y:-sz/2, width:sz, height:sz });
+        const div = document.createElement("div");
+        div.style.cssText = `display:flex;align-items:center;justify-content:center;width:${sz}px;height:${sz}px;`;
+        div.innerHTML = icon(iconName, "26px", transform);
+        div.querySelectorAll("svg, path, rect, circle, polygon").forEach(e => e.style.fill = "white");
         fo.appendChild(div);
         return fo;
     }
 
-    function buildSegment(r1, r2, a1, a2, mid, iconName, transform, dataKey, dataVal, fill) {
-        const g = el("g"); g.dataset[dataKey] = dataVal;
-        const path = el("path", { d: slicePath(r1, r2, a1, a2), fill, stroke:"#444", "stroke-width":"1" });
+    function setIconColor(g, color) {
+        g.querySelectorAll("foreignObject svg, foreignObject path, foreignObject rect, foreignObject circle, foreignObject polygon")
+         .forEach(e => e.style.fill = color);
+    }
+
+    // No stroke — segments bound directly edge-to-edge
+    function makeSegment(r1, r2, a1, a2, mid, iconName, transform, key, val, fill) {
+        const g = svgEl("g"); g.dataset[key] = val;
+        const path = svgEl("path", { d: slicePath(r1, r2, a1, a2), fill, stroke:"none" });
         g.appendChild(path);
         g.appendChild(iconFO(mid, (r1+r2)/2, iconName, transform));
+        if (fill !== COL_DARK) setIconColor(g, "black");
         return g;
     }
 
     function buildMenu(x, y) {
-        const size = (OR2 + 20) * 2;
-        const svg = el("svg");
+        const size = (OR2 + 22) * 2;
+        const svg  = svgEl("svg");
         svg.id = "rcm";
-        svg.style.cssText = `position:fixed;left:${x-size/2}px;top:${y-size/2}px;width:${size}px;height:${size}px;pointer-events:none;z-index:99999;`;
+        svg.style.cssText = `position:fixed;left:${x-size/2}px;top:${y-size/2}px;`
+            + `width:${size}px;height:${size}px;pointer-events:none;z-index:99999;`;
         svg.setAttribute("viewBox", `${-size/2} ${-size/2} ${size} ${size}`);
 
-        const innerG = el("g"); innerG.id = "rcm-inner";
+        // Inner ring — 4 segments, N/E/S/W
+        const innerG = svgEl("g"); innerG.id = "rcm-inner";
         MENU_TOOLS.forEach((mode, i) => {
-            const fill = mode === currentToolMode ? "#e07020" : "#222";
-            innerG.appendChild(buildSegment(IR1, IR2, segA1(i)+1.5, segA1(i)+SECTOR-1.5,
-                segMid(i), TOOL_ICON[mode] || "no_tool", undefined, "mode", mode, fill));
+            const fill = mode === currentToolMode ? COL_ORANGE : COL_DARK;
+            innerG.appendChild(makeSegment(IR1, IR2, segA1(i), segA1(i)+SECTOR,
+                segMid(i), TOOL_ICON[mode], undefined, "mode", mode, fill));
         });
         svg.appendChild(innerG);
 
-        const outerG = el("g"); outerG.id = "rcm-outer";
+        // Outer ring (populated on hover)
+        const outerG = svgEl("g"); outerG.id = "rcm-outer";
         svg.appendChild(outerG);
+
+        // Centre circle — clicking here → no_tool
+        const cFill = currentToolMode === ToolMode.NONE ? COL_ORANGE : COL_DARK;
+        const cg = svgEl("g"); cg.id = "rcm-center";
+        cg.appendChild(svgEl("circle", { cx:0, cy:0, r:IR1, fill:cFill, stroke:"none" }));
+        cg.appendChild(centeredFO("no_tool"));
+        if (cFill !== COL_DARK) setIconColor(cg, "black");
+        svg.appendChild(cg);
+
+        // Guide line on top
+        const guide = svgEl("line", { id:"rcm-guide", x1:0, y1:0, x2:0, y2:0,
+            stroke:"#000", "stroke-width":"1.2", "stroke-opacity":"0.6" });
+        svg.appendChild(guide);
+
         return svg;
     }
 
@@ -2190,107 +2345,171 @@ const RCM = (() => {
         if (!mode || mode === ToolMode.NONE) return;
         const defs = SUBTOOL_DEFS[mode];
         if (!defs?.length) return;
-        const toolIdx = MENU_TOOLS.indexOf(mode);
-        const base = segA1(toolIdx);
+        const base = segA1(MENU_TOOLS.indexOf(mode));
         const sub  = SECTOR / defs.length;
         defs.forEach((def, si) => {
-            outerG.appendChild(buildSegment(OR1, OR2, base+si*sub+1, base+(si+1)*sub-1,
-                base+si*sub+sub/2, def.icon, def.transform, "sub", def.id, "#2a2a2a"));
+            const a1 = base + si*sub;
+            outerG.appendChild(makeSegment(OR1, OR2, a1, a1+sub, a1+sub/2,
+                def.icon, def.transform, "sub", def.id, COL_DARK));
         });
     }
 
     function hitTest(cx, cy) {
         if (!menuEl) return null;
-        const r = menuEl.getBoundingClientRect();
-        const dx = cx-(r.left+r.width/2), dy = cy-(r.top+r.height/2);
+        const r    = menuEl.getBoundingClientRect();
+        const dx   = cx-(r.left+r.width/2), dy = cy-(r.top+r.height/2);
         const dist = Math.hypot(dx, dy);
-        const normDeg = ((Math.atan2(dy, dx)*180/Math.PI)+90+360)%360;
-        if (dist >= IR1 && dist < IR2) {
-            return { ring:"inner", mode: MENU_TOOLS[Math.floor(normDeg/SECTOR)%N] };
+        const norm = ((Math.atan2(dy,dx)*180/Math.PI)+135+360)%360; // offset so 0 = start of N segment
+
+        // Centre circle → no_tool
+        if (dist < IR1) return { ring:"center", mode: ToolMode.NONE, sub: null };
+
+        const toolIdx = Math.floor(norm/SECTOR) % N;
+        const mode    = MENU_TOOLS[toolIdx];
+        const defs    = SUBTOOL_DEFS[mode];
+
+        let sub = null;
+        if (defs?.length) {
+            const rel = (norm - toolIdx*SECTOR + 360) % 360;
+            sub = defs[Math.min(Math.floor(rel/(SECTOR/defs.length)), defs.length-1)].id;
         }
-        if (dist >= OR1 && dist < OR2 && hoveredTool && hoveredTool !== ToolMode.NONE) {
-            const defs = SUBTOOL_DEFS[hoveredTool];
-            if (defs?.length) {
-                const toolIdx = MENU_TOOLS.indexOf(hoveredTool);
-                const rel = (normDeg - toolIdx*SECTOR + 360) % 360;
-                if (rel < SECTOR) {
-                    const si = Math.min(Math.floor(rel/(SECTOR/defs.length)), defs.length-1);
-                    return { ring:"outer", mode:hoveredTool, sub:defs[si].id };
-                }
-            }
-        }
-        return null;
+
+        if (dist < IR2) return { ring:"inner",    mode, sub:null };
+        if (dist < OR2) return { ring:(dist < OR1 ? "gap" : "outer"), mode, sub };
+        return                 { ring:"extended",  mode, sub };
+    }
+
+    function segFill(isCurrentTool, isHovered) {
+        if (isHovered && isCurrentTool) return COL_HOVER;  // brighter if already orange
+        if (isHovered || isCurrentTool)  return COL_ORANGE;
+        return COL_DARK;
+    }
+
+    function applySegmentState(g, isCurrentTool, isHovered, baseColor) {
+        const fill = isHovered || isCurrentTool ? segFill(isCurrentTool, isHovered) : baseColor;
+        const p = g.querySelector("path") || g.querySelector("circle");
+        if (p) p.setAttribute("fill", fill);
+        setIconColor(g, (isHovered || isCurrentTool) ? "black" : "white");
     }
 
     function updateHover(cx, cy) {
         if (!menuEl) return;
-        const hit = hitTest(cx, cy);
-        const newTool = hit?.ring==="inner" ? hit.mode : null;
-        const newSub  = hit?.ring==="outer" ? hit.sub  : null;
+
+        const guide = menuEl.querySelector("#rcm-guide");
+        if (guide) {
+            const r = menuEl.getBoundingClientRect();
+            guide.setAttribute("x2", cx-(r.left+r.width/2));
+            guide.setAttribute("y2", cy-(r.top+r.height/2));
+        }
+
+        const hit     = hitTest(cx, cy);
+        const newTool = hit?.mode ?? null;
+        const newSub  = (hit && hit.ring !== "inner" && hit.ring !== "center") ? hit.sub : null;
+
+        // Always keep the centre circle in sync (unconditional — it's cheap)
+        const centerEl = menuEl.querySelector("#rcm-center circle");
+        const centerFO = menuEl.querySelector("#rcm-center foreignObject");
+        if (centerEl) {
+            const isCenter  = hit?.ring === "center";
+            const isCurNone = currentToolMode === ToolMode.NONE;
+            centerEl.setAttribute("fill", (isCenter || isCurNone)
+                ? (isCenter && isCurNone ? COL_HOVER : COL_ORANGE) : COL_DARK);
+            if (centerFO) {
+                const lit = isCenter || isCurNone;
+                centerFO.querySelectorAll("svg, path, rect, circle, polygon")
+                    .forEach(e => e.style.fill = lit ? "black" : "white");
+            }
+        }
 
         if (newTool !== hoveredTool) {
             hoveredTool = newTool;
+
+            // Update inner tool segments
             menuEl.querySelectorAll("[data-mode]").forEach(g => {
-                const path = g.querySelector("path");
-                if (!path) return;
-                const active = g.dataset.mode===hoveredTool || g.dataset.mode===currentToolMode;
-                path.setAttribute("fill",   active ? "#e07020" : "#222");
-                path.setAttribute("stroke", active ? "#e07020" : "#444");
+                const isCurrent = g.dataset.mode === currentToolMode;
+                const isHov     = g.dataset.mode === hoveredTool;
+                applySegmentState(g, isCurrent, isHov, COL_DARK);
             });
-            rebuildOuter(hoveredTool);
+
+            rebuildOuter(hoveredTool === ToolMode.NONE ? null : hoveredTool);
         }
-        hoveredSub = newSub;
-        menuEl.querySelectorAll("[data-sub]").forEach(g => {
-            const path = g.querySelector("path");
-            if (path) path.setAttribute("fill", g.dataset.sub===hoveredSub ? "#e07020" : "#2a2a2a");
-        });
+        if (newSub !== hoveredSub) {
+            hoveredSub = newSub;
+            menuEl.querySelectorAll("[data-sub]").forEach(g => {
+                applySegmentState(g, false, g.dataset.sub === hoveredSub, COL_DARK);
+            });
+        }
     }
 
     function applySelection(tool, sub) {
-        if (!tool) { setTool(ToolMode.NONE); return; }
+        if (!tool || tool === ToolMode.NONE) { setTool(ToolMode.NONE); return; }
         if (sub) {
             activeSubtool[tool] = sub;
-            if (tool === ToolMode.CONTROL_PAIR && sub === "add") {
-                setTool(tool); startNewPlacement();
-            } else if (tool === ToolMode.ROUTE && sub === "new") {
+            if      (tool === ToolMode.CONTROL_PAIR && sub === "add") { setTool(tool); startNewPlacement(); }
+            else if (tool === ToolMode.ROUTE        && sub === "new") { startNewRoute(); }
+            else { setTool(tool); setSubtool(tool, sub); }
+        } else {
+            // Inner-ring selections always activate the "add" subtool for CP and Route
+            if (tool === ToolMode.ROUTE) {
+                activeSubtool[ToolMode.ROUTE] = "new";
                 startNewRoute();
+            } else if (tool === ToolMode.CONTROL_PAIR) {
+                activeSubtool[ToolMode.CONTROL_PAIR] = "add";
+                setTool(ToolMode.CONTROL_PAIR);
+                startNewPlacement();
             } else {
                 setTool(tool);
-                setSubtool(tool, sub);
             }
-        } else {
-            setTool(tool);
         }
     }
 
+    function openMenu(x, y) {
+        open   = true;
+        menuEl = buildMenu(x, y);
+
+        overlayEl = document.createElement("div");
+        overlayEl.style.cssText = "position:fixed;inset:0;z-index:99998;background:transparent;cursor:default;";
+        overlayEl.addEventListener("mousemove",   e => updateHover(e.clientX, e.clientY));
+        overlayEl.addEventListener("mouseup",     e => { if (e.button===2) RCM.onUp(e); });
+        overlayEl.addEventListener("contextmenu", e => e.preventDefault());
+
+        document.body.appendChild(overlayEl);
+        document.body.appendChild(menuEl);
+
+        // Run an initial hover update so centre is already orange if cursor is there
+        updateHover(x, y);
+    }
+
+    function closeMenu() {
+        open = false;
+        overlayEl?.remove(); overlayEl = null;
+        menuEl?.remove();    menuEl    = null;
+    }
+
     return {
-        onDown(e)   {
+        onDown(e) {
+            if (readOnly) return;   // no tool-picker in locked/published files
             downAt = Date.now(); downPos = {x:e.clientX, y:e.clientY};
             hoveredTool = null; hoveredSub = null; open = false;
         },
-        onMove(e)   {
+        onMove(e) {
             if (!downPos) return;
             if (!open) {
                 const moved = Math.hypot(e.clientX-downPos.x, e.clientY-downPos.y);
-                if (moved > MOVE_PX || Date.now()-downAt > CLICK_MS) {
-                    open = true;
-                    menuEl = buildMenu(downPos.x, downPos.y);
-                    document.body.appendChild(menuEl);
-                }
+                if (moved > MOVE_PX || Date.now()-downAt > CLICK_MS) openMenu(downPos.x, downPos.y);
             }
             if (open) updateHover(e.clientX, e.clientY);
         },
-        onUp(e)     {
+        onUp(e) {
+            // Guard against double-fire: overlay + window both emit mouseup
+            if (!open && !downPos) return;
             const wasOpen = open, _tool = hoveredTool, _sub = hoveredSub;
-            open = false; downPos = null;
-            if (menuEl) { menuEl.remove(); menuEl = null; }
+            downPos = null;
+            closeMenu();
             hoveredTool = null; hoveredSub = null;
             applySelection(wasOpen ? _tool : null, wasOpen ? _sub : null);
         },
-        cancel()    {
-            open = false; downPos = null;
-            if (menuEl) { menuEl.remove(); menuEl = null; }
-        },
+        cancel() { downPos = null; closeMenu(); },
     };
 })();
 
@@ -2791,7 +3010,7 @@ function startMaskGeneration(mapFile, scale) {
                             const d = JSON.parse(line.slice(5).trim());
                             if (d.current !== undefined) {
                                 const pct = Math.round((d.current / d.total) * 100);
-                                text.textContent = `Generiere Maske… ${d.current}/${d.total} (${pct}%)`;
+                                text.textContent = `Generiere Maske… ${pct}%`;
                                 if (prog) prog.value = pct;
                             } else if (d.done) {
                                 maskGenInProgress = false;
@@ -2847,6 +3066,19 @@ function loadMap(filename) {
 
 function createLabel() { alert("Label erstellen (noch nicht implementiert)"); }
 
+function emitPublishWave(btn) {
+    const rect = btn.getBoundingClientRect();
+    const cx = rect.left + rect.width  / 2;
+    const cy = rect.top  + rect.height / 2;
+    const el = document.createElement("div");
+    el.className = "publish-wave";
+    el.style.left = cx + "px";
+    el.style.top  = cy + "px";
+    document.body.appendChild(el);
+    el.addEventListener("animationend", () => el.remove(), { once: true });
+}
+window.emitPublishWave = emitPublishWave;
+
 async function uploadSelectedMap() {
     const input = document.getElementById("map-file-input");
     const file  = input?.files?.[0];
@@ -2876,8 +3108,9 @@ async function uploadSelectedMap() {
         setReadOnly(false);
         checkinCurrentFile();
         updateFilenameInput();
-        // New map replaces any previous editor state — wipe undo history
+        // New map replaces any previous editor state — wipe all undo history
         undoStack = []; redoStack = []; actionCount = 0;
+        clearMaskUndoStacks();
         updateUndoMenu();
 
         // Update project state and save so the file exists on the server
@@ -2915,6 +3148,7 @@ function _loadMapInEditor() {
         applyProjectScale();
         MaskLayer.applyMapDimensions?.();
         drawCourse();
+        fitMapToCamera();
         _updateScalePanel();
     };
     img.onerror = () => { hideMapSpinner(); console.warn("Map image failed to load"); };
@@ -3062,11 +3296,13 @@ function _openScaleModal() {
         _clearRuler();
         _cancelScaleDrawing();
         applyProjectScale();
+        fitMapToCamera();
         saveFile("scale");
         saveSnapshot("autosave");
         _updateScalePanel();
-        // Scaling is a point of no return — clear undo history
+        // Scaling is a point of no return — clear all undo history
         undoStack = []; redoStack = []; actionCount = 0;
+        clearMaskUndoStacks();
         updateUndoMenu();
         // Start in add-control-pair mode
         activeSubtool[ToolMode.CONTROL_PAIR] = "add";
@@ -3119,6 +3355,13 @@ function createFile() {
 
 function openMapModal() {
     document.getElementById("modal-map").classList.add("open");
+    // Reset any leftover selection from a previous upload
+    document.getElementById("selected-map-info").style.display = "none";
+    document.querySelector(".selected-map-name").textContent = "";
+    const uploadBtn = document.getElementById("upload-map-btn");
+    if (uploadBtn) uploadBtn.disabled = true;
+    const fileInput = document.getElementById("map-file-input");
+    if (fileInput) fileInput.value = "";
     initMapUpload();
 }
 
@@ -3202,6 +3445,22 @@ function centerMap(imgWidth, imgHeight) {
     updateCameraTransform();
 }
 
+function fitMapToCamera() {
+    const img = document.getElementById("map-img");
+    if (!img || !img.naturalWidth) return;
+    const rect  = mapContainer.getBoundingClientRect();
+    const mapW  = img.naturalWidth  * (project.scale || 1);
+    const mapH  = img.naturalHeight * (project.scale || 1);
+    const MARGIN = 0.92;
+    const zoom  = Math.min(
+        Math.max(rect.width  / mapW * MARGIN, zoomMin),
+        Math.min(rect.height / mapH * MARGIN, zoomMax),
+    );
+    const x = (rect.width  - mapW * zoom) / 2;
+    const y = (rect.height - mapH * zoom) / 2;
+    updateCameraTransform({ x, y, zoom });
+}
+
 function applyProjectScale() {
     const scaleLayer = document.getElementById("map-scale-layer");
     scaleLayer.style.transform       = `scale(${project.scale || 1})`;
@@ -3230,6 +3489,7 @@ function startNewRoute() {
         updateCPList();
     }
     if (!cp) return;
+    updateControlPairs(cp.order);  // highlight the selected CP in the map
     setTool(ToolMode.ROUTE);
     activateTool(NewRouteTool.init(cp));
 }
@@ -3345,8 +3605,9 @@ function updateCPList() {
 
         list.appendChild(row);
 
-        // Route sub-list: only for selected CP in route mode
-        const inRouteMode = activeTool === RouteTool || activeTool === RouteEditTool || activeTool === NewRouteTool;
+        // Route sub-list: shown in route mode AND in no_tool/view mode
+        const inRouteMode = activeTool === RouteTool || activeTool === RouteEditTool || activeTool === NewRouteTool
+                         || activeTool === ViewTool;
         if (inRouteMode && cp.order === selection.ncp) {
             const routeList = document.createElement("div");
             routeList.className = "cp-route-list";
@@ -3379,13 +3640,14 @@ function updateCPList() {
                     </span>
                     <label class="route-elevation-label">
                         <input class="route-elevation-input" type="number" min="0" step="1"
-                            value="${route.elevation ?? ""}" placeholder="—">
+                            value="${route.elevation ?? ""}" placeholder="—"
+                            ${readOnly ? 'disabled' : ''}>
                         <span>Hm</span>
                     </label>
-                    <button class="cp-delete-btn" title="Route löschen">${icon("trash", "11px")}</button>
+                    ${readOnly ? '' : `<button class="cp-delete-btn" title="Route löschen">${icon("trash", "11px")}</button>`}
                 `;
 
-                rRow.querySelector(".cp-delete-btn").addEventListener("click", e => {
+                rRow.querySelector(".cp-delete-btn")?.addEventListener("click", e => {
                     e.stopPropagation();
                     pushUndoState("Route gelöscht");
                     deleteRoute(cp, route);
@@ -3423,20 +3685,22 @@ function updateCPList() {
                 routeList.appendChild(rRow);
             });
 
-            const newRouteRow = document.createElement("div");
-            const isDrawing   = activeTool === NewRouteTool;
-            newRouteRow.className = "cp-route-row cp-route-row-new" + (isDrawing ? " drawing" : "");
-            const partialLen  = isDrawing ? NewRouteTool.getPartialLength() : null;
-            newRouteRow.innerHTML = `
-                <span class="route-name">Neue Route</span>
-                ${partialLen != null ? `<span class="route-stats"><span class="route-stat route-length">${partialLen}m</span></span>` : ""}
-            `;
-            newRouteRow.addEventListener("click", e => {
-                e.stopPropagation();
-                if (activeTool === NewRouteTool) activateTool(RouteTool);
-                else startNewRoute();
-            });
-            routeList.appendChild(newRouteRow);
+            if (!readOnly) {
+                const newRouteRow = document.createElement("div");
+                const isDrawing   = activeTool === NewRouteTool;
+                newRouteRow.className = "cp-route-row cp-route-row-new" + (isDrawing ? " drawing" : "");
+                const partialLen  = isDrawing ? NewRouteTool.getPartialLength() : null;
+                newRouteRow.innerHTML = `
+                    <span class="route-name">Neue Route</span>
+                    ${partialLen != null ? `<span class="route-stats"><span class="route-stat route-length">${partialLen}m</span></span>` : ""}
+                `;
+                newRouteRow.addEventListener("click", e => {
+                    e.stopPropagation();
+                    if (activeTool === NewRouteTool) activateTool(RouteTool);
+                    else startNewRoute();
+                });
+                routeList.appendChild(newRouteRow);
+            }
 
             list.appendChild(routeList);
         }
@@ -3812,8 +4076,8 @@ const subtoolPanel = document.getElementById("subtool-panel");
 
 const SUBTOOL_DEFS = {
     [ToolMode.CONTROL_PAIR]: [
-        { id: "drag", icon: "no_tool",        title: "Drag controls" },
         { id: "add",  icon: "circle-xmark-r", title: "Add control pair", transform: "rotate(45deg)" },
+        { id: "drag", icon: "no_tool",        title: "Drag controls" },
     ],
     [ToolMode.ROUTE]: [
         { id: "new",    icon: "plus",   title: "New route" },
@@ -3832,7 +4096,7 @@ const SUBTOOL_DEFS = {
 };
 
 const activeSubtool = {
-    [ToolMode.CONTROL_PAIR]: "drag",
+    [ToolMode.CONTROL_PAIR]: "add",
     [ToolMode.ROUTE]:        "new",
     [ToolMode.MASK]:         "pan",
     [ToolMode.BLOCK]:        "line",
@@ -3855,6 +4119,7 @@ function setSubtool(mode, id) {
 
 function updateSubtoolPanel(mode) {
     subtoolPanel.innerHTML = "";
+    if (readOnly) return;           // no subtools in locked/published files
     const defs = SUBTOOL_DEFS[mode];
     if (!defs) return;
 
@@ -3924,10 +4189,14 @@ function setTool(mode) {
     if (readOnly && mode !== ToolMode.NONE) return;
     const prevMode  = currentToolMode;
     currentToolMode = mode;
-    // Route mode: auto-activate new-route when switching INTO this mode
-    // (prevMode guard prevents recursion since startNewRoute calls setTool again)
+    // Auto-activate the default "add" subtool when switching INTO these modes
+    // (prevMode guard prevents recursion since start* calls setTool again)
     if (mode === ToolMode.ROUTE && prevMode !== ToolMode.ROUTE && activeSubtool[ToolMode.ROUTE] === "new") {
         startNewRoute();
+        return;
+    }
+    if (mode === ToolMode.CONTROL_PAIR && prevMode !== ToolMode.CONTROL_PAIR && activeSubtool[ToolMode.CONTROL_PAIR] === "add") {
+        startNewPlacement();
         return;
     }
     activateTool(TOOLS[mode] ?? ViewTool);
@@ -3978,6 +4247,7 @@ function buildToolbar() {
             const scale = 25 / Math.max(W, H);
             iconPath.setAttribute("d", iconDef.d);
             iconPath.setAttribute("transform", `scale(${scale}) translate(${-W / 2} ${-H / 2})`);
+            iconPath.setAttribute("fill-rule", iconDef.fillRule || "nonzero");
         }
     });
 }

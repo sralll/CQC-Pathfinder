@@ -12,8 +12,11 @@ const ICONS = {
     /* --- tool wheel --- */
 
     "control_pair": {
-        viewBox: "0 0 384 512",
-        d: "M0 188.6C0 84.4 86 0 192 0S384 84.4 384 188.6c0 119.3-120.2 262.3-170.4 316.8-11.8 12.8-31.5 12.8-43.3 0-50.2-54.5-170.4-197.5-170.4-316.8zM192 256a64 64 0 1 0 0-128 64 64 0 1 0 0 128z",
+        viewBox: "0 0 448 448",
+        // Orienteering control flag: rounded square border (evenodd ring) + diagonal bottom-left fill
+        // Outer square (20,20)→(428,428) r=28  |  Inner square (56,56)→(392,392) r=16  |  Bottom-left triangle
+        d: "M 48,20 L 400,20 A 28,28 0 0,1 428,48 L 428,400 A 28,28 0 0,1 400,428 L 48,428 A 28,28 0 0,1 20,400 L 20,48 A 28,28 0 0,1 48,20 Z M 72,56 L 376,56 A 16,16 0 0,1 392,72 L 392,376 A 16,16 0 0,1 376,392 L 72,392 A 16,16 0 0,1 56,376 L 56,72 A 16,16 0 0,1 72,56 Z M 56,56 L 392,392 L 56,392 Z",
+        fillRule: "evenodd",
     },
 
     "route": {

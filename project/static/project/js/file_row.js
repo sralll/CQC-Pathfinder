@@ -237,6 +237,9 @@ export class FileRow {
         const btn = this.element.querySelector(`#publish-btn-${this.file.id}`);
         if (!btn) return;
         btn.classList.toggle('publish-btn-active', published);
+
+                // Emit ripple wave from the publish button
+        if (this.file.published) window.emitPublishWave?.(btn);
     }
 
     formatDate(date) {

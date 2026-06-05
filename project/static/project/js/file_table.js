@@ -31,8 +31,6 @@ export class FileTable {
     }
 
     async togglePublish(row) {
-        // Wait for DB confirmation before changing the button colour.
-        // The snapshot is created asynchronously on the server after the response.
         const res  = await fetch(`/editor/publish/${row.file.id}/`, {
             method: 'POST',
             headers: { 'X-CSRFToken': getCSRFToken() }
@@ -43,6 +41,15 @@ export class FileTable {
             return;
         }
         row.updatePublishState(data.published);
+
+        // Mirror the published state onto the currently open editor session
+        if (row.file.id === project?.id) {
+            if (data.published) {
+                window.setReadOnly?.(true, null, 'published');  // lock it
+            } else {
+                window.setReadOnly?.(false);                     // restore editing
+            }
+        }
     }
 
     async deleteFile(id) {
@@ -77,6 +84,7 @@ export class FileTable {
         closeFileModal();
         clearAllLayers();
         MaskLayer.clearMask();
+        window.clearMaskUndoStacks?.();
         maskGenInProgress = false;
         hideMaskGenBar();
         project = data.project;
@@ -100,6 +108,7 @@ export class FileTable {
             img.style.display = 'block';
             MaskLayer.applyMapDimensions();
             drawCourse();
+            updateRoutes();   // ensure routes are visible after DOM is populated
             undoStack = []; redoStack = []; actionCount = 0;
             pushUndoState();
             window._updateScalePanel?.();

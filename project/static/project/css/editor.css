@@ -746,6 +746,16 @@ tr:hover td { background: #222; }
     gap: 6px;
 }
 
+/* Radial context menu */
+@keyframes rcm-appear {
+    from { transform: scale(0.15); opacity: 0; }
+    to   { transform: scale(1);    opacity: 1; }
+}
+#rcm {
+    transform-origin: 50% 50%;
+    animation: rcm-appear 0.22s cubic-bezier(0.34, 1.5, 0.64, 1) both;
+}
+
 .version-trigger {
     font-size: 10px;
     color: #888;
@@ -861,6 +871,32 @@ x-icon.spin svg { animation: spin 1s linear infinite; }
     border-color: #ff9800;
     color: #ffb347;
     box-shadow: 0 0 0 1px rgba(255, 152, 0, 0.15);
+}
+
+@keyframes publish-wave {
+    0%   { transform: translate(-50%, -50%) scale(0); opacity: 1; }
+    25%  { opacity: 0.85; }
+    100% { transform: translate(-50%, -50%) scale(1); opacity: 0; }
+}
+.publish-wave {
+    position: fixed;
+    /* 320 px = 160 px radius — the wave stops here */
+    width:  320px;
+    height: 320px;
+    border-radius: 50%;
+    /* Radial-gradient wave: transparent centre, orange crest band, transparent tail */
+    background: radial-gradient(circle,
+        transparent          38%,
+        rgba(255,152,0,0.12) 44%,
+        rgba(255,152,0,0.55) 50%,
+        rgba(255,152,0,0.90) 54%,
+        rgba(255,152,0,0.55) 58%,
+        rgba(255,152,0,0.12) 65%,
+        transparent          74%
+    );
+    pointer-events: none;
+    z-index: 10001;
+    animation: publish-wave 1.5s ease-out both;
 }
 
 .publish-btn-active:hover {
