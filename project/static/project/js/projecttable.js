@@ -423,8 +423,8 @@ function initButtons() {
 ========================================================= */
 
 const LABEL_COLORS = [
-    '#5b8db8', '#5baa7a', '#c2824a', '#8a5bc2', '#c2a24a',
-    '#4abac2', '#c24a7a', '#6b82c2', '#7ac24a', '#c24ab8',
+    '#c2824a',  // center
+    '#c2a24a', '#7ac24a', '#5baa7a', '#4abac2', '#5b8db8', '#8a5bc2',  // ring
 ];
 
 function labelChipStyle(color) {
@@ -448,7 +448,7 @@ function renderLabelManageDropdown() {
     const drop = document.createElement("div");
     drop.id = "label-manage-dropdown";
     drop.style.cssText = `
-        position:fixed;z-index:9999;background:#1a1a1a;border:1px solid #333;
+        position:fixed;z-index:10001;background:#1a1a1a;border:1px solid #333;
         border-radius:6px;min-width:260px;box-shadow:0 4px 16px #0008;
         padding:6px 0;
     `;
@@ -499,29 +499,64 @@ function renderLabelManageDropdown() {
                 e.stopPropagation();
                 closePickers();
 
+                // Regular hexagon honeycomb geometry (pointy-top, side = S px)
+                const S       = 14;
+                const W       = S * Math.sqrt(3);  // hex width ≈ 24.25
+                const H       = 2 * S;             // hex height = 28
+                const hexPath = 'polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%)';
+                const CW = 82, CH = 76;            // container size
+                const cx = CW / 2, cy = CH / 2;   // container centre
+
+                // 6 neighbour offsets (right → lower-right → lower-left → left → upper-left → upper-right)
+                const offsets = [
+                    [ W,     0      ],
+                    [ W/2,   H*3/4  ],
+                    [-W/2,   H*3/4  ],
+                    [-W,     0      ],
+                    [-W/2,  -H*3/4  ],
+                    [ W/2,  -H*3/4  ],
+                ];
+
                 const picker = document.createElement("div");
                 picker.className = "label-color-picker";
                 picker.style.cssText = `
-                    position:fixed;background:#222;border:1px solid #444;
-                    border-radius:6px;padding:6px;z-index:10000;
-                    display:flex;gap:4px;flex-wrap:wrap;width:134px;
+                    position:fixed;background:#1c1c1c;
+                    clip-path:polygon(25% 0%, 75% 0%, 100% 50%, 75% 100%, 25% 100%, 0% 50%);
+                    z-index:10002;width:${CW}px;height:${CH}px;
                 `;
                 const r = palBtn.getBoundingClientRect();
                 picker.style.top  = `${r.bottom + 4}px`;
-                picker.style.left = `${r.left - 50}px`;
+                picker.style.left = `${Math.round(r.left + r.width / 2 - CW / 2)}px`;
 
-                LABEL_COLORS.forEach(c => {
+                // Draw ring first so the centre hex renders on top
+                const drawOrder = [...LABEL_COLORS.keys()].filter(i => i !== 0).concat(0);
+                drawOrder.forEach(i => {
+                    const c = LABEL_COLORS[i];
+                    const [dx, dy] = i === 0 ? [0, 0] : offsets[i - 1];
+                    const lx = cx + dx - W / 2;
+                    const ty = cy + dy - H / 2;
+                    const isSelected = c === label.color;
+                    if (isSelected) {
+                        const ring = document.createElement("div");
+                        ring.style.cssText = `position:absolute;
+                            width:${W + 4}px;height:${H + 4}px;
+                            left:${Math.round(lx - 2)}px;top:${Math.round(ty - 2)}px;`;
+                        picker.appendChild(ring);
+                    }
                     const sw = document.createElement("div");
-                    sw.style.cssText = `width:20px;height:20px;border-radius:4px;background:${c};cursor:pointer;
-                        border:2px solid ${c === label.color ? '#fff' : 'transparent'};`;
+                    sw.style.cssText = `position:absolute;
+                        width:${W}px;height:${H}px;
+                        left:${Math.round(lx)}px;top:${Math.round(ty)}px;
+                        clip-path:${hexPath};background:${c};cursor:pointer;
+                        transition:transform 0.1s;`;
+                    sw.addEventListener("mouseenter", () => { sw.style.transform = "scale(1.18)"; });
+                    sw.addEventListener("mouseleave", () => { sw.style.transform = ""; });
                     sw.addEventListener("click", () => {
-                        // Optimistic: update immediately
                         label.color = c;
                         projectFiles.forEach(f => { if (f.label?.id === label.id) f.label.color = c; });
                         closePickers();
                         buildRows();
                         applyFilters();
-                        // Fire & forget
                         fetch(`/editor/labels/${label.id}/color/`, {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf },

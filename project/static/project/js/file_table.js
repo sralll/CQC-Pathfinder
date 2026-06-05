@@ -77,6 +77,9 @@ export class FileTable {
     }
 
     _applyProject(data) {
+        // Reset any in-progress tool state (e.g. half-placed control pair) before
+        // replacing the project — must happen before project is overwritten.
+        window.setTool?.("no_tool");
         // Release lock on the previously open file before switching
         if (typeof window.checkinCurrentFile === 'function') {
             window.checkinCurrentFile();
@@ -90,6 +93,8 @@ export class FileTable {
         project = data.project;
         window.setReadOnly?.(data.project.read_only, data.project.locked_by_name, data.project.read_only_reason);
         window.updateFilenameInput?.();
+        window.updateNavPublishBtn?.();
+        window.updateNavLabel?.();
         applyProjectScale();
         updateCameraTransform({ x: 0, y: 0, zoom: 0.67 });
 

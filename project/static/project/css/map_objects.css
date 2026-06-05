@@ -1,3 +1,15 @@
+/* =========================================================
+   Z-INDEX SCALE (map-container stacking context)
+   #map-container uses isolation:isolate → all values below
+   are scoped and do not compete with root-level indices.
+     0   #map-background  (dot grid)
+     1   #map-img         (map image)
+     2   #mask-canvas / #overlay-svg  (exclusive tool modes)
+     3   #ui-elements     (SVG UI layer)
+   100   #mask-gen-bar    (floating progress bar)
+   For root-level z-indices see editor.css scale comment.
+========================================================= */
+
 #map-container {
     position: relative;
     width: 100%;

@@ -1,4 +1,39 @@
 /* =========================================================
+   Z-INDEX SCALE
+   ─────────────────────────────────────────────────────────
+   Stacking contexts and their tiers:
+
+   ROOT CONTEXT
+     10      #navbar
+   9 998     #modal-scale  (inline)
+   9 999     #mask-brush-cursor, notification banners, drag ghost  (JS: 9 999)
+  10 000     .modal                                               (JS: 10 000)
+  10 001     .publish-wave, #nav-label-picker, #label-manage-drop  (JS: 10 001)
+  10 002     .label-color-picker                                  (JS: 10 002)
+  99 998     RCM capture overlay                                   (JS: 99 998)
+  99 999     #rcm radial menu SVG                                  (JS: 99 999)
+
+   #editor-wrap CONTEXT  (position:fixed, z:auto)
+     50      #overview-sidebar
+
+   #map-container CONTEXT  (isolation:isolate)
+      0      #map-background
+      1      #map-img
+      2      #mask-canvas / #overlay-svg  (exclusive modes)
+      3      #ui-elements
+    100      #mask-gen-bar
+
+   .modal CONTEXT  (position:fixed, z:10 000)
+      1      thead  (scroll-scoped sticky)
+    1/2      .modal-header-* items  (header-scoped layout)
+   1 000     .label-dropdown-menu
+   5 000     .table-filter-dropdown  (position:fixed, within modal stacking ctx)
+
+   #navbar CONTEXT  (position:fixed, z:10)
+    100      .nav-dropdown
+========================================================= */
+
+/* =========================================================
    GLOBAL RESET
 ========================================================= */
 
@@ -99,6 +134,42 @@ html, body {
     position: absolute;
     left: 50%;
     transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+/* Navbar publish button */
+.nav-publish-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 3px 5px;
+    border-radius: 4px;
+    color: #555;
+    display: flex;
+    align-items: center;
+    transition: color 0.15s, background 0.15s;
+}
+.nav-publish-btn:hover { color: #888; background: #1e1e1e; }
+.nav-publish-btn.publish-btn-active { color: #ff9800; }
+.nav-publish-btn.publish-btn-active:hover { color: #ffbb44; }
+.nav-publish-btn:disabled { opacity: 0.25; cursor: default; pointer-events: none; }
+
+/* Navbar label slot */
+.nav-label-slot {
+    cursor: pointer;
+    padding: 2px 6px;
+    border-radius: 4px;
+    min-width: 60px;
+    display: flex;
+    align-items: center;
+    border: 1px solid transparent;
+    transition: border-color 0.15s;
+}
+.nav-label-slot:hover { border-color: #333; }
+.nav-label-slot:empty, .nav-label-slot .nav-label-empty {
+    font-size: 11px; color: #444; font-style: italic;
 }
 
 .nav-divider {
@@ -162,7 +233,7 @@ html, body {
     background: #1a1a1a;
     border: 0.5px solid #333;
     border-radius: 0 0 6px 6px;
-    z-index: 200;
+    z-index: 100;
 }
 
 .nav-menu-item.open .nav-dropdown { display: block; }
@@ -740,10 +811,7 @@ tr:hover td { background: #222; }
     padding: 8px 14px !important;
     color: #555;
     font-style: italic;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 6px;
+    text-align: center;
 }
 
 /* Radial context menu */
@@ -790,7 +858,7 @@ x-icon.spin svg { animation: spin 1s linear infinite; }
     left: 50%;
     transform: translateX(-50%);
     width: 360px;
-    z-index: 500;
+    z-index: 100;
     background: #111;
     border: 1px solid #333;
     border-radius: 8px;
@@ -906,7 +974,7 @@ x-icon.spin svg { animation: spin 1s linear infinite; }
 }
 
 .publish-btn-disabled {
-    opacity: 0.5;
+    opacity: 0.9;
     cursor: default !important;
     pointer-events: none;
     border-color: #2f353d;
@@ -916,7 +984,7 @@ x-icon.spin svg { animation: spin 1s linear infinite; }
 .publish-btn-disabled.publish-btn-active {
     background: rgba(255, 140, 0, 0.10);
     border-color: rgba(255, 152, 0, 0.3);
-    color: rgba(255, 179, 71, 0.5);
+    color: rgba(255, 179, 71, 1);
 }
 
 .foreign-file-row { filter: brightness(0.67) saturate(0.67); }

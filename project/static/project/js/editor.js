@@ -5,6 +5,8 @@
 let project = {
     id: null,
     name: 'Neues Projekt',
+    published: false,
+    label: null,
     scale: null,
     scaled: false,
     map_file: '',
@@ -34,8 +36,10 @@ function setReadOnly(isReadOnly, lockedByName, reason) {
     readOnly = !!isReadOnly;
     document.getElementById("read-only-banner")?.remove();
 
-    // Keep filename input in sync with read-only state
+    // Keep filename input and nav buttons in sync with read-only state
     updateFilenameInput();
+    updateNavPublishBtn();
+    updateNavLabel();
 
     // Fade and disable write-only menu items in Projekte dropdown
     const disabledIds = ["nav-save-project"];
@@ -120,6 +124,129 @@ function updateFilenameInput() {
     input.disabled = !project.id || readOnly;
 }
 window.updateFilenameInput = updateFilenameInput;
+
+/* ---- Navbar publish button ---- */
+function updateNavPublishBtn() {
+    const btn = document.getElementById("nav-publish-btn");
+    if (!btn) return;
+    btn.disabled = !project.id;
+    btn.classList.toggle("publish-btn-active", !!(project.id && project.published));
+}
+window.updateNavPublishBtn = updateNavPublishBtn;
+
+async function toggleNavPublish() {
+    if (!project.id) return;
+    const csrf = document.cookie.match(/csrftoken=([^;]+)/)?.[1] ?? "";
+    const res  = await fetch(`/editor/publish/${project.id}/`, {
+        method: 'POST', headers: { 'X-CSRFToken': csrf },
+    });
+    const data = await res.json();
+    if (!res.ok) { alert(data.message || 'Fehler'); return; }
+    project.published = data.published;
+    updateNavPublishBtn();
+    if (data.published) {
+        setReadOnly(true, null, 'published');
+    } else {
+        setReadOnly(false);
+    }
+    if (data.published) {
+        const btn = document.getElementById("nav-publish-btn");
+        if (btn) emitPublishWave(btn);
+    }
+}
+window.toggleNavPublish = toggleNavPublish;
+
+/* ---- Navbar label slot ---- */
+function updateNavLabel() {
+    const chip = document.getElementById("nav-label-chip");
+    if (!chip) return;
+    if (!project.id) { chip.innerHTML = ""; return; }
+    const label = project.label;
+    if (label) {
+        chip.innerHTML = `<span class="table-label-chip" style="background:${label.color}22;color:${label.color};border-color:${label.color}55;">${label.name}</span>`;
+    } else {
+        chip.innerHTML = `<span class="nav-label-empty">Label…</span>`;
+    }
+}
+window.updateNavLabel = updateNavLabel;
+
+function openNavLabelPicker(slotEl) {
+    if (!project.id) return;
+    document.getElementById("nav-label-picker")?.remove();
+
+    const labels = window.allLabels || [];
+    const csrf   = document.cookie.match(/csrftoken=([^;]+)/)?.[1] ?? "";
+    const rect   = slotEl.getBoundingClientRect();
+
+    const drop = document.createElement("div");
+    drop.id = "nav-label-picker";
+    drop.style.cssText = `position:fixed;left:${rect.left}px;top:${rect.bottom+4}px;
+        background:#1a1a1a;border:1px solid #333;border-radius:6px;
+        min-width:160px;padding:4px 0;z-index:10001;box-shadow:0 4px 16px #0008;`;
+
+    const assignAndClose = async (label) => {
+        drop.remove();
+        const prevLabel = project.label;
+        project.label = label;
+        updateNavLabel();
+        // Persist via existing endpoint
+        const res = await fetch(`/editor/files/${project.id}/label/`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf },
+            body: JSON.stringify({ label_id: label ? label.id : null }),
+        });
+        if (!res.ok) { project.label = prevLabel; updateNavLabel(); return; }
+        saveSnapshot("Label");
+        // Also update projectFiles so the file table stays in sync
+        const f = (projectFiles || []).find(f => f.id === project.id);
+        if (f) f.label = label;
+    };
+
+    // Remove label option (if one is set)
+    if (project.label) {
+        const rem = document.createElement("div");
+        rem.style.cssText = "padding:5px 12px;font-size:12px;color:#888;cursor:pointer;";
+        rem.textContent = "Kein Label";
+        rem.onmouseenter = () => rem.style.background = "#222";
+        rem.onmouseleave = () => rem.style.background = "";
+        rem.onclick = () => assignAndClose(null);
+        drop.appendChild(rem);
+        const sep = document.createElement("div");
+        sep.style.cssText = "border-top:1px solid #2a2a2a;margin:4px 0;";
+        drop.appendChild(sep);
+    }
+
+    if (labels.length === 0) {
+        const none = document.createElement("div");
+        none.style.cssText = "padding:5px 12px;font-size:12px;color:#555;font-style:italic;";
+        none.textContent = "Keine Labels vorhanden";
+        drop.appendChild(none);
+    }
+
+    labels.forEach(label => {
+        const row = document.createElement("div");
+        row.style.cssText = "padding:5px 12px;cursor:pointer;display:flex;align-items:center;";
+        row.onmouseenter = () => row.style.background = "#222";
+        row.onmouseleave = () => row.style.background = "";
+        const chip = document.createElement("span");
+        chip.className = "table-label-chip";
+        chip.textContent = label.name;
+        chip.style.cssText = `background:${label.color}22;color:${label.color};border-color:${label.color}55;font-size:12px;`;
+        row.appendChild(chip);
+        row.onclick = () => assignAndClose(label);
+        drop.appendChild(row);
+    });
+
+    document.body.appendChild(drop);
+    setTimeout(() => {
+        document.addEventListener("click", function h(e) {
+            if (!drop.contains(e.target) && e.target !== slotEl) {
+                drop.remove(); document.removeEventListener("click", h);
+            }
+        });
+    }, 0);
+}
+window.openNavLabelPicker = openNavLabelPicker;
 
 async function loadEditorSettings() {
     try {
@@ -284,6 +411,11 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // ── Filename rename input ─────────────────────────────
     initFilenameInput();
+
+    // ── Navbar label slot ─────────────────────────────────
+    document.getElementById('nav-label-slot')?.addEventListener('click', function() {
+        openNavLabelPicker(this);
+    });
 
     // ── Settings toggles ──────────────────────────────────
     loadEditorSettings();
@@ -2530,6 +2662,9 @@ function onMouseDown(e) {
     if (e.button === 2) { if (mapContainer.contains(e.target)) RCM.onDown(e); return; }
     if (e.button !== 0) return;
     if (!mapContainer.contains(e.target)) return;
+    // Prevent the browser from selecting text in the navbar or elsewhere when
+    // the user drags out of the map container during a pan or placement gesture.
+    e.preventDefault();
     // Scaling mode owns the mouse entirely — no tool sees these events
     if (_scalingActive) {
         _scaleDownPos    = { x: e.clientX, y: e.clientY };

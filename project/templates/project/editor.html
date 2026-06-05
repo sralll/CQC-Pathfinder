@@ -32,7 +32,13 @@
     </div>
 
     <div class="nav-center">
+        <button id="nav-publish-btn" class="nav-publish-btn" title="Veröffentlichen" onclick="toggleNavPublish()">
+            <x-icon name="globe" size="12px"></x-icon>
+        </button>
         <input type="text" id="navbar-filename-input" placeholder="—" autocomplete="off" spellcheck="false">
+        <div id="nav-label-slot" class="nav-label-slot" title="Label auswählen">
+            <span id="nav-label-chip"></span>
+        </div>
     </div>
 
     <div id="menu-history" class="nav-menu-item">
@@ -66,6 +72,15 @@
 <div id="editor-wrap">
     <aside id="overview-sidebar">
         <div id="sidebar-top">
+            <div id="scale-panel" style="display:none;">
+                <div class="scale-panel-info">
+                    <div class="scale-step"><span class="scale-step-num">1</span>Zwei Punkte auf der Karte heraussuchen.</div>
+                    <div class="scale-step"><span class="scale-step-num">2</span>Abstand messen (z.&nbsp;B. mit <a href="https://earth.google.com" target="_blank" rel="noopener noreferrer">Google Earth</a>).</div>
+                    <div class="scale-step"><span class="scale-step-num">3</span>Punkte auf der Karte anklicken und Distanz eingeben.</div>
+                </div>
+                <div id="scale-status" class="scale-status">Klicke ersten Punkt auf der Karte…</div>
+            </div>
+
             <div id="cp-list"></div>
             <div id="block-list"></div>
             <div id="mask-controls">
@@ -78,15 +93,6 @@
                     <input type="range" id="mask-size-slider" min="1" max="15" step="1" value="5">
                 </div>
             </div>
-        </div>
-
-        <div id="scale-panel" style="display:none;">
-            <div class="scale-panel-info">
-                <div class="scale-step"><span class="scale-step-num">1</span>Zwei Punkte auf der Karte heraussuchen.</div>
-                <div class="scale-step"><span class="scale-step-num">2</span>Abstand messen (z.&nbsp;B. mit <a href="https://earth.google.com" target="_blank" rel="noopener noreferrer">Google Earth</a>).</div>
-                <div class="scale-step"><span class="scale-step-num">3</span>Punkte auf der Karte anklicken und Distanz eingeben.</div>
-            </div>
-            <div id="scale-status" class="scale-status">Klicke ersten Punkt auf der Karte…</div>
         </div>
 
         <div id="sidebar-bottom">

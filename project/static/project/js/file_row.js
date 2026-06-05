@@ -18,7 +18,7 @@ export class FileRow {
                     class="publish-btn ${this.file.published ? 'publish-btn-active' : ''} ${!this.file.can_edit || this.file.is_locked ? 'publish-btn-disabled' : ''}"
                     ${!this.file.can_edit || this.file.is_locked ? 'disabled' : ''}
                     ${this.file.is_locked ? 'title="Datei wird gerade bearbeitet"' : ''}>
-                    ${icon("broadcast")}
+                    ${icon("globe")}
                 </button>
             </td>
             <td class="file-name-cell">${this.file.name}</td>
@@ -190,7 +190,7 @@ export class FileRow {
 
             if (data.has_more) {
                 const moreRow = document.createElement('tr');
-                moreRow.innerHTML = `<td colspan="7" class="version-load-more">Alle Versionen anzeigen</td>`;
+                moreRow.innerHTML = `<td colspan="8" class="version-load-more">Alle Versionen anzeigen</td>`;
                 moreRow.querySelector('td').addEventListener('click', async () => {
                     moreRow.querySelector('td').innerHTML =
                         `<x-icon name="spinner" class="spin" size="12px"></x-icon>`;

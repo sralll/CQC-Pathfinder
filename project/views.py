@@ -191,6 +191,8 @@ def open_file(request, file_id):
                 'read_only':       read_only,
                 'locked_by_name':  locked_by_name,
                 'read_only_reason': read_only_reason,
+                'published': file.published,
+                'label': {'id': file.label.id, 'name': file.label.name, 'color': file.label.color} if file.label else None,
                 'scale': file.scale,
                 'scaled': file.scaled,
                 'map_file': file.map_file,
