@@ -312,6 +312,7 @@ function pushUndoState(label = "Aktion") {
 }
 
 function restoreState(state) {
+    if (readOnly) return;
     activeTool.onExit?.();
     project = structuredClone(state.project);
     selection.ncp = state.selection.ncp;
@@ -328,6 +329,7 @@ function restoreState(state) {
 }
 
 function undo() {
+    if (readOnly) return;
     if (!undoStack.length) return;
     if (undoStack[undoStack.length - 1].isMaskUndo) {
         redoStack.push({ label: "Maske bearbeitet", isMaskUndo: true });
@@ -340,9 +342,11 @@ function undo() {
     restoreState(undoStack.pop());
     saveFile("undo");
     updateUndoMenu();
+    drawCourse();
 }
 
 function redo() {
+    if (readOnly) return;
     if (!redoStack.length) return;
     if (redoStack[redoStack.length - 1].isMaskUndo) {
         undoStack.push({ label: "Maske bearbeitet", isMaskUndo: true });
@@ -373,6 +377,7 @@ function updateUndoMenu() {
 
 // Jump to a specific point in the undo stack (reversedIndex = 0 is most recent)
 function jumpToUndoState(reversedIndex) {
+    if (readOnly) return;
     if (reversedIndex < 0 || reversedIndex >= undoStack.length) return;
     const targetIndex = undoStack.length - 1 - reversedIndex;
     const targetState = undoStack[targetIndex];
@@ -849,6 +854,7 @@ const ControlPairTool = (() => {
             originX: point.x,
             originY: point.y,
         };
+        pushUndoState("Posten verschoben");
         mapContainer.classList.add("dragging");
         mapContainer.style.cursor = "grabbing";
     }
@@ -877,7 +883,6 @@ const ControlPairTool = (() => {
         const pointType = drag.pointType;
         const point     = cp[pointType];
         const moved     = Math.hypot(point.x - drag.originX, point.y - drag.originY);
-        if (moved > 0) pushUndoState("Posten verschoben");
         drag = null;
         mapContainer.classList.remove("dragging");
         mapContainer.style.cursor = "default";
@@ -1051,6 +1056,7 @@ const RouteEditTool = (() => {
             route       = r;
             cpRef       = cp;
             originalPts = structuredClone(r.rP);
+            pushUndoState("Route bearbeitet");
 
             r.rP.splice(segmentIndex + 1, 0, { x: insertPoint.x, y: insertPoint.y });
             continuation = r.rP.slice(segmentIndex + 1);
@@ -1073,7 +1079,6 @@ const RouteEditTool = (() => {
             hideCrosshair();
             if (route) {
                 calcRouteLength(route); calcRouteRunTime(route);
-                pushUndoState("Route bearbeitet");
                 if (cpRef) saveRoute(cpRef, route);
             }
             reset();
@@ -3650,6 +3655,7 @@ function drawCourse() {
     if (selectedCp) updateControlPairGroup(selectedCp);
     updateRoutes();
     updateCPList();
+    console.log("redrawn");
 }
 
 /* =========================================================

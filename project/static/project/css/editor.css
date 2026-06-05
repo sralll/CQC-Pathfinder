@@ -1251,7 +1251,6 @@ x-icon.spin svg { animation: spin 1s linear infinite; }
 /* hide spinner arrows on ratio input */
 .scale-ratio-inline::-webkit-inner-spin-button,
 .scale-ratio-inline::-webkit-outer-spin-button { -webkit-appearance: none; }
-.scale-ratio-inline { -moz-appearance: textfield; }
 
 .scale-modal-footer { display: flex; justify-content: flex-end; }
 .scale-check-btn {

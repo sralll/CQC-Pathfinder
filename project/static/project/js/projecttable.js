@@ -460,6 +460,7 @@ function renderLabelManageDropdown() {
 
     function closePickers() {
         document.querySelectorAll(".label-color-picker").forEach(p => p.remove());
+        document.querySelectorAll("button[data-pal-btn]").forEach(b => { b._pickerOpen = false; });
     }
 
     function buildRows() {
@@ -491,12 +492,14 @@ function renderLabelManageDropdown() {
 
             // ── Palette button + picker ─────────────────────
             const palBtn = document.createElement("button");
+            palBtn.dataset.palBtn = "";
             palBtn.style.cssText = "background:none;border:none;cursor:pointer;padding:2px;color:#666;display:flex;align-items:center;";
             palBtn.innerHTML = icon("palette", "13px");
             palBtn.title = "Farbe wählen";
 
             palBtn.addEventListener("click", e => {
                 e.stopPropagation();
+                if (palBtn._pickerOpen) { closePickers(); return; }
                 closePickers();
 
                 // Regular hexagon honeycomb geometry (pointy-top, side = S px)
@@ -566,10 +569,15 @@ function renderLabelManageDropdown() {
                     picker.appendChild(sw);
                 });
 
+                palBtn._pickerOpen = true;
                 document.body.appendChild(picker);
                 setTimeout(() => {
                     document.addEventListener("click", function h(ev) {
-                        if (!picker.contains(ev.target)) { picker.remove(); document.removeEventListener("click", h); }
+                        if (!picker.contains(ev.target)) {
+                            picker.remove();
+                            palBtn._pickerOpen = false;
+                            document.removeEventListener("click", h);
+                        }
                     });
                 }, 0);
             });
