@@ -1,0 +1,536 @@
+/* =========================================================
+   RESULTS / PLAY — project overview
+========================================================= */
+
+:root {
+    --navbar-h: 28px;
+}
+
+html, body {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;   /* no page scroll — only the table scrolls */
+    font-family: Arial, sans-serif;
+    background: #151515;
+    color: #ccc;
+    margin: 0;
+}
+
+/* Full-height area below the fixed navbar; centres the container */
+#play-wrap {
+    height: calc(100vh - var(--navbar-h));
+    margin-top: var(--navbar-h);
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    padding: 20px;
+    box-sizing: border-box;
+    overflow: hidden;
+}
+
+/* =========================================================
+   HEADER / FILTER BAR
+========================================================= */
+
+#play-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 16px;
+    border-bottom: 0.5px solid #222;
+    flex-wrap: wrap;
+    flex-shrink: 0;
+    background: #1a1a1a;
+    position: relative;
+    z-index: 3;
+}
+
+/* ── Mode toggle ─────────────────────────────────────── */
+
+#play-mode-toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex: 1;                /* pushes search to centre via spacer trick */
+}
+
+.play-header-end {
+    flex: 1;                /* mirror of #play-mode-toggle to keep search centred */
+}
+
+.mode-icon-tip {
+    position: relative;
+    color: #444;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    padding: 3px;
+    border-radius: 4px;
+    transition: color 0.15s;
+    user-select: none;
+}
+.mode-icon-tip:hover { color: #888; }
+.mode-icon-tip.mode-active { color: #e07020; }
+
+.mode-tip-box {
+    display: none;
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    width: 220px;
+    background: #1c1c1c;
+    border: 0.5px solid #333;
+    border-radius: 6px;
+    padding: 8px 10px;
+    font-size: 11px;
+    line-height: 1.5;
+    color: #aaa;
+    z-index: 6000;
+    pointer-events: none;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+}
+.mode-icon-tip:hover .mode-tip-box,
+.mode-icon-tip.tip-open .mode-tip-box { display: block; }
+
+/* Competition tooltip: always left-aligned with the trophy, expanding right */
+.mode-icon-tip[data-mode="competition"] .mode-tip-box {
+    left: 0;
+    right: auto;
+}
+
+/* Toggle switch — matches editor .toggle-switch/.toggle-slider exactly */
+.mode-switch {
+    position: relative;
+    display: inline-block;
+    width: 32px;
+    height: 18px;
+    flex-shrink: 0;
+    cursor: pointer;
+}
+.mode-switch input { opacity: 0; width: 0; height: 0; }
+.mode-slider {
+    position: absolute;
+    inset: 0;
+    background: #444;
+    border-radius: 18px;
+    transition: background 0.2s;
+}
+.mode-slider::before {
+    content: '';
+    position: absolute;
+    width: 12px;
+    height: 12px;
+    left: 3px;
+    top: 3px;
+    background: #fff;
+    border-radius: 50%;
+    transition: transform 0.2s;
+}
+.mode-switch input:checked + .mode-slider { background: #e07020; }
+.mode-switch input:checked + .mode-slider::before { transform: translateX(14px); }
+
+#play-search-wrap {
+    position: relative;
+    width: 280px;
+    flex-shrink: 0;
+}
+
+#play-search {
+    width: 100%;
+    box-sizing: border-box;
+    background: #1a1a1a;
+    border: 1px solid #2e2e2e;
+    border-radius: 5px;
+    color: #ccc;
+    font-size: 13px;
+    padding: 8px 28px 8px 11px;
+    outline: none;
+    transition: border-color 0.15s;
+}
+#play-search:focus { border-color: #555; }
+#play-search::placeholder { color: #444; }
+
+#play-search-clear {
+    position: absolute;
+    right: 5px;
+    top: 50%;
+    transform: translateY(-50%);
+    background: none;
+    border: none;
+    color: #555;
+    cursor: pointer;
+    font-size: 14px;
+    line-height: 1;
+    padding: 0 2px;
+    display: none;
+}
+#play-search-clear.visible { display: block; color: #ff6666; }
+#play-search-clear.visible:hover { color: #fff; }
+
+/* Mobile-only sort/filter controls */
+#play-mobile-controls {
+    display: none;
+    flex-direction: column;
+    gap: 6px;
+    width: 100%;
+}
+
+/* Each row (sort / filter) inside the mobile controls */
+.play-ctrl-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+/* =========================================================
+   CONTAINER  (wraps search bar + table/cards)
+========================================================= */
+
+#play-container {
+    width: 67%;
+    height: 100%;           /* fills #play-wrap (minus its 20px padding) */
+    display: flex;
+    flex-direction: column;
+    background: #1a1a1a;
+    border: 0.5px solid #2e2e2e;
+    border-radius: 10px;
+    overflow: hidden;       /* clips border-radius; scroll lives in #play-table-wrap */
+}
+
+/* =========================================================
+   DESKTOP TABLE
+========================================================= */
+
+/* Table wrap is the only scroll area */
+#play-table-wrap {
+    flex: 1;
+    min-height: 0;          /* allows flex child to shrink below content height */
+    overflow-y: auto;
+}
+
+#play-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    table-layout: fixed;
+}
+
+/* Fixed column widths — Name gets remaining space */
+#play-table .col-label  { width: 120px; }
+#play-table .col-cp     { width: 72px;  }
+#play-table .col-author { width: 110px; }
+#play-table .col-kader  { width: 110px; }
+#play-table .col-date   { width: 88px;  }
+
+/* Sticky is on <thead>, not individual <th>, so it works regardless of
+   the parent's overflow setting. */
+#play-table thead {
+    position: sticky;
+    top: 0;     /* sticky within #play-table-wrap scroll container */
+    z-index: 2;
+}
+
+#play-table th {
+    text-align: left;
+    padding: 8px 10px;
+    color: #666;
+    font-weight: 500;
+    border-bottom: 0.5px solid #2a2a2a;
+    white-space: nowrap;
+    user-select: none;
+    background: #1a1a1a;
+}
+
+#play-table th .sortable {
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+}
+#play-table th .sortable:hover { color: #aaa; }
+
+#play-table th .filterable {
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+}
+#play-table th .filterable:hover { color: #aaa; }
+
+#play-table th .filter-indicator { opacity: 0.4; }
+#play-table th .filter-indicator.active { opacity: 1; color: #5b8db8; }
+
+#play-table th .sort-icon-box { display: inline-flex; align-items: center; }
+
+#play-table td {
+    padding: 7px 10px;
+    border-bottom: 0.5px solid #1e1e1e;
+    color: #bbb;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    vertical-align: middle;
+}
+
+#play-table tbody tr {
+    cursor: pointer;
+    transition: background 0.15s ease;
+}
+#play-table tbody tr:hover td { background: #1f242b; color: #fff; }
+#play-table tbody tr:hover .play-name-cell {
+    color: #fff;
+    font-weight: 700;
+    transform: translateX(4px);
+}
+
+.play-name-cell {
+    color: #eee;
+    font-weight: 700;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    transition: color 0.15s ease, transform 0.15s ease;
+}
+
+/* Files from other teams are slightly dimmed */
+.play-other-team { opacity: 0.67; }
+.play-other-team:hover { opacity: 1; }
+
+.play-cp-cell { text-align: center; color: #888; }
+
+.play-label-chip {
+    display: inline-block;
+    border-radius: 4px;
+    padding: 1px 7px;
+    font-size: 11px;
+    font-weight: 500;
+    white-space: nowrap;
+}
+
+/* =========================================================
+   MOBILE CARDS
+========================================================= */
+
+#play-cards {
+    display: none;
+    flex-direction: column;
+    gap: 1px;
+    padding: 0;
+}
+
+.play-card {
+    background: #1a1a1a;
+    border-bottom: 0.5px solid #222;
+    padding: 10px 14px;
+    cursor: pointer;
+    transition: background 0.12s;
+}
+.play-card:active { background: #222; }
+
+.play-card-row1 {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 4px;
+}
+
+.play-card-name {
+    font-size: 14px;
+    font-weight: 700;
+    color: #eee;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+}
+
+.play-card-cp {
+    font-size: 12px;
+    color: #666;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.play-card-row2 {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+    color: #666;
+    flex-wrap: wrap;
+}
+
+.play-card-label {
+    /* chip style set inline via JS */
+    border-radius: 3px;
+    padding: 1px 5px;
+    font-size: 10px;
+    font-weight: 500;
+    white-space: nowrap;
+}
+
+.play-card-sep {
+    color: #333;
+}
+
+.play-card-date {
+    margin-left: auto;
+    white-space: nowrap;
+}
+
+/* =========================================================
+   FILTER DROPDOWNS  (shared between desktop + mobile)
+========================================================= */
+
+.play-filter-dropdown {
+    display: none;
+    position: fixed;
+    background: #1a1a1a;
+    border: 0.5px solid #333;
+    border-radius: 6px;
+    z-index: 5000;
+    min-width: 160px;
+    padding: 4px 0;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+}
+.play-filter-dropdown.open { display: block; }
+
+.filter-clear {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 5px 12px;
+    color: #666;
+    font-size: 11px;
+    border-bottom: 0.5px solid #2a2a2a;
+    margin-bottom: 2px;
+    gap: 8px;
+}
+.filter-clear-left { cursor: pointer; }
+.filter-clear-left:hover { color: #aaa; }
+
+.filter-close-btn {
+    background: none;
+    border: none;
+    color: #555;
+    cursor: pointer;
+    font-size: 13px;
+    line-height: 1;
+    padding: 0;
+}
+.filter-close-btn:hover { color: #aaa; }
+
+.filter-option {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 12px;
+    font-size: 12px;
+    color: #aaa;
+    cursor: pointer;
+    gap: 8px;
+}
+.filter-option:hover { background: #222; color: #fff; }
+
+.filter-indicator { opacity: 0.4; }
+.filter-indicator.active { opacity: 1; color: #5b8db8; }
+
+.user-active-team { color: #fff; font-weight: 600; }
+
+/* Mobile sort/filter button chip */
+.play-ctrl-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 8px;
+    border-radius: 4px;
+    border: 0.5px solid #2e2e2e;
+    background: #1a1a1a;
+    color: #888;
+    font-size: 11px;
+    cursor: pointer;
+    user-select: none;
+    transition: background 0.1s, color 0.1s;
+    white-space: nowrap;
+}
+.play-ctrl-btn:hover { background: #252525; color: #ccc; }
+.play-ctrl-btn.active { border-color: #5b8db8; color: #5b8db8; }
+
+/* Loading state */
+#play-loading {
+    padding: 40px;
+    text-align: center;
+    color: #444;
+    font-size: 13px;
+}
+
+/* Empty state — rendered inside <tbody> / cards so the header never shifts */
+.play-empty-row td {
+    padding: 40px;
+    text-align: center;
+    color: #444;
+    font-size: 13px;
+    border-bottom: none;
+    cursor: default;
+}
+.play-empty-card {
+    padding: 40px;
+    text-align: center;
+    color: #444;
+    font-size: 13px;
+}
+
+/* =========================================================
+   RESPONSIVE
+========================================================= */
+
+@media (max-width: 700px) {
+    /* Mobile: show cards + controls, hide table */
+    #play-table-wrap      { display: none; }
+    #play-mobile-controls { display: flex; }
+
+    /* Cards become the scroll area on mobile */
+    #play-cards {
+        display: flex;
+        flex: 1;
+        min-height: 0;
+        overflow-y: auto;
+    }
+
+    /* Container: full width, no decoration */
+    #play-container {
+        width: 100%;
+        border: none;
+        border-radius: 0;
+        background: transparent;
+    }
+    #play-wrap { padding: 0; }
+
+    /* Toggle + search share one row; spacer hidden; search comes first */
+    #play-mode-toggle { flex: 0 0 auto; order: 2; }
+    #play-search-wrap { order: 1; }
+    .play-header-end  { display: none; }
+
+    /* Search fills remaining space next to toggle */
+    #play-search-wrap { flex: 1; min-width: 0; width: auto; }
+
+    /* Mobile controls span the full second row, after search + toggle */
+    #play-mobile-controls { width: 100%; order: 3; }
+
+    /* Both tooltips right-aligned on mobile, expanding left */
+    .mode-tip-box,
+    .mode-icon-tip[data-mode="competition"] .mode-tip-box {
+        left: auto;
+        right: 0;
+        width: calc(100vw - 32px);
+        max-width: 220px;
+        box-sizing: border-box;
+    }
+
+    /* Disable CSS :hover on mobile — only JS .tip-open controls visibility */
+    .mode-icon-tip:hover .mode-tip-box { display: none; }
+    .mode-icon-tip.tip-open .mode-tip-box { display: block; }
+
+    /* Header background matches the page on mobile */
+    #play-header { background: #151515; border-bottom-color: #1e1e1e; }
+}

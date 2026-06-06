@@ -141,7 +141,7 @@ async function toggleNavPublish() {
         method: 'POST', headers: { 'X-CSRFToken': csrf },
     });
     const data = await res.json();
-    if (!res.ok) { alert(data.message || 'Fehler'); return; }
+    if (!res.ok) { await window.showModal({ message: data.message || 'Fehler beim Veröffentlichen.' }); return; }
     project.published = data.published;
     updateNavPublishBtn();
     if (data.published) {
@@ -899,6 +899,7 @@ const ControlPairTool = (() => {
                 rpt.y = point.y;
                 calcRouteLength(r);
                 calcRouteRunTime(r);
+                calcRouteSide(cp, r);
             });
         }
         drawRoutes();
@@ -1078,7 +1079,7 @@ const RouteEditTool = (() => {
             clearEditLayer();
             hideCrosshair();
             if (route) {
-                calcRouteLength(route); calcRouteRunTime(route);
+                calcRouteLength(route); calcRouteRunTime(route); calcRouteSide(cpRef, route);
                 if (cpRef) saveRoute(cpRef, route);
             }
             reset();
@@ -1179,6 +1180,7 @@ const NewRouteTool = (() => {
         calcRouteLength(route);
         route.elevation = 0;
         calcRouteRunTime(route);
+        calcRouteSide(cp, route);
         cp.routes.push(route);
         saveRoute(cp, route);
         selection.nr = route.order;
@@ -3204,8 +3206,6 @@ function loadMap(filename) {
     document.getElementById('map-img').src = `/editor/map/${filename}`;
 }
 
-function createLabel() { alert("Label erstellen (noch nicht implementiert)"); }
-
 function emitPublishWave(btn) {
     const rect = btn.getBoundingClientRect();
     const cx = rect.left + rect.width  / 2;
@@ -4084,6 +4084,18 @@ function calcRouteLength(route) {
         total += Math.sqrt(dx * dx + dy * dy) * PX_TO_M;
     }
     route.length = Math.round(total);
+}
+
+function calcRouteSide(cp, route) {
+    const rP = route.rP;
+    if (!rP?.length || !cp.start || !cp.ziel) { route.pos = null; return; }
+    const dx = cp.ziel.x - cp.start.x;
+    const dy = cp.ziel.y - cp.start.y;
+    let sum = 0;
+    for (const p of rP) {
+        sum += dx * (p.y - cp.start.y) - dy * (p.x - cp.start.x);
+    }
+    route.pos = sum / rP.length;
 }
 
 function calcRouteRunTime(route) {

@@ -1,0 +1,145 @@
+/* =========================================================
+   PLAY MODE — full-screen map + bottom action bar
+========================================================= */
+
+:root {
+    --navbar-h: 0px;
+    /* Button bar: square when 6 buttons fill the viewport width; capped at 60px */
+    --btn-bar-h: min(calc(100vw / 6), 60px);
+}
+
+#navbar { display: none; }
+
+html, body {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    font-family: Arial, sans-serif;
+    background: #151515;
+    color: #ccc;
+    margin: 0;
+}
+
+/* =========================================================
+   LAYOUT
+========================================================= */
+
+#play-wrap {
+    position: fixed;
+    top: var(--navbar-h);
+    left: 0;
+    right: 0;
+    bottom: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+/* =========================================================
+   MAP
+========================================================= */
+
+#map-container {
+    flex: 1;
+    min-height: 0;
+    position: relative;
+    overflow: hidden;
+    background: #2a2a2a;
+    cursor: grab;
+}
+
+#map-container.panning { cursor: grabbing; }
+
+/* Camera: the single element JS applies pan/zoom transform to */
+#camera {
+    position: absolute;
+    top: 0;
+    left: 0;
+    transform-origin: 0 0;
+    /* transform: translate(Xpx, Ypx) scale(S)  — set by JS */
+}
+
+#map-scale-layer {
+    position: relative;
+}
+
+#map-img {
+    display: block;
+    max-width: none;      /* must not be constrained — JS controls size */
+    user-select: none;
+    -webkit-user-drag: none;
+}
+
+#overlay-svg {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    overflow: visible;
+    pointer-events: none;
+}
+
+#overlay-svg .interactive { pointer-events: all; }
+
+#control-layer { opacity: 0.8; }
+
+/* =========================================================
+   BUTTON BAR
+========================================================= */
+
+#play-btn-bar {
+    height: var(--btn-bar-h);
+    flex-shrink: 0;
+    display: flex;
+    background: #1a1a1a;
+    border-top: 0.5px solid #2e2e2e;
+}
+
+.play-btn {
+    flex: 1;
+    height: 100%;
+    min-width: 0;
+    background: none;
+    border: none;
+    border-right: 0.5px solid #2e2e2e;
+    color: #888;
+    font-size: 12px;
+    font-family: inherit;
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    padding: 4px 2px;
+    transition: background 0.12s, color 0.12s;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.play-btn:last-child { border-right: none; }
+.play-btn:hover      { background: #222; color: #ccc; }
+.play-btn:active     { background: #2e2e2e; }
+
+.play-btn.active     { color: #e07020; }
+.play-btn.active:hover { background: #222; color: #ff9933; }
+
+.play-btn.danger       { color: #884444; }
+.play-btn.danger:hover { background: #222; color: #ff6666; }
+
+.play-btn:disabled {
+    opacity: 0.25;
+    cursor: default;
+    pointer-events: none;
+}
+
+.play-btn x-icon { flex-shrink: 0; }
+
+.play-btn-label {
+    font-size: 10px;
+    line-height: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100%;
+}

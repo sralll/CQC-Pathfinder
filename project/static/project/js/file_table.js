@@ -1,5 +1,41 @@
 import { FileRow } from './file_row.js';
 
+/**
+ * Custom modal replacing browser alert() / confirm().
+ * Returns a Promise<boolean> — true = confirmed, false = cancelled.
+ * Options:
+ *   message     {string}  — body text
+ *   confirmText {string}  — label for the confirm button (default "OK")
+ *   cancelText  {string}  — label for the cancel button; omit for alert-style (no cancel)
+ *   danger      {boolean} — style the confirm button red (for destructive actions)
+ */
+function showModal({ message, confirmText = 'OK', cancelText = null, danger = false }) {
+    return new Promise(resolve => {
+        const overlay = document.createElement('div');
+        overlay.className = 'dialog-overlay';
+
+        overlay.innerHTML = `
+            <div class="dialog-box">
+                <p class="dialog-message">${message}</p>
+                <div class="dialog-buttons">
+                    ${cancelText ? `<button class="dialog-btn dialog-btn-cancel">${cancelText}</button>` : ''}
+                    <button class="dialog-btn dialog-btn-confirm${danger ? ' dialog-btn-danger' : ''}">${confirmText}</button>
+                </div>
+            </div>
+        `;
+
+        const close = result => { overlay.remove(); resolve(result); };
+
+        overlay.querySelector('.dialog-btn-confirm').addEventListener('click', () => close(true));
+        overlay.querySelector('.dialog-btn-cancel')?.addEventListener('click', () => close(false));
+        overlay.addEventListener('click', e => { if (e.target === overlay) close(false); });
+
+        document.body.appendChild(overlay);
+        overlay.querySelector('.dialog-btn-confirm').focus();
+    });
+}
+window.showModal = showModal;
+
 export class FileTable {
     constructor(tbody) {
         this.tbody = tbody;
@@ -37,7 +73,7 @@ export class FileTable {
         });
         const data = await res.json();
         if (!res.ok) {
-            alert(data.message || 'Fehler beim Veröffentlichen.');
+            await showModal({ message: data.message || 'Fehler beim Veröffentlichen.' });
             return;
         }
         row.updatePublishState(data.published);
@@ -53,7 +89,7 @@ export class FileTable {
     }
 
     async deleteFile(id) {
-        if (!confirm('Projekt löschen — Sicher?')) return;
+        if (!await showModal({ message: 'Projekt löschen — Sicher?', confirmText: 'Löschen', cancelText: 'Abbrechen', danger: true })) return;
         const csrf = document.cookie.match(/csrftoken=([^;]+)/)?.[1] ?? "";
         window.showTableLoading?.();
         try {
@@ -64,13 +100,13 @@ export class FileTable {
             if (!res.ok) {
                 const d = await res.json().catch(() => ({}));
                 window.hideTableLoading?.();
-                alert(d.error || 'Löschen fehlgeschlagen.');
+                await showModal({ message: d.error || 'Löschen fehlgeschlagen.' });
                 return;
             }
             await window.refreshFileTable?.();
         } catch (e) {
             console.error('deleteFile failed:', e);
-            alert('Löschen fehlgeschlagen.');
+            await showModal({ message: 'Löschen fehlgeschlagen.' });
         } finally {
             window.hideTableLoading?.();
         }

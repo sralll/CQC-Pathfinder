@@ -11,8 +11,7 @@
 <script type="module" src="{% static 'project/js/projecttable.js' %}"></script>
 {% endblock %}
 
-{% block navbar %}
-<nav id="navbar">
+{% block nav_content %}
     <div id="menu-project" class="nav-menu-item">
         Projekte...
         <div class="nav-dropdown" id="project-dropdown" onclick="event.stopPropagation();">
@@ -65,8 +64,7 @@
             </div>
         </div>
     </div>
-</nav>
-{% endblock %}
+{% endblock nav_content %}
 
 {% block content %}
 <div id="editor-wrap">

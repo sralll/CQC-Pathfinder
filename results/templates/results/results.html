@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block styles %}
+<link rel="stylesheet" href="{% static 'results/css/results.css' %}">
+{% endblock %}
+
+{% block scripts %}
+<script defer src="{% static 'results/js/results.js' %}"></script>
+{% endblock %}
+
+{% block content %}
+<div id="play-wrap">
+
+    <div id="play-container">
+
+        <!-- Search + mode toggle -->
+        <div id="play-header">
+
+            <!-- Mode toggle (left) -->
+            <div id="play-mode-toggle">
+                <div class="mode-icon-tip" data-mode="training">
+                    <x-icon name="book-open" size="14px"></x-icon>
+                    <div class="mode-tip-box">
+                        <b>Trainingsmodus</b><br>
+                        Routen werden nicht direkt angezeigt und sollen selber gefunden werden.
+                        Ein im Trainingsmodus absolviertes Projekt wird nicht in der Rangliste aufgeführt.
+                    </div>
+                </div>
+                <label class="mode-switch">
+                    <input type="checkbox" id="mode-toggle-input" checked>
+                    <span class="mode-slider"></span>
+                </label>
+                <div class="mode-icon-tip" data-mode="competition">
+                    <x-icon name="trophy" size="14px"></x-icon>
+                    <div class="mode-tip-box">
+                        <b>Wettkampfmodus</b><br>
+                        Der erste Versuch eines Projekts im Wettkampfmodus wird in der Rangliste aufgeführt.
+                        Die Entscheidungszeit und die zusätzliche Zeit für nicht-ideale Routen werden gemessen.
+                    </div>
+                </div>
+            </div>
+
+            <!-- Search (centred on desktop, fills remaining on mobile) -->
+            <div id="play-search-wrap">
+                <input type="text" id="play-search" placeholder="Suchen…" autocomplete="off">
+                <button id="play-search-clear" type="button">×</button>
+            </div>
+
+            <!-- Right spacer — keeps search visually centred on desktop -->
+            <div class="play-header-end"></div>
+
+            <!-- Mobile sort/filter controls (below search row on mobile) -->
+            <div id="play-mobile-controls"></div>
+        </div>
+
+        <div id="play-loading">Laden…</div>
+
+        <!-- Desktop table -->
+        <div id="play-table-wrap">
+            <table id="play-table">
+                <thead id="play-thead"></thead>
+                <tbody id="play-tbody"></tbody>
+            </table>
+        </div>
+
+        <!-- Mobile cards -->
+        <div id="play-cards"></div>
+
+    </div>
+
+    <!-- Filter dropdowns (positioned by JS) -->
+    <div id="label-filter-dropdown"  class="play-filter-dropdown"></div>
+    <div id="author-filter-dropdown" class="play-filter-dropdown"></div>
+    <div id="kader-filter-dropdown"  class="play-filter-dropdown"></div>
+
+</div>
+{% endblock %}

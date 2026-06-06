@@ -20,7 +20,8 @@ urlpatterns = [
     path("", include("main.urls")),
     path('coursesetter/', include('coursesetter.urls')),
     path("pathfinding/", include("pathfinding.urls")),
-    path('play/', include('play.urls')),
+    path('play/', include('results.urls')),
+    path('play-old/', include('play.urls')),
 
     # login/logout
     path('login/', auth_views.LoginView.as_view(authentication_form=StyledLoginForm), name='login'),

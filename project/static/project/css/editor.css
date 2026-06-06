@@ -73,19 +73,6 @@ html, body {
    LAYOUT
 ========================================================= */
 
-#navbar {
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    height: 28px;
-    display: flex;
-    align-items: center;
-    background: #111;
-    border-bottom: 0.5px solid #222;
-    z-index: 10;
-}
-
 #editor-wrap {
     position: fixed;
     top: 28px;
@@ -112,32 +99,8 @@ html, body {
 }
 
 /* =========================================================
-   NAVBAR
+   NAVBAR  (editor-specific additions — shared rules in navbar.css)
 ========================================================= */
-
-.nav-left, .nav-right {
-    display: flex;
-    align-items: center;
-}
-
-.nav-left {
-    flex: 1;
-    gap: 2px;
-}
-
-.nav-right {
-    margin-left: auto;
-    gap: 10px;
-}
-
-.nav-center {
-    position: absolute;
-    left: 50%;
-    transform: translateX(-50%);
-    display: flex;
-    align-items: center;
-    gap: 4px;
-}
 
 /* Navbar publish button */
 .nav-publish-btn {
@@ -172,12 +135,6 @@ html, body {
     font-size: 11px; color: #444; font-style: italic;
 }
 
-.nav-divider {
-    width: 1px;
-    height: 16px;
-    background: #333;
-}
-
 #nav-filename { font-size: 12px; color: #888; }
 
 #navbar-filename-input {
@@ -203,54 +160,8 @@ html, body {
 .nav-team { font-size: 12px; color: #888; }
 
 /* =========================================================
-   MENU
+   MENU  (editor-specific — shared nav rules in navbar.css)
 ========================================================= */
-
-.nav-menu-item {
-    position: relative;
-    display: flex;
-    align-items: center;
-    height: 100%;
-    padding: 0 6px;
-    color: #aaa;
-    font-size: var(--font-md);
-    border-radius: 3px;
-    cursor: pointer;
-    user-select: none;
-}
-
-.nav-menu-item:hover, .nav-menu-item.open {
-    background: #1e1e1e;
-    color: #fff;
-}
-
-.nav-dropdown {
-    display: none;
-    position: absolute;
-    top: 100%;
-    left: 0;
-    min-width: 180px;
-    background: #1a1a1a;
-    border: 0.5px solid #333;
-    border-radius: 0 0 6px 6px;
-    z-index: 100;
-}
-
-.nav-menu-item.open .nav-dropdown { display: block; }
-
-.nav-dropdown div {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 7px 14px;
-    color: #ccc;
-    font-size: 13px;
-    cursor: pointer;
-}
-
-.nav-dropdown div:hover { background: #222; color: #fff; }
-
-.menu-shortcut { color: #888; font-size: var(--font-sm); }
 
 .settings-toggle-row {
     display: flex;
@@ -430,6 +341,21 @@ html, body {
 .action-btn, .publish-btn {
     padding: 4px 6px;
     font-size: 14px;
+}
+
+/* Square publish button — equal padding, locked aspect ratio, icon centred */
+.publish-btn {
+    padding: 4px;
+    aspect-ratio: 1 / 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+/* Centre the square button vertically in its table cell */
+.col-publish {
+    text-align: center;
+    vertical-align: middle;
 }
 
 .action-btn:hover { color: #378ADD; border-color: #378ADD; }
@@ -1190,6 +1116,80 @@ x-icon.spin svg { animation: spin 1s linear infinite; }
     text-align: center;
     padding: 4px 0 0;
 }
+
+/* =========================================================
+   CONFIRM / ALERT DIALOG  (z: 20 000 — above everything)
+========================================================= */
+
+.dialog-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.55);
+    z-index: 20000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.dialog-box {
+    background: #1a1a1a;
+    border: 0.5px solid #3a3a3a;
+    border-radius: 10px;
+    padding: 28px 32px 22px;
+    min-width: 280px;
+    max-width: 400px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 20px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+}
+
+.dialog-message {
+    color: #ccc;
+    font-size: 14px;
+    text-align: center;
+    line-height: 1.5;
+}
+
+.dialog-buttons {
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+}
+
+.dialog-btn {
+    padding: 6px 18px;
+    border-radius: 6px;
+    border: 0.5px solid #444;
+    font-size: 13px;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.dialog-btn-confirm {
+    background: #2d333b;
+    color: #ccc;
+}
+.dialog-btn-confirm:hover { background: #3a3a3a; color: #fff; border-color: #666; }
+
+.dialog-btn-confirm.dialog-btn-danger {
+    background: rgba(180,40,40,0.18);
+    border-color: #8b2222;
+    color: #e07070;
+}
+.dialog-btn-confirm.dialog-btn-danger:hover {
+    background: rgba(180,40,40,0.32);
+    border-color: #cc3333;
+    color: #f08080;
+}
+
+.dialog-btn-cancel {
+    background: none;
+    color: #666;
+    border-color: transparent;
+}
+.dialog-btn-cancel:hover { color: #aaa; background: #252525; }
 
 /* Scale modal */
 .modal-scale-box {

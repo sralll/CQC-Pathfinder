@@ -130,7 +130,7 @@ function loadFileList() {
         </tr>
     `;
 
-    fetch('/play/get-files/')
+    fetch('/play-old/get-files/')
         .then(response => response.json())
         .then(data => {
             const files = data.files;
@@ -286,7 +286,7 @@ function normalizeCQC(cqc) {
 
 function loadGameData(filename) {
     const encodedFilename = encodeURIComponent(filename);
-    const url = `/play/load-file/${encodedFilename}/`;
+    const url = `/play-old/load-file/${encodedFilename}/`;
 
     // Start spinner
     loading = true;
@@ -906,7 +906,7 @@ function submitChoice(index, routeOrder, reducedColorMap) {
     resultBox.style.display = "block";
     tbody.appendChild(newRow);
 
-    fetch('/play/submit_result/', {
+    fetch('/play-old/submit_result/', {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',

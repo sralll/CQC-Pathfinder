@@ -7,6 +7,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>QCQ Pathfinder</title>
     <link rel="icon" href="{% static 'favicon.ico' %}" type="image/x-icon">
+    <link rel="stylesheet" href="{% static 'css/navbar.css' %}">
 
     <style>
         :root {
@@ -29,15 +30,137 @@
             --z-modal: 1000;
         }
 
+        /* ── Global navbar user section ── */
+        .nav-user-section {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-left: auto;
+            padding: 0 14px 0 10px;
+            flex-shrink: 0;
+        }
+
+        .nav-username {
+            font-size: 12px;
+            color: #ccc;
+            white-space: nowrap;
+        }
+
+        /* Team name — no dropdown (single team) */
+        .nav-team-static {
+            font-size: 12px;
+            color: #666;
+            white-space: nowrap;
+        }
+
+        /* Team switcher — shown when user has multiple teams */
+        .nav-team-switcher {
+            position: relative;
+            font-size: 12px;
+            color: #666;
+            padding: 3px 6px;
+            border-radius: 4px;
+            cursor: pointer;
+            user-select: none;
+            white-space: nowrap;
+            transition: color 0.15s, background 0.15s;
+        }
+        .nav-team-switcher:hover {
+            color: #aaa;
+            background: #1e1e1e;
+        }
+        .nav-team-switcher::after {
+            content: ' ▾';
+            font-size: 9px;
+            opacity: 0.6;
+        }
+
+        /* Dropdown panel */
+        .nav-team-dropdown {
+            display: none;
+            position: absolute;
+            right: 0;
+            top: calc(100% + 4px);
+            background: #1a1a1a;
+            border: 1px solid #333;
+            border-radius: 6px;
+            min-width: 140px;
+            padding: 4px 0;
+            z-index: 10001;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+        }
+        .nav-team-switcher.open .nav-team-dropdown { display: block; }
+
+        .nav-team-option {
+            display: block;
+            padding: 6px 14px;
+            font-size: 12px;
+            color: #aaa;
+            text-decoration: none;
+            white-space: nowrap;
+            transition: background 0.1s, color 0.1s;
+        }
+        .nav-team-option:hover  { background: #252525; color: #fff; }
+        .nav-team-option.active { color: #fff; font-weight: 600; }
+
+        /* Home icon button */
+        .nav-home-btn {
+            display: flex;
+            align-items: center;
+            color: #555;
+            text-decoration: none;
+            padding: 3px 4px;
+            border-radius: 4px;
+            transition: color 0.15s, background 0.15s;
+            flex-shrink: 0;
+        }
+        .nav-home-btn:hover { color: #aaa; background: #1e1e1e; }
     </style>
     {% block styles %}{% endblock %}
     {% block script %}{% endblock %}
 </head>
 
 <body>
-    {% block navbar %}{% endblock %}
+    <nav id="navbar">
+        {% block nav_content %}{% endblock %}
+        {% if user.is_authenticated %}
+        <div class="nav-user-section">
+            {% if user_teams|length > 1 %}
+            <div class="nav-team-switcher" id="nav-team-switcher">
+                {{ active_team.name|default:"—" }}
+                <div class="nav-team-dropdown">
+                    {% for team in user_teams %}
+                    <a class="nav-team-option{% if team == active_team %} active{% endif %}"
+                       href="{% url 'switch_team' team.id %}">{{ team.name }}</a>
+                    {% endfor %}
+                </div>
+            </div>
+            {% elif active_team %}
+            <span class="nav-team-static">{{ active_team.name }}</span>
+            {% endif %}
+            <span class="nav-username">{{ user.first_name|default:user.username }}</span>
+            <a href="{% url 'home' %}" class="nav-home-btn" title="Home">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="13" height="13" fill="currentColor">
+                    <path d="M277.8 8.6c-12.3-11.4-31.3-11.4-43.5 0l-224 208c-9.6 9-12.8 22.9-8 35.1S18.8 272 32 272l16 0 0 176c0 35.3 28.7 64 64 64l288 0c35.3 0 64-28.7 64-64l0-176 16 0c13.2 0 25-8.1 29.8-20.3s1.6-26.2-8-35.1l-224-208zM240 320l32 0c26.5 0 48 21.5 48 48l0 96-128 0 0-96c0-26.5 21.5-48 48-48z"/>
+                </svg>
+            </a>
+        </div>
+        {% endif %}
+    </nav>
     {% block content %}{% endblock %}
     <script>
+    document.addEventListener('DOMContentLoaded', function () {
+        const switcher = document.getElementById('nav-team-switcher');
+        if (switcher) {
+            switcher.addEventListener('click', function (e) {
+                e.stopPropagation();
+                switcher.classList.toggle('open');
+            });
+            document.addEventListener('click', function () {
+                switcher.classList.remove('open');
+            });
+        }
+    });
     function isMobileDevice() {
         return /Mobi|Android/i.test(navigator.userAgent);
     }

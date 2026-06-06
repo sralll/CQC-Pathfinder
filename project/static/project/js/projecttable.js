@@ -333,7 +333,9 @@ function getAllTeams() {
 }
 
 function getAllLabels() {
-    return projectFiles.map(f => f.label).filter(Boolean)
+    return projectFiles
+        .filter(f => f.can_edit)
+        .map(f => f.label).filter(Boolean)
         .filter((label, i, self) => i === self.findIndex(l => l.id === label.id))
         .sort((a, b) => a.name.localeCompare(b.name));
 }
@@ -412,7 +414,6 @@ function initButtons() {
     document.getElementById("label-manage-btn")?.addEventListener("click", toggleLabelDropdown);
     document.getElementById("clear-search-btn")?.addEventListener("click", clearSearch);
     document.getElementById("label-dropdown-btn")?.addEventListener("click", toggleLabelDropdown);
-    document.getElementById("create-label-btn")?.addEventListener("click", createLabel);
     document.getElementById("close-map-modal-btn")?.addEventListener("click", closeMapModal);
     document.getElementById("browse-map-btn")?.addEventListener("click", () => document.getElementById("map-file-input")?.click());
     document.getElementById("upload-map-btn")?.addEventListener("click", uploadSelectedMap);

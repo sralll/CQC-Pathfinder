@@ -25,7 +25,7 @@ CSRF_TRUSTED_ORIGINS = [
     'https://www.cqc-pathfinder.ch',
     'https://cqcpathfinder.up.railway.app',
     'https://cqc-pathfinder-staging.up.railway.app',
-                        
+    'https://staging.cqc-pathfinder.ch',    
 ]
 
 INSTALLED_APPS = [

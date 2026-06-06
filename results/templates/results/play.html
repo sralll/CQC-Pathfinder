@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block styles %}
+<link rel="stylesheet" href="{% static 'results/css/play.css' %}">
+{% endblock %}
+
+{% block scripts %}
+<script defer src="{% static 'results/js/play.js' %}"></script>
+{% endblock %}
+
+{% block content %}
+<div id="play-wrap">
+
+    <div id="map-container">
+        <div id="camera">
+            <div id="map-scale-layer">
+                <img id="map-img" draggable="false">
+            </div>
+            <svg id="overlay-svg" overflow="visible">
+                <defs>
+                    <pattern id="block-hatch" x="0" y="0" width="8" height="8"
+                             patternUnits="userSpaceOnUse"
+                             patternTransform="rotate(45 0 0)">
+                        <line x1="0" y1="0" x2="0" y2="8" stroke="rgb(160, 51, 240)" stroke-width="3"/>
+                        <line x1="0" y1="0" x2="8" y2="0" stroke="rgb(160, 51, 240)" stroke-width="3"/>
+                    </pattern>
+                </defs>
+                <g id="viewport">
+                    <g id="route-layer"></g>
+                    <g id="blocked-layer"></g>
+                    <g id="control-layer"></g>
+                </g>
+                <g id="ui-layer"></g>
+            </svg>
+        </div>
+    </div>
+
+    <div id="play-btn-bar">
+        <!-- buttons inserted by JS -->
+    </div>
+
+</div>
+{% endblock %}

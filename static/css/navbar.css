@@ -1,0 +1,92 @@
+/* =========================================================
+   SHARED NAVBAR  — loaded from base.html, applies everywhere
+========================================================= */
+
+#navbar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    background: #111;
+    border-bottom: 0.5px solid #222;
+    z-index: 10;
+    font-family: Arial, sans-serif;
+}
+
+/* ── Layout helpers ───────────────────────────────────── */
+
+.nav-left, .nav-right {
+    display: flex;
+    align-items: center;
+}
+
+.nav-left  { flex: 1; gap: 2px; }
+.nav-right { margin-left: auto; gap: 10px; }
+
+.nav-center {
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.nav-divider {
+    width: 1px;
+    height: 16px;
+    background: #333;
+    flex-shrink: 0;
+}
+
+/* ── Dropdown menu items ──────────────────────────────── */
+
+.nav-menu-item {
+    position: relative;
+    display: flex;
+    align-items: center;
+    height: 100%;
+    padding: 0 6px;
+    color: #aaa;
+    font-size: 14px;
+    border-radius: 3px;
+    cursor: pointer;
+    user-select: none;
+}
+
+.nav-menu-item:hover,
+.nav-menu-item.open {
+    background: #1e1e1e;
+    color: #fff;
+}
+
+.nav-dropdown {
+    display: none;
+    position: absolute;
+    top: 100%;
+    left: 0;
+    min-width: 180px;
+    background: #1a1a1a;
+    border: 0.5px solid #333;
+    border-radius: 0 0 6px 6px;
+    z-index: 100;
+}
+
+.nav-menu-item.open .nav-dropdown { display: block; }
+
+.nav-dropdown div {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 7px 14px;
+    color: #ccc;
+    font-size: 13px;
+    cursor: pointer;
+}
+
+.nav-dropdown div:hover { background: #222; color: #fff; }
+
+.menu-shortcut { color: #888; font-size: 12px; }
