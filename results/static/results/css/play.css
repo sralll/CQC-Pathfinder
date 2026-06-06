@@ -4,8 +4,7 @@
 
 :root {
     --navbar-h: 0px;
-    /* Button bar: square when 6 buttons fill the viewport width; capped at 60px */
-    --btn-bar-h: min(calc(100vw / 6), 60px);
+    --btn-bar-h: 64px;
 }
 
 #navbar { display: none; }
@@ -34,6 +33,16 @@ html, body {
     flex-direction: column;
 }
 
+/* Desktop: limit the play column to a square (width = viewport height) */
+body.desktop #play-wrap {
+    align-items: center;
+}
+
+body.desktop #map-container,
+body.desktop #play-btn-bar {
+    width: min(100%, 100vh);
+}
+
 /* =========================================================
    MAP
 ========================================================= */
@@ -46,6 +55,7 @@ html, body {
     background: #2a2a2a;
     cursor: grab;
 }
+
 
 #map-container.panning { cursor: grabbing; }
 
@@ -84,6 +94,80 @@ html, body {
 #control-layer { opacity: 0.8; }
 
 /* =========================================================
+   STATS PANEL
+========================================================= */
+
+#play-stats-panel {
+    flex-shrink: 0;
+    width: 100%;
+    max-height: 0;
+    overflow: hidden;
+    background: #1a1a1a;
+    transition: max-height 0.25s ease;
+}
+
+body.desktop #play-stats-panel {
+    width: min(100%, 100vh);
+}
+
+#play-stats-panel.visible {
+    max-height: 160px;
+    border-bottom: 0.5px solid #2e2e2e;
+}
+
+#play-stats-inner {
+    display: flex;
+    gap: 6px;
+    padding: 5px 3px;
+}
+
+.stats-col {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    padding: 4px 5px;
+    border-top: 2px solid;   /* color set inline by JS */
+    overflow: hidden;
+}
+
+.stats-total {
+    font-size: 11px;
+    font-weight: 600;
+    color: #ccc;
+    line-height: 1.4;
+    white-space: nowrap;
+}
+
+.stats-row {
+    font-size: 10px;
+    font-weight: 400;
+    color: #666;
+    line-height: 1.4;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* Mobile >3 routes: stack label above indented value */
+#play-stats-inner.stacked .stats-row {
+    display: flex;
+    flex-direction: column;
+    white-space: normal;
+}
+#play-stats-inner.stacked .stats-label {
+    color: #555;
+}
+#play-stats-inner.stacked .stats-value {
+    padding-left: 6px;
+    color: #888;
+}
+
+body.desktop .stats-total { font-size: 12px; }
+body.desktop .stats-row   { font-size: 11px; }
+
+/* =========================================================
    BUTTON BAR
 ========================================================= */
 
@@ -91,13 +175,38 @@ html, body {
     height: var(--btn-bar-h);
     flex-shrink: 0;
     display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px;
     background: #1a1a1a;
     border-top: 0.5px solid #2e2e2e;
 }
 
+/* =========================================================
+   PROGRESS BAR
+========================================================= */
+
+#play-progress {
+    height: 3px;
+    flex-shrink: 0;
+    width: 100%;
+    background: #000;
+}
+
+body.desktop #play-progress {
+    width: min(100%, 100vh);
+}
+
+#play-progress-fill {
+    height: 100%;
+    width: 0%;
+    background: #e07020;
+    transition: width 0.4s ease;
+}
+
 .play-btn {
     flex: 1;
-    height: 100%;
+    height: calc(100% - 10px);
     min-width: 0;
     background: none;
     border: none;
@@ -136,10 +245,98 @@ html, body {
 .play-btn x-icon { flex-shrink: 0; }
 
 .play-btn-label {
-    font-size: 10px;
     line-height: 1;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
     max-width: 100%;
 }
+
+/* ── Route colour buttons ─────────────────────────────────── */
+.play-btn.route-btn {
+    flex: 1;
+    height: calc(var(--btn-bar-h) - 6px);
+    min-width: 0;
+    border-radius: 8px;
+    border: none;
+    padding: 0;
+    opacity: 0.65;
+    box-shadow:
+        inset 0 1px 0 rgba(255,255,255,0.30),
+        0 2px 5px rgba(0,0,0,0.55);
+    transition: opacity 0.15s, box-shadow 0.15s;
+}
+.play-btn.route-btn:hover  { opacity: 0.85; }
+.play-btn.route-btn:active { opacity: 1; }
+.play-btn.route-btn.active {
+    opacity: 1;
+    box-shadow:
+        inset 0 1px 0 rgba(255,255,255,0.40),
+        0 0 0 2.5px #fff,
+        0 2px 6px rgba(0,0,0,0.6);
+}
+
+/* Non-complex CP: labeled variant — just add text styling */
+.play-btn.route-btn.route-btn-labeled {
+    color: #000;
+    font-weight: 700;
+    line-height: 1;
+}
+
+/* ── Post-choice states (buttonsDisabled = true) ──────────── */
+
+/* Default: dimmed, shows delta text */
+.play-btn.route-btn:disabled {
+    opacity: 0.5;
+    cursor: default;
+    pointer-events: none;
+}
+
+/* Selected by user: white ring + glow */
+.play-btn.route-btn.active:disabled {
+    opacity: 1;
+    cursor: default;
+    pointer-events: none;
+    box-shadow:
+        inset 0 1px 0 rgba(255,255,255,0.40),
+        0 0 0 2.5px #fff,
+        0 0 12px rgba(255,255,255,0.55),
+        0 2px 6px rgba(0,0,0,0.6);
+}
+
+/* Fastest route: just the trophy icon, no border effect — always black */
+.play-btn.route-btn.route-btn-fastest,
+.play-btn.route-btn.route-btn-fastest:disabled,
+.play-btn.route-btn.route-btn-fastest.active,
+.play-btn.route-btn.route-btn-fastest.active:disabled {
+    color: #000;
+    opacity: 1;
+    cursor: default;
+    pointer-events: none;
+}
+
+/* Delta text inside non-fastest buttons */
+.route-btn-delta {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1px;
+    pointer-events: none;
+}
+.route-btn-delta-rel,
+.route-btn-delta-abs {
+    display: block;
+    line-height: 1;
+    font-weight: 700;
+    color: rgba(0,0,0,0.85);
+    white-space: nowrap;
+}
+
+/* Desktop, ≤4 routes: single line with parentheses */
+body.desktop .route-btn-delta:not(.two-lines) {
+    flex-direction: row;
+    gap: 2px;
+    align-items: baseline;
+}
+body.desktop .route-btn-delta:not(.two-lines) .route-btn-delta-abs::before { content: "("; }
+body.desktop .route-btn-delta:not(.two-lines) .route-btn-delta-abs::after  { content: ")"; }

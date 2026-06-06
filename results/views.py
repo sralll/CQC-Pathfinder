@@ -1,7 +1,7 @@
 from django.shortcuts import render, get_object_or_404
 from django.contrib.auth.decorators import login_required
 from django.http import JsonResponse, FileResponse, HttpResponseNotFound
-from django.views.decorators.http import require_GET
+from django.views.decorators.http import require_GET, require_POST
 from django.db.models import Count, Q, Prefetch
 from django.conf import settings
 from project.models import File, ControlPair, Route
@@ -90,7 +90,7 @@ def get_file(request, file_id):
 
 @login_required
 @require_GET
-def get_map(request, filename):
+def get_map(request, filename):  # noqa — kept before submit_result for logical grouping
     filepath = os.path.join(settings.MEDIA_ROOT, 'maps', filename)
     if not os.path.exists(filepath):
         return HttpResponseNotFound(f"Map '{filename}' not found.")
@@ -143,3 +143,33 @@ def get_files(request):
         'multi_team': profile.teams.count() > 1,
         'active_team_name': active_team.name,
     })
+
+
+@login_required
+@require_POST
+def submit_result(request):
+    import json
+    try:
+        data        = json.loads(request.body)
+        cp_id       = data['control_pair_id']
+        route_id    = data.get('selected_route_id')
+        choice_time = float(data['choice_time'])
+        competition = bool(data.get('competition', True))
+
+        from .models import Choice
+        cp    = get_object_or_404(ControlPair, id=cp_id)
+        route = get_object_or_404(Route, id=route_id) if route_id else None
+
+        Choice.objects.update_or_create(
+            user=request.user,
+            control_pair=cp,
+            defaults={
+                'selected_route': route,
+                'choice_time':    choice_time,
+                'competition':    competition,
+            },
+        )
+        return JsonResponse({'status': 'ok'})
+    except Exception as e:
+        traceback.print_exc()
+        return JsonResponse({'error': str(e)}, status=500)

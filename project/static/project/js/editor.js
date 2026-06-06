@@ -568,7 +568,6 @@ function _clearSaveFailedWarning() {
 }
 
 window.addEventListener("online", () => {
-    console.log("[online] event fired, _saveFailed:", _saveFailed);
     if (_saveFailed) {
         saveFile("reconnect");
     }
@@ -898,6 +897,7 @@ const ControlPairTool = (() => {
                 rpt.x = point.x;
                 rpt.y = point.y;
                 calcRouteLength(r);
+                calcRouteNoA(r);
                 calcRouteRunTime(r);
                 calcRouteSide(cp, r);
             });
@@ -1079,7 +1079,7 @@ const RouteEditTool = (() => {
             clearEditLayer();
             hideCrosshair();
             if (route) {
-                calcRouteLength(route); calcRouteRunTime(route); calcRouteSide(cpRef, route);
+                calcRouteLength(route); calcRouteNoA(route); calcRouteRunTime(route); calcRouteSide(cpRef, route);
                 if (cpRef) saveRoute(cpRef, route);
             }
             reset();
@@ -1179,6 +1179,7 @@ const NewRouteTool = (() => {
         pushUndoState("Route erstellt");
         calcRouteLength(route);
         route.elevation = 0;
+        calcRouteNoA(route);
         calcRouteRunTime(route);
         calcRouteSide(cp, route);
         cp.routes.push(route);
@@ -3655,7 +3656,6 @@ function drawCourse() {
     if (selectedCp) updateControlPairGroup(selectedCp);
     updateRoutes();
     updateCPList();
-    console.log("redrawn");
 }
 
 /* =========================================================
@@ -4098,18 +4098,84 @@ function calcRouteSide(cp, route) {
     route.pos = sum / rP.length;
 }
 
+// Distance window (px) used to measure direction change at each point.
+// Large enough to smooth over curve micro-segments, small enough to catch real corners.
+const SHARP_ANGLE_THRESHOLD_PX = 15;
+const SHARP_ANGLE_DEG          = 60;
+
+function calcRouteNoA(route) {
+    const rP = route.rP;
+    if (!rP || rP.length < 3) { route.noA = 0; return; }
+
+    // Build cumulative pixel-distance array along the polyline
+    const cum = [0];
+    for (let i = 1; i < rP.length; i++)
+        cum.push(cum[i - 1] + Math.hypot(rP[i].x - rP[i - 1].x, rP[i].y - rP[i - 1].y));
+    const total = cum[cum.length - 1];
+
+    // Return the interpolated point at cumulative distance d
+    function ptAt(d) {
+        d = Math.max(0, Math.min(d, total));
+        for (let i = 1; i < cum.length; i++) {
+            if (cum[i] >= d) {
+                const segLen = cum[i] - cum[i - 1];
+                const t = segLen > 0 ? (d - cum[i - 1]) / segLen : 0;
+                return { x: rP[i-1].x + (rP[i].x - rP[i-1].x) * t,
+                         y: rP[i-1].y + (rP[i].y - rP[i-1].y) * t };
+            }
+        }
+        return rP[rP.length - 1];
+    }
+
+    const thresh   = SHARP_ANGLE_THRESHOLD_PX;
+    const cosLimit = Math.cos(SHARP_ANGLE_DEG * Math.PI / 180);
+    let noA        = 0;
+    let skipUntil  = 0;   // cumulative dist — skip points inside the last detected corner
+
+    for (let i = 1; i < rP.length - 1; i++) {
+        const d = cum[i];
+        if (d < skipUntil) continue;
+
+        const before = ptAt(d - thresh);
+        const after  = ptAt(d + thresh);
+
+        const inX = rP[i].x - before.x,  inY = rP[i].y - before.y;
+        const outX = after.x - rP[i].x,  outY = after.y - rP[i].y;
+
+        const inLen  = Math.hypot(inX, inY);
+        const outLen = Math.hypot(outX, outY);
+        if (inLen < 1 || outLen < 1) continue;
+
+        const cosAngle = (inX * outX + inY * outY) / (inLen * outLen);
+        if (cosAngle < cosLimit) {          // angle > SHARP_ANGLE_DEG
+            noA++;
+            skipUntil = d + thresh;         // don't double-count the same corner
+        }
+    }
+
+    route.noA = noA;
+}
+
 function calcRouteRunTime(route) {
     const length    = route.length;
     const elevation = route.elevation;
-    if (length == null || length === 0 || elevation == null) {
+    if (length == null || length === 0) {
         route.run_time = null;
+        return;
+    }
+    const noAPenalty = route.noA || 0;
+    // elevation = 0 is the calibration point: no grade penalty, pure flat speed.
+    // Also avoids the formula artefact where gapUp/gapDown ≈ 0.994 at grade 0
+    // would make flat terrain slightly faster than RUN_SPEED.
+    if (!elevation) {
+        route.run_time = length / RUN_SPEED + noAPenalty;
         return;
     }
     const gradient  = (elevation / length) * 100;
     const gapUp     = 0.0017 * gradient ** 2 + 0.02901 * gradient + 0.99387;
     const gapDown   = 0.0017 * gradient ** 2 - 0.02901 * gradient + 0.99387;
     const adjSpeed  = RUN_SPEED / ((gapUp + gapDown) / 2);
-    route.run_time  = length / adjSpeed;
+    route.run_time  = length / adjSpeed + noAPenalty;
 }
 
 /* =========================================================

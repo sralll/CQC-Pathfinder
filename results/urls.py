@@ -7,4 +7,5 @@ urlpatterns = [
     path('<int:file_id>/<str:mode>/', views.play, name='play'),
     path('file/<int:file_id>/', views.get_file, name='play_file'),
     path('map/<str:filename>/', views.get_map, name='play_map'),
+    path('submit-result/', views.submit_result, name='submit_result'),
 ]

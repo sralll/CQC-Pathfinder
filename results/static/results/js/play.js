@@ -22,12 +22,20 @@ let project = {
 };
 let applyTransform = () => {};
 
-const R_CONTROL = 25;
-const GAP       = 8;
-const MIN_ZOOM  = 0.2;
-const MAX_ZOOM  = 8;
+const R_CONTROL  = 25;
+const GAP        = 8;
+const MIN_ZOOM   = 0.2;
+const MAX_ZOOM   = 8;
+const RUN_SPEED  = 4.75;   // m/s — flat-terrain reference speed
+const routeColor = ['#DD0011', '#CC6000', '#008888', '#0055FF', '#5500BB', '#8800CC'];
 
-let currentCpIndex = -1;
+let currentCpIndex    = -1;
+let camBounds         = null;   // { minRX, maxRX, minRY, maxRY, minScale } in rotated space; null during animation
+let currentRouteColors = [];    // colors[i] for cp.routes[i]
+let selectedRouteIdx   = null;  // index into cp.routes, or null for all
+let choiceStartTime    = null;  // performance.now() when routes became visible
+let buttonsDisabled    = false; // true after first submission for this CP
+let currentBtnFontSize = '12px'; // kept in sync with renderAllButtons for stats panel
 
 /* =========================================================
    INIT
@@ -36,7 +44,53 @@ let currentCpIndex = -1;
 document.addEventListener('DOMContentLoaded', () => {
     initCamera();
     loadFile();
+    initKeyNav();
+    initStatsPanel();
 });
+
+function canAdvance() {
+    const last = project.control_pairs.length - 1;
+    return buttonsDisabled && currentCpIndex >= 0 && currentCpIndex < last;
+}
+
+function initKeyNav() {
+    const container = document.getElementById('map-container');
+
+    // ── Desktop: spacebar / enter ────────────────────────────
+    document.addEventListener('keydown', e => {
+        if (e.key === ' ' || e.key === 'Enter') {
+            e.preventDefault();
+            if (canAdvance()) showControlPair(currentCpIndex + 1);
+        }
+    });
+
+    // ── Desktop: double-click on map ─────────────────────────
+    container.addEventListener('dblclick', () => {
+        if (canAdvance()) showControlPair(currentCpIndex + 1);
+    });
+
+    // ── Mobile: swipe right-to-left on map ───────────────────
+    let swipeStartX = null;
+    let swipeStartY = null;
+    const SWIPE_MIN_X = 60;   // minimum horizontal distance px
+    const SWIPE_MAX_Y = 40;   // maximum vertical drift px
+
+    container.addEventListener('touchstart', e => {
+        if (e.touches.length !== 1) { swipeStartX = null; return; }
+        swipeStartX = e.touches[0].clientX;
+        swipeStartY = e.touches[0].clientY;
+    }, { passive: true });
+
+    container.addEventListener('touchend', e => {
+        if (swipeStartX === null) return;
+        const dx = e.changedTouches[0].clientX - swipeStartX;
+        const dy = e.changedTouches[0].clientY - swipeStartY;
+        swipeStartX = null;
+        if (dx < -SWIPE_MIN_X && Math.abs(dy) < SWIPE_MAX_Y) {
+            if (canAdvance()) showControlPair(currentCpIndex + 1);
+        }
+    }, { passive: true });
+}
 
 async function loadFile() {
     showMapSpinner();
@@ -52,7 +106,17 @@ async function loadFile() {
         project.blocked_terrain = data.blocked_terrain;
         project.control_pairs   = data.control_pairs;
         await loadMap(project.map_file);
-        renderButtons([{ label: 'Bereit?', icon: 'flag', action: () => showControlPair(0) }]);
+        const isDesktop  = document.body.classList.contains('desktop');
+        const readyFontSize = isDesktop
+            ? `${Math.min(28, Math.max(14, Math.round(56 / 1)))}px`
+            : `${Math.min(22, Math.max(8,  Math.round(44 / 1)))}px`;
+        renderButtons([{
+            label:    'Bereit?',
+            cls:      'route-btn route-btn-labeled',
+            bgColor:  '#e07020',
+            fontSize: readyFontSize,
+            action:   () => showControlPair(0),
+        }]);
     } catch (e) {
         console.error('loadFile failed:', e);
     } finally {
@@ -85,17 +149,42 @@ function fitCamera(imgW, imgH) {
     const container = document.getElementById('map-container');
     const cw    = container.clientWidth;
     const ch    = container.clientHeight;
-    const scale = Math.min(cw / imgW, ch / imgH);
+    const scale = imgW > 0 && imgH > 0 ? Math.min(cw / imgW, ch / imgH) : 1;
     cam.rot   = 0;
     cam.x     = (cw - imgW * scale) / 2;
     cam.y     = (ch - imgH * scale) / 2;
-    cam.scale = scale;
+    cam.scale = Math.max(scale, 1e-6);  // never zero — prevents division by zero in animateCam
     applyTransform();
 }
 
 /* =========================================================
    CAMERA  (pan + pinch-zoom, mirrors editor behaviour)
 ========================================================= */
+
+function clampCam() {
+    if (!camBounds) return;
+    const container = document.getElementById('map-container');
+    const cw = container.clientWidth;
+    const ch = container.clientHeight;
+
+    // Scale: no zooming out past the calculated minimum
+    cam.scale = Math.min(Math.max(cam.scale, camBounds.minScale), MAX_ZOOM);
+    const s = cam.scale;
+
+    // cam.x bounds: screen must stay within [minRX, maxRX] in rotated space.
+    // Screen left  (x=0)  → rotated X = -cam.x / s  ≥ minRX  → cam.x ≤ -minRX·s
+    // Screen right (x=cw) → rotated X = (cw-cam.x)/s ≤ maxRX → cam.x ≥ cw-maxRX·s
+    const xHi = -camBounds.minRX * s;
+    const xLo =  cw - camBounds.maxRX * s;
+    cam.x = (xLo > xHi) ? (xLo + xHi) / 2          // content narrower than screen: centre
+                         : Math.min(xHi, Math.max(xLo, cam.x));
+
+    // cam.y bounds: same logic for vertical axis
+    const yHi = -camBounds.minRY * s;
+    const yLo =  ch - camBounds.maxRY * s;
+    cam.y = (yLo > yHi) ? (yLo + yHi) / 2
+                         : Math.min(yHi, Math.max(yLo, cam.y));
+}
 
 function initCamera() {
     const container = document.getElementById('map-container');
@@ -105,6 +194,7 @@ function initCamera() {
     let lastPinchDist = null;
 
     applyTransform = () => {
+        if (!isFinite(cam.x) || !isFinite(cam.y) || !isFinite(cam.scale) || !isFinite(cam.rot)) return;
         camera.style.transform =
             `translate(${cam.x}px, ${cam.y}px) rotate(${cam.rot}deg) scale(${cam.scale})`;
     };
@@ -120,6 +210,7 @@ function initCamera() {
         if (!drag) return;
         cam.x = e.clientX - drag.startX;
         cam.y = e.clientY - drag.startY;
+        clampCam();
         applyTransform();
     });
 
@@ -139,6 +230,7 @@ function initCamera() {
         cam.x     = mx - (mx - cam.x) * factor;
         cam.y     = my - (my - cam.y) * factor;
         cam.scale = newScale;
+        clampCam();
         applyTransform();
     }, { passive: false });
 
@@ -172,6 +264,7 @@ function initCamera() {
             cam.scale = newScale;
             lastPinchDist = dist;
         }
+        clampCam();
         applyTransform();
     }, { passive: false });
 
@@ -230,7 +323,7 @@ function drawBlockedTerrain() {
    ROUTES — DRAW
 ========================================================= */
 
-function createRoutePolyline(route, { stroke = 'black', strokeWidth = 1.5 } = {}) {
+function createRoutePolyline(route, { stroke = 'black', strokeWidth = 1.5, opacity = 1 } = {}) {
     if (!route?.rP || route.rP.length < 2) return null;
     const el = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
     el.setAttribute('points',           route.rP.map(p => `${p.x},${p.y}`).join(' '));
@@ -240,6 +333,7 @@ function createRoutePolyline(route, { stroke = 'black', strokeWidth = 1.5 } = {}
     el.setAttribute('stroke-linecap',   'round');
     el.setAttribute('stroke-linejoin',  'round');
     el.setAttribute('vector-effect',    'non-scaling-stroke');
+    el.setAttribute('opacity',          String(opacity));
     el.setAttribute('pointer-events',   'none');
     return el;
 }
@@ -248,16 +342,30 @@ function drawRoutes(cp) {
     const layer = document.getElementById('route-layer');
     layer.innerHTML = '';
     if (!cp?.routes?.length) return;
+    if (!cp.complex) return;   // non-complex: routes not revealed on the map
+
+    // Draw order: routeColor index ascending (FFFF00 bottom → 00FF00 top)
+    // so less-visible colours are never buried under brighter ones
+    const drawOrder = cp.routes
+        .map((route, i) => ({ route, i }))
+        .sort((a, b) =>
+            routeColor.indexOf(currentRouteColors[a.i]) -
+            routeColor.indexOf(currentRouteColors[b.i])
+        );
 
     // White background pass
-    cp.routes.forEach(route => {
+    drawOrder.forEach(({ route }) => {
         const el = createRoutePolyline(route, { stroke: 'white', strokeWidth: 3 });
         if (el) layer.appendChild(el);
     });
 
-    // Black foreground pass
-    cp.routes.forEach(route => {
-        const el = createRoutePolyline(route, { stroke: 'black', strokeWidth: 1.5 });
+    // Colored foreground pass — dim unselected routes when one is selected
+    drawOrder.forEach(({ route, i }) => {
+        const color  = currentRouteColors[i] || '#000';
+        const dimmed = selectedRouteIdx !== null && selectedRouteIdx !== i;
+        const el = createRoutePolyline(route, {
+            stroke: color, strokeWidth: 1.5, opacity: dimmed ? 0.2 : 1,
+        });
         if (el) layer.appendChild(el);
     });
 }
@@ -271,7 +379,17 @@ function showControlPair(index) {
     if (!cp?.start || !cp?.ziel) return;
     currentCpIndex = index;
 
-    // Clear immediately so nothing stale shows during the animation
+    // Cancel any running route animation from the previous CP
+    if (_routeAnim) { cancelAnimationFrame(_routeAnim); _routeAnim = null; }
+
+    // Hide stats panel
+    hideStatsPanel();
+
+    // Reset per-CP state and clear drawing layers
+    camBounds          = null;
+    selectedRouteIdx   = null;
+    currentRouteColors = [];
+    buttonsDisabled    = false;
     document.getElementById('route-layer').innerHTML   = '';
     document.getElementById('control-layer').innerHTML = '';
 
@@ -283,86 +401,274 @@ function showControlPair(index) {
     const cosR   = Math.cos(R);
     const sinR   = Math.sin(R);
 
-    // Fit tightly around the route points only
-    const points = [];
+    const toRot = p => ({ rx: p.x * cosR - p.y * sinR, ry: p.x * sinR + p.y * cosR });
+
+    // Route rP points; fall back to start/ziel if no routes yet
+    const rPts = [];
     for (const route of cp.routes) {
-        if (route.rP?.length) points.push(...route.rP);
+        if (route.rP?.length) rPts.push(...route.rP);
     }
-    // Fall back to start/ziel if no routes yet
-    if (!points.length) points.push(cp.start, cp.ziel);
+    const dataPts = rPts.length ? rPts : [cp.start, cp.ziel];
+    const rotData = dataPts.map(toRot);
 
-    // Project into rotated coordinate system
-    const rotated = points.map(p => ({
-        rx: p.x * cosR - p.y * sinR,
-        ry: p.x * sinR + p.y * cosR,
-    }));
+    let minRX = Math.min(...rotData.map(p => p.rx));
+    let maxRX = Math.max(...rotData.map(p => p.rx));
+    let minRY = Math.min(...rotData.map(p => p.ry));
+    let maxRY = Math.max(...rotData.map(p => p.ry));
 
-    const PAD = 15;
-    let minRX = Math.min(...rotated.map(p => p.rx)) - PAD;
-    let maxRX = Math.max(...rotated.map(p => p.rx)) + PAD;
-    let minRY = Math.min(...rotated.map(p => p.ry)) - PAD;
-    let maxRY = Math.max(...rotated.map(p => p.ry)) + PAD;
-
-    // Expand bounding box to fully contain the start and ziel circles
+    // Expand to include start/ziel circles
     [cp.start, cp.ziel].forEach(pt => {
         if (!pt) return;
-        const rx = pt.x * cosR - pt.y * sinR;
-        const ry = pt.x * sinR + pt.y * cosR;
+        const { rx, ry } = toRot(pt);
         minRX = Math.min(minRX, rx - R_CONTROL);
         maxRX = Math.max(maxRX, rx + R_CONTROL);
         minRY = Math.min(minRY, ry - R_CONTROL);
         maxRY = Math.max(maxRY, ry + R_CONTROL);
     });
 
-    const container = document.getElementById('map-container');
-    const cw    = container.clientWidth;
-    const ch    = container.clientHeight;
-    const scale = Math.min(cw / (maxRX - minRX), ch / (maxRY - minRY));
-
-    // Convert bounding-box centre from rotated space back to map space
-    const centerRX = (minRX + maxRX) / 2;
+    // Horizontal centre: startRX (= zielRX — same X after rotation by design)
+    const startRX  = toRot(cp.start).rx;
     const centerRY = (minRY + maxRY) / 2;
-    // R⁻¹(rot) = [cosR, sinR; -sinR, cosR]
+
+    const container = document.getElementById('map-container');
+    const cw = container.clientWidth;
+    const ch = container.clientHeight;
+
+    // Scale: 10 screen-pixel margin on every side, centred at startRX horizontally
+    const PAD     = 10;
+    const halfW   = Math.max(startRX - minRX, maxRX - startRX);  // widest half-extent from centre line
+    const halfH   = (maxRY - minRY) / 2;
+    const scaleX  = halfW > 0 ? (cw / 2 - PAD) / halfW : MAX_ZOOM;
+    const scaleY  = halfH > 0 ? (ch / 2 - PAD) / halfH : MAX_ZOOM;
+    const scale   = Math.min(scaleX, scaleY, MAX_ZOOM);
+
+    // Map-space coordinates of camera centre (R⁻¹ · (startRX, centerRY))
     animateCam({
         rot:   rotDeg,
         scale: scale,
-        cx:    centerRX * cosR + centerRY * sinR,
-        cy:   -centerRX * sinR + centerRY * cosR,
+        cx:    startRX * cosR + centerRY * sinR,
+        cy:   -startRX * sinR + centerRY * cosR,
     }, 1000, () => {
+        // Bounds = full initial viewport in rotated space (user can zoom in + pan within)
+        camBounds = {
+            minRX: startRX - (cw / 2) / scale,
+            maxRX: startRX + (cw / 2) / scale,
+            minRY: centerRY - (ch / 2) / scale,
+            maxRY: centerRY + (ch / 2) / scale,
+            minScale: scale,
+        };
+        assignRouteColors(cp.routes);
         drawRoutes(cp);
         const group = document.createElementNS('http://www.w3.org/2000/svg', 'g');
         group.classList.add('control-pair-group');
         drawControlPairCircles(cp, group);
         drawConnection(cp, group);
         document.getElementById('control-layer').appendChild(group);
+        choiceStartTime = performance.now();
+        renderAllButtons(cp);
     });
 
-    renderNavButtons();
+    renderNavButtons();  // show nav state immediately while animating
+    updateProgressBar();
+}
+
+function assignRouteColors(routes) {
+    // 1. Shuffle the colour palette
+    const pool = [...routeColor];
+    for (let i = pool.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [pool[i], pool[j]] = [pool[j], pool[i]];
+    }
+
+    // 2. Sort route indices by pos (neighbours in pos-space get adjacent colours)
+    const sorted = routes
+        .map((r, i) => ({ i, pos: r.pos ?? Infinity }))
+        .sort((a, b) => a.pos - b.pos);
+
+    // 3. Assign cyclically — wrapping never repeats a neighbour because
+    //    index k   → pool[k % 6]
+    //    index k+1 → pool[(k+1) % 6]   ← always different for pool.length = 6
+    currentRouteColors = new Array(routes.length);
+    sorted.forEach(({ i }, rank) => {
+        currentRouteColors[i] = pool[rank % pool.length];
+    });
 }
 
 function renderNavButtons() {
-    const last = project.control_pairs.length - 1;
-    renderButtons([
-        {
-            label: 'Zurück',
-            icon:  'chevron-left',
-            action: () => showControlPair(currentCpIndex - 1),
-            disabled: currentCpIndex <= 0,
-        },
-        {
-            label: 'Weiter',
-            icon:  'chevron-right',
-            action: () => showControlPair(currentCpIndex + 1),
-            disabled: currentCpIndex >= last,
-        },
-    ]);
+    renderButtons([]);  // clear bar while animating
+}
+
+function updateProgressBar() {
+    const fill  = document.getElementById('play-progress-fill');
+    if (!fill) return;
+    const total = project.control_pairs.length;
+    const pct   = total > 0 ? ((currentCpIndex + 1) / total) * 100 : 0;
+    fill.style.width = `${pct}%`;
+}
+
+function formatTimeDelta(diffSec) {
+    if (diffSec < 60) return `+${Math.round(diffSec)}s`;
+    const m = Math.floor(diffSec / 60);
+    const s = Math.round(diffSec % 60);
+    return `+${m}:${String(s).padStart(2, '0')}`;
+}
+
+function formatTime(sec) {
+    if (sec == null || isNaN(sec)) return '–';
+    if (sec < 60) return `${Math.round(sec)}s`;
+    const m = Math.floor(sec / 60);
+    const s = Math.round(sec % 60);
+    return `${m}:${String(s).padStart(2, '0')}`;
+}
+
+/* =========================================================
+   STATS PANEL
+========================================================= */
+
+let statsVisible = false;
+
+function initStatsPanel() {
+    document.getElementById('play-btn-bar').addEventListener('click', e => {
+        if (!buttonsDisabled || currentCpIndex < 0) return;
+        // Ignore clicks that originated from a button (e.g. route choice) — only
+        // react to direct taps on the bar background between / around the buttons.
+        if (e.target.closest('.play-btn')) return;
+        if (statsVisible) hideStatsPanel();
+        else renderStatsPanel(project.control_pairs[currentCpIndex]);
+    });
+}
+
+function hideStatsPanel() {
+    statsVisible = false;
+    const panel = document.getElementById('play-stats-panel');
+    if (panel) panel.classList.remove('visible');
+}
+
+function renderStatsPanel(cp) {
+    const panel = document.getElementById('play-stats-panel');
+    panel.innerHTML = '';
+
+    const sorted = cp.routes
+        .map((route, i) => ({ route, i }))
+        .sort((a, b) => (a.route.pos ?? Infinity) - (b.route.pos ?? Infinity));
+
+    const isDesktop = document.body.classList.contains('desktop');
+    const stacked   = !isDesktop && sorted.length > 3;
+
+    const inner = document.createElement('div');
+    inner.id = 'play-stats-inner';
+    if (stacked) inner.classList.add('stacked');
+
+    const row = (label, value) =>
+        `<span class="stats-row"><span class="stats-label">${label}</span><span class="stats-value">${value}</span></span>`;
+
+    sorted.forEach(({ route, i }) => {
+        const distTime = route.length ? route.length / RUN_SPEED : null;
+        const noATime  = route.noA || 0;
+        // Elevation contribution = total minus flat-distance time.
+        // noA is read directly from the stored JSON attribute — not recomputed —
+        // so we don't subtract it here (older files may not have it baked into run_time).
+        const elevTime = route.run_time != null && distTime != null
+            ? route.run_time - distTime : null;
+
+        const showElev    = !!route.elevation && elevTime != null && elevTime > 0.5;
+        const showCorners = noATime > 0;
+
+        const lengthStr = route.length    ? `${Math.round(route.length)}m`    : '–';
+        const elevStr   = route.elevation ? `${Math.round(route.elevation)}m` : '–';
+        const noALabel  = noATime === 1   ? '1 Ecke' : `${noATime} Ecken`;
+
+        const col = document.createElement('div');
+        col.className = 'stats-col';
+        col.style.borderColor = currentRouteColors[i];
+        col.innerHTML =
+            `<span class="stats-total">${formatTime(route.run_time)}</span>` +
+            row(`${lengthStr}:`, `+${formatTime(distTime)}`) +
+            (showElev    ? row(`${elevStr}:`,    `+${formatTime(elevTime)}`) : '') +
+            (showCorners ? row(`${noALabel}:`,   `+${noATime}s`)            : '');
+        inner.appendChild(col);
+    });
+
+    panel.appendChild(inner);
+    statsVisible = true;
+    panel.classList.add('visible');
+}
+
+function renderAllButtons(cp) {
+    // Sort routes by pos ascending (null/undefined sorts last)
+    const sorted = cp.routes
+        .map((route, i) => ({ route, i }))
+        .sort((a, b) => (a.route.pos ?? Infinity) - (b.route.pos ?? Infinity));
+
+    // After a choice is made, compute fastest route for performance feedback
+    let fastestIdx = null;
+    let minTime    = null;
+    if (buttonsDisabled) {
+        const timed = sorted.filter(({ route }) => route.run_time > 0);
+        if (timed.length) {
+            minTime    = Math.min(...timed.map(({ route }) => route.run_time));
+            fastestIdx = timed.find(({ route }) => route.run_time === minTime)?.i ?? null;
+        }
+    }
+
+    // For non-complex CPs: smaller pos = Links, larger pos = Rechts
+    const minPos = cp.complex ? null : Math.min(...cp.routes.map(r => r.pos ?? Infinity));
+
+    // Font size for all route buttons: larger when fewer (wider) buttons
+    // Desktop has more horizontal space so the scaling is gentler
+    const n           = sorted.length;
+    const isDesktop   = document.body.classList.contains('desktop');
+    const btnFontSize = isDesktop
+        ? `${Math.min(28, Math.max(14, Math.round(56 / n)))}px`
+        : `${Math.min(22, Math.max(8,  Math.round(44 / n)))}px`;
+    currentBtnFontSize = btnFontSize;
+    const twoLines = n >= 5;
+
+    renderButtons(sorted.map(({ route, i }) => {
+        let fastest = false;
+        let delta   = null;
+        if (buttonsDisabled && minTime !== null) {
+            if (i === fastestIdx) {
+                fastest = true;
+            } else if (route.run_time > 0) {
+                const diffSec = route.run_time - minTime;
+                const relPct  = Math.round((diffSec / minTime) * 100);
+                delta = { rel: `+${relPct}%`, abs: formatTimeDelta(diffSec), twoLines };
+            }
+        }
+        return {
+            bgColor:   currentRouteColors[i] || '#888',
+            fontSize:  btnFontSize,
+            cls:       cp.complex ? 'route-btn' : 'route-btn route-btn-labeled',
+            label:    cp.complex ? undefined : (route.pos === minPos ? 'Links' : 'Rechts'),
+            active:   selectedRouteIdx === i,
+            disabled: buttonsDisabled,
+            fastest,
+            delta,
+            action:  () => {
+                if (buttonsDisabled) return;
+                const selecting = selectedRouteIdx !== i;
+                selectedRouteIdx = selecting ? i : null;
+                if (selecting) {
+                    buttonsDisabled = true;
+                    renderAllButtons(cp);          // re-render disabled
+                    submitResult(cp, cp.routes[i]);
+                    animateRoutes(cp, i);
+                } else {
+                    drawRoutes(cp);
+                    renderAllButtons(cp);
+                }
+            },
+        };
+    }));
 }
 
 /* =========================================================
    CAMERA ANIMATION
 ========================================================= */
 
-let _camAnim = null;   // cancel token for any running animation
+let _camAnim   = null;   // cancel token for any running camera animation
+let _routeAnim = null;   // cancel token for any running route animation
 
 function animateCam(target, duration = 1000, onComplete) {
     if (_camAnim) cancelAnimationFrame(_camAnim);
@@ -377,9 +683,10 @@ function animateCam(target, duration = 1000, onComplete) {
     const fromSinR = Math.sin(fromR);
     const fromDX   = scx - cam.x;
     const fromDY   = scy - cam.y;
+    const safeScale = cam.scale > 0 ? cam.scale : 1;
     // R⁻¹(rot) · (screen_centre − cam_origin) / scale  →  map centre
-    const fromCx = ( fromCosR * fromDX + fromSinR * fromDY) / cam.scale;
-    const fromCy = (-fromSinR * fromDX + fromCosR * fromDY) / cam.scale;
+    const fromCx = ( fromCosR * fromDX + fromSinR * fromDY) / safeScale;
+    const fromCy = (-fromSinR * fromDX + fromCosR * fromDY) / safeScale;
 
     const fromScale  = cam.scale;
     const fromRotDeg = cam.rot;
@@ -558,19 +865,189 @@ function hideMapSpinner() {
 }
 
 /* =========================================================
+   ROUTE ANIMATION  (dot + trail + wave on submission)
+========================================================= */
+
+function animateRoutes(cp, selectedIdx) {
+    const layer = document.getElementById('route-layer');
+    layer.innerHTML = '';
+
+    // Normalise durations: fastest run_time → 1 second; others scale proportionally
+    const validTimes = cp.routes.map(r => r.run_time).filter(t => t > 0);
+    const minTime    = validTimes.length ? Math.min(...validTimes) : 1;
+
+    const anims = cp.routes.map((route, i) => {
+        const rP = route.rP;
+        if (!rP || rP.length < 2) return null;
+
+        // Cumulative pixel distances
+        const dists = [0];
+        for (let j = 1; j < rP.length; j++)
+            dists.push(dists[j - 1] + Math.hypot(rP[j].x - rP[j - 1].x, rP[j].y - rP[j - 1].y));
+        const totalDist = dists[dists.length - 1];
+
+        // Animation duration: fastest = 1 s. Amplifier tapers from 5× at 0% excess
+        // down to 1× at 100% excess, then stays at 1× — keeps large differences
+        // visible without making badly-drawn routes absurdly slow.
+        const ratio    = route.run_time > 0 ? route.run_time / minTime : 1;
+        const excess   = ratio - 1;
+        const amp      = 5 - 4 * Math.min(excess, 1);
+        const duration = 1 + excess * amp;
+
+        const color = currentRouteColors[i];
+
+        // Dimmed white background (static)
+        const bg = createRoutePolyline(route, { stroke: 'white', strokeWidth: 3, opacity: 0.2 });
+        if (bg) layer.appendChild(bg);
+
+        // Trail (grows with the dot)
+        const trail = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+        trail.setAttribute('fill', 'none');
+        trail.setAttribute('stroke', color);
+        trail.setAttribute('stroke-width', '2.5');
+        trail.setAttribute('stroke-linecap',  'round');
+        trail.setAttribute('stroke-linejoin', 'round');
+        trail.setAttribute('vector-effect', 'non-scaling-stroke');
+        trail.setAttribute('points', `${rP[0].x},${rP[0].y}`);
+        layer.appendChild(trail);
+
+        // Dot
+        const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        dot.setAttribute('r',    '5');
+        dot.setAttribute('fill',  color);
+        dot.setAttribute('cx',    rP[0].x);
+        dot.setAttribute('cy',    rP[0].y);
+        dot.setAttribute('vector-effect', 'non-scaling-stroke');
+        layer.appendChild(dot);
+
+        return { rP, dists, totalDist, duration, color, trail, dot, i, done: false };
+    }).filter(Boolean);
+
+    const t0 = performance.now();
+    if (_routeAnim) cancelAnimationFrame(_routeAnim);
+
+    (function tick(now) {
+        const elapsed = (now - t0) / 1000;
+        let   allDone = true;
+
+        anims.forEach(anim => {
+            if (anim.done) return;
+            const { rP, dists, totalDist, duration, trail, dot, i } = anim;
+
+            // Linear progress within this route's normalised duration
+            const dist = Math.min((elapsed / duration) * totalDist, totalDist);
+
+            // Current segment
+            let seg = dists.length - 2;
+            for (let j = 1; j < dists.length; j++) {
+                if (dists[j] >= dist) { seg = j - 1; break; }
+            }
+            const segLen = (dists[seg + 1] ?? totalDist) - dists[seg];
+            const segT   = segLen > 0 ? (dist - dists[seg]) / segLen : 1;
+            const p0 = rP[seg], p1 = rP[Math.min(seg + 1, rP.length - 1)];
+            const cx = p0.x + (p1.x - p0.x) * segT;
+            const cy = p0.y + (p1.y - p0.y) * segT;
+
+            dot.setAttribute('cx', cx);
+            dot.setAttribute('cy', cy);
+
+            const pts = rP.slice(0, seg + 1).map(p => `${p.x},${p.y}`);
+            if (segT > 0) pts.push(`${cx},${cy}`);
+            trail.setAttribute('points', pts.join(' '));
+
+            if (dist >= totalDist) {
+                anim.done = true;
+                dot.remove();
+                emitWave(rP[rP.length - 1], anim.color);
+            } else {
+                allDone = false;
+            }
+        });
+
+        if (!allDone) _routeAnim = requestAnimationFrame(tick);
+        else _routeAnim = null;
+    })(t0);
+}
+
+function emitWave(pos, color) {
+    const layer = document.getElementById('ui-layer');
+    const c = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    c.setAttribute('cx', pos.x);
+    c.setAttribute('cy', pos.y);
+    c.setAttribute('r',  R_CONTROL);
+    c.setAttribute('fill',          'none');
+    c.setAttribute('stroke',         color);
+    c.setAttribute('stroke-width',  '14');
+    c.setAttribute('vector-effect',  'non-scaling-stroke');
+    c.style.filter = 'blur(4px)';
+    layer.appendChild(c);
+
+    const start    = performance.now();
+    const duration = 1800;                  // slower, more dramatic
+    const endR     = R_CONTROL * 2.5;
+
+    (function animate(now) {
+        const t    = Math.min((now - start) / duration, 1);
+        const ease = 1 - Math.pow(1 - t, 2);   // ease-out quad
+        c.setAttribute('r',       R_CONTROL + (endR - R_CONTROL) * ease);
+        c.setAttribute('opacity', (1 - ease) * 0.85);
+        if (t < 1) requestAnimationFrame(animate);
+        else c.remove();
+    })(start);
+}
+
+/* =========================================================
+   RESULT SUBMISSION
+========================================================= */
+
+function submitResult(cp, route) {
+    const choiceTime = choiceStartTime !== null
+        ? (performance.now() - choiceStartTime) / 1000
+        : 0;
+
+    const csrf = document.cookie.match(/csrftoken=([^;]+)/)?.[1] ?? '';
+
+    fetch('/play/submit-result/', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf },
+        body: JSON.stringify({
+            control_pair_id:   cp.id,
+            selected_route_id: route?.id ?? null,
+            choice_time:       choiceTime,
+            competition:       competitionMode,
+        }),
+    }).catch(err => console.error('submit-result failed:', err));
+}
+
+/* =========================================================
    BUTTON BAR
 ========================================================= */
 
 function renderButtons(defs) {
     const bar = document.getElementById('play-btn-bar');
     bar.innerHTML = '';
-    defs.forEach(({ label, icon, action, cls, disabled }) => {
+    defs.forEach(({ label, iconName, action, cls, disabled, bgColor, fontSize, active, fastest, delta }) => {
         const btn = document.createElement('button');
-        btn.className = 'play-btn' + (cls ? ` ${cls}` : '');
+        let btnCls = 'play-btn' + (cls ? ` ${cls}` : '') + (active ? ' active' : '');
+        if (fastest) btnCls += ' route-btn-fastest';
+        btn.className = btnCls;
         if (disabled) btn.disabled = true;
-        btn.innerHTML = `
-            <x-icon name="${icon}" size="1.4em"></x-icon>
-            <span class="play-btn-label">${label}</span>`;
+        if (bgColor)  btn.style.background = bgColor;
+        if (fontSize) btn.style.fontSize   = fontSize;
+
+        let html = '';
+        if (iconName) {
+            html = `<x-icon name="${iconName}" size="1.4em"></x-icon>
+                    <span class="play-btn-label">${label || ''}</span>`;
+        } else if (fastest) {
+            html = icon('trophy', '1.4em');
+        } else if (delta) {
+            const lineClass = delta.twoLines ? ' two-lines' : '';
+            html = `<span class="route-btn-delta${lineClass}"><span class="route-btn-delta-rel">${delta.rel}</span><span class="route-btn-delta-abs">${delta.abs}</span></span>`;
+        } else if (label) {
+            html = `<span class="play-btn-label">${label}</span>`;
+        }
+        btn.innerHTML = html;
         btn.addEventListener('click', action);
         bar.appendChild(btn);
     });
