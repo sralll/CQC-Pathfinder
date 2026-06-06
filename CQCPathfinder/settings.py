@@ -17,6 +17,7 @@ ALLOWED_HOSTS = ['cqc-pathfinder.ch',
                  'www.cqc-pathfinder.ch',
                  'cqcpathfinder.up.railway.app',
                  'cqc-pathfinder-staging.up.railway.app',
+                 'staging.cqc-pathfinder.ch',
                  'localhost',
                  '127.0.0.1']
 
