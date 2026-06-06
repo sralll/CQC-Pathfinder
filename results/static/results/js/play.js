@@ -1040,7 +1040,7 @@ function renderButtons(defs) {
             html = `<x-icon name="${iconName}" size="1.4em"></x-icon>
                     <span class="play-btn-label">${label || ''}</span>`;
         } else if (fastest) {
-            html = icon('trophy', '1.4em');
+            html = icon('crown', '1.4em');
         } else if (delta) {
             const lineClass = delta.twoLines ? ' two-lines' : '';
             html = `<span class="route-btn-delta${lineClass}"><span class="route-btn-delta-rel">${delta.rel}</span><span class="route-btn-delta-abs">${delta.abs}</span></span>`;

@@ -217,6 +217,7 @@ html, body {
 
 /* Fixed column widths — Name gets remaining space */
 #play-table .col-label  { width: 120px; }
+#play-table .col-status { width: 80px;  }
 #play-table .col-cp     { width: 72px;  }
 #play-table .col-author { width: 110px; }
 #play-table .col-kader  { width: 110px; }
@@ -346,7 +347,7 @@ html, body {
 
 .play-card-cp {
     font-size: 12px;
-    color: #666;
+    color: #bbb;
     white-space: nowrap;
     flex-shrink: 0;
 }
@@ -356,7 +357,7 @@ html, body {
     align-items: center;
     gap: 8px;
     font-size: 11px;
-    color: #666;
+    color: #bbb;
     flex-wrap: wrap;
 }
 
@@ -370,7 +371,7 @@ html, body {
 }
 
 .play-card-sep {
-    color: #333;
+    color: #777;
 }
 
 .play-card-date {

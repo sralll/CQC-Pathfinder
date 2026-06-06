@@ -8,7 +8,7 @@ class Choice(models.Model):
 
     choice_time = models.FloatField()
     competition = models.BooleanField(default=True)
-    timestamp = models.DateTimeField(auto_now_add=True)
+    timestamp   = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         constraints = [

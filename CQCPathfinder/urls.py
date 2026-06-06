@@ -9,19 +9,22 @@ from CQCPathfinder.forms import StyledLoginForm
 from django.views.generic import RedirectView
 
 from main import views
+from results import views as results_views
 
 urlpatterns = [
     path('editor/', include('project.urls')),
     path('account/', include('account.urls')),
 
-
-
     path("admin/", admin.site.urls),
     path("", include("main.urls")),
     path('coursesetter/', include('coursesetter.urls')),
     path("pathfinding/", include("pathfinding.urls")),
-    path('play/', include('results.urls')),
-    path('play-old/', include('play.urls')),
+    path('play/',         include('results.urls')),
+    path('results/',                    results_views.results_overview,   name='results_overview'),
+    path('results/list/',               results_views.get_files_overview, name='results_list'),
+    path('results/<int:file_id>/',      results_views.file_results,       name='file_results'),
+    path('results/<int:file_id>/data/', results_views.get_file_results,   name='file_results_data'),
+    path('play-old/',     include('play.urls')),
 
     # login/logout
     path('login/', auth_views.LoginView.as_view(authentication_form=StyledLoginForm), name='login'),

@@ -4,7 +4,7 @@ from . import views
 urlpatterns = [
     path('', views.home_view, name='home'),
     path('statistik/', views.stats_view, name='stats_view'),  # Add this line
-    path('results/', views.results_view, name='results'),  # Add this line
+    path('results-old/', views.results_view, name='results_old'),
     path('get_published_files/', views.get_published_files, name='get_published_files'),
     path('fetch_plot_data/<str:filename>/', views.fetch_plot_data, name='fetch_plot_data'),
     path('stats/', views.user_game_stats, name='own_game_stats'),
@@ -12,5 +12,5 @@ urlpatterns = [
     path('user_list/', views.users_with_results, name='user_list'),
     path('feedback/', views.feedback_view, name='feedback'),
     path("stats/table/", views.trainer_stats, name="trainer_stats"),
-    path('results/load-file/<str:filename>/', views.load_file, name='load_file'),
+    path('results-old/load-file/<str:filename>/', views.load_file, name='load_file'),
 ]

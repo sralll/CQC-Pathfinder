@@ -90,3 +90,80 @@
 .nav-dropdown div:hover { background: #222; color: #fff; }
 
 .menu-shortcut { color: #888; font-size: 12px; }
+
+/* ── Results nav link ─────────────────────────────────── */
+
+.nav-results-link {
+    font-size: 12px;
+    color: #aaa;
+    text-decoration: none;
+    padding: 0 6px;
+    white-space: nowrap;
+    transition: color 0.1s;
+}
+
+.nav-results-link:hover { color: #fff; }
+.nav-results-link.active { color: #e07020; }
+
+/* ── Mobile hamburger ─────────────────────────────────── */
+
+.nav-ham-btn {
+    display: none;
+    align-items: center;
+    justify-content: center;
+    background: none;
+    border: none;
+    color: #888;
+    cursor: pointer;
+    padding: 0 10px;
+    height: 28px;
+    flex-shrink: 0;
+    transition: color 0.1s;
+}
+.nav-ham-btn:hover { color: #fff; }
+
+/* Desktop: panel children flow inline as if the wrapper doesn't exist */
+body.desktop .nav-ham-panel { display: contents; }
+
+/* Mobile: hamburger visible, panel hidden by default */
+body.mobile .nav-ham-btn { display: flex; }
+
+body.mobile .nav-ham-panel {
+    display: none;
+    position: fixed;
+    top: 28px;
+    flex-direction: column;
+    background: #1a1a1a;
+    border: 0.5px solid #333;
+    border-top: none;
+    z-index: 10002;
+    min-width: 200px;
+    padding: 6px 0;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+}
+body.mobile .nav-ham-panel.open { display: flex; }
+
+/* Left panel anchors left */
+body.mobile #nav-panel-left  { left: 0; border-radius: 0 0 6px 0; }
+/* Right panel anchors right */
+body.mobile .nav-ham-panel-right { right: 0; border-radius: 0 0 0 6px; }
+
+/* Item styles inside mobile dropdown */
+body.mobile .nav-ham-panel .nav-results-link {
+    display: block;
+    padding: 9px 16px;
+    font-size: 13px;
+    color: #ccc;
+}
+body.mobile .nav-ham-panel .nav-results-link:hover { color: #fff; background: #222; }
+
+body.mobile .nav-ham-panel .fr-toggle-wrap  { padding: 9px 16px; }
+body.mobile .nav-ham-panel .fr-toggle-label { font-size: 12px; color: #ccc; }
+
+body.mobile .nav-ham-panel .nav-username    { display: block; padding: 9px 16px; font-size: 13px; }
+body.mobile .nav-ham-panel .nav-team-static { display: block; padding: 9px 16px; font-size: 13px; color: #aaa; }
+body.mobile .nav-ham-panel .nav-team-switcher { padding: 9px 16px; font-size: 13px; }
+body.mobile .nav-ham-panel .nav-home-btn    { padding: 9px 16px; display: flex; }
+
+/* Hide vertical dividers inside dropdowns */
+body.mobile .nav-ham-panel .nav-divider { display: none; }

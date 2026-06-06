@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block styles %}
+<link rel="stylesheet" href="{% static 'results/css/results.css' %}">
+{% endblock %}
+
+{% block scripts %}
+<script defer src="{% static 'results/js/overview.js' %}"></script>
+{% endblock %}
+
+{% block nav_content %}
+<a href="{% url 'results_overview' %}" class="nav-results-link">Resultate</a>
+{% endblock %}
+
+{% block content %}
+<div id="play-wrap">
+
+    <div id="play-container">
+
+        <!-- Search -->
+        <div id="play-header">
+
+            <div id="play-search-wrap">
+                <input type="text" id="play-search" placeholder="Suchen…" autocomplete="off">
+                <button id="play-search-clear" type="button">×</button>
+            </div>
+
+            <div class="play-header-end"></div>
+
+            <!-- Mobile sort/filter controls -->
+            <div id="play-mobile-controls"></div>
+        </div>
+
+        <div id="play-loading">Laden…</div>
+
+        <!-- Desktop table -->
+        <div id="play-table-wrap">
+            <table id="play-table">
+                <thead id="play-thead"></thead>
+                <tbody id="play-tbody"></tbody>
+            </table>
+        </div>
+
+        <!-- Mobile cards -->
+        <div id="play-cards"></div>
+
+    </div>
+
+    <!-- Filter dropdowns (positioned by JS) -->
+    <div id="label-filter-dropdown"  class="play-filter-dropdown"></div>
+    <div id="author-filter-dropdown" class="play-filter-dropdown"></div>
+    <div id="kader-filter-dropdown"  class="play-filter-dropdown"></div>
+
+</div>
+{% endblock %}

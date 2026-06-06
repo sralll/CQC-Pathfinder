@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block styles %}
+<link rel="stylesheet" href="{% static 'results/css/results.css' %}">
+<link rel="stylesheet" href="{% static 'results/css/file_results.css' %}">
+{% endblock %}
+
+{% block nav_content %}
+<button class="nav-ham-btn" id="nav-ham-left" aria-label="Menü">
+    <x-icon name="bars" size="12px"></x-icon>
+</button>
+<div class="nav-ham-panel" id="nav-panel-left">
+    <a href="{% url 'results_overview' %}" class="nav-results-link">Resultate</a>
+    <div class="nav-divider"></div>
+    <label class="fr-toggle-wrap">
+        <input type="checkbox" id="fr-training-toggle" checked>
+        <span class="fr-toggle-label">Trainingsresultate einbeziehen</span>
+    </label>
+</div>
+<div class="nav-center">
+    <span id="fr-nav-title" class="fr-nav-title"></span>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script defer src="{% static 'results/js/file_results.js' %}"></script>
+{% endblock %}
+
+{% block content %}
+<div id="play-wrap" data-file-id="{{ file_id }}">
+    <div id="play-container">
+
+        <div id="play-loading">Laden…</div>
+
+        <!-- Left column: table + toolbar + chart -->
+        <div id="fr-left">
+
+            <div id="play-table-wrap">
+                <table id="fr-table">
+                    <thead>
+                        <tr>
+                            <th class="fr-col-check"></th>
+                            <th class="fr-col-rank">#</th>
+                            <th class="fr-col-name">Name</th>
+                            <th class="fr-col-time" title="Summe der Entscheidungszeiten">Zeit</th>
+                            <th class="fr-col-time" title="Gesamte Zeitverluste gegenüber der schnellsten Route">Routen</th>
+                            <th class="fr-col-time fr-col-total">Total</th>
+                        </tr>
+                    </thead>
+                    <tbody id="fr-tbody"></tbody>
+                </table>
+            </div>
+
+            <div id="fr-chart-wrap">
+                <svg id="fr-chart" preserveAspectRatio="xMidYMid meet"></svg>
+            </div>
+
+        </div>
+
+        <!-- Cheater placeholder (shown when user hasn't completed the file) -->
+        <div id="fr-cheater">
+            <img src="{% static 'img/cheater.gif' %}" alt="">
+        </div>
+
+        <!-- Right column: map + route list -->
+        <div id="fr-bottom">
+
+            <div id="fr-map-section">
+                <div id="fr-nav-bar">
+                    <button class="fr-nav-btn" id="fr-prev-btn" onclick="prevCp()"><x-icon name="cp-prev" size="13px"></x-icon></button>
+                    <span id="fr-cp-label">Posten 1</span>
+                    <button class="fr-nav-btn" id="fr-next-btn" onclick="nextCp()"><x-icon name="cp-next" size="13px"></x-icon></button>
+                    <button class="fr-nav-btn fr-replay-btn" onclick="replayAnimation()"><x-icon name="replay" size="12px"></x-icon></button>
+                </div>
+                <div id="fr-map-container">
+                    <div id="fr-camera">
+                        <div id="fr-map-scale-layer">
+                            <img id="fr-map-img" draggable="false">
+                        </div>
+                        <svg id="fr-overlay-svg" overflow="visible">
+                            <defs>
+                                <pattern id="fr-block-hatch" x="0" y="0" width="8" height="8"
+                                         patternUnits="userSpaceOnUse"
+                                         patternTransform="rotate(45 0 0)">
+                                    <line x1="0" y1="0" x2="0" y2="8" stroke="rgb(160,51,240)" stroke-width="3"/>
+                                    <line x1="0" y1="0" x2="8" y2="0" stroke="rgb(160,51,240)" stroke-width="3"/>
+                                </pattern>
+                            </defs>
+                            <g id="fr-blocked-layer"></g>
+                            <g id="fr-route-layer"></g>
+                            <g id="fr-control-layer"></g>
+                            <g id="fr-wave-layer"></g>
+                        </svg>
+                    </div>
+                </div>
+            </div>
+
+            <div id="fr-route-panel"></div>
+
+        </div>
+
+    </div>
+</div>
+
+{% endblock %}

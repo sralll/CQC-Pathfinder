@@ -1,6 +1,8 @@
 /* =========================================================
-   PLAY / RESULTS — project overview
-   Patterns ported from projecttable.js
+   RESULTS OVERVIEW — file list with completion counts
+   Same filter/sort structure as the play listing (results.js),
+   plus a "Resultate" column showing how many users completed
+   every control pair in the file.
 ========================================================= */
 
 /* =========================================================
@@ -13,24 +15,9 @@ let sharedPool      = false;
 let multiTeam       = false;
 let activeTeamName  = '';
 
-const STATUS = {
-    neu:      { label: 'neu',      color: '#0044CC', rgb: '0,68,204'    },
-    begonnen: { label: 'begonnen', color: '#E07020', rgb: '224,112,32'  },
-    erledigt: { label: 'erledigt', color: '#1A8833', rgb: '26,136,51'   },
-};
-
-function fileStatus(f) {
-    if (!f.user_cp_done || f.user_cp_done === 0) return STATUS.neu;
-    if (f.user_cp_done >= f.cp_count)            return STATUS.erledigt;
-    return STATUS.begonnen;
-}
-
-let competitionMode    = true;   // true = competition (trophy), false = training (book)
-
-let activeLabelFilter  = null;      // single ID or null (like editor)
+let activeLabelFilter   = null;
 let activeAuthorFilters = [];
 let activeKaderFilters  = [];
-let activeStatusFilter = null;      // one of 'neu','begonnen','erledigt', or null
 let sortState = { key: 'last_edited', dir: -1 };
 
 /* =========================================================
@@ -39,7 +26,6 @@ let sortState = { key: 'last_edited', dir: -1 };
 
 document.addEventListener('DOMContentLoaded', async () => {
     initSearch();
-    initModeToggle();
     initDropdownProtection();
     await loadFiles();
 });
@@ -47,7 +33,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 async function loadFiles() {
     document.getElementById('play-loading').style.display = '';
     try {
-        const res  = await fetch('/play/files/');
+        const res  = await fetch('/results/list/');
         const data = await res.json();
         allFiles       = data.files            || [];
         sharedPool     = data.shared_pool      || false;
@@ -63,54 +49,6 @@ async function loadFiles() {
 }
 
 /* =========================================================
-   MODE TOGGLE  (competition / training)
-========================================================= */
-
-function initModeToggle() {
-    const input = document.getElementById('mode-toggle-input');
-    if (!input) return;
-
-    // Restore persisted mode; fall back to checkbox default (competition = checked)
-    const stored = sessionStorage.getItem('competitionMode');
-    if (stored !== null) {
-        competitionMode = stored === 'true';
-        input.checked   = competitionMode;
-    } else {
-        competitionMode = input.checked;
-    }
-    updateModeIcons();
-
-    input.addEventListener('change', () => {
-        competitionMode = input.checked;
-        sessionStorage.setItem('competitionMode', competitionMode);
-        updateModeIcons();
-    });
-
-    // Mobile: click on icon shows/hides tooltip; desktop relies on CSS :hover
-    document.querySelectorAll('.mode-icon-tip').forEach(el => {
-        el.addEventListener('click', e => {
-            e.stopPropagation();
-            const isOpen = el.classList.contains('tip-open');
-            // Close all tips
-            document.querySelectorAll('.mode-icon-tip').forEach(o => o.classList.remove('tip-open'));
-            if (!isOpen) el.classList.add('tip-open');
-        });
-    });
-
-    // Close tips when clicking elsewhere
-    document.addEventListener('click', () => {
-        document.querySelectorAll('.mode-icon-tip').forEach(el => el.classList.remove('tip-open'));
-    });
-}
-
-function updateModeIcons() {
-    document.querySelector('.mode-icon-tip[data-mode="training"]')
-        ?.classList.toggle('mode-active', !competitionMode);
-    document.querySelector('.mode-icon-tip[data-mode="competition"]')
-        ?.classList.toggle('mode-active',  competitionMode);
-}
-
-/* =========================================================
    SEARCH
 ========================================================= */
 
@@ -122,13 +60,12 @@ function initSearch() {
 }
 
 function updateClearButton() {
-    const input    = document.getElementById('play-search');
+    const input   = document.getElementById('play-search');
     const clearBtn = document.getElementById('play-search-clear');
     const hasSearch  = !!input.value.trim();
     const hasFilters = activeLabelFilter !== null
         || activeAuthorFilters.length > 0
-        || activeKaderFilters.length  > 0
-        || activeStatusFilter !== null;
+        || activeKaderFilters.length  > 0;
     clearBtn.classList.toggle('visible', hasSearch || hasFilters);
 }
 
@@ -137,7 +74,6 @@ function clearSearch() {
     activeLabelFilter   = null;
     activeAuthorFilters = [];
     activeKaderFilters  = [];
-    activeStatusFilter = null;
     sortState = { key: 'last_edited', dir: -1 };
     applyFilters();
     updateClearButton();
@@ -155,15 +91,10 @@ function applyFilters() {
             (f.name   || '').toLowerCase().includes(search) ||
             (f.author || '').toLowerCase().includes(search) ||
             (f.label?.name || '').toLowerCase().includes(search);
-        const matchLabel  = !activeLabelFilter
-            || f.label?.id === activeLabelFilter;
-        const matchAuthor = !activeAuthorFilters.length
-            || activeAuthorFilters.includes((f.author || '').trim());
-        const matchKader  = !activeKaderFilters.length
-            || activeKaderFilters.includes((f.team_name || '').trim());
-        const matchStatus = !activeStatusFilter
-            || fileStatus(f).label === activeStatusFilter;
-        return matchSearch && matchLabel && matchAuthor && matchKader && matchStatus;
+        const matchLabel  = !activeLabelFilter  || f.label?.id === activeLabelFilter;
+        const matchAuthor = !activeAuthorFilters.length || activeAuthorFilters.includes((f.author || '').trim());
+        const matchKader  = !activeKaderFilters.length  || activeKaderFilters.includes((f.team_name || '').trim());
+        return matchSearch && matchLabel && matchAuthor && matchKader;
     });
 
     filteredFiles = applySorting(filteredFiles);
@@ -178,28 +109,25 @@ function applyFilters() {
 
 function applySorting(data) {
     const { key, dir } = sortState;
-
     const sortGroup = arr => {
         if (!key) return arr;
         return [...arr].sort((a, b) => {
             const get = f => {
                 switch (key) {
-                    case 'name':        return (f.name || '').toLowerCase();
-                    case 'cp_count':    return f.cp_count || 0;
-                    case 'last_edited': return new Date(f.last_edited || 0).getTime();
+                    case 'name':           return (f.name || '').toLowerCase();
+                    case 'cp_count':       return f.cp_count       || 0;
+                    case 'results_count':  return f.results_count  || 0;
+                    case 'last_edited':    return new Date(f.last_edited || 0).getTime();
                     default: return '';
                 }
             };
             const va = get(a), vb = get(b);
-            // For name, flip so ↓ = A→Z (ascending); for numbers/dates ↓ = largest first
             const effectiveDir = key === 'name' ? -dir : dir;
             if (va < vb) return -1 * effectiveDir;
             if (va > vb) return  1 * effectiveDir;
             return 0;
         });
     };
-
-    // Active team always on top; each group sorted independently
     const own   = data.filter(f => f.team_name === activeTeamName);
     const other = data.filter(f => f.team_name !== activeTeamName);
     return [...sortGroup(own), ...sortGroup(other)];
@@ -216,7 +144,7 @@ function setSort(key) {
 ========================================================= */
 
 function renderHeader() {
-    const thead = document.getElementById('play-thead');
+    const thead   = document.getElementById('play-thead');
     const kaderCol = multiTeam
         ? `<th class="col-kader">
                <span class="filterable" id="kader-filter-btn">Kader
@@ -237,9 +165,9 @@ function renderHeader() {
                     <span class="filter-indicator active-filter-icon">${window.icon('filter', '0.8em')}</span>
                 </span>
             </th>
-            <th class="col-status">
-                <span class="filterable" id="status-filter-btn">Status
-                    <span class="filter-indicator active-filter-icon">${window.icon('filter', '0.8em')}</span>
+            <th class="col-results" data-sort="results_count" style="text-align:center;">
+                <span class="sortable">Resultate
+                    <span id="sort-results_count" class="sort-indicator"></span>
                 </span>
             </th>
             <th class="col-cp" data-sort="cp_count" style="text-align:center;">
@@ -272,7 +200,6 @@ function attachHeaderEvents() {
     document.getElementById('label-filter-btn')  ?.addEventListener('click', toggleLabelFilter);
     document.getElementById('author-filter-btn') ?.addEventListener('click', toggleAuthorFilter);
     document.getElementById('kader-filter-btn')  ?.addEventListener('click', toggleKaderFilter);
-    document.getElementById('status-filter-btn') ?.addEventListener('click', toggleStatusFilter);
     document.getElementById('play-search-clear') ?.addEventListener('click', clearSearch);
 }
 
@@ -288,7 +215,7 @@ function getSortIcon(k) {
 }
 
 function updateSortIndicators() {
-    ['name', 'cp_count', 'last_edited'].forEach(k => {
+    ['name', 'cp_count', 'results_count', 'last_edited'].forEach(k => {
         const el = document.getElementById(`sort-${k}`);
         if (el) el.innerHTML = getSortIcon(k);
     });
@@ -302,7 +229,6 @@ function updateFilterIcons() {
     document.querySelector('.col-label  .active-filter-icon')?.classList.toggle('active', activeLabelFilter !== null);
     document.querySelector('.col-author .active-filter-icon')?.classList.toggle('active', activeAuthorFilters.length > 0);
     document.querySelector('.col-kader  .active-filter-icon')?.classList.toggle('active', activeKaderFilters.length  > 0);
-    document.querySelector('.col-status .active-filter-icon')?.classList.toggle('active', activeStatusFilter !== null);
 }
 
 /* =========================================================
@@ -318,15 +244,11 @@ function positionFilterDropdown(dropdown, target) {
     const rect  = target.getBoundingClientRect();
     const viewW = window.innerWidth;
     const top   = rect.bottom + 4;
-
-    // Measure actual dropdown width while hidden
     dropdown.style.visibility = 'hidden';
     dropdown.style.display    = 'block';
     const dropW = dropdown.offsetWidth;
     dropdown.style.display    = '';
     dropdown.style.visibility = '';
-
-    // Align left by default; flip to right-align if it would overflow
     if (rect.left + dropW > viewW - 8) {
         dropdown.style.left  = 'auto';
         dropdown.style.right = `${viewW - rect.right}px`;
@@ -344,8 +266,6 @@ function initDropdownProtection() {
     });
 }
 
-/* ── Label filter ──────────────────────────────────────── */
-
 function toggleLabelFilter(event) {
     const dropdown = document.getElementById('label-filter-dropdown');
     if (dropdown.classList.contains('open')) { dropdown.classList.remove('open'); return; }
@@ -357,13 +277,12 @@ function toggleLabelFilter(event) {
 
 function renderLabelFilterDropdown() {
     const dropdown = document.getElementById('label-filter-dropdown');
-    const labels = getAllLabels();
     dropdown.innerHTML = `
         <div class="filter-clear">
             <div class="filter-clear-left" onclick="event.stopPropagation(); clearLabelFilter()"><b>Alle</b></div>
             <button class="filter-close-btn" onclick="event.stopPropagation(); closeAllFilters()" type="button">✕</button>
         </div>
-        ${labels.map(label => `
+        ${getAllLabels().map(label => `
             <div class="filter-option" onclick="event.stopPropagation(); setLabelFilter(${label.id})">
                 <span style="background:${label.color}22;color:${label.color};border:1px solid ${label.color}55;
                       border-radius:4px;padding:1px 7px;font-size:11px;font-weight:500;">${label.name}</span>
@@ -374,12 +293,9 @@ function renderLabelFilterDropdown() {
 
 window.setLabelFilter = function(labelId) {
     activeLabelFilter = activeLabelFilter === labelId ? null : labelId;
-    applyFilters();
-    renderLabelFilterDropdown();
+    applyFilters(); renderLabelFilterDropdown();
 };
 window.clearLabelFilter = function() { activeLabelFilter = null; applyFilters(); closeAllFilters(); };
-
-/* ── Author filter ─────────────────────────────────────── */
 
 function toggleAuthorFilter(event) {
     const dropdown = document.getElementById('author-filter-dropdown');
@@ -409,12 +325,9 @@ window.toggleAuthorSelection = function(author) {
     activeAuthorFilters = activeAuthorFilters.includes(author)
         ? activeAuthorFilters.filter(a => a !== author)
         : [...activeAuthorFilters, author];
-    applyFilters();
-    renderAuthorFilterDropdown();
+    applyFilters(); renderAuthorFilterDropdown();
 };
 window.clearAuthorFilters = function() { activeAuthorFilters = []; applyFilters(); closeAllFilters(); };
-
-/* ── Kader filter ──────────────────────────────────────── */
 
 function toggleKaderFilter(event) {
     const dropdown = document.getElementById('kader-filter-dropdown');
@@ -427,10 +340,9 @@ function toggleKaderFilter(event) {
 
 function renderKaderFilterDropdown() {
     const dropdown = document.getElementById('kader-filter-dropdown');
-    const allKader = getAllKader();
     const ordered  = activeTeamName
-        ? [activeTeamName, ...allKader.filter(k => k !== activeTeamName)]
-        : allKader;
+        ? [activeTeamName, ...getAllKader().filter(k => k !== activeTeamName)]
+        : getAllKader();
     dropdown.innerHTML = `
         <div class="filter-clear">
             <div class="filter-clear-left" onclick="event.stopPropagation(); clearKaderFilters()"><b>Alle</b></div>
@@ -448,45 +360,9 @@ window.toggleKaderSelection = function(kader) {
     activeKaderFilters = activeKaderFilters.includes(kader)
         ? activeKaderFilters.filter(k => k !== kader)
         : [...activeKaderFilters, kader];
-    applyFilters();
-    renderKaderFilterDropdown();
+    applyFilters(); renderKaderFilterDropdown();
 };
 window.clearKaderFilters = function() { activeKaderFilters = []; applyFilters(); closeAllFilters(); };
-
-/* ── Status filter ─────────────────────────────────────── */
-
-function toggleStatusFilter(event) {
-    const dropdown = document.getElementById('status-filter-dropdown');
-    if (dropdown.classList.contains('open')) { dropdown.classList.remove('open'); return; }
-    closeAllFilters();
-    renderStatusFilterDropdown();
-    positionFilterDropdown(dropdown, event.currentTarget);
-    dropdown.classList.add('open');
-}
-
-function renderStatusFilterDropdown() {
-    const dropdown = document.getElementById('status-filter-dropdown');
-    dropdown.innerHTML = `
-        <div class="filter-clear">
-            <div class="filter-clear-left" onclick="event.stopPropagation(); clearStatusFilters()"><b>Alle</b></div>
-            <button class="filter-close-btn" onclick="event.stopPropagation(); closeAllFilters()" type="button">✕</button>
-        </div>
-        ${Object.values(STATUS).map(s => `
-            <div class="filter-option" onclick="event.stopPropagation(); setStatusFilter('${s.label}')">
-                <span style="color:${s.color};font-weight:600;">${s.label}</span>
-                ${activeStatusFilter === s.label ? window.icon('square-check') : window.icon('square')}
-            </div>
-        `).join('')}`;
-}
-
-window.setStatusFilter = function(label) {
-    activeStatusFilter = activeStatusFilter === label ? null : label;
-    applyFilters();
-    renderStatusFilterDropdown();
-};
-window.clearStatusFilters = function() { activeStatusFilter = null; applyFilters(); closeAllFilters(); };
-
-/* ── Filter data helpers ───────────────────────────────── */
 
 function getAllLabels() {
     return allFiles
@@ -495,11 +371,9 @@ function getAllLabels() {
         .filter((l, i, self) => i === self.findIndex(x => x.id === l.id))
         .sort((a, b) => a.name.localeCompare(b.name));
 }
-
 function getAllAuthors() {
     return [...new Set(allFiles.map(f => (f.author || '').trim()).filter(Boolean))].sort();
 }
-
 function getAllKader() {
     return [...new Set(allFiles.map(f => (f.team_name || '').trim()).filter(Boolean))].sort();
 }
@@ -537,11 +411,10 @@ function renderTable() {
             ? `<td class="${f.team_name === activeTeamName ? 'user-active-team' : ''}">${f.team_name || '—'}</td>`
             : '';
 
-        const st = fileStatus(f);
         tr.innerHTML = `
             <td class="play-name-cell">${f.name}</td>
             <td>${labelHtml}</td>
-            <td class="col-status-cell" style="color:${st.color};font-weight:600;">${st.label}</td>
+            <td class="play-cp-cell">${f.results_count || 0}</td>
             <td class="play-cp-cell">${f.cp_count}</td>
             <td>${f.author || '—'}</td>
             ${kaderCell}
@@ -571,9 +444,6 @@ function renderCards() {
     filteredFiles.forEach(f => {
         const card = document.createElement('div');
         card.className = 'play-card' + (multiTeam && f.team_name !== activeTeamName ? ' play-other-team' : '');
-        const st = fileStatus(f);
-        card.style.background = `linear-gradient(to left, rgba(${st.rgb},0.40) 0%, rgba(${st.rgb},0) 65%), #1a1a1a`;
-        card.style.color = '#fff';
 
         const labelHtml = f.label
             ? `<span style="background:${f.label.color}22;color:${f.label.color};
@@ -588,10 +458,12 @@ function renderCards() {
                <span class="play-card-sep">·</span>`
             : '';
 
+        const rc = f.results_count || 0;
+
         card.innerHTML = `
             <div class="play-card-row1">
                 <span class="play-card-name">${f.name}</span>
-                <span class="play-card-cp">${f.cp_count} Posten</span>
+                <span class="play-card-cp">${rc} ${rc === 1 ? 'Resultat' : 'Resultate'}</span>
             </div>
             <div class="play-card-row2">
                 ${labelHtml}
@@ -613,16 +485,14 @@ function renderMobileControls() {
     const bar = document.getElementById('play-mobile-controls');
     bar.innerHTML = '';
 
-    // ── Row 1: sort buttons ───────────────────────────────
     const sortRow = document.createElement('div');
     sortRow.className = 'play-ctrl-row';
-
-    const sortFields = [
-        { key: 'name',        label: 'Name'   },
-        { key: 'cp_count',    label: 'Posten' },
-        { key: 'last_edited', label: 'Datum'  },
-    ];
-    sortFields.forEach(({ key, label }) => {
+    [
+        { key: 'name',           label: 'Name'      },
+        { key: 'results_count',  label: 'Resultate' },
+        { key: 'cp_count',       label: 'Posten'    },
+        { key: 'last_edited',    label: 'Datum'     },
+    ].forEach(({ key, label }) => {
         const btn   = document.createElement('button');
         const arrow = sortState.key === key ? (sortState.dir === -1 ? ' ↓' : ' ↑') : '';
         btn.className   = 'play-ctrl-btn' + (sortState.key === key ? ' active' : '');
@@ -632,22 +502,15 @@ function renderMobileControls() {
     });
     bar.appendChild(sortRow);
 
-    // ── Row 2: filter buttons ─────────────────────────────
     const filterRow = document.createElement('div');
     filterRow.className = 'play-ctrl-row';
-
-    const filterFields = [
-        { field: 'label',  label: 'Label',  toggle: toggleLabelFilter  },
-        { field: 'author', label: 'Autor',  toggle: toggleAuthorFilter },
-        { field: 'status', label: 'Status', toggle: toggleStatusFilter },
-        ...(multiTeam
-            ? [{ field: 'kader', label: 'Kader', toggle: toggleKaderFilter }]
-            : []),
-    ];
-    filterFields.forEach(({ field, label, toggle }) => {
+    [
+        { field: 'label',  label: 'Label', toggle: toggleLabelFilter  },
+        { field: 'author', label: 'Autor', toggle: toggleAuthorFilter },
+        ...(multiTeam ? [{ field: 'kader', label: 'Kader', toggle: toggleKaderFilter }] : []),
+    ].forEach(({ field, label, toggle }) => {
         const active = field === 'label'  ? activeLabelFilter !== null
                      : field === 'author' ? activeAuthorFilters.length > 0
-                     : field === 'status' ? activeStatusFilter !== null
                      :                     activeKaderFilters.length  > 0;
         const btn = document.createElement('button');
         btn.className = 'play-ctrl-btn' + (active ? ' active' : '');
@@ -659,12 +522,11 @@ function renderMobileControls() {
 }
 
 /* =========================================================
-   NAVIGATION
+   NAVIGATION  (click handling added later)
 ========================================================= */
 
 function openFile(id) {
-    const mode = competitionMode ? 'competition' : 'training';
-    window.location.href = `/play/${id}/${mode}/`;
+    window.location.href = `/results/${id}/`;
 }
 
 /* =========================================================

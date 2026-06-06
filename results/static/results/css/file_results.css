@@ -1,0 +1,363 @@
+/* =========================================================
+   FILE RESULTS PAGE
+   Overrides results.css to use full width and a two-column
+   desktop layout.
+========================================================= */
+
+/* Full-width — no centering, no padding, no border-radius */
+#play-wrap {
+    justify-content: flex-start;
+    align-items:     stretch;
+    padding:         0;
+}
+
+#play-container {
+    width:         100%;
+    max-width:     none;
+    border:        none;
+    border-radius: 0;
+    height:        100%;
+}
+
+/* ── Desktop: side-by-side split ──────────────────────── */
+
+body.desktop #play-container {
+    flex-direction: row;
+    gap: 8px;
+    padding: 8px;
+}
+
+/* Left column: table (scrollable) + toolbar + chart */
+#fr-left {
+    display:        flex;
+    flex-direction: column;
+    overflow-y:     auto;
+    overflow-x:     hidden;
+}
+
+body.desktop #fr-left {
+    flex:       1;
+    min-width:  0;
+    height:     100%;
+    border-right: 0.5px solid #2e2e2e;
+}
+
+/* Table capped at 40% of viewport height, minimum so it never collapses */
+body.desktop #play-table-wrap {
+    max-height: 40vh;
+    min-height: 80px;
+    flex-shrink: 0;
+    overflow-y: auto;
+}
+
+/* Chart fills remaining left-column height, minimum so it stays readable */
+body.desktop #fr-chart-wrap {
+    flex:       1;
+    min-height: 140px;
+    height:     auto;
+}
+
+/* Cheater placeholder */
+#fr-cheater {
+    display: none;
+    align-items: center;
+    justify-content: center;
+    background: #111;
+}
+
+body.desktop #fr-cheater {
+    flex: 1;
+    height: 100%;
+    min-width: 0;
+}
+
+#fr-cheater img {
+    max-width: 65%;
+    max-height: 55%;
+    border-radius: 6px;
+    opacity: 0.9;
+}
+
+@media (max-width: 600px) {
+    #fr-cheater      { min-height: 240px; }
+    #fr-cheater img  { max-width: 80%; max-height: 80%; }
+}
+
+/* Right column: map + route panel */
+body.desktop #fr-bottom {
+    flex:       1;
+    min-width:  0;
+    height:     100%;
+    min-height: 0;
+}
+
+/* Title in navbar */
+.fr-nav-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: #ddd;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 300px;
+}
+
+.fr-toggle-wrap {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+}
+
+.fr-toggle-wrap input[type="checkbox"] {
+    accent-color: #e07020;
+    width: 13px;
+    height: 13px;
+    cursor: pointer;
+}
+
+.fr-toggle-label {
+    font-size: 11px;
+    color: #666;
+    white-space: nowrap;
+}
+
+/* ── Chart ─────────────────────────────────────────────── */
+
+#fr-chart-wrap {
+    flex-shrink: 0;
+    width: 100%;
+    height: 200px;
+    background: #111;
+    border-bottom: 0.5px solid #222;
+}
+
+#fr-chart {
+    display: block;
+    width: 100%;
+    height: 100%;
+    cursor: pointer;
+}
+
+/* ── Map + route list container ────────────────────────── */
+
+#fr-bottom {
+    display: flex;
+    flex-direction: row;
+    flex-shrink: 0;
+    min-height: 360px;
+    border-top: 0.5px solid #222;
+}
+
+#fr-map-section {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-width: 0;
+    border-right: 0.5px solid #222;
+    min-height: 0;
+}
+
+#fr-map-container {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+    background: #2a2a2a;
+    min-height: 0;
+    cursor: grab;
+    user-select: none;
+}
+
+#fr-camera {
+    position: absolute;
+    top: 0; left: 0;
+    transform-origin: 0 0;
+}
+
+#fr-map-scale-layer { position: relative; }
+
+#fr-map-img {
+    display: block;
+    max-width: none;
+    user-select: none;
+    -webkit-user-drag: none;
+}
+
+#fr-overlay-svg {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    overflow: visible;
+    pointer-events: none;
+}
+
+#fr-nav-bar {
+    height: 34px;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    background: #161616;
+    border-bottom: 0.5px solid #2a2a2a;
+    position: relative;
+}
+
+.fr-replay-btn {
+    position: absolute;
+    right: 8px;
+}
+
+.fr-nav-btn {
+    background: none;
+    border: 0.5px solid #333;
+    border-radius: 4px;
+    color: #aaa;
+    font-size: 13px;
+    padding: 4px 10px;
+    cursor: pointer;
+    transition: background 0.1s, color 0.1s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.fr-nav-btn:hover:not(:disabled) { background: #252525; color: #fff; }
+.fr-nav-btn:disabled              { opacity: 0.3; cursor: default; }
+
+#fr-cp-label {
+    font-size: 12px;
+    color: #888;
+    min-width: 80px;
+    text-align: center;
+}
+
+/* ── Route list panel ───────────────────────────────────── */
+
+#fr-route-panel {
+    width: 220px;
+    flex-shrink: 0;
+    overflow-y: auto;
+    background: #111;
+    padding: 8px 0;
+}
+
+.fr-route-header {
+    padding: 6px 10px 4px 10px;
+    border-left: 3px solid transparent;
+    margin-top: 6px;
+}
+.fr-route-header:first-child { margin-top: 0; }
+
+.fr-route-name {
+    font-size: 12px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.fr-route-crown svg {
+    fill: currentColor;
+    opacity: 0.85;
+    vertical-align: middle;
+}
+
+.fr-route-stats {
+    font-size: 10px;
+    color: #555;
+    display: block;
+}
+
+.fr-route-athletes {
+    max-height: 96px;
+    overflow-y: auto;
+}
+
+body.mobile .fr-route-athletes {
+    max-height: none;
+    overflow-y: visible;
+}
+
+.fr-route-athlete {
+    display: flex;
+    justify-content: space-between;
+    padding: 2px 10px 2px 13px;
+    font-size: 11px;
+    color: #bbb;
+}
+
+.fr-route-athlete.fr-training  { color: #555; }
+.fr-route-athlete.fr-route-empty { color: #333; font-style: italic; }
+
+.fr-athlete-name { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fr-athlete-time { flex-shrink: 0; color: #666; margin-left: 6px; }
+
+/* Mobile: single scrollable column */
+@media (max-width: 600px) {
+    /* Allow the page to scroll */
+    html, body        { overflow: auto; }
+    #play-wrap        { height: auto; min-height: calc(100vh - var(--navbar-h)); overflow: visible; }
+    #play-container   { height: auto; overflow: visible; flex-direction: column; gap: 0; padding: 0; }
+
+    /* Left column: natural height, no clipping */
+    #fr-left          { height: auto; overflow: visible; border-right: none;
+                        border-bottom: 0.5px solid #2e2e2e; }
+
+    /* Table: override results.css which hides it on mobile for other pages; no max-height so it fully expands */
+    #play-table-wrap  { display: block; max-height: none; min-height: 0; overflow-y: visible; flex-shrink: 0; }
+
+    /* Chart: fixed height */
+    #fr-chart-wrap    { height: 260px; flex-shrink: 0; }
+
+    /* Right section: column, natural height */
+    #fr-bottom        { flex-direction: column; min-height: auto; height: auto; border-top: none; }
+    #fr-map-section   { flex-direction: column; min-height: auto; border-right: none;
+                        border-top: 0.5px solid #2e2e2e; }
+    #fr-map-container { height: 360px; min-height: 0; flex: none; }
+    #fr-route-panel   { width: 100%; max-height: 240px; border-top: 0.5px solid #222; }
+}
+
+/* ── Table ─────────────────────────────────────────────── */
+
+#fr-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    color: #ccc;
+}
+
+#fr-table thead {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+}
+
+#fr-table th {
+    font-size: 11px;
+    font-weight: 600;
+    color: #666;
+    letter-spacing: 0.02em;
+    padding: 8px 12px;
+    border-bottom: 0.5px solid #2e2e2e;
+    white-space: nowrap;
+    background: #161616;
+}
+
+#fr-table td {
+    padding: 3px 10px;
+    border-bottom: 0.5px solid #1e1e1e;
+}
+
+#fr-table tbody tr:hover td { background: #1e1e1e; }
+
+.fr-col-check { width: 28px; text-align: center; }
+.fr-col-check input { accent-color: #e07020; cursor: pointer; }
+.fr-col-rank  { width: 36px;  color: #555; font-size: 11px; text-align: center; }
+.fr-col-name  { font-weight: 600; color: #eee; text-align: left; }
+.fr-col-time  { width: 110px; text-align: right; font-variant-numeric: tabular-nums; }
+.fr-col-total { color: #fff;  font-weight: 700; }
+
+/* Rows with at least one training-mode choice */
+.fr-row-training td { color: #555; }
+.fr-row-training .fr-col-name { color: #666; }
+.fr-row-training .fr-col-total { color: #666; font-weight: 600; }
