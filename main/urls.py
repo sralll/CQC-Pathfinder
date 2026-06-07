@@ -7,10 +7,10 @@ urlpatterns = [
     path('results-old/', views.results_view, name='results_old'),
     path('get_published_files/', views.get_published_files, name='get_published_files'),
     path('fetch_plot_data/<str:filename>/', views.fetch_plot_data, name='fetch_plot_data'),
-    path('stats/', views.user_game_stats, name='own_game_stats'),
-    path('stats/<int:user_id>/', views.user_game_stats, name='user_game_stats'),
+    path('statistik/data/', views.user_game_stats, name='own_game_stats'),
+    path('statistik/data/<int:user_id>/', views.user_game_stats, name='user_game_stats'),
     path('user_list/', views.users_with_results, name='user_list'),
     path('feedback/', views.feedback_view, name='feedback'),
-    path("stats/table/", views.trainer_stats, name="trainer_stats"),
+    path("statistik/table/", views.trainer_stats, name="trainer_stats"),
     path('results-old/load-file/<str:filename>/', views.load_file, name='load_file'),
 ]

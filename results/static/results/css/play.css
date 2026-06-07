@@ -204,6 +204,10 @@ body.desktop #play-progress {
     transition: width 0.4s ease;
 }
 
+body.training-mode #play-progress-fill {
+    background: #888;
+}
+
 .play-btn {
     flex: 1;
     height: calc(100% - 10px);

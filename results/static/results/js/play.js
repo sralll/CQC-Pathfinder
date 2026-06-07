@@ -9,6 +9,7 @@
 const urlParts        = window.location.pathname.split('/').filter(Boolean);
 const fileId          = urlParts[urlParts.length - 2];   // /play/<id>/<mode>/
 const competitionMode = urlParts[urlParts.length - 1] === 'competition';
+document.body.classList.toggle('training-mode', !competitionMode);
 
 let cam = { x: 0, y: 0, scale: 1, rot: 0 };   // rot in degrees (CSS convention)
 let project = {
@@ -95,7 +96,7 @@ function initKeyNav() {
 async function loadFile() {
     showMapSpinner();
     try {
-        const res = await fetch(`/play/file/${fileId}/`);
+        const res = await fetch(`/play/get-file/${fileId}/`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
         project.id            = data.id;
@@ -135,7 +136,7 @@ function loadMap(filename) {
             resolve();
         };
         img.onerror = reject;
-        img.src = `/play/map/${filename}/`;
+        img.src = `/play/get-map/${filename}/`;
     });
 }
 
@@ -458,14 +459,34 @@ function showControlPair(index) {
             minScale: scale,
         };
         assignRouteColors(cp.routes);
-        drawRoutes(cp);
         const group = document.createElementNS('http://www.w3.org/2000/svg', 'g');
         group.classList.add('control-pair-group');
         drawControlPairCircles(cp, group);
         drawConnection(cp, group);
         document.getElementById('control-layer').appendChild(group);
-        choiceStartTime = performance.now();
-        renderAllButtons(cp);
+
+        if (!competitionMode && cp.complex) {
+            // Training mode: hide routes/buttons behind a reveal step first
+            const isDesktop = document.body.classList.contains('desktop');
+            const revealFontSize = isDesktop
+                ? `${Math.min(28, Math.max(14, Math.round(56 / 1)))}px`
+                : `${Math.min(22, Math.max(8,  Math.round(44 / 1)))}px`;
+            renderButtons([{
+                label:    'Routen anzeigen',
+                cls:      'route-btn route-btn-labeled',
+                bgColor:  '#e07020',
+                fontSize: revealFontSize,
+                action:   () => {
+                    drawRoutes(cp);
+                    choiceStartTime = performance.now();
+                    renderAllButtons(cp);
+                },
+            }]);
+        } else {
+            drawRoutes(cp);
+            choiceStartTime = performance.now();
+            renderAllButtons(cp);
+        }
     });
 
     renderNavButtons();  // show nav state immediately while animating

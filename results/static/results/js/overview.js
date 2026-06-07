@@ -33,7 +33,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 async function loadFiles() {
     document.getElementById('play-loading').style.display = '';
     try {
-        const res  = await fetch('/results/list/');
+        const res  = await fetch('/results/get-list/');
         const data = await res.json();
         allFiles       = data.files            || [];
         sharedPool     = data.shared_pool      || false;

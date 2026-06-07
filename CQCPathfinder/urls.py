@@ -19,12 +19,28 @@ urlpatterns = [
     path("", include("main.urls")),
     path('coursesetter/', include('coursesetter.urls')),
     path("pathfinding/", include("pathfinding.urls")),
-    path('play/',         include('results.urls')),
-    path('results/',                    results_views.results_overview,   name='results_overview'),
-    path('results/list/',               results_views.get_files_overview, name='results_list'),
-    path('results/<int:file_id>/',      results_views.file_results,       name='file_results'),
-    path('results/<int:file_id>/data/', results_views.get_file_results,   name='file_results_data'),
-    path('play-old/',     include('play.urls')),
+
+    # Play
+    path('play/',                            results_views.index,              name='results_home'),
+    path('play/<int:file_id>/<str:mode>/',   results_views.play,               name='play'),
+    path('play/get-files/',                  results_views.get_files,          name='play_get_files'),
+    path('play/get-file/<int:file_id>/',     results_views.get_file,           name='play_get_file'),
+    path('play/get-map/<str:filename>/',     results_views.get_map,            name='play_get_map'),
+    path('play/submit-result/',              results_views.submit_result,      name='submit_result'),
+
+    # Results
+    path('results/',                         results_views.results_overview,   name='results_overview'),
+    path('results/<int:file_id>/',           results_views.file_results,       name='file_results'),
+    path('results/get-list/',                results_views.get_files_overview, name='results_get_list'),
+    path('results/<int:file_id>/get-data/',  results_views.get_file_results,   name='results_get_data'),
+
+    # Stats
+    path('stats/',                           results_views.stats_view,         name='results_stats'),
+    path('stats/get-stats/',                 results_views.get_user_stats,     name='stats_get_stats'),
+    path('stats/get-athletes/',              results_views.get_team_athletes,  name='stats_get_athletes'),
+    path('stats/get-table/',                 views.trainer_stats,              name='stats_get_table'),
+
+    path('play-old/', include('play.urls')),
 
     # login/logout
     path('login/', auth_views.LoginView.as_view(authentication_form=StyledLoginForm), name='login'),

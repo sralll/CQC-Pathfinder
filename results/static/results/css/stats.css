@@ -1,0 +1,408 @@
+/* =========================================================
+   STATS PAGE — personal & team performance overview
+========================================================= */
+
+#play-wrap {
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: flex-start;
+    overflow-y: auto;
+    padding: 16px;
+    box-sizing: border-box;
+}
+
+
+/* ── Nav: mode toggle (training / competition) ───────── */
+
+.nav-mode-toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-left: 14px;
+}
+
+/* ── Trainer bar (view toggle + athlete picker) ──────── */
+
+#trainer-bar {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    width: 100%;
+    max-width: 1100px;
+    margin: 0 auto 12px;
+    flex-wrap: wrap;
+}
+
+.trainer-view-toggle {
+    display: inline-flex;
+    background: #1a1a1a;
+    border: 0.5px solid #2e2e2e;
+    border-radius: 6px;
+    overflow: hidden;
+}
+
+.trainer-view-btn {
+    background: transparent;
+    border: none;
+    color: #888;
+    padding: 6px 14px;
+    font-size: 12px;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+}
+.trainer-view-btn:hover  { color: #ccc; background: #222; }
+.trainer-view-btn.active { color: #fff; background: #e07020; }
+
+#trainer-athlete-picker {
+    position: relative;
+    flex: 1;
+    max-width: 320px;
+    min-width: 180px;
+}
+
+#trainer-athlete-search {
+    width: 100%;
+    box-sizing: border-box;
+    background: #1a1a1a;
+    border: 1px solid #2e2e2e;
+    border-radius: 5px;
+    color: #ccc;
+    font-size: 13px;
+    padding: 7px 28px 7px 11px;
+    outline: none;
+    transition: border-color 0.15s;
+}
+#trainer-athlete-search:focus      { border-color: #555; }
+#trainer-athlete-search::placeholder { color: #444; }
+
+#trainer-athlete-clear {
+    position: absolute;
+    right: 5px;
+    top: 50%;
+    transform: translateY(-50%);
+    background: none;
+    border: none;
+    color: #555;
+    cursor: pointer;
+    font-size: 16px;
+    line-height: 1;
+    padding: 0 4px;
+    display: none;
+}
+#trainer-athlete-clear.visible        { display: block; color: #ff6666; }
+#trainer-athlete-clear.visible:hover  { color: #fff; }
+
+.trainer-dropdown {
+    display: none;
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    right: 0;
+    max-height: 260px;
+    overflow-y: auto;
+    background: #1a1a1a;
+    border: 0.5px solid #333;
+    border-radius: 6px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+    z-index: 1000;
+}
+.trainer-dropdown.open { display: block; }
+
+.trainer-athlete-option {
+    padding: 7px 12px;
+    color: #aaa;
+    font-size: 12px;
+    cursor: pointer;
+    transition: background 0.1s, color 0.1s;
+}
+.trainer-athlete-option:hover { background: #252525; color: #fff; }
+.trainer-athlete-option.active { color: #e07020; }
+.trainer-athlete-option.trainer-own {
+    border-bottom: 0.5px solid #2e2e2e;
+    font-style: italic;
+}
+.trainer-athlete-empty {
+    padding: 10px 12px;
+    color: #555;
+    font-size: 11px;
+    text-align: center;
+}
+
+#stats-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-auto-rows: minmax(260px, 1fr);
+    gap: 16px;
+    width: 100%;
+    max-width: 1100px;
+    margin: 0 auto;
+}
+
+.stats-card {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    background: #1a1a1a;
+    border: 0.5px solid #2e2e2e;
+    border-radius: 10px;
+    padding: 14px 16px;
+    min-width: 0;
+    min-height: 0;
+}
+
+.stats-card-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin: 0 0 8px;
+}
+
+.stats-card-title {
+    margin: 0;
+    font-size: 13px;
+    font-weight: 600;
+    color: #ddd;
+}
+
+.stats-card-expand {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    background: transparent;
+    border: none;
+    color: #555;
+    cursor: pointer;
+    border-radius: 4px;
+    padding: 0;
+    transition: color 0.15s, background 0.15s;
+}
+.stats-card-expand:hover { color: #ccc; background: #222; }
+.stats-card-expand svg   { display: block; }
+
+.stats-card-body {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    position: relative;
+}
+
+/* Spinner shown while data loads */
+.stats-card-body.loading > * { visibility: hidden; }
+.stats-card-body.loading::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 28px;
+    height: 28px;
+    margin: -14px 0 0 -14px;
+    border: 2px solid #2e2e2e;
+    border-top-color: #e07020;
+    border-radius: 50%;
+    animation: stats-spin 0.8s linear infinite;
+}
+@keyframes stats-spin { to { transform: rotate(360deg); } }
+
+/* ── Expand: one card fills the whole grid area ──────── */
+
+#stats-grid.has-expanded > .stats-card:not(.expanded) { display: none; }
+#stats-grid.has-expanded > .stats-card.expanded {
+    grid-column: 1 / -1;
+    grid-row:    1 / -1;
+}
+
+.stats-svg {
+    display: block;
+    width: 100%;
+    height: 100%;
+}
+
+/* ── Donut card ──────────────────────────────────────── */
+
+.stats-donut-body {
+    align-items: center;
+    justify-content: center;
+}
+
+.stats-donut-legend {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 6px 14px;
+    margin-top: 8px;
+    font-size: 11px;
+    color: #999;
+}
+
+.stats-donut-legend-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    white-space: nowrap;
+}
+
+.stats-donut-legend-dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.stats-donut-legend-icon {
+    display: inline-flex;
+    align-items: center;
+    color: #4CAF50;
+}
+
+/* ── Tooltip (donut + bar hover) ─────────────────────── */
+
+.stats-tooltip {
+    position: fixed;
+    background: #1c1c1c;
+    border: 0.5px solid #333;
+    border-radius: 4px;
+    padding: 4px 8px;
+    font-size: 11px;
+    color: #ddd;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.1s ease;
+    z-index: 10000;
+    white-space: nowrap;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+}
+
+.stats-hover-target { cursor: pointer; }
+
+/* ── Facts card ──────────────────────────────────────── */
+
+#stats-facts {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-auto-rows: minmax(0, 1fr);
+    gap: 12px;
+}
+
+.stats-fact {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    background: #151515;
+    border: 0.5px solid #262626;
+    border-radius: 8px;
+    padding: 10px 6px;
+    text-align: center;
+}
+
+.stats-fact-value {
+    font-size: 19px;
+    font-weight: 700;
+    color: #e07020;
+    font-variant-numeric: tabular-nums;
+}
+
+.stats-fact-label {
+    font-size: 10px;
+    color: #888;
+    line-height: 1.3;
+}
+
+/* ── Trainer table view ──────────────────────────────── */
+
+#stats-table-wrap {
+    display: none;
+    width: 100%;
+    max-width: 1100px;
+    margin: 0 auto;
+    background: #1a1a1a;
+    border: 0.5px solid #2e2e2e;
+    border-radius: 10px;
+    overflow-x: auto;
+}
+
+#stats-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+    color: #ccc;
+    min-width: 720px;
+}
+
+#stats-table thead th {
+    position: sticky;
+    top: 0;
+    background: #1a1a1a;
+    color: #aaa;
+    font-weight: 500;
+    text-align: right;
+    padding: 9px 8px;
+    border-bottom: 0.5px solid #2e2e2e;
+    white-space: nowrap;
+}
+
+#stats-table thead th.stats-th-name { text-align: left; }
+
+#stats-table tbody td {
+    padding: 8px;
+    border-bottom: 0.5px solid #232323;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+#stats-table tbody td:first-child {
+    text-align: left;
+    color: #ddd;
+}
+
+#stats-table tbody tr:hover td { background: #222; }
+
+#stats-table tbody tr.stats-table-summary td {
+    color: #fff;
+    font-weight: 600;
+    background: #1f1f1f;
+    border-bottom: 0.5px solid #3a3a3a;
+}
+#stats-table tbody tr.stats-table-summary:hover td { background: #262626; }
+
+/* ── Mobile ──────────────────────────────────────────── */
+
+@media (max-width: 700px) {
+    html, body { overflow: auto; }
+    #play-wrap {
+        height: auto;
+        min-height: calc(100vh - var(--navbar-h));
+        padding: 10px;
+    }
+    #stats-grid {
+        grid-template-columns: 1fr;
+        grid-auto-rows: minmax(220px, auto);
+    }
+    #trainer-bar          { gap: 8px; }
+    #trainer-athlete-picker { max-width: none; }
+    .nav-mode-toggle      { margin-left: 6px; }
+    #stats-table          { font-size: 11px; min-width: 0; }
+    #stats-table thead th { padding: 7px 5px; }
+    #stats-table tbody td { padding: 6px 5px; }
+    .stats-card-expand    { display: none; }
+}
+
+/* Crown column in trainer table: align icon to the right like the other numeric cells */
+#stats-table thead th.stats-th-crown {
+    text-align: right;
+}
+#stats-table thead th.stats-th-crown x-icon {
+    display: inline-flex;
+    vertical-align: middle;
+}
+
+.stats-cell-crown {
+    display: inline-flex;
+    align-items: center;
+    color: #4CAF50;
+    vertical-align: middle;
+}

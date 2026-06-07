@@ -22,3 +22,5 @@ venv/
 upload.py
 
 svg_icons/
+
+.claude/

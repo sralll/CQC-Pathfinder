@@ -378,3 +378,170 @@ def get_file_results(request, file_id):
         'is_trainer':       is_trainer,
         'user_has_results': user_has_results,
     })
+
+
+# ── Personal stats ───────────────────────────────────────────────────────────
+
+@login_required
+def stats_view(request):
+    is_trainer = request.user.is_superuser or request.user.groups.filter(name='Trainer').exists()
+    return render(request, 'results/stats.html', {'is_trainer': is_trainer})
+
+
+CHOICE_BUCKETS = ('fastest', 'less_5', 'between_5_10', 'more_10')
+
+
+def _bucket_choice(choice, min_time_per_cp):
+    """Classify a competition Choice by how much slower than the fastest
+    route the selected route was. Returns (bucket, time_lost) or None if
+    the choice can't be evaluated (no route data)."""
+    cp_min = min_time_per_cp.get(choice.control_pair_id)
+    if not cp_min or not choice.selected_route or not choice.selected_route.run_time:
+        return None
+    diff = choice.selected_route.run_time - cp_min
+    pct  = diff / cp_min
+    if diff <= 0:
+        bucket = 'fastest'
+    elif pct < 0.05:
+        bucket = 'less_5'
+    elif pct < 0.10:
+        bucket = 'between_5_10'
+    else:
+        bucket = 'more_10'
+    return bucket, max(0.0, diff)
+
+
+def _aggregate_choices(choices, min_time_per_cp):
+    counts = {b: 0 for b in CHOICE_BUCKETS}
+    sum_choice_time = 0.0
+    sum_route_diff  = 0.0
+    n = 0
+    for c in choices:
+        classified = _bucket_choice(c, min_time_per_cp)
+        if classified is None:
+            continue
+        bucket, time_lost = classified
+        counts[bucket]  += 1
+        sum_choice_time += c.choice_time or 0
+        sum_route_diff  += time_lost
+        n += 1
+    return {
+        'total':           n,
+        'counts':          counts,
+        'avg_choice_time': round(sum_choice_time / n, 2) if n else 0,
+        'avg_route_diff':  round(sum_route_diff  / n, 2) if n else 0,
+    }
+
+
+@login_required
+@require_GET
+def get_user_stats(request):
+    from .models import Choice
+    from collections import defaultdict
+    from django.contrib.auth.models import User
+
+    is_trainer = request.user.is_superuser or request.user.groups.filter(name='Trainer').exists()
+    competition_flag = request.GET.get('competition', 'true').lower() != 'false'
+
+    target_user = request.user
+    if is_trainer:
+        uid = request.GET.get('user_id')
+        if uid:
+            try:
+                target_user = User.objects.get(id=int(uid))
+            except (User.DoesNotExist, ValueError):
+                pass
+
+    profile     = request.user.profile
+    active_team = profile.active_team
+
+    # Compare against everyone sharing the requester's active team
+    # (falls back to "just the target user" if there's no active team)
+    team_filter = Q(user__profile__active_team=active_team) if active_team else Q(user=target_user)
+
+    choices = list(
+        Choice.objects
+        .filter(competition=competition_flag)
+        .filter(team_filter)
+        .select_related('selected_route')
+        .order_by('timestamp')
+    )
+
+    cp_ids = {c.control_pair_id for c in choices if c.control_pair_id}
+    cps = (
+        ControlPair.objects
+        .filter(id__in=cp_ids)
+        .prefetch_related(Prefetch('routes', queryset=Route.objects.all()))
+    )
+    min_time_per_cp = {}
+    for cp in cps:
+        times = [r.run_time for r in cp.routes.all() if r.run_time]
+        min_time_per_cp[cp.id] = min(times) if times else None
+
+    user_choices = [c for c in choices if c.user_id == target_user.id]
+
+    team_stats = _aggregate_choices(choices,      min_time_per_cp)
+    user_stats = _aggregate_choices(user_choices, min_time_per_cp)
+
+    # Activity: completed control pairs per month (covers multi-year history)
+    activity_map = defaultdict(int)
+    for c in user_choices:
+        if c.timestamp:
+            activity_map[c.timestamp.strftime('%Y-%m')] += 1
+    activity = [{'period': period, 'count': activity_map[period]} for period in sorted(activity_map)]
+
+    # Streaks: longest & current run of consecutive "fastest route chosen" choices
+    longest_streak = 0
+    current_run    = 0
+    for c in user_choices:
+        classified = _bucket_choice(c, min_time_per_cp)
+        if classified and classified[0] == 'fastest':
+            current_run   += 1
+            longest_streak = max(longest_streak, current_run)
+        else:
+            current_run = 0
+
+    fastest_pct = round(user_stats['counts']['fastest'] / user_stats['total'] * 100, 1) if user_stats['total'] else 0
+
+    return JsonResponse({
+        'user':        user_stats,
+        'team':        team_stats,
+        'activity':    activity,
+        'facts': {
+            'total_cp':       user_stats['total'],
+            'fastest_pct':    fastest_pct,
+            'longest_streak': longest_streak,
+            'current_streak': current_run,
+        },
+        'target_name': target_user.get_full_name() or target_user.username,
+    })
+
+
+@login_required
+@require_GET
+def get_team_athletes(request):
+    """List athletes (non-trainers) sharing the requesting trainer's active team."""
+    from django.contrib.auth.models import User
+
+    is_trainer = request.user.is_superuser or request.user.groups.filter(name='Trainer').exists()
+    if not is_trainer:
+        return JsonResponse({'error': 'Not authorized'}, status=403)
+
+    profile     = request.user.profile
+    active_team = profile.active_team
+    if not active_team:
+        return JsonResponse({'athletes': []})
+
+    users = (
+        User.objects
+        .filter(profile__active_team=active_team)
+        .exclude(groups__name='Trainer')
+        .exclude(id=request.user.id)
+        .order_by('first_name', 'last_name', 'username')
+    )
+    return JsonResponse({
+        'athletes': [
+            {'id': u.id, 'name': u.get_full_name() or u.username}
+            for u in users
+        ]
+    })

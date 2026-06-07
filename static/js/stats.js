@@ -42,7 +42,7 @@ function home() {
 }
 
 function updateStats(userId) {
-    const url = userId ? `/stats/${userId}/` : '/stats/';
+    const url = userId ? `/statistik/data/${userId}/` : '/statistik/data/';
     
     fetch(url)
     .then(response => response.json())
@@ -259,7 +259,7 @@ async function loadTrainerStats(isTraining) {
   const mode = isTraining ? "competition" : "training";
 
   try {
-    const response = await fetch(`/stats/table/?mode=${mode}`);
+    const response = await fetch(`/statistik/table/?mode=${mode}`);
 
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);

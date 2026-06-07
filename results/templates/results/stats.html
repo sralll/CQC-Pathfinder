@@ -1,0 +1,117 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block styles %}
+<link rel="stylesheet" href="{% static 'results/css/results.css' %}">
+<link rel="stylesheet" href="{% static 'results/css/stats.css' %}">
+{% endblock %}
+
+{% block nav_content %}
+<div class="nav-mode-toggle">
+    <div class="mode-icon-tip" data-mode="training">
+        <x-icon name="book-open" size="14px"></x-icon>
+        <div class="mode-tip-box"><b>Trainingsmodus</b></div>
+    </div>
+    <label class="mode-switch">
+        <input type="checkbox" id="mode-toggle-input" checked>
+        <span class="mode-slider"></span>
+    </label>
+    <div class="mode-icon-tip mode-active" data-mode="competition">
+        <x-icon name="trophy" size="14px"></x-icon>
+        <div class="mode-tip-box"><b>Wettkampfmodus</b></div>
+    </div>
+</div>
+<div class="nav-center">
+    <span id="stats-nav-title" class="fr-nav-title">Statistik</span>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script defer src="{% static 'results/js/stats.js' %}"></script>
+{% endblock %}
+
+{% block content %}
+<div id="play-wrap" data-is-trainer="{% if is_trainer %}1{% else %}0{% endif %}">
+
+    {% if is_trainer %}
+    <div id="trainer-bar">
+        <div class="trainer-view-toggle">
+            <button class="trainer-view-btn active" data-view="graph">Diagramm</button>
+            <button class="trainer-view-btn" data-view="table">Tabelle</button>
+        </div>
+        <div id="trainer-athlete-picker">
+            <input type="text" id="trainer-athlete-search" placeholder="Athlet auswählen…" autocomplete="off">
+            <button id="trainer-athlete-clear" type="button" title="Zurücksetzen">×</button>
+            <div id="trainer-athlete-dropdown" class="trainer-dropdown"></div>
+        </div>
+    </div>
+    {% endif %}
+
+    <div id="stats-grid">
+
+        <div class="stats-card" id="stats-card-routes">
+            <div class="stats-card-head">
+                <h2 class="stats-card-title" id="stats-card-routes-title">Routenwahl</h2>
+                <button class="stats-card-expand" type="button" title="Vergrössern" aria-label="Vergrössern"></button>
+            </div>
+            <div class="stats-card-body stats-donut-body loading">
+                <svg class="stats-svg" id="stats-donut-chart" preserveAspectRatio="xMidYMid meet"></svg>
+            </div>
+            <div class="stats-donut-legend" id="stats-donut-legend"></div>
+        </div>
+
+        <div class="stats-card" id="stats-card-avg">
+            <div class="stats-card-head">
+                <h2 class="stats-card-title">Ø Zeiten pro Posten</h2>
+                <button class="stats-card-expand" type="button" title="Vergrössern" aria-label="Vergrössern"></button>
+            </div>
+            <div class="stats-card-body loading">
+                <svg class="stats-svg" id="stats-bar-chart" preserveAspectRatio="xMidYMid meet"></svg>
+            </div>
+        </div>
+
+        <div class="stats-card" id="stats-card-activity">
+            <div class="stats-card-head">
+                <h2 class="stats-card-title">Aktivität</h2>
+                <button class="stats-card-expand" type="button" title="Vergrössern" aria-label="Vergrössern"></button>
+            </div>
+            <div class="stats-card-body loading">
+                <svg class="stats-svg" id="stats-activity-chart" preserveAspectRatio="xMidYMid meet"></svg>
+            </div>
+        </div>
+
+        <div class="stats-card" id="stats-card-facts">
+            <div class="stats-card-head">
+                <h2 class="stats-card-title">Auf einen Blick</h2>
+                <button class="stats-card-expand" type="button" title="Vergrössern" aria-label="Vergrössern"></button>
+            </div>
+            <div class="stats-card-body loading" id="stats-facts"></div>
+        </div>
+
+    </div>
+
+    {% if is_trainer %}
+    <div id="stats-table-wrap">
+        <table id="stats-table">
+            <thead>
+                <tr>
+                    <th class="stats-th-name">Athlet</th>
+                    <th class="stats-th-num">Posten</th>
+                    <th class="stats-th-num" title="Durchschnittliche Entscheidungszeit">Ø Entsch.</th>
+                    <th class="stats-th-num" title="Durchschnittlicher Routenwahlfehler">Ø Fehler</th>
+                    <th class="stats-th-num stats-th-cat stats-th-crown" style="color:#4CAF50">
+                        <x-icon name="crown" size="13px"></x-icon>
+                    </th>
+                    <th class="stats-th-num stats-th-cat" style="color:#FFC107">&lt; 5%</th>
+                    <th class="stats-th-num stats-th-cat" style="color:#FF9800">5–10%</th>
+                    <th class="stats-th-num stats-th-cat" style="color:#F44336">&gt; 10%</th>
+                    <th class="stats-th-num" title="Fehlerpotential-Erkennung — Variation der Entscheidungszeit, wenn das Fehlerpotential hoch ist">Sensit.</th>
+                    <th class="stats-th-num" title="Zeitsensitivität — Veränderung der Routenwahlfehler pro Sekunde längere Entscheidungszeit (Konfidenz in Klammer)">ROI</th>
+                </tr>
+            </thead>
+            <tbody></tbody>
+        </table>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

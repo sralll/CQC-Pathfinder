@@ -14,7 +14,7 @@ let cpCount         = 0;
 let includeTraining = true;
 let selectedIds     = new Set();
 
-let project        = null;   // from /play/file/<id>/
+let project        = null;   // from /play/get-file/<id>/
 let currentCpIdx   = 0;
 let cpColorCache   = {};     // { cp_id: [color, ...] }
 let cpDistances    = [];     // min route length per CP, for x-axis scaling
@@ -53,7 +53,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 async function loadResults() {
     document.getElementById('play-loading').style.display = '';
     try {
-        const res  = await fetch(`/results/${FILE_ID}/data/`);
+        const res  = await fetch(`/results/${FILE_ID}/get-data/`);
         const data = await res.json();
         const title = data.file_name || '';
         document.getElementById('fr-nav-title').textContent = title;
@@ -77,7 +77,7 @@ async function loadResults() {
 
 async function loadProject() {
     try {
-        const res  = await fetch(`/play/file/${FILE_ID}/`);
+        const res  = await fetch(`/play/get-file/${FILE_ID}/`);
         project = await res.json();
 
         // Distance of each CP's leg (shortest route), used for proportional x-axis
@@ -113,7 +113,7 @@ function loadMapImage(filename, scale) {
             resolve();
         };
         img.onerror = reject;
-        img.src     = `/play/map/${filename}/`;
+        img.src     = `/play/get-map/${filename}/`;
     });
 }
 
@@ -244,7 +244,7 @@ function drawChart() {
         t.setAttribute('x', W/2); t.setAttribute('y', H/2);
         t.setAttribute('text-anchor', 'middle');
         t.setAttribute('fill', '#444'); t.setAttribute('font-size', '12');
-        t.textContent = 'Athlete auswählen um den Verlauf zu sehen';
+        t.textContent = 'Personen anwählen, um den Verlauf zu sehen';
         svg.appendChild(t); return;
     }
 
