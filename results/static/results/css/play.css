@@ -213,7 +213,9 @@ body.desktop #play-progress {
     transition: width 0.4s ease;
 }
 
-body.training-mode #play-progress-fill {
+body.training-mode      #play-progress-fill,
+body.replay-mode        #play-progress-fill,
+body.has-prior-results  #play-progress-fill {
     background: #888;
 }
 

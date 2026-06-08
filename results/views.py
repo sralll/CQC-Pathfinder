@@ -51,6 +51,28 @@ def get_file(request, file_id):
             if not (own or shared):
                 return JsonResponse({'error': 'Permission denied'}, status=403)
 
+        # ── First-attempt / replay logic ─────────────────────────
+        # The Choice model has a unique constraint on (user, control_pair),
+        # so a CP is "done" for the user if any Choice exists for it
+        # (irrespective of competition vs. training mode).
+        from .models import Choice
+        all_cps     = list(file.control_pairs.all())
+        done_cp_ids = set(
+            Choice.objects
+                  .filter(user=request.user, control_pair__file_id=file_id)
+                  .values_list('control_pair_id', flat=True)
+        )
+        remaining = [cp for cp in all_cps if cp.id not in done_cp_ids]
+
+        if not remaining:
+            # Everything's been answered before — play full file again, no save
+            cps_to_play = all_cps
+            replay      = True
+        else:
+            # First attempt (neu) or resuming a partial run (begonnen)
+            cps_to_play = remaining
+            replay      = False
+
         return JsonResponse({
             'id':              file.id,
             'name':            file.name,
@@ -58,6 +80,9 @@ def get_file(request, file_id):
             'scaled':          file.scaled,
             'map_file':        file.map_file,
             'blocked_terrain': file.blocked_terrain,
+            'replay':          replay,
+            'total_cp_count':  len(all_cps),
+            'done_cp_count':   len(all_cps) - len(remaining),
             'control_pairs': [
                 {
                     'id':      cp.id,
@@ -79,7 +104,7 @@ def get_file(request, file_id):
                         for r in cp.routes.all()
                     ],
                 }
-                for cp in file.control_pairs.all()
+                for cp in cps_to_play
             ],
         })
 
@@ -174,7 +199,8 @@ def submit_result(request):
         cp    = get_object_or_404(ControlPair, id=cp_id)
         route = get_object_or_404(Route, id=route_id) if route_id else None
 
-        Choice.objects.update_or_create(
+        # First attempt only — never overwrite an existing Choice (replay mode)
+        _, created = Choice.objects.get_or_create(
             user=request.user,
             control_pair=cp,
             defaults={
@@ -183,7 +209,7 @@ def submit_result(request):
                 'competition':    competition,
             },
         )
-        return JsonResponse({'status': 'ok'})
+        return JsonResponse({'status': 'saved' if created else 'skipped'})
     except Exception as e:
         traceback.print_exc()
         return JsonResponse({'error': str(e)}, status=500)

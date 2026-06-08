@@ -1,80 +1,44 @@
 {% extends "base.html" %}
 {% load static %}
+
+{% block styles %}
+<link rel="stylesheet" href="{% static 'css/login.css' %}">
+{% endblock %}
+
 {% block content %}
-<div id="login-box">
-  <div id="login-logo">
-    <img src="{% static 'img/logo.svg' %}" alt="Logo">
-  </div>
+<div class="login-page">
+    <div class="login-card">
 
-  <form id="login-form" method="post">
-    {% csrf_token %}
+        <div class="login-logo-wrap">
+            <img class="login-logo" src="{% static 'img/logo.svg' %}" alt="CQC Pathfinder">
+        </div>
 
-    <div class="form-row">
-      {{ form.username }}
+        {% if form.errors %}
+        <div class="login-error">Falsche Benutzerdaten</div>
+        {% endif %}
+
+        <form class="login-form" method="post" action="">
+            {% csrf_token %}
+
+            <label class="login-field">
+                <span class="login-field-label">Benutzername</span>
+                <input type="text" name="username" autocomplete="username"
+                       autocapitalize="off" autocorrect="off" spellcheck="false"
+                       required>
+            </label>
+
+            <label class="login-field">
+                <span class="login-field-label">Passwort</span>
+                <div class="login-input-group">
+                    <input type="password" name="password" autocomplete="current-password" required>
+                    <button type="submit" class="login-submit" title="Anmelden" aria-label="Anmelden">
+                        <x-icon name="sign-in" size="18px"></x-icon>
+                    </button>
+                </div>
+            </label>
+        </form>
+
+        <a class="login-reset-link" href="{% url 'password_reset' %}">Passwort vergessen?</a>
     </div>
-
-    <div class="form-row">
-      {{ form.password }}
-      
-      <button id="loginButton" type="submit">
-        <img src="{% static 'img/login.svg' %}" alt="Login" height="30">
-      </button>
-    </div>
-  </form>
-
-<div id="reset-mobile">
-    <a href="{% url 'password_reset' %}" class="reset-link">Passwort vergessen?</a>
-  </div>
 </div>
-
-<div id="reset-desktop">
-  <a href="{% url 'password_reset' %}"  class="reset-link">Passwort vergessen?</a>
-</div>
-
-  {% if form.errors %}
-    <div id="form-errors">
-      <p>Falsche Benutzerdaten</p>
-    </div>
-
-    <script>
-      function positionFormError() {
-        const loginBox = document.getElementById('login-form');
-        const formError = document.getElementById('form-errors');
-        
-        if (loginBox && formError) {
-          const rect = loginBox.getBoundingClientRect();
-          const offsetTop = window.scrollY + rect.top - 50; // 20px spacing below
-
-          formError.style.position = 'absolute';
-          formError.style.top = `${offsetTop}px`;
-          formError.style.left = `${rect.left+5}px`;
-          formError.style.width = `${rect.width}px`;
-        }
-      }
-
-      window.addEventListener('DOMContentLoaded', positionFormError);
-      window.addEventListener('resize', positionFormError);
-    </script>
-{% endif %}
-
-
-<script>
-
-  function positionFormFooter() {
-        const loginBox = document.getElementById('login-form');
-        const formFooter = document.getElementById('reset-desktop');
-
-        if (loginBox && formFooter) {
-            const rect = loginBox.getBoundingClientRect();
-            const offsetTop = window.scrollY + rect.bottom + 5; // 20px spacing below
-
-            formFooter.style.position = 'absolute';
-            formFooter.style.top = `${offsetTop}px`;
-            formFooter.style.left = `${rect.left}px`;
-            formFooter.style.width = `${rect.width}px`;
-        }
-    }
-    window.addEventListener('DOMContentLoaded', positionFormFooter);
-    window.addEventListener('resize', positionFormFooter);
-</script>
 {% endblock %}

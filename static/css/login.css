@@ -1,173 +1,173 @@
-#login-box {
+/* =========================================================
+   LOGIN — sign-in screen, matches the home page aesthetic
+========================================================= */
+
+html, body {
+    height: 100%;
+    margin: 0;
+    background: #151515;
+    color: #ddd;
+    font-family: Arial, sans-serif;
+}
+
+/* Hide the (empty) navbar on the login screen — nothing useful in it
+   until the user is signed in */
+#navbar { display: none; }
+
+.login-page {
+    min-height: 100vh;
     display: flex;
+    align-items: center;
     justify-content: center;
-    align-items: center;
-    flex-direction: column;
-    height: 100vh;
-    width: 100vw;
-    margin: 0;
-    padding: 0;
-}
-
-body.desktop #login-box {
-    background-image: url("/static/img/logo.svg");
-    background-repeat: no-repeat;
-    background-size: contain;
-    background-attachment: fixed;}
-
-
-body.desktop #login-logo {
-    display: none;
-}
-
-body.mobile #login-logo {
-    width: 80vw;
-    margin: 0;
-    margin-bottom: 20px;
-}
-
-body.mobile #login-logo img {
-    width: 80vw;
-}
-
-body.desktop #login-box {
-    background-position: center center;
-}
-
-body.mobile #login-box {
-    background-position: center top;
-}
-
-#login-form {
-    display: flex;
-    flex-direction: column;
-}
-
-body.desktop #login-form {
-    max-width: 300px;
-    gap: 10px;
-}
-
-body.mobile #login-form {
-    display: flex;
-    flex-direction: column;
-    width: 80vw;
-    gap: 20px;
-}
-
-.form-row {
-    display: flex;
-    flex-direction: row;
-    align-items: center;
-    gap: 0;
-}
-
-/*.form-row input[type="password"] {
-    flex: 2;
-}
-
-.form-row input[type="text"] {
-    flex: 3;
-}*/
-
-#login-form input {
-    background-color: rgb(0, 0, 0);
-    color: white;
-    width: 100%;
+    padding: 24px 16px;
     box-sizing: border-box;
 }
-body.desktop #login-form input {
-    padding: 12px;
-    font-size: 1rem;
-}
 
-#id_username {
-    border-radius: 10px;
-}
-
-#id_password {
-    border-radius: 10px 0 0 10px;
-}
-
-body.mobile #login-form input {
-    padding: 20px;
-    font-size: 2rem;
-}
-
-.form-content {
+.login-card {
+    width: 100%;
+    max-width: 380px;
     display: flex;
     flex-direction: column;
+    gap: 18px;
+}
+
+/* ── Logo ─────────────────────────────────────────────── */
+
+.login-logo-wrap {
+    display: flex;
     justify-content: center;
-    flex-grow: 1;
-    gap: 10px;
+    margin-bottom: 4px;
 }
 
-.reset-link {
-    color: #ccc;
-    text-decoration: none;
-    font-size: 0.9em;
-    margin-right: 10px;
+.login-logo {
+    width: 70%;
+    max-width: 240px;
+    height: auto;
+    display: block;
 }
 
-body.mobile .reset-link {
-    font-size: 2em;
+/* ── Error banner ─────────────────────────────────────── */
+
+.login-error {
+    background: rgba(244, 67, 54, 0.10);
+    border: 0.5px solid rgba(244, 67, 54, 0.40);
+    color: #ff8a80;
+    padding: 9px 12px;
+    border-radius: 6px;
+    font-size: 13px;
+    text-align: center;
 }
 
-body.desktop #reset-mobile {
-    display: none;
-}
+/* ── Form ─────────────────────────────────────────────── */
 
-body.mobile #reset-desktop {
-    display: none;
-}
-
-.reset-link:hover {
-    text-decoration: underline;
-}
-
-#form-errors {
-    color: rgb(179, 0, 0);
-    font-size: 10px;
-    font-size: large;
+.login-form {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
     margin: 0;
 }
 
-#loginButton {
-    flex-shrink: 0;
-    background-color: rgb(255, 153, 1);
-    color: rgb(0, 0, 0);
-    border-radius: 0 10px 10px 0;
-    font-size: 1rem;
-    cursor: pointer;
-    padding: 7px;
-    outline: none;
-    box-shadow: none;
-    height: 100%;
-    line-height: 1;
-    height: auto;
+.login-field {
     display: flex;
-    justify-content: center;
+    flex-direction: column;
+    gap: 5px;
+}
+
+.login-field-label {
+    font-size: 11px;
+    color: #888;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    padding-left: 2px;
+}
+
+.login-field input {
+    width: 100%;
+    box-sizing: border-box;
+    background: #1a1a1a;
+    border: 1px solid #2e2e2e;
+    border-radius: 6px;
+    color: #fff;
+    font-size: 15px;
+    font-family: inherit;
+    padding: 11px 13px;
+    outline: none;
+    transition: border-color 0.15s, background 0.15s;
+}
+.login-field input:hover  { border-color: #3a3a3a; }
+.login-field input:focus  { border-color: #e07020; background: #1c1c1c; }
+
+/* Disable Chrome's yellow autofill while keeping the text readable */
+.login-field input:-webkit-autofill,
+.login-field input:-webkit-autofill:hover,
+.login-field input:-webkit-autofill:focus {
+    -webkit-text-fill-color: #fff;
+    -webkit-box-shadow: 0 0 0 1000px #1a1a1a inset;
+    transition: background-color 5000s ease-in-out 0s;
+}
+
+/* Password input grouped with the submit-icon button — same pattern as the
+   editor's "project-title-input + create-file" save-group. */
+.login-input-group {
+    display: flex;
+    align-items: stretch;
+    background: #1a1a1a;
+    border: 1px solid #2e2e2e;
+    border-radius: 6px;
+    overflow: hidden;
+    transition: border-color 0.15s, background 0.15s;
+}
+.login-input-group:hover            { border-color: #3a3a3a; }
+.login-input-group:focus-within     { border-color: #e07020; background: #1c1c1c; }
+
+/* The password input inside the group drops its own border/radius */
+.login-input-group input {
+    flex: 1;
+    min-width: 0;
+    border: none !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+    box-shadow: none;
+}
+.login-input-group input:hover,
+.login-input-group input:focus { background: transparent !important; }
+
+.login-submit {
+    flex-shrink: 0;
+    display: flex;
     align-items: center;
+    justify-content: center;
+    min-width: 52px;
+    padding: 0 16px;
+    background: linear-gradient(180deg, #e07020 0%, #c95e16 100%);
+    border: none;
+    border-left: 1px solid #2e2e2e;
+    color: #fff;
+    cursor: pointer;
+    transition: background 0.15s, transform 0.06s;
 }
+.login-submit:hover  { background: linear-gradient(180deg, #f08030 0%, #d56a18 100%); }
+.login-submit:active { transform: scale(0.98); }
 
-body.mobile #loginButton {
-    padding: 16px;
-}
+/* ── Reset-password link ──────────────────────────────── */
 
-body.mobile #loginButton img {
-    height: 50px;
+.login-reset-link {
+    align-self: center;
+    color: #777;
+    font-size: 12px;
+    text-decoration: none;
+    margin-top: 2px;
+    transition: color 0.1s;
 }
+.login-reset-link:hover { color: #ccc; text-decoration: underline; }
 
-#reset-desktop {
-    display: none;
-    justify-content: left;
-    margin: 5px;
-    width: 20%;
-}
+/* ── Mobile scaling ───────────────────────────────────── */
 
-#reset-mobile {
-    display: none;
-    justify-content: left;
-    margin-top: 20px;
-    width: 90vw;
-}
+body.mobile .login-page         { padding: 20px 14px; }
+body.mobile .login-card         { gap: 22px; max-width: 460px; }
+body.mobile .login-field-label  { font-size: 13px; }
+body.mobile .login-field input  { font-size: 17px; padding: 14px 16px; }
+body.mobile .login-submit       { min-width: 68px; padding: 0 22px; }
+body.mobile .login-submit x-icon { font-size: 22px; }
+body.mobile .login-reset-link   { font-size: 14px; }
+body.mobile .login-error        { font-size: 15px; padding: 12px 14px; }

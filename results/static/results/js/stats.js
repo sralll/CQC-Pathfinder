@@ -630,22 +630,11 @@ function drawAvgChart() {
             svg.appendChild(rect);
         });
 
-        // Value label centered above each bar — team (offset left) and user (offset right)
-        const teamY = toY(g.team);
-        const userY = toY(g.user);
-        const teamLbl = svgEl('text');
-        teamLbl.setAttribute('x', groupCx - teamBarW * 0.30);
-        teamLbl.setAttribute('y', teamY - 4);
-        teamLbl.setAttribute('text-anchor', 'middle');
-        teamLbl.setAttribute('fill', '#888');
-        teamLbl.setAttribute('font-size', '9');
-        teamLbl.setAttribute('pointer-events', 'none');
-        teamLbl.textContent = `${g.team.toFixed(1)}s`;
-        svg.appendChild(teamLbl);
-
+        // Only the individual (user) bar gets a value label, centred above it.
+        // Team values are visible via hover tooltip.
         const userLbl = svgEl('text');
-        userLbl.setAttribute('x', groupCx + teamBarW * 0.30);
-        userLbl.setAttribute('y', userY - 4);
+        userLbl.setAttribute('x', groupCx);
+        userLbl.setAttribute('y', toY(g.user) - 4);
         userLbl.setAttribute('text-anchor', 'middle');
         userLbl.setAttribute('fill', '#ccc');
         userLbl.setAttribute('font-size', '9');

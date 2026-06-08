@@ -1,115 +1,177 @@
-.home-container {
+/* =========================================================
+   HOME — landing page with role-aware app shortcuts
+========================================================= */
+
+html, body {
+    height: 100%;
+    margin: 0;
+    background: #151515;
+    color: #ddd;
+    font-family: Arial, sans-serif;
+}
+
+.home-page {
+    min-height: calc(100vh - var(--navbar-h, 28px));
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px 16px;
+    box-sizing: border-box;
+}
+
+.home-card {
+    width: 100%;
+    max-width: 440px;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 22px;
+}
+
+/* ── Logo ─────────────────────────────────────────────── */
+
+.home-logo-wrap {
+    display: flex;
+    justify-content: center;
+    margin-bottom: 4px;
+}
+
+.home-logo {
+    width: 70%;
+    max-width: 280px;
+    height: auto;
+    display: block;
+}
+
+/* ── Tile grid ────────────────────────────────────────── */
+
+.home-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+}
+
+/* Athletes (non-trainer): only 3 tiles → Play spans the full top row,
+   Resultate and Statistik share the row below. */
+.home-grid:not(.home-grid-trainer) .home-tile-primary {
+    grid-column: 1 / -1;
+    aspect-ratio: 2 / 1;
+}
+
+.home-tile {
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 15px;
-    overflow: auto;
-}
-
-body.mobile .home-container {
-    gap: 20px;
-}
-
-.home-button {
-    display: inline-block;
-    background-color: #a1a1a1;
-    color: black;
-    text-align: center;
-    text-decoration: none;
-    padding: 15px 0;
-    font-size: 1.5rem;
-    border-radius: 6px;
-    font-weight: normal;
-    transition: background-color 0.2s ease;
-}
-
-body.mobile .home-button {
-    font-size: 2rem;
-    border-radius: 15px;
-    padding: 30px 0;
-}
-
-.home-button:hover {
-    background-color: #797979;
-}
-
-.full-width {
-    width: 90vw;
-}
-
-body.desktop .full-width {
-    max-width: 400px;
-}
-
-.half-button-row {
-    display: flex;
     justify-content: center;
-    gap: 15px;
-    width: 90vw;
-}
-
-body.mobile .half-button-row {
-    gap: 20px;
-}
-
-body.desktop .half-button-row {
-    max-width: 400px;
-
-}
-
-.half-width {
-    flex: 1;
-    text-align: center;
-}
-
-.password-link {
-    font-size: 0.9rem;
+    gap: 10px;
+    aspect-ratio: 1 / 1;
+    padding: 16px 12px;
+    background: #1a1a1a;
+    border: 0.5px solid #2e2e2e;
+    border-radius: 10px;
     color: #ccc;
     text-decoration: none;
+    font-size: 15px;
+    font-weight: 500;
+    transition: background 0.15s, border-color 0.15s, color 0.15s, transform 0.06s;
+    text-align: center;
+    user-select: none;
 }
 
-.updateInfo {
-    font-size: 0.9rem;
-    color: rgb(0, 183, 255);
-    text-decoration: none;
+.home-tile:hover {
+    background: #222;
+    border-color: #3a3a3a;
+    color: #fff;
 }
+.home-tile:active { transform: scale(0.98); }
 
-body.mobile .password-link {
-    font-size: 1rem;
-}
-
-.password-link:hover {
-    text-decoration: underline;
-}
-
-#logoContainer {
-    width: 90vw;
-    margin-bottom: 0;
-}
-
-body.desktop #logoContainer {
-    max-width: 400px;
-}
-
-#titleLogo {
-    width: 90vw;
-    height: auto;
-}
-
-body.desktop #titleLogo {
-    max-width: 400px;
-}
-
-#playButton {
-    background-color: #ff9900;
-    font-weight: bold;
-}
-
-#playButton:hover {
-    background-color: #cc7a00;
-}
-
-.link-row {
+.home-tile-icon {
+    color: #888;
     display: flex;
-    gap: 1rem;
+    align-items: center;
+    justify-content: center;
+    transition: color 0.15s;
+}
+.home-tile:hover .home-tile-icon { color: #e07020; }
+
+.home-tile-label {
+    font-size: 15px;
+    line-height: 1;
+}
+
+/* Primary tile — Play stands out */
+.home-tile-primary {
+    background: linear-gradient(180deg, #e07020 0%, #c95e16 100%);
+    border-color: #d56a1a;
+    color: #fff;
+}
+.home-tile-primary .home-tile-icon       { color: rgba(255,255,255,0.92); }
+.home-tile-primary:hover                  { background: linear-gradient(180deg, #f08030 0%, #d56a18 100%); color: #fff; border-color: #f08030; }
+.home-tile-primary:hover .home-tile-icon { color: #fff; }
+
+/* ── Feedback button ──────────────────────────────────── */
+
+.home-feedback {
+    display: block;
+    text-align: center;
+    padding: 11px 14px;
+    background: #1a1a1a;
+    border: 0.5px solid #2e2e2e;
+    border-radius: 8px;
+    color: #aaa;
+    text-decoration: none;
+    font-size: 13px;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.home-feedback:hover {
+    background: #222;
+    color: #fff;
+    border-color: #3a3a3a;
+}
+
+/* ── Bottom links row ─────────────────────────────────── */
+
+.home-links {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 6px 16px;
+    margin-top: 4px;
+}
+
+.home-links a {
+    color: #777;
+    font-size: 12px;
+    text-decoration: none;
+    transition: color 0.1s;
+}
+.home-links a:hover { color: #ccc; text-decoration: underline; }
+
+/* ── Trainer update note ──────────────────────────────── */
+
+.home-update-info {
+    text-align: center;
+    font-size: 11px;
+    color: #5b8db8;
+    padding: 6px 10px;
+    border: 0.5px solid rgba(91, 141, 184, 0.25);
+    border-radius: 6px;
+    background: rgba(91, 141, 184, 0.06);
+}
+
+/* ── Mobile scaling ───────────────────────────────────── */
+
+body.mobile .home-page    { padding: 20px 14px; }
+body.mobile .home-tile    { font-size: 17px; padding: 18px 12px; }
+body.mobile .home-tile-label { font-size: 17px; }
+body.mobile .home-feedback { font-size: 15px; padding: 14px 16px; }
+body.mobile .home-links a  { font-size: 14px; }
+body.mobile .home-update-info { font-size: 13px; }
+
+/* On narrow phones the tiles stack to a single column if very tight,
+   otherwise keep the 2×2 grid which is comfortable on most devices. */
+@media (max-width: 360px) {
+    .home-grid { grid-template-columns: 1fr; }
+    .home-tile { aspect-ratio: auto; min-height: 90px; }
+    .home-grid:not(.home-grid-trainer) .home-tile-primary { aspect-ratio: auto; }
 }

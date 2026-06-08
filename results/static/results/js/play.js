@@ -37,6 +37,7 @@ let selectedRouteIdx   = null;  // index into cp.routes, or null for all
 let choiceStartTime    = null;  // performance.now() when routes became visible
 let buttonsDisabled    = false; // true after first submission for this CP
 let currentBtnFontSize = '12px'; // kept in sync with renderAllButtons for stats panel
+let replayMode         = false; // true → all CPs already done, no DB writes
 
 /* =========================================================
    INIT
@@ -144,15 +145,26 @@ async function loadFile() {
         project.map_file        = data.map_file;
         project.blocked_terrain = data.blocked_terrain;
         project.control_pairs   = data.control_pairs;
+        replayMode              = !!data.replay;
+        document.body.classList.toggle('replay-mode', replayMode);
+        // Any prior results in the DB → grey progress bar, regardless of mode
+        document.body.classList.toggle('has-prior-results', (data.done_cp_count || 0) > 0);
         await loadMap(project.map_file);
         const isDesktop  = document.body.classList.contains('desktop');
         const readyFontSize = isDesktop
             ? `${Math.min(28, Math.max(14, Math.round(56 / 1)))}px`
             : `${Math.min(22, Math.max(8,  Math.round(44 / 1)))}px`;
+        // First-button label hints the play mode:
+        //   replay      → "Wiedergabe?" (no save)
+        //   resuming    → "Weiter?"     (continuing a 'begonnen' run)
+        //   first play  → "Bereit?"
+        let firstLabel = 'Bereit?';
+        if (replayMode)                       firstLabel = 'Wiedergabe?';
+        else if ((data.done_cp_count || 0) > 0) firstLabel = 'Weiter?';
         renderButtons([{
-            label:    'Bereit?',
+            label:    firstLabel,
             cls:      'route-btn route-btn-labeled',
-            bgColor:  '#e07020',
+            bgColor:  replayMode ? '#666' : '#e07020',
             fontSize: readyFontSize,
             action:   () => showControlPair(0),
         }]);
@@ -1060,6 +1072,11 @@ function emitWave(pos, color) {
 ========================================================= */
 
 function submitResult(cp, route) {
+    // Replay mode: file is already fully played; do not write anything to the DB.
+    // The server also enforces this (Choice.objects.get_or_create), but skipping
+    // the request avoids unnecessary traffic.
+    if (replayMode) return;
+
     const choiceTime = choiceStartTime !== null
         ? (performance.now() - choiceStartTime) / 1000
         : 0;
