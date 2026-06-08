@@ -162,11 +162,12 @@ html, body {
 /* ── Mobile scaling ───────────────────────────────────── */
 
 body.mobile .home-page    { padding: 20px 14px; }
-body.mobile .home-tile    { font-size: 17px; padding: 18px 12px; }
-body.mobile .home-tile-label { font-size: 17px; }
-body.mobile .home-feedback { font-size: 15px; padding: 14px 16px; }
-body.mobile .home-links a  { font-size: 14px; }
-body.mobile .home-update-info { font-size: 13px; }
+body.mobile .home-tile    { font-size: 19px; padding: 22px 14px; gap: 14px; }
+body.mobile .home-tile-label { font-size: 19px; }
+body.mobile .home-tile-icon x-icon { font-size: 40px; }
+body.mobile .home-feedback { font-size: 17px; padding: 16px 18px; }
+body.mobile .home-links a  { font-size: 16px; }
+body.mobile .home-update-info { font-size: 14px; }
 
 /* On narrow phones the tiles stack to a single column if very tight,
    otherwise keep the 2×2 grid which is comfortable on most devices. */

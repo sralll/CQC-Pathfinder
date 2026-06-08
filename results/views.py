@@ -23,6 +23,12 @@ def play(request, file_id, mode):
 
 
 @login_required
+def random_play(request):
+    """Procedurally-generated single-obstacle scenarios. Front-end only."""
+    return render(request, 'results/random_play.html')
+
+
+@login_required
 @require_GET
 def get_file(request, file_id):
     try:

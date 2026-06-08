@@ -1,0 +1,207 @@
+/* =========================================================
+   RANDOM PLAY — procedurally-generated single-obstacle leg
+   Isolated from regular play mode. Front-end only.
+========================================================= */
+
+html, body {
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    background: #151515;
+    color: #ddd;
+    font-family: Arial, sans-serif;
+    overflow: hidden;
+    overscroll-behavior: none;
+}
+
+#navbar { /* keep navbar; nothing to override */ }
+.rp-nav-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: #ddd;
+}
+
+#rp-wrap {
+    position: fixed;
+    top: var(--navbar-h, 28px);
+    left: 0;
+    right: 0;
+    bottom: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+}
+
+body.desktop #rp-wrap { align-items: center; }
+body.desktop #rp-hud,
+body.desktop #rp-map-container,
+body.desktop #rp-feedback,
+body.desktop #rp-btn-bar { width: min(100%, 100vh); }
+
+/* ── HUD (streak counters) ─────────────────────────────── */
+
+#rp-hud {
+    display: flex;
+    justify-content: space-around;
+    align-items: center;
+    background: #1a1a1a;
+    border-bottom: 0.5px solid #2a2a2a;
+    padding: 8px 12px;
+    flex-shrink: 0;
+}
+
+.rp-hud-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+}
+
+.rp-hud-label {
+    font-size: 10px;
+    color: #777;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.rp-hud-value {
+    font-size: 18px;
+    font-weight: 700;
+    color: #ddd;
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+}
+
+.rp-hud-correct { color: #4CAF50; }
+.rp-hud-streak  { color: #e07020; }
+
+/* ── Map ───────────────────────────────────────────────── */
+
+#rp-map-container {
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+    position: relative;
+    background: #fff4cc;   /* light yellow (paved) */
+}
+
+#rp-svg {
+    width: 100%;
+    height: 100%;
+    display: block;
+    user-select: none;
+}
+
+/* Animated trace */
+.rp-trace {
+    fill: none;
+    stroke-width: 6;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+.rp-route {
+    fill: none;
+    stroke-width: 4;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    opacity: 0.7;
+}
+
+.rp-route-faded { opacity: 0.35; }
+
+/* Start / Ziel circles */
+.rp-control-circle {
+    fill: none;
+    stroke: #a033f0;
+    stroke-width: 3;
+}
+
+.rp-control-line {
+    stroke: #a033f0;
+    stroke-width: 2.5;
+    stroke-linecap: round;
+}
+
+/* ── Feedback strip ────────────────────────────────────── */
+
+#rp-feedback {
+    flex-shrink: 0;
+    height: 0;
+    background: #161616;
+    border-top: 0.5px solid #2a2a2a;
+    overflow: hidden;
+    transition: height 0.18s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    font-size: 12px;
+    color: #ccc;
+    padding: 0 14px;
+}
+
+#rp-feedback.open { height: 48px; }
+
+.rp-feedback-correct { color: #4CAF50; font-weight: 700; }
+.rp-feedback-wrong   { color: #f4574c; font-weight: 700; }
+.rp-feedback-diff    { color: #aaa; font-variant-numeric: tabular-nums; }
+
+/* ── Button bar ────────────────────────────────────────── */
+
+#rp-btn-bar {
+    height: 70px;
+    flex-shrink: 0;
+    display: flex;
+    gap: 6px;
+    padding: 6px;
+    background: #111;
+    border-top: 0.5px solid #2a2a2a;
+    box-sizing: border-box;
+}
+
+.rp-btn {
+    flex: 1;
+    min-width: 0;
+    background: none;
+    border: none;
+    color: #fff;
+    font-family: inherit;
+    font-size: 17px;
+    font-weight: 700;
+    cursor: pointer;
+    border-radius: 8px;
+    padding: 0;
+    transition: opacity 0.12s, transform 0.06s, box-shadow 0.15s;
+    box-shadow:
+        inset 0 1px 0 rgba(255,255,255,0.30),
+        0 2px 5px rgba(0,0,0,0.55);
+    opacity: 0.78;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.45);
+}
+.rp-btn:hover  { opacity: 0.92; }
+.rp-btn:active { opacity: 1; transform: scale(0.99); }
+.rp-btn:disabled {
+    pointer-events: none;
+}
+.rp-btn.rp-btn-disabled { opacity: 0.45; }
+
+.rp-btn-next {
+    background: linear-gradient(180deg, #e07020 0%, #c95e16 100%);
+    flex: 1;
+    box-shadow:
+        inset 0 1px 0 rgba(255,255,255,0.30),
+        0 3px 8px rgba(224,112,32,0.45);
+}
+.rp-btn-next:hover { background: linear-gradient(180deg, #f08030 0%, #d56a18 100%); }
+
+/* ── Mobile typography ─────────────────────────────────── */
+
+body.mobile #rp-wrap            { --navbar-h: 56px; top: 56px; }
+body.mobile #rp-btn-bar         { height: 90px; }
+body.mobile .rp-btn             { font-size: 22px; }
+body.mobile .rp-hud-value       { font-size: 22px; }
+body.mobile .rp-hud-label       { font-size: 12px; }
+body.mobile .rp-nav-title       { font-size: 16px; }
+body.mobile #rp-feedback        { font-size: 14px; }
+body.mobile #rp-feedback.open   { height: 56px; }

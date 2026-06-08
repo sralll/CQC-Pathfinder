@@ -177,21 +177,35 @@ body.mobile .nav-ham-panel .nav-divider { display: none; }
 body.mobile #navbar,
 @media (max-width: 700px) { #navbar { } }
 
-body.mobile #navbar { height: 44px; font-size: 14px; }
-body.mobile .nav-ham-btn { height: 44px; padding: 0 14px; }
-body.mobile .nav-ham-btn x-icon { font-size: 16px; }
-body.mobile .nav-ham-panel { top: 44px; }
+body.mobile #navbar { height: 56px; font-size: 16px; }
+body.mobile .nav-ham-btn { height: 56px; padding: 0 16px; }
+body.mobile .nav-ham-btn x-icon { font-size: 20px; }
+body.mobile .nav-ham-panel { top: 56px; }
 body.mobile .nav-results-link,
 body.mobile .nav-username,
 body.mobile .nav-team-static,
-body.mobile .nav-team-switcher { font-size: 14px; }
-body.mobile .nav-home-btn svg { width: 16px; height: 16px; }
-body.mobile .fr-nav-title { font-size: 14px; }
+body.mobile .nav-team-switcher { font-size: 16px; }
+body.mobile .nav-home-btn svg { width: 20px; height: 20px; }
+body.mobile .fr-nav-title { font-size: 16px; }
 body.mobile .nav-ham-panel .nav-results-link,
 body.mobile .nav-ham-panel .nav-username,
 body.mobile .nav-ham-panel .nav-team-static,
 body.mobile .nav-ham-panel .nav-team-switcher,
-body.mobile .nav-ham-panel .fr-toggle-label { font-size: 14px; padding-top: 11px; padding-bottom: 11px; }
+body.mobile .nav-ham-panel .fr-toggle-label { font-size: 16px; padding-top: 12px; padding-bottom: 12px; }
 
 /* Pages that fix content below the navbar — update the offset */
-body.mobile #play-wrap { --navbar-h: 44px; }
+body.mobile #play-wrap { --navbar-h: 56px; }
+
+/* Inline mode-toggle in the navbar — base layout (used by stats + file_results
+   + anywhere else that drops a mode toggle into the nav). The visual styling
+   of .mode-icon-tip / .mode-switch lives in results.css. */
+.nav-mode-toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-left: 14px;
+}
+
+/* Inline mode-toggle in the navbar — stays visible on mobile rather than
+   being hidden inside the hamburger panel */
+body.mobile .nav-mode-toggle { gap: 10px; margin-left: 10px; }

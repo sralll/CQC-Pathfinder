@@ -7,17 +7,25 @@
 {% endblock %}
 
 {% block nav_content %}
-<button class="nav-ham-btn" id="nav-ham-left" aria-label="Menü">
-    <x-icon name="bars" size="12px"></x-icon>
-</button>
-<div class="nav-ham-panel" id="nav-panel-left">
-    <a href="{% url 'results_overview' %}" class="nav-results-link">Resultate</a>
-    <a href="{% url 'results_stats' %}" class="nav-results-link">Statistik</a>
-    <div class="nav-divider"></div>
-    <label class="fr-toggle-wrap">
-        <input type="checkbox" id="fr-training-toggle" checked>
-        <span class="fr-toggle-label">Trainingsresultate einbeziehen</span>
+<div class="fr-mode-toggle nav-mode-toggle">
+    <div class="mode-icon-tip mode-active" data-mode="training">
+        <x-icon name="book-open" size="14px"></x-icon>
+        <div class="mode-tip-box">
+            <b>Inkl. Training</b><br>
+            Resultate aus Trainings- und Wettkampfläufen werden angezeigt.
+        </div>
+    </div>
+    <label class="mode-switch">
+        <input type="checkbox" id="fr-training-toggle">
+        <span class="mode-slider"></span>
     </label>
+    <div class="mode-icon-tip" data-mode="competition">
+        <x-icon name="trophy" size="14px"></x-icon>
+        <div class="mode-tip-box">
+            <b>Nur Wettkampf</b><br>
+            Trainingsresultate werden ausgeblendet.
+        </div>
+    </div>
 </div>
 <div class="nav-center">
     <span id="fr-nav-title" class="fr-nav-title"></span>

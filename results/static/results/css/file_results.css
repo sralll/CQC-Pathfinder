@@ -365,8 +365,16 @@ body.mobile .fr-route-athletes {
 /* =========================================================
    MOBILE TYPOGRAPHY — readable on actual phones
 ========================================================= */
-body.mobile #fr-table             { font-size: 14px; }
-body.mobile #fr-table th          { font-size: 13px; }
-body.mobile .fr-nav-title         { font-size: 15px; }
-body.mobile .fr-col-rank          { font-size: 13px; }
+body.mobile #fr-table             { font-size: 15px; }
+body.mobile #fr-table th          { font-size: 14px; padding: 8px 6px; }
+body.mobile #fr-table td          { padding: 8px 6px; }
+body.mobile .fr-nav-title         { font-size: 16px; }
+body.mobile .fr-col-rank          { font-size: 14px; }
 body.mobile .fr-col-time          { width: 90px; }
+
+/* CP-navigation buttons / label — make tap targets generous on mobile */
+body.mobile #fr-nav-bar           { height: 52px; gap: 22px; }
+body.mobile .fr-nav-btn           { padding: 10px 20px; font-size: 18px; border-radius: 6px; }
+body.mobile .fr-nav-btn x-icon    { font-size: 18px; }
+body.mobile .fr-replay-btn        { right: 10px; }
+body.mobile #fr-cp-label          { font-size: 15px; min-width: 110px; }

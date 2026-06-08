@@ -163,11 +163,11 @@ html, body {
 
 /* ── Mobile scaling ───────────────────────────────────── */
 
-body.mobile .login-page         { padding: 20px 14px; }
-body.mobile .login-card         { gap: 22px; max-width: 460px; }
-body.mobile .login-field-label  { font-size: 13px; }
-body.mobile .login-field input  { font-size: 17px; padding: 14px 16px; }
-body.mobile .login-submit       { min-width: 68px; padding: 0 22px; }
-body.mobile .login-submit x-icon { font-size: 22px; }
-body.mobile .login-reset-link   { font-size: 14px; }
-body.mobile .login-error        { font-size: 15px; padding: 12px 14px; }
+body.mobile .login-page         { padding: 22px 14px; }
+body.mobile .login-card         { gap: 24px; max-width: 460px; }
+body.mobile .login-field-label  { font-size: 15px; }
+body.mobile .login-field input  { font-size: 19px; padding: 16px 18px; }
+body.mobile .login-submit       { min-width: 76px; padding: 0 24px; }
+body.mobile .login-submit x-icon { font-size: 26px; }
+body.mobile .login-reset-link   { font-size: 16px; }
+body.mobile .login-error        { font-size: 17px; padding: 13px 15px; }

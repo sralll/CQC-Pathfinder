@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block styles %}
+<link rel="stylesheet" href="{% static 'results/css/random_play.css' %}">
+{% endblock %}
+
+{% block scripts %}
+<script defer src="{% static 'results/js/random_play.js' %}"></script>
+{% endblock %}
+
+{% block nav_content %}
+<div class="nav-center">
+    <span class="rp-nav-title">Random Play</span>
+</div>
+{% endblock %}
+
+{% block content %}
+<div id="rp-wrap">
+
+    <!-- Stats / streak header -->
+    <div id="rp-hud">
+        <div class="rp-hud-item">
+            <span class="rp-hud-label">Versuche</span>
+            <span class="rp-hud-value" id="rp-attempts">0</span>
+        </div>
+        <div class="rp-hud-item">
+            <span class="rp-hud-label">Korrekt</span>
+            <span class="rp-hud-value rp-hud-correct" id="rp-correct">0</span>
+        </div>
+        <div class="rp-hud-item">
+            <span class="rp-hud-label">Serie</span>
+            <span class="rp-hud-value rp-hud-streak" id="rp-streak">0</span>
+        </div>
+        <div class="rp-hud-item">
+            <span class="rp-hud-label">Beste Serie</span>
+            <span class="rp-hud-value" id="rp-best-streak">0</span>
+        </div>
+    </div>
+
+    <!-- Map -->
+    <div id="rp-map-container">
+        <svg id="rp-svg" preserveAspectRatio="xMidYMid meet">
+            <defs>
+                <pattern id="rp-veg" width="6" height="6" patternUnits="userSpaceOnUse">
+                    <rect width="6" height="6" fill="#dcefcf"/>
+                    <circle cx="2" cy="2" r="1.2" fill="#a8c98a"/>
+                    <circle cx="5" cy="5" r="0.9" fill="#a8c98a"/>
+                </pattern>
+                <pattern id="rp-fence-stripe" width="10" height="10" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+                    <rect width="10" height="10" fill="#000"/>
+                    <line x1="0" y1="5" x2="10" y2="5" stroke="#fff" stroke-width="1"/>
+                </pattern>
+            </defs>
+            <g id="rp-bg-layer"></g>
+            <g id="rp-decor-layer"></g>
+            <g id="rp-obstacle-layer"></g>
+            <g id="rp-route-layer"></g>
+            <g id="rp-control-layer"></g>
+            <g id="rp-ui-layer"></g>
+        </svg>
+    </div>
+
+    <!-- Feedback strip -->
+    <div id="rp-feedback"></div>
+
+    <!-- Action bar (Left / Right buttons or Next) -->
+    <div id="rp-btn-bar"></div>
+
+</div>
+{% endblock %}

@@ -122,11 +122,36 @@ function loadMapImage(filename, scale) {
 ========================================================= */
 
 function initToggle() {
-    document.getElementById('fr-training-toggle').addEventListener('change', e => {
-        includeTraining = e.target.checked;
+    const input = document.getElementById('fr-training-toggle');
+    if (!input) return;
+    // checked = competition (trophy active), unchecked = include training (book active)
+    input.checked = !includeTraining;
+    updateFrModeIcons();
+    input.addEventListener('change', e => {
+        includeTraining = !e.target.checked;
+        updateFrModeIcons();
         selectedIds.clear();
         render();
     });
+    // Mobile: tap the icon for an inline tooltip
+    document.querySelectorAll('.fr-mode-toggle .mode-icon-tip').forEach(tip => {
+        tip.addEventListener('click', e => {
+            e.stopPropagation();
+            const wasOpen = tip.classList.contains('tip-open');
+            document.querySelectorAll('.mode-icon-tip.tip-open').forEach(t => t.classList.remove('tip-open'));
+            if (!wasOpen) tip.classList.add('tip-open');
+        });
+    });
+    document.addEventListener('click', () => {
+        document.querySelectorAll('.mode-icon-tip.tip-open').forEach(t => t.classList.remove('tip-open'));
+    });
+}
+
+function updateFrModeIcons() {
+    document.querySelector('.fr-mode-toggle [data-mode="training"]')
+        ?.classList.toggle('mode-active',  includeTraining);
+    document.querySelector('.fr-mode-toggle [data-mode="competition"]')
+        ?.classList.toggle('mode-active', !includeTraining);
 }
 
 /* =========================================================

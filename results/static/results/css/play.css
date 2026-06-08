@@ -437,11 +437,11 @@ body.desktop .route-btn-delta:not(.two-lines) .route-btn-delta-abs::after  { con
    actual phones (the JS adds body.mobile based on UA)
 ========================================================= */
 
-body.mobile { --btn-bar-h: 76px; }
-body.mobile .play-btn          { font-size: 14px; }
-body.mobile .play-btn-label    { font-size: 14px; }
-body.mobile .route-btn-delta-rel { font-size: 14px; }
-body.mobile .route-btn-delta-abs { font-size: 12px; }
-body.mobile .play-end-title { font-size: 18px; }
-body.mobile .play-end-sub   { font-size: 14px; }
-body.mobile .play-end-btn   { font-size: 15px; padding: 14px 18px; }
+body.mobile { --btn-bar-h: 90px; }
+body.mobile .play-btn          { font-size: 16px; }
+body.mobile .play-btn-label    { font-size: 16px; }
+body.mobile .route-btn-delta-rel { font-size: 16px; }
+body.mobile .route-btn-delta-abs { font-size: 14px; }
+body.mobile .play-end-title { font-size: 22px; }
+body.mobile .play-end-sub   { font-size: 16px; }
+body.mobile .play-end-btn   { font-size: 17px; padding: 16px 20px; }

@@ -22,6 +22,7 @@ urlpatterns = [
 
     # Play
     path('play/',                            results_views.index,              name='results_home'),
+    path('play/random/',                     results_views.random_play,        name='random_play'),
     path('play/<int:file_id>/<str:mode>/',   results_views.play,               name='play'),
     path('play/get-files/',                  results_views.get_files,          name='play_get_files'),
     path('play/get-file/<int:file_id>/',     results_views.get_file,           name='play_get_file'),
