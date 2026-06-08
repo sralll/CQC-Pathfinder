@@ -167,3 +167,31 @@ body.mobile .nav-ham-panel .nav-home-btn    { padding: 9px 16px; display: flex; 
 
 /* Hide vertical dividers inside dropdowns */
 body.mobile .nav-ham-panel .nav-divider { display: none; }
+
+/* =========================================================
+   MOBILE SCALING — high-DPI phones get a noticeably taller
+   navbar with larger touch targets and readable text.
+   Applies when the device is a phone OR the viewport is narrow.
+========================================================= */
+
+body.mobile #navbar,
+@media (max-width: 700px) { #navbar { } }
+
+body.mobile #navbar { height: 44px; font-size: 14px; }
+body.mobile .nav-ham-btn { height: 44px; padding: 0 14px; }
+body.mobile .nav-ham-btn x-icon { font-size: 16px; }
+body.mobile .nav-ham-panel { top: 44px; }
+body.mobile .nav-results-link,
+body.mobile .nav-username,
+body.mobile .nav-team-static,
+body.mobile .nav-team-switcher { font-size: 14px; }
+body.mobile .nav-home-btn svg { width: 16px; height: 16px; }
+body.mobile .fr-nav-title { font-size: 14px; }
+body.mobile .nav-ham-panel .nav-results-link,
+body.mobile .nav-ham-panel .nav-username,
+body.mobile .nav-ham-panel .nav-team-static,
+body.mobile .nav-ham-panel .nav-team-switcher,
+body.mobile .nav-ham-panel .fr-toggle-label { font-size: 14px; padding-top: 11px; padding-bottom: 11px; }
+
+/* Pages that fix content below the navbar — update the offset */
+body.mobile #play-wrap { --navbar-h: 44px; }

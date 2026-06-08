@@ -17,6 +17,15 @@ html, body {
     background: #151515;
     color: #ccc;
     margin: 0;
+    /* Prevent the browser's edge-swipe "back" gesture from interfering with
+       swipe-to-advance during play */
+    overscroll-behavior-x: none;
+    overscroll-behavior-y: contain;
+}
+
+#play-wrap, #map-container {
+    overscroll-behavior: none;
+    touch-action: pan-y pinch-zoom;
 }
 
 /* =========================================================
@@ -282,9 +291,10 @@ body.training-mode #play-progress-fill {
 
 /* Non-complex CP: labeled variant — just add text styling */
 .play-btn.route-btn.route-btn-labeled {
-    color: #000;
+    color: #fff;
     font-weight: 700;
     line-height: 1;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.45);
 }
 
 /* ── Post-choice states (buttonsDisabled = true) ──────────── */
@@ -308,12 +318,12 @@ body.training-mode #play-progress-fill {
         0 2px 6px rgba(0,0,0,0.6);
 }
 
-/* Fastest route: just the trophy icon, no border effect — always black */
+/* Fastest route: just the trophy icon, no border effect — always white */
 .play-btn.route-btn.route-btn-fastest,
 .play-btn.route-btn.route-btn-fastest:disabled,
 .play-btn.route-btn.route-btn-fastest.active,
 .play-btn.route-btn.route-btn-fastest.active:disabled {
-    color: #000;
+    color: #fff;
     opacity: 1;
     cursor: default;
     pointer-events: none;
@@ -332,7 +342,8 @@ body.training-mode #play-progress-fill {
     display: block;
     line-height: 1;
     font-weight: 700;
-    color: rgba(0,0,0,0.85);
+    color: rgba(255,255,255,0.92);
+    text-shadow: 0 1px 2px rgba(0,0,0,0.45);
     white-space: nowrap;
 }
 
@@ -344,3 +355,91 @@ body.desktop .route-btn-delta:not(.two-lines) {
 }
 body.desktop .route-btn-delta:not(.two-lines) .route-btn-delta-abs::before { content: "("; }
 body.desktop .route-btn-delta:not(.two-lines) .route-btn-delta-abs::after  { content: ")"; }
+
+/* =========================================================
+   END-OF-FILE MODAL — appears when last CP is done and the
+   user tries to advance to the next control
+========================================================= */
+
+#play-end-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 5000;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0,0,0,0.55);
+    backdrop-filter: blur(2px);
+    -webkit-backdrop-filter: blur(2px);
+    animation: play-end-fade 0.18s ease-out;
+}
+#play-end-modal.open { display: flex; }
+
+@keyframes play-end-fade {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+}
+
+.play-end-card {
+    background: #1c1c1c;
+    border: 0.5px solid #333;
+    border-radius: 10px;
+    padding: 22px 22px 18px;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.7);
+    min-width: 280px;
+    max-width: 92vw;
+    text-align: center;
+}
+
+.play-end-title {
+    margin: 0 0 4px;
+    font-size: 16px;
+    font-weight: 600;
+    color: #fff;
+}
+.play-end-sub {
+    margin: 0 0 16px;
+    font-size: 12px;
+    color: #888;
+}
+
+.play-end-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.play-end-btn {
+    display: block;
+    background: #e07020;
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    padding: 11px 16px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.12s;
+    text-decoration: none;
+    font-family: inherit;
+}
+.play-end-btn:hover { background: #f08030; }
+.play-end-btn.secondary {
+    background: #262626;
+    color: #ccc;
+}
+.play-end-btn.secondary:hover { background: #333; color: #fff; }
+
+/* =========================================================
+   MOBILE TYPOGRAPHY — make tap targets and text larger on
+   actual phones (the JS adds body.mobile based on UA)
+========================================================= */
+
+body.mobile { --btn-bar-h: 76px; }
+body.mobile .play-btn          { font-size: 14px; }
+body.mobile .play-btn-label    { font-size: 14px; }
+body.mobile .route-btn-delta-rel { font-size: 14px; }
+body.mobile .route-btn-delta-abs { font-size: 12px; }
+body.mobile .play-end-title { font-size: 18px; }
+body.mobile .play-end-sub   { font-size: 14px; }
+body.mobile .play-end-btn   { font-size: 15px; padding: 14px 18px; }

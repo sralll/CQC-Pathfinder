@@ -54,6 +54,44 @@ function canAdvance() {
     return buttonsDisabled && currentCpIndex >= 0 && currentCpIndex < last;
 }
 
+// Last CP has been answered; user is trying to go to the next one
+function isFinished() {
+    const last = project.control_pairs.length - 1;
+    return buttonsDisabled && currentCpIndex === last;
+}
+
+function tryAdvance() {
+    if (canAdvance()) {
+        showControlPair(currentCpIndex + 1);
+    } else if (isFinished()) {
+        showEndOfFileModal();
+    }
+}
+
+function showEndOfFileModal() {
+    let modal = document.getElementById('play-end-modal');
+    if (!modal) {
+        modal = document.createElement('div');
+        modal.id = 'play-end-modal';
+        modal.innerHTML = `
+            <div class="play-end-card">
+                <h3 class="play-end-title">Projekt abgeschlossen</h3>
+                <p class="play-end-sub">Was möchtest du als nächstes tun?</p>
+                <div class="play-end-actions">
+                    <a class="play-end-btn"           href="/results/${fileId}/">Resultate ansehen</a>
+                    <a class="play-end-btn secondary" href="/play/">Zurück zur Projektliste</a>
+                    <a class="play-end-btn secondary" href="/">Startseite</a>
+                </div>
+            </div>`;
+        document.body.appendChild(modal);
+        // Close on backdrop click
+        modal.addEventListener('click', e => {
+            if (e.target === modal) modal.classList.remove('open');
+        });
+    }
+    modal.classList.add('open');
+}
+
 function initKeyNav() {
     const container = document.getElementById('map-container');
 
@@ -61,13 +99,13 @@ function initKeyNav() {
     document.addEventListener('keydown', e => {
         if (e.key === ' ' || e.key === 'Enter') {
             e.preventDefault();
-            if (canAdvance()) showControlPair(currentCpIndex + 1);
+            tryAdvance();
         }
     });
 
     // ── Desktop: double-click on map ─────────────────────────
     container.addEventListener('dblclick', () => {
-        if (canAdvance()) showControlPair(currentCpIndex + 1);
+        tryAdvance();
     });
 
     // ── Mobile: swipe right-to-left on map ───────────────────
@@ -88,7 +126,7 @@ function initKeyNav() {
         const dy = e.changedTouches[0].clientY - swipeStartY;
         swipeStartX = null;
         if (dx < -SWIPE_MIN_X && Math.abs(dy) < SWIPE_MAX_Y) {
-            if (canAdvance()) showControlPair(currentCpIndex + 1);
+            tryAdvance();
         }
     }, { passive: true });
 }

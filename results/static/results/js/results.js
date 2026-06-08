@@ -30,7 +30,7 @@ let competitionMode    = true;   // true = competition (trophy), false = trainin
 let activeLabelFilter  = null;      // single ID or null (like editor)
 let activeAuthorFilters = [];
 let activeKaderFilters  = [];
-let activeStatusFilter = null;      // one of 'neu','begonnen','erledigt', or null
+let activeStatusFilters = ['neu', 'begonnen'];   // default selection on first load
 let sortState = { key: 'last_edited', dir: -1 };
 
 /* =========================================================
@@ -128,7 +128,7 @@ function updateClearButton() {
     const hasFilters = activeLabelFilter !== null
         || activeAuthorFilters.length > 0
         || activeKaderFilters.length  > 0
-        || activeStatusFilter !== null;
+        || activeStatusFilters.length > 0;
     clearBtn.classList.toggle('visible', hasSearch || hasFilters);
 }
 
@@ -137,7 +137,7 @@ function clearSearch() {
     activeLabelFilter   = null;
     activeAuthorFilters = [];
     activeKaderFilters  = [];
-    activeStatusFilter = null;
+    activeStatusFilters = [];
     sortState = { key: 'last_edited', dir: -1 };
     applyFilters();
     updateClearButton();
@@ -161,8 +161,8 @@ function applyFilters() {
             || activeAuthorFilters.includes((f.author || '').trim());
         const matchKader  = !activeKaderFilters.length
             || activeKaderFilters.includes((f.team_name || '').trim());
-        const matchStatus = !activeStatusFilter
-            || fileStatus(f).label === activeStatusFilter;
+        const matchStatus = !activeStatusFilters.length
+            || activeStatusFilters.includes(fileStatus(f).label);
         return matchSearch && matchLabel && matchAuthor && matchKader && matchStatus;
     });
 
@@ -302,7 +302,7 @@ function updateFilterIcons() {
     document.querySelector('.col-label  .active-filter-icon')?.classList.toggle('active', activeLabelFilter !== null);
     document.querySelector('.col-author .active-filter-icon')?.classList.toggle('active', activeAuthorFilters.length > 0);
     document.querySelector('.col-kader  .active-filter-icon')?.classList.toggle('active', activeKaderFilters.length  > 0);
-    document.querySelector('.col-status .active-filter-icon')?.classList.toggle('active', activeStatusFilter !== null);
+    document.querySelector('.col-status .active-filter-icon')?.classList.toggle('active', activeStatusFilters.length > 0);
 }
 
 /* =========================================================
@@ -472,19 +472,21 @@ function renderStatusFilterDropdown() {
             <button class="filter-close-btn" onclick="event.stopPropagation(); closeAllFilters()" type="button">✕</button>
         </div>
         ${Object.values(STATUS).map(s => `
-            <div class="filter-option" onclick="event.stopPropagation(); setStatusFilter('${s.label}')">
+            <div class="filter-option" onclick="event.stopPropagation(); toggleStatusSelection('${s.label}')">
                 <span style="color:${s.color};font-weight:600;">${s.label}</span>
-                ${activeStatusFilter === s.label ? window.icon('square-check') : window.icon('square')}
+                ${activeStatusFilters.includes(s.label) ? window.icon('square-check') : window.icon('square')}
             </div>
         `).join('')}`;
 }
 
-window.setStatusFilter = function(label) {
-    activeStatusFilter = activeStatusFilter === label ? null : label;
+window.toggleStatusSelection = function(label) {
+    activeStatusFilters = activeStatusFilters.includes(label)
+        ? activeStatusFilters.filter(s => s !== label)
+        : [...activeStatusFilters, label];
     applyFilters();
     renderStatusFilterDropdown();
 };
-window.clearStatusFilters = function() { activeStatusFilter = null; applyFilters(); closeAllFilters(); };
+window.clearStatusFilters = function() { activeStatusFilters = []; applyFilters(); closeAllFilters(); };
 
 /* ── Filter data helpers ───────────────────────────────── */
 
@@ -572,7 +574,14 @@ function renderCards() {
         const card = document.createElement('div');
         card.className = 'play-card' + (multiTeam && f.team_name !== activeTeamName ? ' play-other-team' : '');
         const st = fileStatus(f);
-        card.style.background = `linear-gradient(to left, rgba(${st.rgb},0.40) 0%, rgba(${st.rgb},0) 65%), #1a1a1a`;
+        // Smoother gradient: two intermediate stops so the fall-off is gradual,
+        // and the colour reaches the dark base only at 100% rather than 65%.
+        card.style.background =
+            `linear-gradient(to left,
+                rgba(${st.rgb},0.45) 0%,
+                rgba(${st.rgb},0.25) 35%,
+                rgba(${st.rgb},0.08) 75%,
+                rgba(${st.rgb},0)    100%), #1a1a1a`;
         card.style.color = '#fff';
 
         const labelHtml = f.label
@@ -647,7 +656,7 @@ function renderMobileControls() {
     filterFields.forEach(({ field, label, toggle }) => {
         const active = field === 'label'  ? activeLabelFilter !== null
                      : field === 'author' ? activeAuthorFilters.length > 0
-                     : field === 'status' ? activeStatusFilter !== null
+                     : field === 'status' ? activeStatusFilters.length > 0
                      :                     activeKaderFilters.length  > 0;
         const btn = document.createElement('button');
         btn.className = 'play-ctrl-btn' + (active ? ' active' : '');

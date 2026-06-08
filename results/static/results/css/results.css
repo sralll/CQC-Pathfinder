@@ -535,3 +535,25 @@ html, body {
     /* Header background matches the page on mobile */
     #play-header { background: #151515; border-bottom-color: #1e1e1e; }
 }
+
+/* =========================================================
+   MOBILE TYPOGRAPHY — make text readable on actual phones,
+   independent of viewport width
+========================================================= */
+
+body.mobile #play-search          { font-size: 15px; padding: 10px 32px 10px 14px; }
+body.mobile #play-search-clear    { font-size: 18px; }
+body.mobile .play-card-name       { font-size: 15px; font-weight: 600; }
+body.mobile .play-card-cp         { font-size: 13px; }
+body.mobile .play-card-row2       { font-size: 13px; }
+body.mobile .play-card-date       { font-size: 12px; }
+body.mobile .play-ctrl-btn        { font-size: 13px; padding: 8px 14px; }
+body.mobile .mode-icon-tip        { padding: 6px; }
+body.mobile .mode-icon-tip x-icon { font-size: 18px; }
+body.mobile .mode-switch          { width: 38px; height: 22px; }
+body.mobile .mode-slider::before  { width: 16px; height: 16px; left: 3px; top: 3px; }
+body.mobile .mode-switch input:checked + .mode-slider::before { transform: translateX(16px); }
+body.mobile .play-empty-card      { font-size: 14px; }
+body.mobile #play-loading         { font-size: 14px; }
+body.mobile .play-filter-dropdown { font-size: 14px; }
+body.mobile .filter-option        { padding: 10px 14px; }

@@ -27,6 +27,8 @@ const PAGE = {
     view:           'graph',         // 'graph' | 'table'
     selectedAthlete: null,           // { id, name } or null = own stats
     athletes:       [],
+    tableRows:      [],              // raw rows from /stats/get-table
+    tableSort:      { key: null, dir: 1 }, // dir 1 = ascending, -1 = descending
 };
 
 /* =========================================================
@@ -40,6 +42,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     updateNavTitle();
     if (PAGE.isTrainer) {
         initTrainerControls();
+        initTableSortHandlers();
         loadAthletes();   // fire and forget — dropdown populates async
     }
     await loadStats();
@@ -156,10 +159,27 @@ function initTrainerControls() {
     const clearBtn = document.getElementById('trainer-athlete-clear');
     const dropdown = document.getElementById('trainer-athlete-dropdown');
 
-    search.addEventListener('focus', () => renderAthleteDropdown(search.value, true));
+    search.addEventListener('focus', () => {
+        // Clear the input on focus so the user can search again, but keep
+        // PAGE.selectedAthlete (and therefore the displayed stats) until they
+        // pick a different one.
+        search.value = '';
+        clearBtn.classList.remove('visible');
+        renderAthleteDropdown('', true);
+    });
     search.addEventListener('input', () => {
         clearBtn.classList.toggle('visible', !!search.value);
         renderAthleteDropdown(search.value, true);
+    });
+    search.addEventListener('blur', () => {
+        // If the user blurs without selecting anything, restore the previously
+        // selected athlete's name so the field reflects what's being shown.
+        setTimeout(() => {
+            if (!dropdown.classList.contains('open')) {
+                search.value = PAGE.selectedAthlete ? PAGE.selectedAthlete.name : '';
+                clearBtn.classList.toggle('visible', !!PAGE.selectedAthlete);
+            }
+        }, 200);
     });
     search.addEventListener('keydown', e => {
         if (e.key === 'Escape') { dropdown.classList.remove('open'); search.blur(); }
@@ -183,11 +203,10 @@ function initTrainerControls() {
 
 function applyView() {
     const isGraph = PAGE.view === 'graph';
-    document.getElementById('stats-grid').style.display       = isGraph ? '' : 'none';
+    document.getElementById('stats-grid').style.display = isGraph ? '' : 'none';
     const tableWrap = document.getElementById('stats-table-wrap');
     if (tableWrap) tableWrap.style.display = isGraph ? 'none' : 'block';
-    const picker = document.getElementById('trainer-athlete-picker');
-    if (picker)    picker.style.display = isGraph ? '' : 'none';
+    // Athlete picker is visible in both views — in table view it filters the table
 }
 
 async function loadAthletes() {
@@ -247,7 +266,12 @@ function selectAthlete(athlete) {
     const clearBtn = document.getElementById('trainer-athlete-clear');
     if (search)   search.value = athlete ? athlete.name : '';
     if (clearBtn) clearBtn.classList.toggle('visible', !!athlete);
-    loadStats();
+    if (PAGE.view === 'table') {
+        // Just re-filter cached rows; no fetch needed
+        renderTrainerTable(PAGE.tableRows);
+    } else {
+        loadStats();
+    }
 }
 
 function escapeHtml(s) {
@@ -287,33 +311,88 @@ async function loadGraphStats() {
 }
 
 async function loadTrainerTable() {
-    const mode = PAGE.competition ? 'competition' : 'training';
+    const mode  = PAGE.competition ? 'competition' : 'training';
+    const wrap  = document.getElementById('stats-table-wrap');
     const tbody = document.querySelector('#stats-table tbody');
-    if (tbody) tbody.style.opacity = '0.3';
-    const res = await fetch(`/stats/get-table/?mode=${mode}`);
-    if (!res.ok) {
-        if (tbody) {
-            tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;color:#666;padding:24px;">Fehler beim Laden der Daten</td></tr>';
-            tbody.style.opacity = '1';
+    if (wrap) wrap.classList.add('loading');
+    try {
+        const res = await fetch(`/stats/get-table/?mode=${mode}`);
+        if (!res.ok) {
+            if (tbody) {
+                tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;color:#666;padding:24px;">Fehler beim Laden der Daten</td></tr>';
+            }
+            return;
         }
-        return;
+        const data = await res.json();
+        PAGE.tableRows = Array.isArray(data) ? data : [];
+        renderTrainerTable(PAGE.tableRows);
+    } finally {
+        if (wrap) wrap.classList.remove('loading');
     }
-    const data = await res.json();
-    renderTrainerTable(Array.isArray(data) ? data : []);
+}
+
+// Numeric value used for column sort comparisons (NaN for "–"/missing)
+function tableSortValue(row, key) {
+    switch (key) {
+        case 'athlete':         return (row.athlete || '').toLowerCase();
+        case 'posten':          return Number(row.posten) || 0;
+        case 'avg_choice_time': return row.avg_choice_time == null ? NaN : Number(row.avg_choice_time);
+        case 'avg_error':       return row.avg_error       == null ? NaN : Number(row.avg_error);
+        case 'schnellste':      return row.schnellste      == null ? NaN : Number(row.schnellste);
+        case 'lt5':             return row.lt5             == null ? NaN : Number(row.lt5);
+        case 'lt10':            return row.lt10            == null ? NaN : Number(row.lt10);
+        case 'gt10':            return row.gt10            == null ? NaN : Number(row.gt10);
+        case 'sensitivity':     return row.sensitivity == null || row.sensitivity === '-' ? NaN : Number(row.sensitivity);
+        case 'roi_slope': {
+            const m = /^-?\d+(\.\d+)?/.exec(String(row.roi_slope || ''));
+            return m ? Number(m[0]) : NaN;
+        }
+        default: return 0;
+    }
 }
 
 function renderTrainerTable(rows) {
     const tbody = document.querySelector('#stats-table tbody');
     if (!tbody) return;
-    tbody.style.opacity = '1';
     tbody.innerHTML = '';
     if (!rows.length) {
         tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;color:#666;padding:24px;">Keine Daten vorhanden</td></tr>';
+        updateTableSortIndicators();
         return;
     }
+
+    // Always keep Kaderdurchschnitt as the top row
+    const summary = rows.find(r => String(r.athlete || '').includes('Kaderdurchschnitt'));
+    let athletes  = rows.filter(r => r !== summary);
+
+    // Apply athlete filter from picker (in table view only)
+    if (PAGE.selectedAthlete) {
+        athletes = athletes.filter(r => (r.athlete || '').trim() === PAGE.selectedAthlete.name.trim());
+    }
+
+    // Apply sort
+    const { key, dir } = PAGE.tableSort;
+    if (key) {
+        athletes.sort((a, b) => {
+            const va = tableSortValue(a, key);
+            const vb = tableSortValue(b, key);
+            // Push NaN to the end regardless of sort direction
+            const aMissing = (typeof va === 'number' && isNaN(va));
+            const bMissing = (typeof vb === 'number' && isNaN(vb));
+            if (aMissing && !bMissing) return 1;
+            if (!aMissing && bMissing) return -1;
+            if (aMissing && bMissing)  return 0;
+            if (va < vb) return -1 * dir;
+            if (va > vb) return  1 * dir;
+            return 0;
+        });
+    }
+
+    const ordered = summary ? [summary, ...athletes] : athletes;
+
     const fmtPct = v => (v == null ? '–' : `${Number(v).toFixed(1)}%`);
     const fmtSec = v => (v == null ? '–' : `${Number(v).toFixed(2)}s`);
-    for (const row of rows) {
+    for (const row of ordered) {
         const isSummary = String(row.athlete || '').includes('Kaderdurchschnitt');
         const tr = document.createElement('tr');
         if (isSummary) tr.className = 'stats-table-summary';
@@ -330,6 +409,34 @@ function renderTrainerTable(rows) {
             <td>${row.roi_slope ?? '–'}</td>`;
         tbody.appendChild(tr);
     }
+    updateTableSortIndicators();
+}
+
+function initTableSortHandlers() {
+    const headers = document.querySelectorAll('#stats-table thead th[data-sort]');
+    headers.forEach(th => {
+        th.style.cursor = 'pointer';
+        th.addEventListener('click', () => {
+            const key = th.dataset.sort;
+            if (PAGE.tableSort.key === key) {
+                PAGE.tableSort.dir *= -1;
+            } else {
+                PAGE.tableSort.key = key;
+                PAGE.tableSort.dir = (key === 'athlete') ? 1 : -1;
+            }
+            renderTrainerTable(PAGE.tableRows);
+        });
+    });
+}
+
+function updateTableSortIndicators() {
+    const { key, dir } = PAGE.tableSort;
+    document.querySelectorAll('#stats-table thead th[data-sort]').forEach(th => {
+        const ind = th.querySelector('.stats-th-sort');
+        if (!ind) return;
+        if (th.dataset.sort !== key) { ind.textContent = ''; return; }
+        ind.textContent = dir === 1 ? ' ↑' : ' ↓';
+    });
 }
 
 function renderCharts() {
@@ -346,12 +453,16 @@ function renderCharts() {
 function drawDonutLegend() {
     const wrap = document.getElementById('stats-donut-legend');
     if (!wrap) return;
-    wrap.innerHTML = CATEGORY_LABELS.map((_, i) =>
-        `<span class="stats-donut-legend-item">
+    wrap.innerHTML = CATEGORY_LABELS.map((_, i) => {
+        // For the crown entry, show only the crown (no dot) coloured green
+        if (i === 0) {
+            return `<span class="stats-donut-legend-item">${categoryLabelHtml(i, '13px')}</span>`;
+        }
+        return `<span class="stats-donut-legend-item">
             <span class="stats-donut-legend-dot" style="background:${USER_COLORS[i]}"></span>
             ${categoryLabelHtml(i, '11px')}
-        </span>`
-    ).join('');
+        </span>`;
+    }).join('');
 }
 
 /* =========================================================
@@ -461,7 +572,8 @@ function drawAvgChart() {
     const H = svg.clientHeight || 220;
     svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
 
-    const ML = 36, MR = 14, MT = 10, MB = 26;
+    // Reserve space at top for the legend
+    const ML = 36, MR = 14, MT = 24, MB = 26;
     const chartW = W - ML - MR;
     const chartH = H - MT - MB;
 
@@ -494,38 +606,53 @@ function drawAvgChart() {
     }
 
     const groupW = chartW / groups.length;
-    const barW   = Math.min(34, groupW * 0.26);
-    const gap    = Math.min(12, groupW * 0.08);
+    const teamBarW = Math.min(56, groupW * 0.42);
+    const userBarW = Math.max(10, teamBarW * 0.45);
 
     groups.forEach((g, gi) => {
         const groupCx = ML + gi * groupW + groupW / 2;
+        // Draw team bar behind (wider), then user bar in front (narrower) — both centered on groupCx
         [
-            { value: g.team, color: 'rgba(224,112,32,0.35)', who: 'Team' },
-            { value: g.user, color: '#e07020',               who: 'Du'   },
-        ].forEach((bar, bi) => {
-            const x = groupCx - barW - gap / 2 + bi * (barW + gap);
+            { value: g.team, color: 'rgba(224,112,32,0.42)', who: 'Team', width: teamBarW },
+            { value: g.user, color: '#e07020',               who: 'Du',   width: userBarW },
+        ].forEach(bar => {
+            const x = groupCx - bar.width / 2;
             const y = toY(bar.value);
             const rect = svgEl('rect');
             rect.setAttribute('x', x);
             rect.setAttribute('y', y);
-            rect.setAttribute('width', barW);
+            rect.setAttribute('width', bar.width);
             rect.setAttribute('height', Math.max(0, (MT + chartH) - y));
             rect.setAttribute('fill', bar.color);
             rect.setAttribute('rx', 2);
             rect.setAttribute('class', 'stats-hover-target');
             bindTooltip(rect, `${bar.who} · ${g.label}: ${bar.value.toFixed(2)}s`);
             svg.appendChild(rect);
-
-            const vlbl = svgEl('text');
-            vlbl.setAttribute('x', x + barW / 2);
-            vlbl.setAttribute('y', y - 4);
-            vlbl.setAttribute('text-anchor', 'middle');
-            vlbl.setAttribute('fill', '#999');
-            vlbl.setAttribute('font-size', '9');
-            vlbl.setAttribute('pointer-events', 'none');
-            vlbl.textContent = `${bar.value.toFixed(1)}s`;
-            svg.appendChild(vlbl);
         });
+
+        // Value label centered above each bar — team (offset left) and user (offset right)
+        const teamY = toY(g.team);
+        const userY = toY(g.user);
+        const teamLbl = svgEl('text');
+        teamLbl.setAttribute('x', groupCx - teamBarW * 0.30);
+        teamLbl.setAttribute('y', teamY - 4);
+        teamLbl.setAttribute('text-anchor', 'middle');
+        teamLbl.setAttribute('fill', '#888');
+        teamLbl.setAttribute('font-size', '9');
+        teamLbl.setAttribute('pointer-events', 'none');
+        teamLbl.textContent = `${g.team.toFixed(1)}s`;
+        svg.appendChild(teamLbl);
+
+        const userLbl = svgEl('text');
+        userLbl.setAttribute('x', groupCx + teamBarW * 0.30);
+        userLbl.setAttribute('y', userY - 4);
+        userLbl.setAttribute('text-anchor', 'middle');
+        userLbl.setAttribute('fill', '#ccc');
+        userLbl.setAttribute('font-size', '9');
+        userLbl.setAttribute('font-weight', '600');
+        userLbl.setAttribute('pointer-events', 'none');
+        userLbl.textContent = `${g.user.toFixed(1)}s`;
+        svg.appendChild(userLbl);
 
         const glbl = svgEl('text');
         glbl.setAttribute('x', groupCx);
@@ -535,6 +662,43 @@ function drawAvgChart() {
         glbl.setAttribute('font-size', '10');
         glbl.textContent = g.label;
         svg.appendChild(glbl);
+    });
+
+    // Legend at top: team (faded wide rect) | individual (solid narrow rect)
+    drawAvgLegend(svg, W);
+}
+
+function drawAvgLegend(svg, W) {
+    // Render the legend in the top-right of the SVG
+    const items = [
+        { label: 'Team',         color: 'rgba(224,112,32,0.42)', w: 14, h: 8 },
+        { label: 'Individuell',  color: '#e07020',               w: 6,  h: 10 },
+    ];
+    let x = W - 12;
+    const y = 4;
+    // Build right to left
+    items.slice().reverse().forEach(item => {
+        const t = svgEl('text');
+        t.setAttribute('y', y + 9);
+        t.setAttribute('fill', '#888');
+        t.setAttribute('font-size', '10');
+        t.setAttribute('text-anchor', 'end');
+        t.setAttribute('x', x);
+        t.textContent = item.label;
+        svg.appendChild(t);
+        // approximate text width
+        const textW = item.label.length * 5.2;
+        x -= textW + 4;
+
+        const rect = svgEl('rect');
+        rect.setAttribute('width',  item.w);
+        rect.setAttribute('height', item.h);
+        rect.setAttribute('rx', 1.5);
+        rect.setAttribute('fill', item.color);
+        rect.setAttribute('x', x - item.w);
+        rect.setAttribute('y', y + 1);
+        svg.appendChild(rect);
+        x -= item.w + 10;
     });
 }
 

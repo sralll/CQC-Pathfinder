@@ -361,3 +361,12 @@ body.mobile .fr-route-athletes {
 .fr-row-training td { color: #555; }
 .fr-row-training .fr-col-name { color: #666; }
 .fr-row-training .fr-col-total { color: #666; font-weight: 600; }
+
+/* =========================================================
+   MOBILE TYPOGRAPHY — readable on actual phones
+========================================================= */
+body.mobile #fr-table             { font-size: 14px; }
+body.mobile #fr-table th          { font-size: 13px; }
+body.mobile .fr-nav-title         { font-size: 15px; }
+body.mobile .fr-col-rank          { font-size: 13px; }
+body.mobile .fr-col-time          { width: 90px; }

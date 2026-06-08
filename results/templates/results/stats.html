@@ -95,18 +95,18 @@
         <table id="stats-table">
             <thead>
                 <tr>
-                    <th class="stats-th-name">Athlet</th>
-                    <th class="stats-th-num">Posten</th>
-                    <th class="stats-th-num" title="Durchschnittliche Entscheidungszeit">Ø Entsch.</th>
-                    <th class="stats-th-num" title="Durchschnittlicher Routenwahlfehler">Ø Fehler</th>
-                    <th class="stats-th-num stats-th-cat stats-th-crown" style="color:#4CAF50">
-                        <x-icon name="crown" size="13px"></x-icon>
+                    <th class="stats-th-name" data-sort="athlete">Athlet<span class="stats-th-sort"></span></th>
+                    <th class="stats-th-num"  data-sort="posten">Posten<span class="stats-th-sort"></span></th>
+                    <th class="stats-th-num"  data-sort="avg_choice_time" title="Durchschnittliche Entscheidungszeit">Ø Entsch.<span class="stats-th-sort"></span></th>
+                    <th class="stats-th-num"  data-sort="avg_error" title="Durchschnittlicher Routenwahlfehler">Ø Fehler<span class="stats-th-sort"></span></th>
+                    <th class="stats-th-num stats-th-cat stats-th-crown" data-sort="schnellste" style="color:#4CAF50">
+                        <x-icon name="crown" size="13px"></x-icon><span class="stats-th-sort"></span>
                     </th>
-                    <th class="stats-th-num stats-th-cat" style="color:#FFC107">&lt; 5%</th>
-                    <th class="stats-th-num stats-th-cat" style="color:#FF9800">5–10%</th>
-                    <th class="stats-th-num stats-th-cat" style="color:#F44336">&gt; 10%</th>
-                    <th class="stats-th-num" title="Fehlerpotential-Erkennung — Variation der Entscheidungszeit, wenn das Fehlerpotential hoch ist">Sensit.</th>
-                    <th class="stats-th-num" title="Zeitsensitivität — Veränderung der Routenwahlfehler pro Sekunde längere Entscheidungszeit (Konfidenz in Klammer)">ROI</th>
+                    <th class="stats-th-num stats-th-cat" data-sort="lt5"  style="color:#FFC107">&lt; 5%<span class="stats-th-sort"></span></th>
+                    <th class="stats-th-num stats-th-cat" data-sort="lt10" style="color:#FF9800">5–10%<span class="stats-th-sort"></span></th>
+                    <th class="stats-th-num stats-th-cat" data-sort="gt10" style="color:#F44336">&gt; 10%<span class="stats-th-sort"></span></th>
+                    <th class="stats-th-num" data-sort="sensitivity" title="Fehlerpotential-Erkennung — Variation der Entscheidungszeit, wenn das Fehlerpotential hoch ist">Sensit.<span class="stats-th-sort"></span></th>
+                    <th class="stats-th-num" data-sort="roi_slope"   title="Zeitsensitivität — Veränderung der Routenwahlfehler pro Sekunde längere Entscheidungszeit (Konfidenz in Klammer)">ROI<span class="stats-th-sort"></span></th>
                 </tr>
             </thead>
             <tbody></tbody>
