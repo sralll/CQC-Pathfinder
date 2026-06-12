@@ -30,6 +30,26 @@ PULL = "pull"
 _MD5_CHUNK = 1 << 20  # 1 MiB
 
 
+def _same(local_entry, remote_entry):
+    """Decide whether a local file already matches a remote object.
+
+    Single-part uploads: remote ETag == file MD5, so we verify both size and
+    hash. Multipart uploads (boto3 default >= 8 MB): ETag is
+    '<md5-of-part-md5s>-<numparts>', which can't be reconstructed without
+    knowing the original part boundaries -- fall back to size-only equality
+    in that case. This is what AWS CLI / rclone also do.
+    """
+    if local_entry is None or remote_entry is None:
+        return False
+    lsize, lmd5 = local_entry
+    rsize, retag = remote_entry
+    if lsize != rsize:
+        return False
+    if "-" in retag:
+        return True
+    return lmd5 == retag
+
+
 def _r2_client():
     endpoint = os.environ.get("R2_ENDPOINT_URL")
     access_key = os.environ.get("R2_ACCESS_KEY_ID")
@@ -147,8 +167,8 @@ class Command(BaseCommand):
             remote = _remote_index(client, bucket, sub)
 
             if direction == PUSH:
-                for rel, (lsize, lmd5) in local.items():
-                    if remote.get(rel) == (lsize, lmd5):
+                for rel, local_entry in local.items():
+                    if _same(local_entry, remote.get(rel)):
                         continue
                     client.upload_file(
                         str(local_dir / rel), bucket, f"{sub}/{rel}"
@@ -176,8 +196,8 @@ class Command(BaseCommand):
                         f"Django service to override."
                     )
 
-                for rel, (rsize, retag) in remote.items():
-                    if local.get(rel) == (rsize, retag):
+                for rel, remote_entry in remote.items():
+                    if _same(local.get(rel), remote_entry):
                         continue
                     dst = local_dir / rel
                     dst.parent.mkdir(parents=True, exist_ok=True)
