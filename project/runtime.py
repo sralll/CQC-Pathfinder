@@ -6,7 +6,6 @@ The same algorithm is implemented in JavaScript in
 
 Used from:
     * `project/migrations/0002_migrate_data_from_publishedfile.py`
-    * `results/migrations/0002_migrate_data_from_userresult.py`
     * `results/management/commands/recalc_route_runtimes.py`
 """
 
@@ -37,6 +36,30 @@ def _normalize_turn_rad(angle):
 
 def _round_noA(value):
     return math.floor(value * 10 + 0.5) / 10
+
+
+def _scale_factor(scale):
+    try:
+        scale = float(scale)
+    except (TypeError, ValueError):
+        return 1.0
+    return scale if scale > 0 else 1.0
+
+
+def noa_distance_window(scale=None):
+    return NOA_CLUSTER_WINDOW_M / (PX_TO_M * _scale_factor(scale))
+
+
+def _scaled_noA_points(points, scale=None):
+    factor = _scale_factor(scale)
+    out = []
+    for point in points or []:
+        x = point.get("x")
+        y = point.get("y")
+        if not isinstance(x, (int, float)) or not isinstance(y, (int, float)):
+            continue
+        out.append({"x": x * factor, "y": y * factor})
+    return out
 
 
 def _simplified_noA_points(points):
@@ -135,7 +158,7 @@ def calc_route_noA_old_windowed(rP, scale=None):
 
 def calc_route_noA(rP, scale=None):
     """Return the fractional turn penalty for a route polyline."""
-    rP = _simplified_noA_points(rP)
+    rP = _simplified_noA_points(_scaled_noA_points(rP, scale))
     if not rP or len(rP) < 3:
         return 0
 
@@ -228,13 +251,14 @@ def calc_route_runtime(length_m, noA, elevation_m):
     return length_m / adj_speed + noA_penalty
 
 
-def calc_route_length(rP):
+def calc_route_length(rP, scale=None):
     """Polyline length in METRES (matches the editor's `calcRouteLength`)."""
     if not rP or len(rP) < 2:
         return 0
+    factor = _scale_factor(scale)
     total = 0.0
     for i in range(1, len(rP)):
-        dx = rP[i]['x'] - rP[i - 1]['x']
-        dy = rP[i]['y'] - rP[i - 1]['y']
+        dx = (rP[i]['x'] - rP[i - 1]['x']) * factor
+        dy = (rP[i]['y'] - rP[i - 1]['y']) * factor
         total += math.hypot(dx, dy) * PX_TO_M
     return round(total)

@@ -2,7 +2,7 @@ from django.db import migrations
 
 # Canonical noA + run_time implementation lives in project/runtime.py so the
 # editor (JS) and every backend caller agree on the numbers.
-from project.runtime import calc_route_noA, calc_route_runtime
+from project.runtime import calc_route_length, calc_route_noA, calc_route_runtime
 
 
 def to_int(value):
@@ -25,6 +25,9 @@ def migrate_data(apps, schema_editor):
     ControlPair = apps.get_model('project', 'ControlPair')
     Route = apps.get_model('project', 'Route')
     Team = apps.get_model('account', 'Team')
+
+    migrated_files = 0
+    migrated_routes = 0
 
     for old in OldFile.objects.all():
         data = old.data or {}
@@ -53,6 +56,7 @@ def migrate_data(apps, schema_editor):
             batch_progress=old.batch_progress,
             last_edited=old.last_edited,
         )
+        migrated_files += 1
 
         for cp_order, cp_data in enumerate(data.get('cP', [])):
             cp = ControlPair.objects.create(
@@ -64,13 +68,13 @@ def migrate_data(apps, schema_editor):
             )
             for route_order, route_data in enumerate(cp_data.get('route', [])):
                 rP        = route_data.get('rP') or []
-                length    = to_int(route_data.get('length'))
                 elevation = to_int(route_data.get('elevation'))
-                # Recompute noA + run_time from the polyline using the
-                # current shared algorithm so legacy data ends up on the
-                # same footing as anything created by the new editor.
-                new_noA      = calc_route_noA(rP, file_scale) if len(rP) >= 3 else 0
-                new_run_time = calc_route_runtime(length, new_noA, elevation)
+                # Recompute length, noA, and run_time from the polyline using
+                # the project scale so legacy data lands on the same footing
+                # as routes created in the new editor.
+                new_length   = calc_route_length(rP, file_scale)
+                new_noA      = calc_route_noA(rP, file_scale)
+                new_run_time = calc_route_runtime(new_length, new_noA, elevation)
 
                 Route.objects.create(
                     control_pair=cp,
@@ -78,10 +82,16 @@ def migrate_data(apps, schema_editor):
                     rP=rP,
                     noA=new_noA,
                     pos=to_float(route_data.get('pos')),
-                    length=length,
+                    length=new_length,
                     run_time=new_run_time,
                     elevation=elevation,
                 )
+                migrated_routes += 1
+
+    print(
+        f"Migrated {migrated_files} files and {migrated_routes} routes "
+        "with recalculated length, noA, and run_time."
+    )
 
 
 class Migration(migrations.Migration):
