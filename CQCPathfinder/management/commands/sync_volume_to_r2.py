@@ -158,6 +158,24 @@ class Command(BaseCommand):
                     client.delete_object(Bucket=bucket, Key=f"{sub}/{rel}")
                     total_deleted += 1
             else:
+                # Safety: if remote returns zero objects while local has files,
+                # the most likely cause is a misconfig (wrong R2_ENDPOINT_URL or
+                # R2_BUCKET) -- not an intentional wipe. Refuse unless the user
+                # explicitly opts in via ALLOW_PULL_WIPE.
+                if (
+                    len(remote) == 0
+                    and len(local) > 0
+                    and os.environ.get("ALLOW_PULL_WIPE", "").lower()
+                    not in ("1", "true", "yes")
+                ):
+                    raise CommandError(
+                        f"[pull] {sub}: remote prefix is empty but local has "
+                        f"{len(local)} file(s). Refusing to wipe local volume "
+                        f"-- this usually means R2_ENDPOINT_URL or R2_BUCKET "
+                        f"is misconfigured. Set ALLOW_PULL_WIPE=true on the "
+                        f"Django service to override."
+                    )
+
                 for rel, (rsize, retag) in remote.items():
                     if local.get(rel) == (rsize, retag):
                         continue
