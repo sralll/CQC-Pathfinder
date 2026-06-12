@@ -235,6 +235,7 @@ def submit_result(request):
             user=request.user,
             control_pair=cp,
             defaults={
+                'team':           getattr(request.user.profile, 'active_team', None),
                 'selected_route': route,
                 'choice_time':    choice_time,
                 'competition':    competition,
@@ -599,7 +600,13 @@ def get_user_stats(request):
 
     # Compare against everyone sharing the requester's active team
     # (falls back to "just the target user" if there's no active team)
-    team_filter = Q(user__profile__active_team=active_team) if active_team else Q(user=target_user)
+    if active_team:
+        team_filter = (
+            Q(team=active_team) |
+            Q(team__isnull=True, user__profile__active_team=active_team)
+        )
+    else:
+        team_filter = Q(user=target_user)
 
     choices = list(
         Choice.objects
@@ -740,6 +747,10 @@ def get_stats_table(request):
         choices = list(
             Choice.objects
                   .filter(competition=competition_flag, user_id__in=team_user_ids)
+                  .filter(
+                      Q(team=active_team) |
+                      Q(team__isnull=True, user__profile__active_team=active_team)
+                  )
                   .select_related('selected_route')
         )
         per_user = {}

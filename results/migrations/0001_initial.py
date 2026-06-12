@@ -11,6 +11,7 @@ class Migration(migrations.Migration):
     initial = True
 
     dependencies = [
+        ("account", "0002_migrate_data_from_accounts"),
         ("project", "0003_create_editor_settings_for_existing_users"),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]
@@ -39,6 +40,16 @@ class Migration(migrations.Migration):
                         on_delete=django.db.models.deletion.SET_NULL,
                         related_name="choices",
                         to="project.controlpair",
+                    ),
+                ),
+                (
+                    "team",
+                    models.ForeignKey(
+                        blank=True,
+                        null=True,
+                        on_delete=django.db.models.deletion.SET_NULL,
+                        related_name="choices",
+                        to="account.team",
                     ),
                 ),
                 (

@@ -3,6 +3,7 @@ from django.utils import timezone
 
 class Choice(models.Model):
     user = models.ForeignKey('auth.User', on_delete=models.SET_NULL, null=True, blank=True, related_name='choices')
+    team = models.ForeignKey('account.Team', on_delete=models.SET_NULL, null=True, blank=True, related_name='choices')
     control_pair = models.ForeignKey('project.ControlPair', on_delete=models.SET_NULL, null=True, blank=True, related_name='choices')
     selected_route = models.ForeignKey('project.Route', on_delete=models.SET_NULL, null=True, blank=True, related_name='selected_choices')
 

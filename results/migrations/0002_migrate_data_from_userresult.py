@@ -6,18 +6,25 @@ def migrate_data(apps, schema_editor):
     OldResult = apps.get_model('play', 'UserResult')
     Choice = apps.get_model('results', 'Choice')
     ControlPair = apps.get_model('project', 'ControlPair')
+    Team = apps.get_model('account', 'Team')
 
     print("Skipping route runtime recalculation; project.0002 already populated Route.noA and Route.run_time.")
 
-    control_pairs_by_key = {}
-    for cp_id, file_name, cp_order in (
+    team_ids_by_name = dict(Team.objects.values_list('name', 'id'))
+
+    control_pairs_by_team_key = {}
+    control_pairs_by_file_key = {}
+    for cp_id, file_name, team_name, cp_order in (
         ControlPair.objects
-        .select_related('file')
-        .values_list('id', 'file__name', 'order')
+        .select_related('file', 'file__team')
+        .values_list('id', 'file__name', 'file__team__name', 'order')
         .order_by('id')
     ):
-        # Matches the old migration's `.first()` behavior when filenames are not unique.
-        control_pairs_by_key.setdefault((file_name, cp_order), cp_id)
+        # Prefer the old UserResult.kader snapshot. The same filename can exist
+        # in multiple teams, so filename + CP order alone can attach choices to
+        # the wrong migrated File/ControlPair.
+        control_pairs_by_team_key.setdefault((file_name, cp_order, team_name), cp_id)
+        control_pairs_by_file_key.setdefault((file_name, cp_order), cp_id)
 
     routes_by_key = {}
     for route_id, cp_id, route_order in Route.objects.values_list('id', 'control_pair_id', 'order').order_by('id'):
@@ -35,9 +42,15 @@ def migrate_data(apps, schema_editor):
             Choice.objects.bulk_create(staged, batch_size=batch_size, ignore_conflicts=True)
             staged.clear()
 
-    for old in OldResult.objects.all().iterator(chunk_size=batch_size):
+    for old in OldResult.objects.select_related('kader').all().iterator(chunk_size=batch_size):
         processed += 1
-        cp_id = control_pairs_by_key.get((old.filename, old.control_pair_index))
+        team_name = old.kader.name if old.kader_id else None
+        team_id = team_ids_by_name.get(team_name)
+        cp_id = control_pairs_by_team_key.get(
+            (old.filename, old.control_pair_index, team_name)
+        )
+        if not cp_id:
+            cp_id = control_pairs_by_file_key.get((old.filename, old.control_pair_index))
         if not cp_id:
             missing_cp += 1
             continue
@@ -50,6 +63,7 @@ def migrate_data(apps, schema_editor):
 
         staged.append(Choice(
             user_id=old.user_id,
+            team_id=team_id,
             control_pair_id=cp_id,
             selected_route_id=selected_route_id,
             choice_time=old.choice_time,
