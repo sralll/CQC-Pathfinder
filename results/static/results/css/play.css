@@ -120,9 +120,31 @@ body.desktop #play-stats-panel {
 }
 
 #play-stats-panel.visible {
-    max-height: 160px;
+    max-height: 200px;
     border-bottom: 0.5px solid #2e2e2e;
 }
+
+#play-stats-header {
+    display: flex;
+    justify-content: center;
+    align-items: baseline;
+    gap: 12px;
+    padding: 6px 5px 2px;
+    white-space: nowrap;
+    line-height: 1.3;
+}
+.stats-choice-total {
+    font-size: 14px;
+    font-weight: 700;
+    color: #ddd;
+}
+.stats-choice-sub {
+    font-size: 10px;
+    font-weight: 400;
+    color: #666;
+}
+body.desktop .stats-choice-total { font-size: 16px; }
+body.desktop .stats-choice-sub   { font-size: 11px; }
 
 #play-stats-inner {
     display: flex;
@@ -175,6 +197,45 @@ body.desktop #play-stats-panel {
 
 body.desktop .stats-total { font-size: 12px; }
 body.desktop .stats-row   { font-size: 11px; }
+
+/* Inline icon inside a stats-row label (used for elevation + angle/corners
+   so the row stays compact on narrow phones) */
+.stats-icon {
+    display: inline-flex;
+    align-items: center;
+    vertical-align: -0.15em;
+    margin-right: 2px;
+    color: inherit;
+}
+
+/* =========================================================
+   COUNTDOWN BAR  (complex-CP reveal buffer indicator)
+========================================================= */
+
+#play-countdown {
+    height: 3px;
+    flex-shrink: 0;
+    width: 100%;
+    background: #c43030;     /* visible once the grey fill empties */
+    display: none;
+}
+body.desktop #play-countdown { width: min(100%, 100vh); }
+#play-countdown.active { display: block; }
+
+#play-countdown-fill {
+    height: 100%;
+    width: 100%;
+    background: #cccccc;     /* bright grey when full */
+    /* transition duration set inline by JS */
+    transform-origin: left center;
+}
+
+/* When the buffer is over, the now fully-red bar pulses until selection. */
+#play-countdown.pulsing { animation: countdown-pulse 0.7s ease-in-out infinite; }
+@keyframes countdown-pulse {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: 0.35; }
+}
 
 /* =========================================================
    BUTTON BAR
@@ -445,3 +506,14 @@ body.mobile .route-btn-delta-abs { font-size: 14px; }
 body.mobile .play-end-title { font-size: 22px; }
 body.mobile .play-end-sub   { font-size: 16px; }
 body.mobile .play-end-btn   { font-size: 17px; padding: 16px 20px; }
+body.mobile .stats-choice-total { font-size: 18px; }
+body.mobile .stats-choice-sub   { font-size: 13px; }
+
+/* Icon-only end-of-file action button (e.g. home) */
+.play-end-btn.play-end-btn-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 9px 16px;
+}
+.play-end-btn.play-end-btn-icon svg { display: block; }

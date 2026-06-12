@@ -2165,53 +2165,25 @@ function send_pathfinding() {
         if (!response.ok) {
             throw new Error("Network response was not ok");
         }
-
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder("utf-8");
-        let buffer = "";
-
-        function read() {
-            return reader.read().then(({ done, value }) => {
-                if (done) {
-                    pfController = null; // clear controller
-                    return;
-                }
-
-                buffer += decoder.decode(value, { stream: true });
-
-                // Split on SSE messages
-                let parts = buffer.split("\n\n");
-                buffer = parts.pop(); // incomplete last part
-
-                for (const part of parts) {
-                    const dataLines = part.split("\n").filter(line => line.startsWith("data: "));
-                    if (dataLines.length === 0) continue;
-
-                    const dataString = dataLines.map(line => line.slice(5).trim()).join("\n");
-
-                    try {
-                        const data = JSON.parse(dataString);
-
-                        if (data.waypoint !== undefined && data.total !== undefined) {
-                            alertBox.innerHTML = renderProgressBar(data.waypoint, data.total);
-                        } else if (data.final_path !== undefined) {
-                            alertBox.innerHTML = "Route generiert";
-                            addFinalPathAsRoute(data.final_path);
-                            markUnsaved();
-                        } else if (data.error) {
-                            alertBox.innerHTML = data.error;
-                        }
-
-                    } catch (e) {
-                        console.error("Error parsing SSE JSON", e);
-                    }
-                }
-
-                return read();
-            });
+        return response.json();
+    }).then(data => {
+        if (data.error) {
+            alertBox.innerHTML = data.error;
+            pfController = null;
+            return;
         }
-
-        return read();
+        const routes = data.routes || [];
+        if (!routes.length) {
+            alertBox.innerHTML = "Keine Route gefunden.";
+            pfController = null;
+            return;
+        }
+        for (const route of routes) {
+            addFinalPathAsRoute(route);
+        }
+        markUnsaved();
+        alertBox.innerHTML = routes.length > 1 ? `${routes.length} Routen generiert` : "Route generiert";
+        pfController = null;
     }).catch(err => {
         if (err.name === "AbortError") {
             alertBox.innerHTML = "<span style='color:red;'>Pathfinding abgebrochen</span>";

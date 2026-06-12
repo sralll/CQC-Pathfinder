@@ -7,20 +7,6 @@
 {% endblock %}
 
 {% block nav_content %}
-<div class="nav-mode-toggle">
-    <div class="mode-icon-tip" data-mode="training">
-        <x-icon name="book-open" size="14px"></x-icon>
-        <div class="mode-tip-box"><b>Trainingsmodus</b></div>
-    </div>
-    <label class="mode-switch">
-        <input type="checkbox" id="mode-toggle-input" checked>
-        <span class="mode-slider"></span>
-    </label>
-    <div class="mode-icon-tip mode-active" data-mode="competition">
-        <x-icon name="trophy" size="14px"></x-icon>
-        <div class="mode-tip-box"><b>Wettkampfmodus</b></div>
-    </div>
-</div>
 <div class="nav-center">
     <span id="stats-nav-title" class="fr-nav-title">Statistik</span>
 </div>
@@ -33,19 +19,42 @@
 {% block content %}
 <div id="play-wrap" data-is-trainer="{% if is_trainer %}1{% else %}0{% endif %}">
 
-    {% if is_trainer %}
-    <div id="trainer-bar">
-        <div class="trainer-view-toggle">
-            <button class="trainer-view-btn active" data-view="graph">Diagramm</button>
-            <button class="trainer-view-btn" data-view="table">Tabelle</button>
+    <div id="stats-header">
+        <!-- 3-way slider toggle: Training | Competition | Infinity -->
+        <div class="stats-3way" data-mode="competition" role="radiogroup" aria-label="Modus">
+            <button class="stats-3way-stop" data-mode="training" aria-label="Training">
+                <x-icon name="book-open" size="14px"></x-icon>
+            </button>
+            <button class="stats-3way-stop" data-mode="competition" aria-label="Wettkampf">
+                <x-icon name="trophy" size="14px"></x-icon>
+            </button>
+            <button class="stats-3way-stop" data-mode="random" aria-label="Infinity">
+                <x-icon name="infinity" size="14px"></x-icon>
+            </button>
+            <div class="stats-3way-thumb" id="stats-3way-thumb">
+                <x-icon name="trophy" size="16px"></x-icon>
+            </div>
+        </div>
+
+        {% if is_trainer %}
+        <div class="stats-2way" data-view="graph" aria-label="Ansicht">
+            <button class="stats-2way-stop trainer-view-btn active" data-view="graph" aria-label="Diagramm">
+                <x-icon name="chart-pie" size="14px"></x-icon>
+            </button>
+            <button class="stats-2way-stop trainer-view-btn" data-view="table" aria-label="Tabelle">
+                <x-icon name="table-cells" size="14px"></x-icon>
+            </button>
+            <div class="stats-2way-thumb" id="stats-2way-thumb">
+                <x-icon name="chart-pie" size="16px"></x-icon>
+            </div>
         </div>
         <div id="trainer-athlete-picker">
             <input type="text" id="trainer-athlete-search" placeholder="Athlet auswählen…" autocomplete="off">
             <button id="trainer-athlete-clear" type="button" title="Zurücksetzen">×</button>
             <div id="trainer-athlete-dropdown" class="trainer-dropdown"></div>
         </div>
+        {% endif %}
     </div>
-    {% endif %}
 
     <div id="stats-grid">
 

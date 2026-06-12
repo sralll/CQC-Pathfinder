@@ -9,6 +9,77 @@ import traceback
 from django.conf import settings
 import os
 import mimetypes
+import tempfile
+import threading
+
+
+_mask_generation_jobs = {}
+_mask_generation_jobs_lock = threading.Lock()
+
+
+def _normalize_order_payload(control_pairs):
+    """Keep relative order but make CP and route orders contiguous from zero."""
+    if not isinstance(control_pairs, list):
+        return []
+    control_pairs.sort(key=lambda cp: cp.get('order', 0) if isinstance(cp, dict) else 0)
+    for cp_order, cp in enumerate(control_pairs):
+        if not isinstance(cp, dict):
+            continue
+        cp['order'] = cp_order
+        routes = cp.get('routes')
+        if not isinstance(routes, list):
+            cp['routes'] = []
+            continue
+        routes.sort(key=lambda route: route.get('order', 0) if isinstance(route, dict) else 0)
+        for route_order, route in enumerate(routes):
+            if isinstance(route, dict):
+                route['order'] = route_order
+    return control_pairs
+
+
+class _MaskGenerationJob:
+    def __init__(self, key, event_base):
+        self.key = key
+        self.event_base = event_base
+        self.history = []
+        self.subscribers = set()
+        self.done = False
+
+    def _format_event(self, event):
+        import json as _json
+        return f"data: {_json.dumps(event)}\n\n"
+
+    async def publish(self, payload):
+        event = {**self.event_base, **payload}
+        with _mask_generation_jobs_lock:
+            self.history.append(event)
+            if payload.get('done') or payload.get('error'):
+                self.done = True
+            subscribers = list(self.subscribers)
+        for queue in subscribers:
+            queue.put_nowait(event)
+        return event
+
+    async def stream(self):
+        import asyncio
+        queue = asyncio.Queue()
+        with _mask_generation_jobs_lock:
+            history = list(self.history)
+            if not self.done:
+                self.subscribers.add(queue)
+        try:
+            for event in history:
+                yield self._format_event(event)
+                if event.get('done') or event.get('error'):
+                    return
+            while True:
+                event = await queue.get()
+                yield self._format_event(event)
+                if event.get('done') or event.get('error'):
+                    return
+        finally:
+            with _mask_generation_jobs_lock:
+                self.subscribers.discard(queue)
 
 
 def _create_db_snapshot(file, user, trigger):
@@ -452,7 +523,7 @@ def save_file(request):
 
         # Rebuild control pairs atomically using bulk_create (2 INSERTs vs N×M)
         from django.db import transaction as _tx
-        cp_data_list = data.get('control_pairs', [])
+        cp_data_list = _normalize_order_payload(data.get('control_pairs', []))
         with _tx.atomic():
             ControlPair.objects.filter(file=file).delete()   # cascades to routes
 
@@ -533,14 +604,16 @@ def delete_element(request):
 
         if element_type == 'control_pair':
             db_id = data.get('db_id')
-            ControlPair.objects.filter(id=db_id, file=file).delete()
+            cp = get_object_or_404(ControlPair, id=db_id, file=file)
+            cp.delete()
             return JsonResponse({'status': 'ok', 'last_edited': _touch_file()})
 
         elif element_type == 'route':
             db_id    = data.get('db_id')
             cp_db_id = data.get('cp_db_id')
             cp = get_object_or_404(ControlPair, id=cp_db_id, file=file)
-            Route.objects.filter(id=db_id, control_pair=cp).delete()
+            route = get_object_or_404(Route, id=db_id, control_pair=cp)
+            route.delete()
             return JsonResponse({'status': 'ok', 'last_edited': _touch_file()})
 
         return JsonResponse({'error': f'Unknown type: {element_type}'}, status=400)
@@ -605,7 +678,9 @@ def save_element(request):
             cp_db_id = cp_data.get('db_id')   # separate from frontend order-based id
 
             if cp_db_id:
-                cp = get_object_or_404(ControlPair, id=cp_db_id, file=file)
+                cp = ControlPair.objects.filter(id=cp_db_id, file=file).first()
+                if not cp:
+                    return JsonResponse({'error': 'Control pair does not belong to this file'}, status=404)
             else:
                 cp = ControlPair(file=file)
 
@@ -627,10 +702,14 @@ def save_element(request):
             route_data  = data.get('route', {})
             route_db_id = route_data.get('db_id')
 
-            cp = get_object_or_404(ControlPair, id=cp_db_id, file=file)
+            cp = ControlPair.objects.filter(id=cp_db_id, file=file).first()
+            if not cp:
+                return JsonResponse({'error': 'Control pair does not belong to this file'}, status=404)
 
             if route_db_id:
-                route = get_object_or_404(Route, id=route_db_id, control_pair=cp)
+                route = Route.objects.filter(id=route_db_id, control_pair=cp).first()
+                if not route:
+                    return JsonResponse({'error': 'Route does not belong to this control pair'}, status=404)
             else:
                 route = Route(control_pair=cp)
 
@@ -784,6 +863,7 @@ async def generate_mask(request):
 
     filename  = body.get('filename')
     cqc_scale = body.get('scale')
+    file_id   = body.get('file_id')
     if not filename or not cqc_scale:
         return HttpResponse("Missing filename or scale", status=400)
     try:
@@ -798,10 +878,61 @@ async def generate_mask(request):
     if not os.path.exists(map_path):
         return HttpResponseNotFound(f"Map '{filename}' not found.")
 
+    if file_id is not None:
+        try:
+            file_id = int(file_id)
+        except (TypeError, ValueError):
+            return HttpResponse("Invalid file_id", status=400)
+
+        def _check_file():
+            return File.objects.filter(
+                id=file_id,
+                deleted=False,
+                team=request.user.profile.active_team,
+                map_file=filename,
+            ).exists()
+
+        if not await sync_to_async(_check_file)():
+            return HttpResponse("file_id does not match the requested map file", status=409)
+
+    active_team_id = await sync_to_async(lambda: request.user.profile.active_team_id)()
+    event_base = {
+        'file_id': file_id,
+        'filename': filename,
+        'map_file': filename,
+        'mask_file': mask_filename,
+    }
+    job_key = (active_team_id, file_id if file_id is not None else filename)
+    with _mask_generation_jobs_lock:
+        existing_job = _mask_generation_jobs.get(job_key)
+        if existing_job and existing_job.done:
+            _mask_generation_jobs.pop(job_key, None)
+            existing_job = None
+        if existing_job:
+            job = existing_job
+            owns_job = False
+        else:
+            job = _MaskGenerationJob(job_key, event_base)
+            _mask_generation_jobs[job_key] = job
+            owns_job = True
+
+    if not owns_job:
+        print(f"[SSE] ATTACH file={filename}", flush=True)
+        resp = StreamingHttpResponse(job.stream(), content_type="text/event-stream")
+        resp["Cache-Control"] = "no-cache"
+        resp["X-Accel-Buffering"] = "no"
+        return resp
+
+    def _drop_mask_generation_job():
+        with _mask_generation_jobs_lock:
+            if _mask_generation_jobs.get(job_key) is job:
+                _mask_generation_jobs.pop(job_key, None)
+
     # ── Load image + model (sync I/O → run in executor) ───────────────────
     try:
         import onnxruntime as ort
     except ImportError:
+        _drop_mask_generation_job()
         return HttpResponse("onnxruntime not installed", status=500)
 
     def _load():
@@ -819,9 +950,11 @@ async def generate_mask(request):
     try:
         img, ort_session = await sync_to_async(_load)()
     except ValueError as e:
+        _drop_mask_generation_job()
         return HttpResponse(str(e), status=400)
     except Exception as e:
         traceback.print_exc()
+        _drop_mask_generation_job()
         return HttpResponse(str(e), status=500)
 
     img_w, img_h   = img.size
@@ -845,8 +978,13 @@ async def generate_mask(request):
     async def sse_stream():
         t0 = time.time()
         processed = 0
+
+        async def _event(payload):
+            event = await job.publish(payload)
+            return job._format_event(event)
+
         print(f"[SSE] START  file={filename}  tiles={total_tiles}", flush=True)
-        yield f"data: {_json.dumps({'current': 0, 'total': total_tiles})}\n\n"
+        yield await _event({'current': 0, 'total': total_tiles})
 
         try:
             for y0 in range(0, img_h, step):
@@ -868,16 +1006,17 @@ async def generate_mask(request):
 
                     processed += 1
                     print(f"[SSE] tile {processed}/{total_tiles}  ({time.time()-t0:.1f}s)", flush=True)
-                    yield f"data: {_json.dumps({'current': processed, 'total': total_tiles})}\n\n"
+                    yield await _event({'current': processed, 'total': total_tiles})
 
         except Exception as e:
             print(f"[SSE] ERROR: {e}", flush=True)
-            yield f"data: {_json.dumps({'error': str(e)})}\n\n"
+            yield await _event({'error': str(e)})
+            _drop_mask_generation_job()
             return
 
         # ── Save mask ──────────────────────────────────────────────────────
         def _save():
-            mo = SimpleNamespace(impassable=0, very_slow=135, slow=231, cross=241, fast=243)
+            mo = SimpleNamespace(impassable=0, outline=135, very_slow=135, slow=231, cross=241, fast=243)
             vis = 255 * np.ones((img_h, img_w, 1), dtype=np.uint8)
             vis[output_img < 10] = mo.impassable
             vis[(output_img >= 10) & (output_img < 22)] = mo.very_slow
@@ -887,15 +1026,39 @@ async def generate_mask(request):
             vis[output_img == 32] = mo.cross
             vis[output_img == 33] = mo.fast
             vis[output_img == 34] = mo.impassable
+            # 1-px 8-connected outline around every impassable region, painted
+            # at grey=135 (cost 255-135 = 120/px, ~10× a fast-terrain pixel).
+            # Soft-blocks paths from hugging obstacles without sealing narrow
+            # passages — the algorithm prefers detours but can still squeeze
+            # through a 1-px gap if no alternative exists.
+            from scipy import ndimage as _ndi
+            vis_2d = vis[:, :, 0]
+            impassable_mask = vis_2d == mo.impassable
+            dilated = _ndi.binary_dilation(
+                impassable_mask,
+                structure=np.ones((3, 3), dtype=bool),
+                iterations=1,
+            )
+            outline_mask = dilated & ~impassable_mask
+            vis_2d[outline_mask] = mo.outline
             final = Image.fromarray(np.repeat(vis, 3, axis=2).astype(np.uint8))
             buf = BytesIO(); final.save(buf, format="PNG"); buf.seek(0)
             mask_path = os.path.join(settings.MEDIA_ROOT, 'masks', mask_filename)
             with open(mask_path, 'wb') as f: f.write(buf.read())
+            if file_id is not None:
+                File.objects.filter(id=file_id, deleted=False, map_file=filename).update(has_mask=True)
+            else:
+                File.objects.filter(map_file=filename, deleted=False).update(has_mask=True)
             gc.collect()
 
         await sync_to_async(_save)()
         print(f"[SSE] DONE  {time.time()-t0:.1f}s", flush=True)
-        yield f"data: {_json.dumps({'done': True, 'mask_file': mask_filename})}\n\n"
+        yield await _event({'done': True})
+        _drop_mask_generation_job()
+
+        # (Phase 2 — visibility-graph navgraph build — was removed when the
+        # navgraph approach was retired. The client-side worker decodes the
+        # PNG on its own once the editor receives this `done` event.)
 
     resp = StreamingHttpResponse(sse_stream(), content_type="text/event-stream")
     resp["Cache-Control"] = "no-cache"
@@ -1012,14 +1175,64 @@ def upload_map(request):
     uploaded = request.FILES.get('file')
     if not uploaded:
         return JsonResponse({'error': 'No file'}, status=400)
-    if uploaded.content_type not in ('image/png', 'image/jpeg', 'image/jpg'):
-        return JsonResponse({'error': 'Nur PNG oder JPEG erlaubt'}, status=400)
-    if uploaded.size > 15 * 1024 * 1024:
-        return JsonResponse({'error': 'Datei zu gross (max. 15 MB)'}, status=400)
+    ext = os.path.splitext(uploaded.name)[1].lower()
+    is_ocad = ext in ('.ocd', '.ocad')
+    if is_ocad:
+        if uploaded.size > 50 * 1024 * 1024:
+            return JsonResponse({'error': 'Datei zu gross (max. 50 MB)'}, status=400)
+    else:
+        if uploaded.content_type not in ('image/png', 'image/jpeg', 'image/jpg'):
+            return JsonResponse({'error': 'Nur PNG, JPEG oder OCAD erlaubt'}, status=400)
+        if uploaded.size > 15 * 1024 * 1024:
+            return JsonResponse({'error': 'Datei zu gross (max. 15 MB)'}, status=400)
     try:
         from django.utils.timezone import now
-        ext      = os.path.splitext(uploaded.name)[1].lower() or '.png'
-        filename = f"{now().strftime('%Y%m%d_%H%M%S')}{ext}"
+        stamp = now().strftime('%Y%m%d_%H%M%S')
+
+        if is_ocad:
+            from .ocad import OcadConversionError, convert_ocad_map_to_editor_assets
+
+            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=ext or '.ocd')
+            source_path = tmp.name
+            with tmp as f:
+                for chunk in uploaded.chunks():
+                    f.write(chunk)
+
+            map_filename = f"{stamp}.png"
+            mask_filename = f"mask_{os.path.splitext(map_filename)[0]}.png"
+            try:
+                conversion = convert_ocad_map_to_editor_assets(source_path, map_filename)
+            except OcadConversionError as exc:
+                return JsonResponse({'error': f'OCAD-Konvertierung fehlgeschlagen: {exc}'}, status=400)
+            finally:
+                try:
+                    os.unlink(source_path)
+                except OSError:
+                    pass
+
+            return JsonResponse({
+                'status': 'ok',
+                'map_file': map_filename,
+                'mask_file': mask_filename,
+                'has_mask': False,
+                'auto_generate_mask': True,
+                'scale': conversion.get('scale'),
+                'scaled': conversion.get('scaled', True),
+                'control_pairs': conversion.get('control_pairs', []),
+                'ocad': {
+                    'courses': conversion.get('courses', 0),
+                    'controls': conversion.get('controls', 0),
+                    'mask_symbols': conversion.get('mask_symbols', 0),
+                    'width': conversion.get('width'),
+                    'height': conversion.get('height'),
+                    'map_scale': conversion.get('ocad_map_scale'),
+                    'scale_calibration_factor': conversion.get('scale_calibration_factor'),
+                    'meters_per_raster_pixel': conversion.get('meters_per_raster_pixel'),
+                },
+            })
+
+        ext      = ext or '.png'
+        filename = f"{stamp}{ext}"
         dest     = os.path.join(settings.MEDIA_ROOT, 'maps', filename)
         os.makedirs(os.path.dirname(dest), exist_ok=True)
         with open(dest, 'wb') as f:

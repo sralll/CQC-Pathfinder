@@ -1,256 +1,388 @@
 /* =========================================================
-   RANDOM PLAY — procedurally-generated single-obstacle leg
-   Front-end only, no DB writes. Isolated from regular play.
+   RANDOM PLAY — procedurally-generated sprint route-choice
+   problem. Uses IOF-style colours, compound obstacles,
+   decorative obstacles, rotated camera (start at bottom),
+   and the same dot-and-trail animation as play.js.
 
-   Architecture
-   ------------
-   1.  generateScene()       — random obstacle (building / pond / fence /
-                                impassable-cliff / hedge),  random decoration,
-                                random start + ziel on opposite sides.
-   2.  tangentRoutes(...)    — for a convex obstacle, computes the shortest
-                                detour on each side using the convex hull of
-                                {start, ziel, obstacle vertices}.
-   3.  renderScene()         — paints background, decoration, obstacle, start
-                                and ziel circles.  Routes are HIDDEN.
-   4.  pickSide(side)        — animates the chosen route, fades the other,
-                                shows feedback, updates streak.
-   5.  next()                — clears + generates a fresh scene.
-
-   The scene uses an internal 1200×800 coordinate space; the SVG's
-   preserveAspectRatio handles fitting it into the available viewport.
+   Records each attempt to /play/random/submit-choice/ →
+   RandomChoice DB model.
 ========================================================= */
 
-const VB_W = 1200;
-const VB_H = 800;
-const RUN_SPEED = 4.75;    // m/s — same number used in regular play mode
-const PX_PER_M  = 6;       // viewBox px per "metre"  → 200 px = ~33 m
+/* ── Coordinate system & constants ────────────────────── */
 
-const COLOR_LEFT  = '#0055FF';
-const COLOR_RIGHT = '#DD0011';
+const VB_W      = 1200;
+const VB_H      = 800;
+const RUN_SPEED = 4.75;   // m/s reference flat-ground speed
+const PX_PER_M  = 6;      // viewBox px → metres
 
-const SVG  = (id) => document.getElementById(id);
-const NS   = 'http://www.w3.org/2000/svg';
+const ROUTE_COLORS  = ['#DD0011', '#CC6000'];   // play.js's first two route colours
+const CONTROL_COLOR = '#a033f0';                // standard orienteering pink/purple
+const R_CONTROL     = 25;                       // control circle radius
+
+// IOF (ISSprOM 2019) palette
+const IOF = {
+    open_yellow:   '#FFE9A7',
+    open_orange:   '#FFB259',
+    paved:         '#FFC880',
+    forest_run:    '#FFFFFF',
+    veg_light:     '#C5EBC4',
+    veg_medium:    '#88C97A',
+    veg_slow:      '#5BA15C',
+    building:      '#0a0a0a',
+    pond:          '#00B0EF',
+    pond_border:   '#0080CC',
+    stone_wall:    '#0a0a0a',
+    fence:         '#0a0a0a',
+    cliff:         '#0a0a0a',
+    contour:       '#bf8b57',
+};
+
+const NS    = 'http://www.w3.org/2000/svg';
 const svgEl = (tag) => document.createElementNS(NS, tag);
+const SVG   = (id)  => document.getElementById(id);
 
-let scene  = null;
-let phase  = 'choose';    // 'choose' | 'reveal'
-let stats  = loadStats();
+/* ── State ────────────────────────────────────────────── */
+
+let scene       = null;
+let phase       = 'choose';   // 'choose' | 'reveal'
+let choiceStartTime = null;
+let _routeAnim  = null;
+let stats       = loadStats();
 
 document.addEventListener('DOMContentLoaded', () => {
-    const svg = SVG('rp-svg');
-    svg.setAttribute('viewBox', `0 0 ${VB_W} ${VB_H}`);
+    SVG('rp-svg').setAttribute('viewBox', `0 0 ${VB_W} ${VB_H}`);
+    SVG('rp-svg').setAttribute('preserveAspectRatio', 'xMidYMid meet');
+    document.body.classList.add('has-prior-results'); // grey progress bar (visual hint: no project)
     next();
-    window.addEventListener('keydown', e => {
-        if (phase === 'choose') {
-            if (e.key === 'ArrowLeft')  pickSide('left');
-            if (e.key === 'ArrowRight') pickSide('right');
-        } else if (e.key === ' ' || e.key === 'Enter' || e.key === 'ArrowRight') {
-            next();
-        }
-    });
+    initInput();
     renderHud();
 });
 
-/* =========================================================
-   SCENE GENERATION
-========================================================= */
+function initInput() {
+    document.addEventListener('keydown', e => {
+        if (phase === 'choose') {
+            if (e.key === 'ArrowLeft')  pickSide(0);
+            if (e.key === 'ArrowRight') pickSide(1);
+        } else if (e.key === ' ' || e.key === 'Enter' || e.key === 'ArrowRight') {
+            e.preventDefault();
+            next();
+        }
+    });
+    // Tap on map background advances after reveal
+    SVG('map-container').addEventListener('click', e => {
+        if (phase !== 'reveal') return;
+        if (e.target.closest('.play-btn')) return;
+        next();
+    });
+}
 
-const OBSTACLE_TYPES = ['building', 'pond', 'fence', 'hedge', 'cliff'];
+/* =========================================================
+   PROCEDURAL GENERATION
+========================================================= */
 
 function next() {
     phase = 'choose';
+    if (_routeAnim) { cancelAnimationFrame(_routeAnim); _routeAnim = null; }
     scene = generateScene();
     renderScene();
-    closeFeedback();
+    // Clear the centre choice-time slot — fresh problem, no time to show yet
+    const ct = SVG('rp-choice-time');
+    if (ct) ct.textContent = '';
     renderChoiceButtons();
+    choiceStartTime = performance.now();
 }
 
 function generateScene() {
-    const type   = pickRandom(OBSTACLE_TYPES);
-    const center = {
-        x: rand(VB_W * 0.30, VB_W * 0.70),
-        y: rand(VB_H * 0.30, VB_H * 0.70),
+    // 1. Build a compound "primary" obstacle (1–3 connected shapes)
+    const primary = generatePrimaryCompound();
+
+    // 2. Place start + ziel on opposite sides of the primary obstacle's hull
+    let { start, ziel } = placeEndpoints(primary.hull);
+
+    // 3. Compute the two routes around the primary hull
+    let routes = tangentRoutes(start, ziel, primary.hull);
+
+    // 4. Add decorative obstacles + map "texture" tiles that don't intersect routes
+    const decor = generateDecoration(primary.hull, [routes[0].points, routes[1].points], start, ziel);
+
+    // 5. Bake a rotation + translation into every coordinate so that start
+    //    ends up at the bottom of the viewbox and ziel at the top. This way
+    //    the SVG always renders upright without a runtime <g transform>.
+    const angle = Math.atan2(ziel.y - start.y, ziel.x - start.x);
+    const rot   = -Math.PI / 2 - angle;
+    const mid   = { x: (start.x + ziel.x) / 2, y: (start.y + ziel.y) / 2 };
+    const dst   = { x: VB_W / 2, y: VB_H / 2 };
+
+    const transform = p => {
+        const dx = p.x - mid.x, dy = p.y - mid.y;
+        const ca = Math.cos(rot), sa = Math.sin(rot);
+        return { x: dst.x + dx * ca - dy * sa, y: dst.y + dx * sa + dy * ca };
     };
 
-    let obstacle;
-    switch (type) {
-        case 'building': obstacle = makeBuilding(center.x, center.y); break;
-        case 'pond':     obstacle = makePond(center.x, center.y);     break;
-        case 'fence':    obstacle = makeFence(center.x, center.y);    break;
-        case 'hedge':    obstacle = makeHedge(center.x, center.y);    break;
-        case 'cliff':    obstacle = makeCliff(center.x, center.y);    break;
-    }
+    const start2 = transform(start);
+    const ziel2  = transform(ziel);
 
-    const { start, ziel } = placeEndpoints(obstacle);
-    const routes = tangentRoutes(start, ziel, obstacle.hull);
+    const primary2 = applyTransformToCompound(primary, transform);
 
-    const decor = makeDecoration(obstacle);
+    // Re-compute routes against the transformed hull so the route points
+    // reference the new vertices (so the post-pick animation lines up)
+    const routes2 = tangentRoutes(start2, ziel2, primary2.hull);
 
-    return { obstacle, start, ziel, routes, decor };
+    const decor2 = decor.map(d => applyTransformToDecor(d, transform));
+
+    return { primary: primary2, decor: decor2, start: start2, ziel: ziel2, routes: routes2 };
 }
 
-/* ── Obstacle generators ───────────────────────────────── */
+function applyTransformToCompound(primary, T) {
+    const shapes = primary.shapes.map(s => applyTransformToShape(s, T));
+    return { composition: primary.composition, shapes, hull: shapes.flatMap(s => s.hull) };
+}
 
-function makeBuilding(cx, cy) {
-    // Rotated rectangle.  Sometimes an L-shape via two stacked rectangles.
-    const w = rand(140, 260);
-    const h = rand(100, 220);
-    const angle = rand(0, Math.PI * 2);
-    const corners = rectCorners(cx, cy, w, h, angle);
+function applyTransformToShape(s, T) {
+    const out = { ...s };
+    if (s.polygon)  out.polygon  = s.polygon.map(T);
+    if (s.polyline) out.polyline = s.polyline.map(T);
+    if (s.hull)     out.hull     = s.hull.map(T);
+    if (s.a)        out.a        = T(s.a);
+    if (s.b)        out.b        = T(s.b);
+    if (s.cx !== undefined && s.cy !== undefined) {
+        const c = T({ x: s.cx, y: s.cy });
+        out.cx = c.x; out.cy = c.y;
+    }
+    // For a wall, we need to recompute hull after a,b transform — but the
+    // hull we have is already in world coords pre-transform, and we did
+    // map it above. That's correct.
+    return out;
+}
 
-    if (Math.random() < 0.35) {
-        // L-shape: subtract a smaller rect from one corner.  We don't actually
-        // model the cut-out for routing; the convex hull (the full rect) is
-        // what the path is computed against, which is fine here.
-        const c2w = w * rand(0.4, 0.6);
-        const c2h = h * rand(0.4, 0.6);
-        const offX = (w - c2w) / 2 * pickRandom([-1, 1]);
-        const offY = (h - c2h) / 2 * pickRandom([-1, 1]);
-        const cx2  = cx + offX * Math.cos(angle) - offY * Math.sin(angle);
-        const cy2  = cy + offX * Math.sin(angle) + offY * Math.cos(angle);
-        const cutout = rectCorners(cx2, cy2, c2w + 4, c2h + 4, angle);
-        return {
-            type: 'building',
-            polygons: [corners, cutout],
-            hull: corners,                         // routing uses the full rect
-            color: '#1f1f1f',
-            stroke: '#000',
-        };
+function applyTransformToDecor(d, T) {
+    if (d.kind === 'tile') {
+        // Re-derive corners, transform them, then convert back to bb + rot
+        // (drawing path uses x/y/w/h/rot of the original; simpler to just
+        // transform all four corners and store them as a polygon override)
+        const corners = [
+            { x: d.x, y: d.y }, { x: d.x + d.w, y: d.y },
+            { x: d.x + d.w, y: d.y + d.h }, { x: d.x, y: d.y + d.h },
+        ].map(T);
+        return { kind: 'tile_polygon', polygon: corners, color: d.color };
+    }
+    return applyTransformToShape(d, T);
+}
+
+/* ── Compound primary obstacle ────────────────────────── */
+
+function generatePrimaryCompound() {
+    const composition = pickWeighted([
+        ['L_building',         5],
+        ['T_building',         3],
+        ['U_courtyard',        3],
+        ['building_with_wing', 4],
+        ['building_plus_wall', 4],
+        ['building_plus_pond', 2],
+        ['building_row',       3],
+        ['pond_with_island',   1],
+        ['fence_corridor',     3],
+        ['hedge_bend',         2],
+        ['cliff_arc',          2],
+    ]);
+    const cx = rand(VB_W * 0.35, VB_W * 0.65);
+    const cy = rand(VB_H * 0.35, VB_H * 0.65);
+    const baseAngle = rand(0, Math.PI * 2);
+
+    let shapes = [];
+    switch (composition) {
+        case 'L_building': {
+            const w = rand(180, 280), h = rand(120, 180);
+            const armW = w * rand(0.40, 0.55), armH = rand(80, 140);
+            const a = rectAt(cx, cy, w, h, baseAngle, IOF.building, 'building');
+            // L-arm extending downward from one end
+            const off = rotate({ x: w/2 - armW/2, y: -h/2 - armH/2 }, baseAngle);
+            const b = rectAt(cx + off.x, cy + off.y, armW, armH, baseAngle, IOF.building, 'building');
+            shapes = [a, b];
+            break;
+        }
+        case 'T_building': {
+            const w = rand(220, 320), h = rand(100, 140);
+            const armW = rand(80, 130), armH = rand(150, 220);
+            const a = rectAt(cx, cy, w, h, baseAngle, IOF.building, 'building');
+            const off = rotate({ x: 0, y: (h + armH) / 2 - 4 }, baseAngle);
+            const b = rectAt(cx + off.x, cy + off.y, armW, armH, baseAngle, IOF.building, 'building');
+            shapes = [a, b];
+            break;
+        }
+        case 'U_courtyard': {
+            // Three rectangles forming a U with an open courtyard in the middle
+            const w = rand(240, 320), h = rand(50, 90);   // base bar
+            const armW = rand(50, 80), armH = rand(140, 200);
+            const a = rectAt(cx, cy, w, h, baseAngle, IOF.building, 'building');
+            const dxL = -(w - armW) / 2, dyL = -(h + armH) / 2 + 4;
+            const oL  = rotate({ x: dxL, y: dyL }, baseAngle);
+            const oR  = rotate({ x: -dxL, y: dyL }, baseAngle);
+            shapes = [
+                a,
+                rectAt(cx + oL.x, cy + oL.y, armW, armH, baseAngle, IOF.building, 'building'),
+                rectAt(cx + oR.x, cy + oR.y, armW, armH, baseAngle, IOF.building, 'building'),
+            ];
+            break;
+        }
+        case 'building_with_wing': {
+            const w = rand(170, 240), h = rand(120, 180);
+            const wing = rand(70, 120);
+            const a = rectAt(cx, cy, w, h, baseAngle, IOF.building, 'building');
+            const off = rotate({ x: w/2 + wing/2 - 2, y: rand(-h/4, h/4) }, baseAngle);
+            const b = rectAt(cx + off.x, cy + off.y, wing, wing * rand(0.6, 0.9), baseAngle, IOF.building, 'building');
+            shapes = [a, b];
+            break;
+        }
+        case 'building_plus_wall': {
+            const w = rand(160, 240), h = rand(110, 170);
+            const a = rectAt(cx, cy, w, h, baseAngle, IOF.building, 'building');
+            // Stone wall extending from the building edge
+            const wallLen = rand(140, 220);
+            const startEdge = rotate({ x: w/2, y: rand(-h/3, h/3) }, baseAngle);
+            const wallAngle = baseAngle + rand(-0.6, 0.6);
+            const wallEnd  = {
+                x: cx + startEdge.x + Math.cos(wallAngle) * wallLen,
+                y: cy + startEdge.y + Math.sin(wallAngle) * wallLen,
+            };
+            shapes = [a, wallShape({ x: cx + startEdge.x, y: cy + startEdge.y }, wallEnd, IOF.stone_wall, 8)];
+            break;
+        }
+        case 'building_plus_pond': {
+            const w = rand(160, 220), h = rand(120, 170);
+            const a = rectAt(cx, cy, w, h, baseAngle, IOF.building, 'building');
+            const off = rotate({ x: -(w/2 + rand(60, 90)), y: rand(-h/2, h/2) }, baseAngle);
+            shapes = [a, blobShape(cx + off.x, cy + off.y, rand(55, 95), IOF.pond, IOF.pond_border, 'pond')];
+            break;
+        }
+        case 'building_row': {
+            // 2-3 small buildings in a row, narrow alleys between them
+            const count = randInt(2, 3);
+            const bw = rand(70, 110), bh = rand(70, 120);
+            const gap = rand(8, 20);
+            const total = count * bw + (count - 1) * gap;
+            for (let i = 0; i < count; i++) {
+                const dx = -total / 2 + bw / 2 + i * (bw + gap);
+                const off = rotate({ x: dx, y: 0 }, baseAngle);
+                shapes.push(rectAt(cx + off.x, cy + off.y, bw, bh, baseAngle, IOF.building, 'building'));
+            }
+            break;
+        }
+        case 'pond_with_island': {
+            const r = rand(120, 170);
+            shapes = [blobShape(cx, cy, r, IOF.pond, IOF.pond_border, 'pond')];
+            // Tiny "island" (decorative — sits on top of the pond)
+            const off = rotate({ x: rand(-r * 0.3, r * 0.3), y: rand(-r * 0.3, r * 0.3) }, 0);
+            shapes.push(rectAt(cx + off.x, cy + off.y, rand(30, 50), rand(25, 45), baseAngle, IOF.building, 'building'));
+            break;
+        }
+        case 'fence_corridor': {
+            // Two parallel fences forming an impassable corridor
+            const len = rand(220, 320);
+            const gap = rand(50, 90);
+            const angle = baseAngle;
+            const nx = -Math.sin(angle), ny = Math.cos(angle);
+            const dx = Math.cos(angle) * len / 2, dy = Math.sin(angle) * len / 2;
+            shapes = [
+                wallShape({ x: cx - dx + nx * gap, y: cy - dy + ny * gap },
+                          { x: cx + dx + nx * gap, y: cy + dy + ny * gap }, IOF.fence, 4, true),
+                wallShape({ x: cx - dx - nx * gap, y: cy - dy - ny * gap },
+                          { x: cx + dx - nx * gap, y: cy + dy - ny * gap }, IOF.fence, 4, true),
+            ];
+            break;
+        }
+        case 'hedge_bend': {
+            // A hedge with a kink → forms an L-shaped barrier
+            const len1 = rand(140, 200), len2 = rand(120, 180);
+            const a = { x: cx - Math.cos(baseAngle) * len1, y: cy - Math.sin(baseAngle) * len1 };
+            const b = { x: cx, y: cy };
+            const bendAngle = baseAngle + rand(0.7, 1.3) * pickRandom([-1, 1]);
+            const c = { x: cx + Math.cos(bendAngle) * len2, y: cy + Math.sin(bendAngle) * len2 };
+            shapes = [
+                wallShape(a, b, IOF.veg_slow, 14),
+                wallShape(b, c, IOF.veg_slow, 14),
+            ];
+            break;
+        }
+        case 'cliff_arc': {
+            const segs = randInt(3, 5);
+            const total = rand(220, 320);
+            const segLen = total / segs;
+            let cur = { x: cx - Math.cos(baseAngle) * total / 2, y: cy - Math.sin(baseAngle) * total / 2 };
+            let angle = baseAngle;
+            const pts = [cur];
+            for (let i = 0; i < segs; i++) {
+                angle += rand(-0.35, 0.35);
+                cur = { x: cur.x + Math.cos(angle) * segLen, y: cur.y + Math.sin(angle) * segLen };
+                pts.push(cur);
+            }
+            shapes = [{
+                kind: 'cliff', polyline: pts,
+                hull: inflatePolyline(pts, 12),
+                color: IOF.cliff, stroke: IOF.cliff,
+            }];
+            break;
+        }
     }
 
-    return {
-        type:  'building',
-        polygons: [corners],
-        hull:  corners,
-        color: '#1f1f1f',
-        stroke:'#000',
-    };
+    // Combined convex hull of all shape hulls → routing target
+    const allHullPoints = shapes.flatMap(s => s.hull);
+    const hull = convexHull(allHullPoints);
+
+    return { composition, shapes, hull };
+}
+
+/* ── Shape builders ───────────────────────────────────── */
+
+function rectAt(cx, cy, w, h, angle, fill, kind) {
+    const corners = rectCorners(cx, cy, w, h, angle);
+    return { kind, polygon: corners, hull: corners, color: fill, stroke: '#000' };
 }
 
 function rectCorners(cx, cy, w, h, angle) {
     const hw = w/2, hh = h/2;
     const ca = Math.cos(angle), sa = Math.sin(angle);
     return [
-        { x: -hw, y: -hh },
-        { x:  hw, y: -hh },
-        { x:  hw, y:  hh },
-        { x: -hw, y:  hh },
+        { x: -hw, y: -hh }, { x:  hw, y: -hh }, { x:  hw, y:  hh }, { x: -hw, y:  hh },
     ].map(p => ({
-        x: cx + p.x*ca - p.y*sa,
-        y: cy + p.x*sa + p.y*ca,
+        x: cx + p.x * ca - p.y * sa,
+        y: cy + p.x * sa + p.y * ca,
     }));
 }
 
-function makePond(cx, cy) {
-    // Organic blob: radial polygon with smooth perturbation.
-    const n = 14;
-    const baseR = rand(80, 150);
+function rotate(p, angle) {
+    const ca = Math.cos(angle), sa = Math.sin(angle);
+    return { x: p.x * ca - p.y * sa, y: p.x * sa + p.y * ca };
+}
+
+function blobShape(cx, cy, baseR, fill, stroke, kind) {
+    const n = 16;
     const verts = [];
     let r = baseR;
     for (let i = 0; i < n; i++) {
-        const a = (i / n) * Math.PI * 2 + rand(-0.05, 0.05);
-        // Smooth jitter via a random walk in radius
-        r = clamp(r + rand(-baseR * 0.10, baseR * 0.10), baseR * 0.65, baseR * 1.20);
+        const a = (i / n) * Math.PI * 2 + rand(-0.04, 0.04);
+        r = clamp(r + rand(-baseR * 0.08, baseR * 0.08), baseR * 0.7, baseR * 1.2);
         verts.push({ x: cx + r * Math.cos(a), y: cy + r * Math.sin(a) });
     }
-    return {
-        type:  'pond',
-        polygons: [verts],
-        hull:  convexHull(verts),
-        color: '#82d2f2',
-        stroke:'#1a78b3',
-    };
+    return { kind, polygon: verts, hull: convexHull(verts), color: fill, stroke };
 }
 
-function makeFence(cx, cy) {
-    // Single line segment treated as an impassable barrier.
-    const len   = rand(220, 380);
-    const angle = rand(0, Math.PI * 2);
-    const dx = Math.cos(angle) * len / 2;
-    const dy = Math.sin(angle) * len / 2;
-    const a  = { x: cx - dx, y: cy - dy };
-    const b  = { x: cx + dx, y: cy + dy };
-    // For routing, give the line a tiny "thickness" so the hull algorithm
-    // can route around either endpoint without zero-width edge cases.
-    const nx = -Math.sin(angle) * 4;
-    const ny =  Math.cos(angle) * 4;
+function wallShape(a, b, color, half, ticked = false) {
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const len = Math.hypot(dx, dy) || 1;
+    const nx = -dy / len * half, ny = dx / len * half;
     const hull = [
         { x: a.x - nx, y: a.y - ny },
         { x: b.x - nx, y: b.y - ny },
         { x: b.x + nx, y: b.y + ny },
         { x: a.x + nx, y: a.y + ny },
     ];
-    return {
-        type:    'fence',
-        polygons:[],           // not a filled shape
-        segments:[[a, b]],
-        hull,
-        color:   '#000',
-        stroke:  '#000',
-    };
-}
-
-function makeHedge(cx, cy) {
-    // Wider line with green colouring.
-    const len   = rand(240, 380);
-    const angle = rand(0, Math.PI * 2);
-    const dx = Math.cos(angle) * len / 2;
-    const dy = Math.sin(angle) * len / 2;
-    const a  = { x: cx - dx, y: cy - dy };
-    const b  = { x: cx + dx, y: cy + dy };
-    const half = 14;
-    const nx = -Math.sin(angle) * half;
-    const ny =  Math.cos(angle) * half;
-    const hull = [
-        { x: a.x - nx, y: a.y - ny },
-        { x: b.x - nx, y: b.y - ny },
-        { x: b.x + nx, y: b.y + ny },
-        { x: a.x + nx, y: a.y + ny },
-    ];
-    return {
-        type:    'hedge',
-        polygons:[hull],
-        hull,
-        color:   '#5a8b3e',
-        stroke:  '#324c1f',
-    };
-}
-
-function makeCliff(cx, cy) {
-    // Impassable cliff: a jagged thick line.
-    const segments = rand(3, 6) | 0;
-    const totalLen = rand(220, 360);
-    const angle    = rand(0, Math.PI * 2);
-    const segLen   = totalLen / segments;
-    const points = [{ x: cx - Math.cos(angle) * totalLen / 2,
-                      y: cy - Math.sin(angle) * totalLen / 2 }];
-    for (let i = 0; i < segments; i++) {
-        const a = angle + rand(-0.25, 0.25);
-        const last = points[points.length - 1];
-        points.push({
-            x: last.x + Math.cos(a) * segLen,
-            y: last.y + Math.sin(a) * segLen,
-        });
-    }
-    // Thicken into a polygon for routing.
-    const half = 10;
-    const hull = inflatePolyline(points, half);
-    return {
-        type:    'cliff',
-        polygons:[],
-        polyline:points,
-        hull,
-        color:   '#000',
-        stroke:  '#000',
-    };
+    return { kind: 'wall', a, b, hull, color, stroke: color, half, ticked };
 }
 
 function inflatePolyline(pts, half) {
-    // Compute a simple "thickness" hull by offsetting each side
     if (pts.length < 2) return [];
-    // Average normal-perpendicular for each side, mirrored
-    const top = [];
-    const bot = [];
+    const top = [], bot = [];
     for (let i = 0; i < pts.length; i++) {
         const prev = pts[Math.max(0, i - 1)];
         const next = pts[Math.min(pts.length - 1, i + 1)];
@@ -263,109 +395,119 @@ function inflatePolyline(pts, half) {
     return [...top, ...bot.reverse()];
 }
 
-/* ── Decoration (purely cosmetic; ignored by routing) ────── */
+/* ── Endpoint placement ───────────────────────────────── */
 
-function makeDecoration(obstacle) {
-    const decor = [];
-    const bb = boundingBox(obstacle.hull);
-
-    // A few light-green vegetation blobs scattered around the periphery
-    const vegCount = randInt(3, 6);
-    for (let i = 0; i < vegCount; i++) {
-        const c = randomFarPoint(obstacle.hull, 80);
-        if (!c) continue;
-        const r = rand(30, 70);
-        decor.push({ kind: 'vegetation', cx: c.x, cy: c.y, r });
-    }
-
-    // A few path/street strips (light grey)
-    if (Math.random() < 0.7) {
-        const horiz = Math.random() < 0.5;
-        const t = rand(VB_W * 0.15, VB_W * 0.85);
-        decor.push({
-            kind: 'path',
-            x: horiz ? 0     : t - 6,
-            y: horiz ? t - 6 : 0,
-            w: horiz ? VB_W  : 12,
-            h: horiz ? 12    : VB_H,
-        });
-    }
-
-    return decor;
-}
-
-function randomFarPoint(hull, minDist) {
-    for (let attempt = 0; attempt < 20; attempt++) {
-        const p = { x: rand(40, VB_W - 40), y: rand(40, VB_H - 40) };
-        const d = distToPolygon(p, hull);
-        if (d > minDist) return p;
-    }
-    return null;
-}
-
-/* ── Endpoint placement ────────────────────────────────── */
-
-function placeEndpoints(obstacle) {
-    const bb = boundingBox(obstacle.hull);
+function placeEndpoints(hull) {
+    const bb = boundingBox(hull);
     const cx = (bb.minX + bb.maxX) / 2;
     const cy = (bb.minY + bb.maxY) / 2;
     const w  = bb.maxX - bb.minX;
     const h  = bb.maxY - bb.minY;
 
-    // Choose an axis along which to place start/ziel.  Pick the SHORTER side
-    // of the bounding box so the detour is meaningful (start and ziel are
-    // separated by the longer dimension of the obstacle).
-    const horizontal = h < w;   // obstacle wider than tall → endpoints above/below
-
-    const margin = rand(90, 160);
+    const horizontal = h < w;
+    const margin = rand(110, 170);
     let start, ziel;
     if (horizontal) {
-        // Place above and below
-        start = { x: cx + rand(-w * 0.35, w * 0.35), y: clamp(bb.minY - margin, 60, VB_H - 60) };
-        ziel  = { x: cx + rand(-w * 0.35, w * 0.35), y: clamp(bb.maxY + margin, 60, VB_H - 60) };
+        start = { x: cx + rand(-w * 0.30, w * 0.30), y: clamp(bb.minY - margin, 70, VB_H - 70) };
+        ziel  = { x: cx + rand(-w * 0.30, w * 0.30), y: clamp(bb.maxY + margin, 70, VB_H - 70) };
     } else {
-        // Place left and right
-        start = { x: clamp(bb.minX - margin, 60, VB_W - 60), y: cy + rand(-h * 0.35, h * 0.35) };
-        ziel  = { x: clamp(bb.maxX + margin, 60, VB_W - 60), y: cy + rand(-h * 0.35, h * 0.35) };
+        start = { x: clamp(bb.minX - margin, 70, VB_W - 70), y: cy + rand(-h * 0.30, h * 0.30) };
+        ziel  = { x: clamp(bb.maxX + margin, 70, VB_W - 70), y: cy + rand(-h * 0.30, h * 0.30) };
+    }
+    if (Math.random() < 0.5) [start, ziel] = [ziel, start];
+    return { start, ziel };
+}
+
+/* ── Decoration: stuff around the main obstacle ──────── */
+
+function generateDecoration(primaryHull, routePts, start, ziel) {
+    const items = [];
+
+    // Background "tiles": light paved areas / vegetation patches
+    const tileCount = randInt(3, 7);
+    for (let i = 0; i < tileCount; i++) {
+        const w = rand(120, 280), h = rand(80, 200);
+        const x = rand(0, VB_W - w), y = rand(0, VB_H - h);
+        const kind = pickWeighted([['paved', 3], ['veg_light', 4], ['veg_medium', 2]]);
+        const color = kind === 'paved' ? IOF.paved
+                    : kind === 'veg_light' ? IOF.veg_light : IOF.veg_medium;
+        items.push({ kind: 'tile', x, y, w, h, color, rot: rand(-0.2, 0.2) });
     }
 
-    // Randomly swap so the visual orientation varies
-    if (Math.random() < 0.5) [start, ziel] = [ziel, start];
+    // Scattered decorative obstacles (buildings / hedges / fences / vegetation blobs)
+    const decorCount = randInt(4, 8);
+    for (let i = 0; i < decorCount; i++) {
+        let attempts = 20, placed = null;
+        while (attempts-- > 0) {
+            const cx = rand(50, VB_W - 50);
+            const cy = rand(50, VB_H - 50);
+            // Must not intersect the primary obstacle or the planned routes or the control circles
+            if (pointInPolygon({x: cx, y: cy}, primaryHull)) continue;
+            if (distToPolygon({x: cx, y: cy}, primaryHull) < 30) continue;
+            if (Math.hypot(cx - start.x, cy - start.y) < 50) continue;
+            if (Math.hypot(cx - ziel.x,  cy - ziel.y)  < 50) continue;
+            // Far enough from the planned route paths (so the path doesn't cross decorations)
+            const minRouteDist = Math.min(
+                pathMinDistance({x: cx, y: cy}, routePts[0]),
+                pathMinDistance({x: cx, y: cy}, routePts[1]),
+            );
+            if (minRouteDist < 35) continue;
 
-    return { start, ziel };
+            placed = generateDecorItem(cx, cy);
+            break;
+        }
+        if (placed) items.push(placed);
+    }
+
+    return items;
+}
+
+function generateDecorItem(cx, cy) {
+    const kind = pickWeighted([
+        ['small_building', 4],
+        ['vegetation',     5],
+        ['short_fence',    2],
+        ['boulder',        2],
+        ['small_pond',     1],
+    ]);
+    const angle = rand(0, Math.PI * 2);
+    switch (kind) {
+        case 'small_building':
+            return rectAt(cx, cy, rand(45, 90), rand(35, 80), angle, IOF.building, 'small_building');
+        case 'vegetation':
+            return blobShape(cx, cy, rand(25, 55), pickRandom([IOF.veg_light, IOF.veg_medium]), null, 'vegetation');
+        case 'short_fence': {
+            const len = rand(80, 150);
+            const a = { x: cx - Math.cos(angle) * len / 2, y: cy - Math.sin(angle) * len / 2 };
+            const b = { x: cx + Math.cos(angle) * len / 2, y: cy + Math.sin(angle) * len / 2 };
+            return { kind: 'short_fence', a, b, color: IOF.fence };
+        }
+        case 'boulder':
+            return { kind: 'boulder', cx, cy, r: rand(3, 6), color: IOF.cliff };
+        case 'small_pond':
+            return blobShape(cx, cy, rand(25, 45), IOF.pond, IOF.pond_border, 'small_pond');
+    }
 }
 
 /* =========================================================
    GEOMETRY HELPERS
 ========================================================= */
 
-function rand(min, max)     { return min + Math.random() * (max - min); }
-function randInt(min, max)  { return Math.floor(rand(min, max + 1)); }
-function pickRandom(arr)    { return arr[Math.floor(Math.random() * arr.length)]; }
-function clamp(v, lo, hi)   { return Math.max(lo, Math.min(hi, v)); }
+function rand(a, b) { return a + Math.random() * (b - a); }
+function randInt(a, b) { return Math.floor(rand(a, b + 1)); }
+function pickRandom(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+function pickWeighted(pairs) {
+    const total = pairs.reduce((s, p) => s + p[1], 0);
+    let r = Math.random() * total;
+    for (const [item, w] of pairs) { r -= w; if (r <= 0) return item; }
+    return pairs[0][0];
+}
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 
 function boundingBox(pts) {
     const xs = pts.map(p => p.x), ys = pts.map(p => p.y);
     return { minX: Math.min(...xs), maxX: Math.max(...xs),
              minY: Math.min(...ys), maxY: Math.max(...ys) };
-}
-
-function distToPolygon(p, poly) {
-    let best = Infinity;
-    for (let i = 0; i < poly.length; i++) {
-        const a = poly[i], b = poly[(i + 1) % poly.length];
-        best = Math.min(best, segmentPointDistance(p, a, b));
-    }
-    return best;
-}
-
-function segmentPointDistance(p, a, b) {
-    const dx = b.x - a.x, dy = b.y - a.y;
-    const lenSq = dx*dx + dy*dy || 1;
-    let t = ((p.x - a.x)*dx + (p.y - a.y)*dy) / lenSq;
-    t = clamp(t, 0, 1);
-    const cx = a.x + dx * t, cy = a.y + dy * t;
-    return Math.hypot(p.x - cx, p.y - cy);
 }
 
 function cross(o, a, b) {
@@ -390,52 +532,74 @@ function convexHull(points) {
     return lower.concat(upper);
 }
 
-function pathLength(pts) {
-    let total = 0;
-    for (let i = 1; i < pts.length; i++) {
-        total += Math.hypot(pts[i].x - pts[i-1].x, pts[i].y - pts[i-1].y);
+function pointInPolygon(p, poly) {
+    let inside = false;
+    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+        const xi = poly[i].x, yi = poly[i].y, xj = poly[j].x, yj = poly[j].y;
+        const intersect = ((yi > p.y) !== (yj > p.y)) && (p.x < (xj - xi) * (p.y - yi) / (yj - yi + 1e-9) + xi);
+        if (intersect) inside = !inside;
     }
-    return total;
+    return inside;
+}
+
+function distToPolygon(p, poly) {
+    let best = Infinity;
+    for (let i = 0; i < poly.length; i++) {
+        const a = poly[i], b = poly[(i + 1) % poly.length];
+        best = Math.min(best, segmentPointDistance(p, a, b));
+    }
+    return best;
+}
+
+function segmentPointDistance(p, a, b) {
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const lenSq = dx*dx + dy*dy || 1;
+    let t = ((p.x - a.x)*dx + (p.y - a.y)*dy) / lenSq;
+    t = clamp(t, 0, 1);
+    return Math.hypot(p.x - (a.x + dx * t), p.y - (a.y + dy * t));
+}
+
+function pathLength(pts) {
+    let s = 0;
+    for (let i = 1; i < pts.length; i++) s += Math.hypot(pts[i].x - pts[i-1].x, pts[i].y - pts[i-1].y);
+    return s;
+}
+
+function pathMinDistance(p, pathPts) {
+    let best = Infinity;
+    for (let i = 1; i < pathPts.length; i++) {
+        best = Math.min(best, segmentPointDistance(p, pathPts[i - 1], pathPts[i]));
+        if (best < 1) break;
+    }
+    return best;
 }
 
 /* =========================================================
-   SIDE-SPLIT ROUTING — shortest path on each side of the
-   obstacle, using the convex hull of {start, ziel, hull}.
+   SIDE-SPLIT ROUTING — two arcs around the compound hull
 ========================================================= */
 
 function tangentRoutes(start, ziel, obstacleHull) {
-    // Hull of everything; the two arcs from start → ziel are our routes.
-    const allPoints = [start, ziel, ...obstacleHull];
-    const hull      = convexHull(allPoints);
-
+    const hull = convexHull([start, ziel, ...obstacleHull]);
     const sIdx = hull.findIndex(p => p === start);
     const zIdx = hull.findIndex(p => p === ziel);
-
     if (sIdx === -1 || zIdx === -1) {
-        // Start or ziel is inside the obstacle hull (shouldn't happen after
-        // proper endpoint placement, but fall back to a straight line).
-        return {
-            left:  { points: [start, ziel], length: pathLength([start, ziel]) },
-            right: { points: [start, ziel], length: pathLength([start, ziel]) },
-        };
+        return [
+            { points: [start, ziel], length: pathLength([start, ziel]) },
+            { points: [start, ziel], length: pathLength([start, ziel]) },
+        ];
     }
 
-    // Walk hull in both directions from start to ziel
     const arc1 = walkArc(hull, sIdx, zIdx,  1);
     const arc2 = walkArc(hull, sIdx, zIdx, -1);
 
-    // Which is "left" of the start→ziel segment?
+    // "Left" of start→ziel from the player's perspective (running toward ziel)
     const mid = arc1[Math.floor(arc1.length / 2)];
     const sideSign = (ziel.x - start.x) * (mid.y - start.y) - (ziel.y - start.y) * (mid.x - start.x);
-    // In screen coords (y-down), cross product > 0 means "right of vector",
-    // but visual "left" from a top-down map perspective is the same direction
-    // a player would intuitively call "left" while running from start to ziel.
-    // Pick a convention and stick to it:
     const arc1IsLeft = sideSign < 0;
 
     return arc1IsLeft
-        ? { left:  buildRoute(arc1), right: buildRoute(arc2) }
-        : { left:  buildRoute(arc2), right: buildRoute(arc1) };
+        ? [route(arc1), route(arc2)]
+        : [route(arc2), route(arc1)];
 }
 
 function walkArc(hull, fromIdx, toIdx, step) {
@@ -449,8 +613,10 @@ function walkArc(hull, fromIdx, toIdx, step) {
     return arc;
 }
 
-function buildRoute(pts) {
-    return { points: pts, length: pathLength(pts) };
+function route(pts) {
+    const len   = pathLength(pts);
+    const time  = (len / PX_PER_M) / RUN_SPEED;   // seconds
+    return { points: pts, length: len, time };
 }
 
 /* =========================================================
@@ -463,121 +629,127 @@ function renderScene() {
     clearLayer('rp-obstacle-layer');
     clearLayer('rp-route-layer');
     clearLayer('rp-control-layer');
-    clearLayer('rp-ui-layer');
+
+    // No runtime rotation — the coords are already in the canonical frame.
+    const rotGroup = SVG('rp-rotation');
+    if (rotGroup) rotGroup.removeAttribute('transform');
 
     drawBackground();
     drawDecor(scene.decor);
-    drawObstacle(scene.obstacle);
-    drawControl(scene.start, true);
-    drawControl(scene.ziel,  false);
+    for (const shape of scene.primary.shapes) drawShape(shape, true);
+    drawControls(scene.start, scene.ziel);
 }
 
 function clearLayer(id) { SVG(id).innerHTML = ''; }
 
 function drawBackground() {
-    const r = svgEl('rect');
-    r.setAttribute('x', 0); r.setAttribute('y', 0);
-    r.setAttribute('width', VB_W); r.setAttribute('height', VB_H);
-    r.setAttribute('fill', '#fff4cc');
-    SVG('rp-bg-layer').appendChild(r);
+    const bg = svgEl('rect');
+    bg.setAttribute('x', 0); bg.setAttribute('y', 0);
+    bg.setAttribute('width', VB_W); bg.setAttribute('height', VB_H);
+    bg.setAttribute('fill', IOF.open_yellow);
+    SVG('rp-bg-layer').appendChild(bg);
 }
 
-function drawDecor(decor) {
+function drawDecor(items) {
     const layer = SVG('rp-decor-layer');
-    for (const d of decor) {
-        if (d.kind === 'vegetation') {
-            const c = svgEl('circle');
-            c.setAttribute('cx', d.cx); c.setAttribute('cy', d.cy); c.setAttribute('r', d.r);
-            c.setAttribute('fill', '#bce0a0');
-            c.setAttribute('opacity', '0.85');
-            layer.appendChild(c);
-        } else if (d.kind === 'path') {
-            const r = svgEl('rect');
-            r.setAttribute('x', d.x); r.setAttribute('y', d.y);
-            r.setAttribute('width', d.w); r.setAttribute('height', d.h);
-            r.setAttribute('fill', '#f7f7f7');
-            r.setAttribute('opacity', '0.9');
-            layer.appendChild(r);
+    for (const d of items) {
+        if (d.kind === 'tile_polygon') {
+            const p = svgEl('polygon');
+            p.setAttribute('points', d.polygon.map(v => `${v.x},${v.y}`).join(' '));
+            p.setAttribute('fill', d.color);
+            p.setAttribute('opacity', '0.85');
+            layer.appendChild(p);
+        } else {
+            drawShape(d, false, layer);
         }
     }
 }
 
-function drawObstacle(obs) {
-    const layer = SVG('rp-obstacle-layer');
-    switch (obs.type) {
-        case 'building': {
-            obs.polygons.forEach((poly, i) => {
-                const p = svgEl('polygon');
-                p.setAttribute('points', poly.map(v => `${v.x},${v.y}`).join(' '));
-                if (i === 0) {
-                    p.setAttribute('fill', obs.color);
-                    p.setAttribute('stroke', obs.stroke);
-                    p.setAttribute('stroke-width', '2');
-                } else {
-                    // L-shape "cut-out" — overlay matching the background colour
-                    p.setAttribute('fill', '#fff4cc');
-                    p.setAttribute('stroke', 'none');
-                }
-                layer.appendChild(p);
-            });
-            break;
-        }
-        case 'pond': {
+function drawShape(shape, primary, layer) {
+    layer = layer || SVG('rp-obstacle-layer');
+    switch (shape.kind) {
+        case 'building':
+        case 'small_building': {
             const p = svgEl('polygon');
-            p.setAttribute('points', obs.polygons[0].map(v => `${v.x},${v.y}`).join(' '));
-            p.setAttribute('fill', obs.color);
-            p.setAttribute('stroke', obs.stroke);
-            p.setAttribute('stroke-width', '3');
+            p.setAttribute('points', shape.polygon.map(v => `${v.x},${v.y}`).join(' '));
+            p.setAttribute('fill', shape.color);
+            p.setAttribute('stroke', '#000');
+            p.setAttribute('stroke-width', '1.5');
             layer.appendChild(p);
             break;
         }
-        case 'fence': {
-            const [a, b] = obs.segments[0];
-            const line = svgEl('line');
-            line.setAttribute('x1', a.x); line.setAttribute('y1', a.y);
-            line.setAttribute('x2', b.x); line.setAttribute('y2', b.y);
-            line.setAttribute('stroke', '#000');
-            line.setAttribute('stroke-width', '4');
-            line.setAttribute('stroke-dasharray', '8 4');
-            layer.appendChild(line);
-            // Tick marks
-            const dx = b.x - a.x, dy = b.y - a.y, len = Math.hypot(dx, dy);
-            const ux = dx / len, uy = dy / len;
-            const tickStep = 18, tickLen = 5;
-            for (let t = tickStep; t < len; t += tickStep) {
-                const px = a.x + ux * t, py = a.y + uy * t;
-                const tk = svgEl('line');
-                tk.setAttribute('x1', px); tk.setAttribute('y1', py);
-                tk.setAttribute('x2', px - uy * tickLen);
-                tk.setAttribute('y2', py + ux * tickLen);
-                tk.setAttribute('stroke', '#000');
-                tk.setAttribute('stroke-width', '1.5');
-                layer.appendChild(tk);
+        case 'pond':
+        case 'small_pond': {
+            const p = svgEl('polygon');
+            p.setAttribute('points', shape.polygon.map(v => `${v.x},${v.y}`).join(' '));
+            p.setAttribute('fill', shape.color);
+            p.setAttribute('stroke', shape.stroke || IOF.pond_border);
+            p.setAttribute('stroke-width', '2.5');
+            layer.appendChild(p);
+            break;
+        }
+        case 'vegetation': {
+            const p = svgEl('polygon');
+            p.setAttribute('points', shape.polygon.map(v => `${v.x},${v.y}`).join(' '));
+            p.setAttribute('fill', shape.color);
+            p.setAttribute('opacity', '0.85');
+            layer.appendChild(p);
+            break;
+        }
+        case 'wall': {
+            const a = shape.a, b = shape.b;
+            const isHedge = shape.color === IOF.veg_slow;
+            if (isHedge) {
+                // Thick green band for hedge
+                const polygon = svgEl('polygon');
+                polygon.setAttribute('points', shape.hull.map(v => `${v.x},${v.y}`).join(' '));
+                polygon.setAttribute('fill', IOF.veg_slow);
+                polygon.setAttribute('opacity', '0.95');
+                layer.appendChild(polygon);
+            } else {
+                // Stone wall / fence — black thick line
+                const line = svgEl('line');
+                line.setAttribute('x1', a.x); line.setAttribute('y1', a.y);
+                line.setAttribute('x2', b.x); line.setAttribute('y2', b.y);
+                line.setAttribute('stroke', shape.color);
+                line.setAttribute('stroke-width', (shape.half * 0.9) || 4);
+                line.setAttribute('stroke-linecap', 'round');
+                layer.appendChild(line);
+                if (shape.ticked) drawFenceTicks(layer, a, b);
             }
             break;
         }
-        case 'hedge': {
-            const p = svgEl('polygon');
-            p.setAttribute('points', obs.polygons[0].map(v => `${v.x},${v.y}`).join(' '));
-            p.setAttribute('fill', obs.color);
-            p.setAttribute('stroke', obs.stroke);
-            p.setAttribute('stroke-width', '2');
-            p.setAttribute('opacity', '0.92');
-            layer.appendChild(p);
+        case 'short_fence': {
+            const line = svgEl('line');
+            line.setAttribute('x1', shape.a.x); line.setAttribute('y1', shape.a.y);
+            line.setAttribute('x2', shape.b.x); line.setAttribute('y2', shape.b.y);
+            line.setAttribute('stroke', shape.color);
+            line.setAttribute('stroke-width', '3');
+            line.setAttribute('stroke-linecap', 'round');
+            layer.appendChild(line);
+            drawFenceTicks(layer, shape.a, shape.b);
+            break;
+        }
+        case 'boulder': {
+            const c = svgEl('circle');
+            c.setAttribute('cx', shape.cx); c.setAttribute('cy', shape.cy);
+            c.setAttribute('r', shape.r);
+            c.setAttribute('fill', shape.color);
+            layer.appendChild(c);
             break;
         }
         case 'cliff': {
             const poly = svgEl('polyline');
-            poly.setAttribute('points', obs.polyline.map(v => `${v.x},${v.y}`).join(' '));
+            poly.setAttribute('points', shape.polyline.map(v => `${v.x},${v.y}`).join(' '));
             poly.setAttribute('fill', 'none');
-            poly.setAttribute('stroke', '#000');
+            poly.setAttribute('stroke', shape.color);
             poly.setAttribute('stroke-width', '5');
             poly.setAttribute('stroke-linejoin', 'round');
             poly.setAttribute('stroke-linecap', 'round');
             layer.appendChild(poly);
             // Hatches on one side
-            for (let i = 0; i < obs.polyline.length - 1; i++) {
-                const a = obs.polyline[i], b = obs.polyline[i + 1];
+            for (let i = 0; i < shape.polyline.length - 1; i++) {
+                const a = shape.polyline[i], b = shape.polyline[i + 1];
                 const dx = b.x - a.x, dy = b.y - a.y;
                 const len = Math.hypot(dx, dy);
                 const ux = dx / len, uy = dy / len;
@@ -586,9 +758,8 @@ function drawObstacle(obs) {
                     const px = a.x + ux * t, py = a.y + uy * t;
                     const tk = svgEl('line');
                     tk.setAttribute('x1', px); tk.setAttribute('y1', py);
-                    tk.setAttribute('x2', px - uy * 7);
-                    tk.setAttribute('y2', py + ux * 7);
-                    tk.setAttribute('stroke', '#000');
+                    tk.setAttribute('x2', px - uy * 8); tk.setAttribute('y2', py + ux * 8);
+                    tk.setAttribute('stroke', shape.color);
                     tk.setAttribute('stroke-width', '2');
                     layer.appendChild(tk);
                 }
@@ -598,197 +769,319 @@ function drawObstacle(obs) {
     }
 }
 
-function drawControl(pt, isStart) {
-    const layer = SVG('rp-control-layer');
-    const r = 22;
-    const c = svgEl('circle');
-    c.setAttribute('cx', pt.x); c.setAttribute('cy', pt.y); c.setAttribute('r', r);
-    c.setAttribute('class', 'rp-control-circle');
-    layer.appendChild(c);
-
-    if (isStart) {
-        // Triangle for start
-        const tri = svgEl('polygon');
-        const s = 14;
-        const pts = [
-            { x: pt.x,         y: pt.y - s },
-            { x: pt.x + s*0.87, y: pt.y + s/2 },
-            { x: pt.x - s*0.87, y: pt.y + s/2 },
-        ];
-        tri.setAttribute('points', pts.map(p => `${p.x},${p.y}`).join(' '));
-        tri.setAttribute('fill', 'none');
-        tri.setAttribute('stroke', '#a033f0');
-        tri.setAttribute('stroke-width', '2.5');
-        layer.appendChild(tri);
-    } else {
-        // Concentric inner circle for ziel
-        const c2 = svgEl('circle');
-        c2.setAttribute('cx', pt.x); c2.setAttribute('cy', pt.y); c2.setAttribute('r', r * 0.55);
-        c2.setAttribute('class', 'rp-control-circle');
-        c2.setAttribute('stroke-width', '2.5');
-        layer.appendChild(c2);
+function drawFenceTicks(layer, a, b) {
+    const dx = b.x - a.x, dy = b.y - a.y, len = Math.hypot(dx, dy);
+    const ux = dx / len, uy = dy / len;
+    const step = 16;
+    for (let t = step / 2; t < len; t += step) {
+        const px = a.x + ux * t, py = a.y + uy * t;
+        // X-mark for crossable fence: two short crossed lines
+        const tk = svgEl('line');
+        tk.setAttribute('x1', px - uy * 4); tk.setAttribute('y1', py + ux * 4);
+        tk.setAttribute('x2', px + uy * 4); tk.setAttribute('y2', py - ux * 4);
+        tk.setAttribute('stroke', '#000');
+        tk.setAttribute('stroke-width', '1.5');
+        layer.appendChild(tk);
     }
 }
 
-function drawRoute(route, color, classes = '') {
-    const layer = SVG('rp-route-layer');
-    const path = svgEl('polyline');
-    path.setAttribute('points', route.points.map(p => `${p.x},${p.y}`).join(' '));
-    path.setAttribute('class', `rp-route ${classes}`);
-    path.setAttribute('stroke', color);
-    layer.appendChild(path);
-    return path;
+function drawControls(start, ziel) {
+    const layer = SVG('rp-control-layer');
+    // Use the same draw routines as regular play mode: two equal circles +
+    // a straight connection line (no arrow, no dashed line).
+    [start, ziel].forEach(pt => {
+        const c = svgEl('circle');
+        c.setAttribute('cx', pt.x); c.setAttribute('cy', pt.y); c.setAttribute('r', R_CONTROL);
+        c.setAttribute('fill', 'transparent');
+        c.setAttribute('stroke', CONTROL_COLOR);
+        c.setAttribute('stroke-width', '3');
+        c.setAttribute('vector-effect', 'non-scaling-stroke');
+        layer.appendChild(c);
+    });
+
+    const GAP = 8;
+    const dx  = ziel.x - start.x;
+    const dy  = ziel.y - start.y;
+    const dist = Math.hypot(dx, dy);
+    if (dist <= 2 * (R_CONTROL + GAP)) return;
+
+    const angle  = Math.atan2(dy, dx);
+    const offset = R_CONTROL + GAP;
+    const line = svgEl('line');
+    line.setAttribute('x1', start.x + Math.cos(angle) * offset);
+    line.setAttribute('y1', start.y + Math.sin(angle) * offset);
+    line.setAttribute('x2', ziel.x  - Math.cos(angle) * offset);
+    line.setAttribute('y2', ziel.y  - Math.sin(angle) * offset);
+    line.setAttribute('stroke', CONTROL_COLOR);
+    line.setAttribute('stroke-width', '3');
+    line.setAttribute('fill', 'none');
+    line.setAttribute('vector-effect', 'non-scaling-stroke');
+    layer.appendChild(line);
 }
 
 /* =========================================================
-   CHOICE FLOW
+   CHOICE FLOW + PLAY-MODE-STYLE ANIMATION
 ========================================================= */
 
 function renderChoiceButtons() {
-    const bar = SVG('rp-btn-bar');
+    const bar = SVG('play-btn-bar');
     bar.innerHTML = '';
 
-    const leftBtn  = document.createElement('button');
-    leftBtn.className = 'rp-btn';
-    leftBtn.style.background = COLOR_LEFT;
-    leftBtn.textContent = 'Links';
-    leftBtn.addEventListener('click', () => pickSide('left'));
+    const isDesktop = document.body.classList.contains('desktop');
+    const fontSize = isDesktop
+        ? `${Math.min(28, Math.max(14, Math.round(56 / 2)))}px`
+        : `${Math.min(22, Math.max(8,  Math.round(44 / 2)))}px`;
 
-    const rightBtn = document.createElement('button');
-    rightBtn.className = 'rp-btn';
-    rightBtn.style.background = COLOR_RIGHT;
-    rightBtn.textContent = 'Rechts';
-    rightBtn.addEventListener('click', () => pickSide('right'));
+    // Buttons in play-mode style (route-btn route-btn-labeled)
+    scene.routes.forEach((r, i) => {
+        const btn = document.createElement('button');
+        btn.className = 'play-btn route-btn route-btn-labeled';
+        btn.style.background = ROUTE_COLORS[i];
+        btn.style.fontSize   = fontSize;
+        btn.dataset.idx = i;
 
-    bar.appendChild(leftBtn);
-    bar.appendChild(rightBtn);
+        const label = document.createElement('span');
+        label.className = 'play-btn-label';
+        label.textContent = i === 0 ? 'Links' : 'Rechts';
+        btn.appendChild(label);
+
+        btn.addEventListener('click', () => pickSide(i));
+        bar.appendChild(btn);
+    });
 }
 
-function renderNextButton() {
-    const bar = SVG('rp-btn-bar');
-    bar.innerHTML = '';
-
-    const btn = document.createElement('button');
-    btn.className = 'rp-btn rp-btn-next';
-    btn.textContent = 'Nächste';
-    btn.addEventListener('click', next);
-    bar.appendChild(btn);
-}
-
-function pickSide(side) {
+function pickSide(idx) {
     if (phase !== 'choose') return;
     phase = 'reveal';
 
-    const chosen   = scene.routes[side];
-    const otherKey = side === 'left' ? 'right' : 'left';
-    const other    = scene.routes[otherKey];
+    const choiceTime = ((performance.now() - choiceStartTime) / 1000);
+    const chosen     = scene.routes[idx];
+    const other      = scene.routes[1 - idx];
 
-    // Draw both routes — chosen highlighted, other faded — and animate the
-    // chosen one's trace from start to ziel.
-    const chosenColor = side === 'left' ? COLOR_LEFT : COLOR_RIGHT;
-    const otherColor  = side === 'left' ? COLOR_RIGHT : COLOR_LEFT;
+    // Disable buttons; mark which one was clicked
+    const buttons = SVG('play-btn-bar').querySelectorAll('.play-btn');
+    buttons.forEach((b, i) => {
+        b.disabled = true;
+        if (i === idx) b.classList.add('active');
+    });
 
-    drawRoute(other,  otherColor,  'rp-route-faded');
-    drawRoute(chosen, chosenColor);
-    animateTrace(chosen, chosenColor);
+    // Determine which route is the shorter (correct)
+    const shorter = chosen.time <= other.time ? chosen : other;
+    const longer  = chosen.time >  other.time ? chosen : other;
+    const correctIdx = chosen.time <= other.time ? idx : 1 - idx;
+    const slowerIdx  = correctIdx === 0 ? 1 : 0;
+    const isCorrect  = idx === correctIdx;
+    const diffSec    = longer.time - shorter.time;
 
-    // Determine performance
-    const correctSide = scene.routes.left.length <= scene.routes.right.length ? 'left' : 'right';
-    const isCorrect   = side === correctSide;
-    const diffPx      = Math.abs(scene.routes.left.length - scene.routes.right.length);
-    const diffMeters  = diffPx / PX_PER_M;
-    const diffSeconds = diffMeters / RUN_SPEED;
+    // Replace the original Links/Rechts label with the crown (correct) and
+    // the +X% / +Ys delta (slower). Layout is identical for both — the same
+    // .play-btn-label slot is reused so the text simply gets swapped out.
+    const correctLabel = buttons[correctIdx].querySelector('.play-btn-label');
+    if (correctLabel) {
+        correctLabel.innerHTML = window.icon ? window.icon('crown', '1.6em') : '👑';
+        correctLabel.classList.add('rp-btn-crown');
+    }
+    buttons[correctIdx].classList.add('route-btn-fastest');
 
-    showFeedback({ isCorrect, diffMeters, diffSeconds, chosen, correctSide });
-
-    // Update stats
-    stats.attempts++;
-    if (isCorrect) { stats.correct++; stats.streak++; stats.bestStreak = Math.max(stats.bestStreak, stats.streak); }
-    else           { stats.streak = 0; }
-    saveStats();
-    renderHud();
-
-    // Switch button bar to "next"
-    renderNextButton();
-}
-
-function animateTrace(route, color) {
-    // Build a polyline and animate its stroke-dashoffset
-    const layer = SVG('rp-route-layer');
-    const trace = svgEl('polyline');
-    trace.setAttribute('points', route.points.map(p => `${p.x},${p.y}`).join(' '));
-    trace.setAttribute('class', 'rp-trace');
-    trace.setAttribute('stroke', color);
-    layer.appendChild(trace);
-    const len = route.length;
-    trace.style.strokeDasharray  = `${len}`;
-    trace.style.strokeDashoffset = `${len}`;
-    // Speed scales with route length; clamp between 700-1400ms
-    const duration = clamp(len * 1.3, 700, 1400);
-    trace.style.transition = `stroke-dashoffset ${duration}ms linear`;
-    // Trigger transition on next frame
-    requestAnimationFrame(() => { trace.style.strokeDashoffset = '0'; });
-}
-
-/* =========================================================
-   FEEDBACK
-========================================================= */
-
-function showFeedback({ isCorrect, diffMeters, diffSeconds }) {
-    const el = SVG('rp-feedback');
-    el.innerHTML = '';
-
-    const status = document.createElement('span');
-    status.className = isCorrect ? 'rp-feedback-correct' : 'rp-feedback-wrong';
-    status.textContent = isCorrect ? '✓ Schnellste Route' : '✗ Längere Route';
-    el.appendChild(status);
-
-    if (!isCorrect) {
-        const diff = document.createElement('span');
-        diff.className = 'rp-feedback-diff';
-        diff.textContent = `+${diffMeters.toFixed(0)} m  ·  +${diffSeconds.toFixed(1)}s`;
-        el.appendChild(diff);
-    } else if (diffMeters < 1) {
-        const diff = document.createElement('span');
-        diff.className = 'rp-feedback-diff';
-        diff.textContent = '(praktisch gleich lang)';
-        el.appendChild(diff);
+    const slowerLabel = buttons[slowerIdx].querySelector('.play-btn-label');
+    if (slowerLabel && diffSec > 0) {
+        slowerLabel.innerHTML =
+            `<span class="route-btn-delta-rel">+${Math.round((diffSec / shorter.time) * 100)}%</span>` +
+            `<span class="route-btn-delta-abs">+${diffSec.toFixed(1)}s</span>`;
+        slowerLabel.classList.add('route-btn-delta');
     }
 
-    el.classList.add('open');
+    // Animate routes (play.js dot-and-trail style, both routes in parallel)
+    animateRoutes(idx);
+
+    // Stats update — flame goes orange when a new record is set
+    stats.attempts++;
+    let newRecord = false;
+    if (isCorrect) {
+        stats.correct++;
+        stats.streak++;
+        if (stats.streak > stats.bestStreak) {
+            stats.bestStreak = stats.streak;
+            newRecord = true;
+        }
+    } else {
+        stats.streak = 0;
+    }
+    saveStats();
+    renderHud({ choiceTime, newRecord });
+
+    // Submit to DB
+    submitChoice({
+        correct:      isCorrect,
+        choice_time:  choiceTime,
+        shorter_time: shorter.time,
+        longer_time:  longer.time,
+    });
 }
 
-function closeFeedback() {
-    const el = SVG('rp-feedback');
-    el.classList.remove('open');
-    el.innerHTML = '';
+function animateRoutes(chosenIdx) {
+    const layer = SVG('rp-route-layer');
+    layer.innerHTML = '';
+
+    const validTimes = scene.routes.map(r => r.time).filter(t => t > 0);
+    const minTime    = validTimes.length ? Math.min(...validTimes) : 1;
+
+    const anims = scene.routes.map((route, i) => {
+        const rP = route.points;
+        if (!rP || rP.length < 2) return null;
+
+        const dists = [0];
+        for (let j = 1; j < rP.length; j++)
+            dists.push(dists[j - 1] + Math.hypot(rP[j].x - rP[j - 1].x, rP[j].y - rP[j - 1].y));
+        const totalDist = dists[dists.length - 1];
+
+        const ratio    = route.time > 0 ? route.time / minTime : 1;
+        const excess   = ratio - 1;
+        const amp      = 5 - 4 * Math.min(excess, 1);
+        const duration = 1 + excess * amp;        // seconds
+
+        const color = ROUTE_COLORS[i];
+
+        // Background dimmed white outline
+        const bg = svgEl('polyline');
+        bg.setAttribute('points', rP.map(p => `${p.x},${p.y}`).join(' '));
+        bg.setAttribute('fill', 'none');
+        bg.setAttribute('stroke', 'white');
+        bg.setAttribute('stroke-width', '3');
+        bg.setAttribute('opacity', '0.2');
+        bg.setAttribute('stroke-linejoin', 'round');
+        layer.appendChild(bg);
+
+        const trail = svgEl('polyline');
+        trail.setAttribute('fill', 'none');
+        trail.setAttribute('stroke', color);
+        trail.setAttribute('stroke-width', '3');
+        trail.setAttribute('stroke-linecap',  'round');
+        trail.setAttribute('stroke-linejoin', 'round');
+        trail.setAttribute('points', `${rP[0].x},${rP[0].y}`);
+        if (i !== chosenIdx) trail.setAttribute('opacity', '0.7');
+        layer.appendChild(trail);
+
+        const dot = svgEl('circle');
+        dot.setAttribute('r', '6');
+        dot.setAttribute('fill', color);
+        dot.setAttribute('cx', rP[0].x);
+        dot.setAttribute('cy', rP[0].y);
+        layer.appendChild(dot);
+
+        return { rP, dists, totalDist, duration, color, trail, dot, i, done: false };
+    }).filter(Boolean);
+
+    const t0 = performance.now();
+    if (_routeAnim) cancelAnimationFrame(_routeAnim);
+
+    (function tick(now) {
+        const elapsed = (now - t0) / 1000;
+        let allDone = true;
+
+        anims.forEach(anim => {
+            if (anim.done) return;
+            const { rP, dists, totalDist, duration, trail, dot } = anim;
+
+            const dist = Math.min((elapsed / duration) * totalDist, totalDist);
+            let seg = dists.length - 2;
+            for (let j = 1; j < dists.length; j++) {
+                if (dists[j] >= dist) { seg = j - 1; break; }
+            }
+            const segLen = (dists[seg + 1] ?? totalDist) - dists[seg];
+            const segT   = segLen > 0 ? (dist - dists[seg]) / segLen : 1;
+            const p0 = rP[seg], p1 = rP[Math.min(seg + 1, rP.length - 1)];
+            const cx = p0.x + (p1.x - p0.x) * segT;
+            const cy = p0.y + (p1.y - p0.y) * segT;
+
+            dot.setAttribute('cx', cx);
+            dot.setAttribute('cy', cy);
+
+            const pts = rP.slice(0, seg + 1).map(p => `${p.x},${p.y}`);
+            if (segT > 0) pts.push(`${cx},${cy}`);
+            trail.setAttribute('points', pts.join(' '));
+
+            if (dist >= totalDist) {
+                anim.done = true;
+                dot.remove();
+                emitWave(rP[rP.length - 1], anim.color);
+            } else {
+                allDone = false;
+            }
+        });
+
+        if (!allDone) _routeAnim = requestAnimationFrame(tick);
+        else _routeAnim = null;
+    })(t0);
+}
+
+function emitWave(pos, color) {
+    const layer = SVG('rp-control-layer');
+    const c = svgEl('circle');
+    c.setAttribute('cx', pos.x); c.setAttribute('cy', pos.y); c.setAttribute('r', R_CONTROL);
+    c.setAttribute('fill', 'none');
+    c.setAttribute('stroke', color);
+    c.setAttribute('stroke-width', '14');
+    c.setAttribute('opacity', '0.85');
+    c.setAttribute('vector-effect', 'non-scaling-stroke');
+    c.style.filter = 'blur(4px)';
+    layer.appendChild(c);
+    const start = performance.now();
+    (function step(now) {
+        const t = Math.min((now - start) / 1800, 1);
+        const e = 1 - Math.pow(1 - t, 2);
+        c.setAttribute('r',       R_CONTROL + (R_CONTROL * 1.6) * e);
+        c.setAttribute('opacity', (1 - e) * 0.85);
+        if (t < 1) requestAnimationFrame(step);
+        else c.remove();
+    })(start);
 }
 
 /* =========================================================
-   STATS / STREAK  (localStorage, no DB)
+   FEEDBACK + STATS + DB
 ========================================================= */
 
 function loadStats() {
     try {
-        const raw = localStorage.getItem('rpStats');
-        if (!raw) throw 0;
-        const o = JSON.parse(raw);
+        const o = JSON.parse(localStorage.getItem('rpStats') || '{}');
         return {
-            attempts:    o.attempts    || 0,
-            correct:     o.correct     || 0,
-            streak:      o.streak      || 0,
-            bestStreak:  o.bestStreak  || 0,
+            attempts:   o.attempts   || 0,
+            correct:    o.correct    || 0,
+            streak:     o.streak     || 0,
+            bestStreak: o.bestStreak || 0,
         };
     } catch { return { attempts: 0, correct: 0, streak: 0, bestStreak: 0 }; }
 }
-
 function saveStats() {
     try { localStorage.setItem('rpStats', JSON.stringify(stats)); } catch {}
 }
 
-function renderHud() {
-    document.getElementById('rp-attempts').textContent     = stats.attempts;
-    document.getElementById('rp-correct').textContent      = stats.correct;
-    document.getElementById('rp-streak').textContent       = stats.streak;
-    document.getElementById('rp-best-streak').textContent  = stats.bestStreak;
+function renderHud(opts = {}) {
+    const attemptsEl = SVG('rp-attempts');
+    const streakEl   = SVG('rp-streak');
+    const flameEl    = SVG('rp-flame');
+    const choiceEl   = SVG('rp-choice-time');
+    if (attemptsEl) attemptsEl.textContent = stats.attempts;
+    if (streakEl)   streakEl.textContent   = stats.streak;
+    if (flameEl) {
+        // Orange flame when the current streak just broke the previous record
+        const onFire = !!opts.newRecord;
+        flameEl.classList.toggle('is-record', onFire);
+        // Also stay orange while the current streak == best (record is alive)
+        if (!onFire && stats.streak > 0 && stats.streak === stats.bestStreak) {
+            flameEl.classList.add('is-record');
+        }
+    }
+    if (choiceEl && opts.choiceTime !== undefined) {
+        choiceEl.textContent = `${opts.choiceTime.toFixed(2)}s`;
+    }
+}
+
+function submitChoice(payload) {
+    const csrf = document.cookie.match(/csrftoken=([^;]+)/)?.[1] ?? '';
+    fetch('/play/infinity/submit-choice/', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf },
+        body:    JSON.stringify(payload),
+    }).catch(err => console.error('submit-random-choice failed:', err));
 }

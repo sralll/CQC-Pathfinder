@@ -8,6 +8,7 @@ import math
 import os
 import gc
 import json
+import time
 import numpy as np
 from io import BytesIO
 import onnxruntime as ort
@@ -16,83 +17,72 @@ import threading
 from django.db import connection
 
 from .communication import extract_pathfinding_inputs
-from .preprocess import load_mask, inflate_obstacles, find_path_with_margin_growth, generate_corridor_mask_numpy, apply_blocked_terrain
-from .a_star import get_a_star_turns, simplify_wps
-from .theta_star import make_los_cached, guided_theta_star, simplify_theta_path, guided_theta_star_sync
+from .preprocess import load_mask, apply_blocked_terrain
+from project.runtime import calc_route_noA
+# The visibility-graph / navgraph pathfinding (navgraph.py, query.py) was
+# removed; the editor uses the client-side θ* worker exclusively now.
+
+try:
+    from debug.timing import record_pathfinding
+except Exception:  # pragma: no cover — debug app may be absent in stripped builds
+    def record_pathfinding(*args, **kwargs):
+        pass
 
 RUN_SPEED = 4.75  # m/s
+TRAIN_SCALE = 0.710
 
-# Create your views here.
 def group_required(group_name):
     def in_group(u):
         return u.is_authenticated and u.groups.filter(name=group_name).exists()
     return user_passes_test(in_group)
 
-@group_required('Trainer')
-def find(request):
 
-    async def event_stream():
-        # Step 1: Extract inputs
-        data, status = extract_pathfinding_inputs(request)
-        if status != 200:
-            yield f"data: {json.dumps({'error': data.get('error', 'Invalid request')})}\n\n"
-            return
+def _blocked_to_grid(blocked: dict) -> dict:
+    """Convert blocked terrain from map-pixel coords (frontend) to mask-pixel
+    coords (matches the train_scale division applied to start/ziel)."""
+    if not blocked:
+        return {}
+    out: dict = {"lines": [], "areas": []}
+    for ln in blocked.get('lines') or []:
+        s, e = ln.get('start'), ln.get('end')
+        if not s or not e:
+            continue
+        out['lines'].append({
+            'start': {'x': int(s['x'] / TRAIN_SCALE), 'y': int(s['y'] / TRAIN_SCALE)},
+            'end': {'x': int(e['x'] / TRAIN_SCALE), 'y': int(e['y'] / TRAIN_SCALE)},
+        })
+    for a in blocked.get('areas') or []:
+        pts = a.get('points') or []
+        if len(pts) < 3:
+            continue
+        out['areas'].append({
+            'points': [
+                {'x': int(p['x'] / TRAIN_SCALE), 'y': int(p['y'] / TRAIN_SCALE)}
+                for p in pts
+            ],
+        })
+    return out
 
-        # Step 2: Load mask and convert to numpy grid
-        mask, error = load_mask(data)
-        if error:
-            yield f"data: {json.dumps({'error': error})}\n\n"
-            return
-        
-        # Overlay blocking instructions
-        blockedTerrain = {
-            "lines": data.get("blockedTerrain", {}).get("lines", []),
-            "areas": data.get("blockedTerrain", {}).get("areas", [])
-        }
-        grid = apply_blocked_terrain(mask, blockedTerrain)
 
-        # Step 3: Find path with margin growth
-        a_star_path, subgrid, offset, start_cP, ziel_cP = find_path_with_margin_growth(
-            grid, data["start"], data["ziel"], data["routes"]
-        )
-        if a_star_path is None:
-            yield f"data: {json.dumps({'error': 'Exploratory A* exited with no path found. Recheck mask.'})}\n\n"
-            return
+def _routes_to_response(routes, start_xy, ziel_xy):
+    """Scale graph-space routes back to map units for the frontend; replace
+    the first/last point with the originally requested start/ziel so the
+    polyline starts/ends exactly where the user clicked."""
+    out = []
+    for r in routes:
+        if not r:
+            continue
+        pts = [(float(start_xy[0]), float(start_xy[1]))]
+        for (x, y) in r[1:-1]:
+            pts.append((float(x) * TRAIN_SCALE, float(y) * TRAIN_SCALE))
+        pts.append((float(ziel_xy[0]), float(ziel_xy[1])))
+        out.append(pts)
+    return out
 
-        # Step 4: Simplify waypoints and prepare LOS cache
-        a_star_wps = get_a_star_turns(a_star_path)
-        a_star_wps = simplify_wps(a_star_wps, subgrid)
-        inflated_subgrid = inflate_obstacles(subgrid, radius=1, dilation_block=150)
 
-        corridor_mask = generate_corridor_mask_numpy(a_star_wps, subgrid.shape, radius=40)
-        constrained_grid = np.where(corridor_mask == 1, inflated_subgrid, 0)
-
-        #DEBUG
-        #Image.fromarray((corridor_mask * 255).astype(np.uint8)).save("corridor_mask.png")
-        #Image.fromarray(constrained_grid.astype(np.uint8)).save("constrained_grid.png")
-        cached_los = make_los_cached(constrained_grid)
-
-        # Step 5: Yield updates from guided_theta_star generator
-        final_path = None
-        for update in guided_theta_star(constrained_grid, start_cP, ziel_cP, a_star_wps,
-                                        switch_radius=10, cached_los=cached_los):
-            
-            if update.get("done"):
-                final_path = update["path"]
-            # Each update should be a dict you convert to JSON
-            yield f"data: {json.dumps(update)}\n\n"
-
-        if final_path is None:
-            yield f"data: {json.dumps({'error': 'Guided θ* exited with no path found'})}\n\n"
-            return
-        theta_star_path = simplify_theta_path(final_path)
-
-        theta_star_path = [((x + offset[0]) * 0.71, (y + offset[1]) * 0.71) for (x, y) in theta_star_path]
-        # Step 6: Final done message (optional)
-        yield f"data: {json.dumps({'final_path': theta_star_path})}\n\n"
-        yield f"data: {json.dumps({'status': 'done'})}\n\n"
-        
-    return StreamingHttpResponse(event_stream(), content_type='text/event-stream')
+# The visibility-graph `find` and `rebuild_navgraph` views were removed when
+# the navgraph pathfinding approach was retired. The editor uses the
+# client-side Web Worker θ* pipeline exclusively for auto-fire on CP creation.
 
 @group_required('Trainer')
 def upload_mask(request):
@@ -251,23 +241,20 @@ def run_UNet_stream(request):
             with open(mask_path, 'wb') as f:
                 f.write(final_img_bytes.read())
 
+            # Mask PNG is on disk; frontend can load the preview, flip
+            # File.has_mask and decode the greyscale into the client-side
+            # worker. (The legacy navgraph build phase was removed.)
             yield f"data: {json.dumps({'done': True, 'final_path': f'masks/{mask_filename}'})}\n\n"
             gc.collect()
 
-        def sync_tile_generator():
-            loop = asyncio.new_event_loop()
-            async_gen = tile_generator()
-            try:
-                while True:
-                    try:
-                        yield loop.run_until_complete(async_gen.__anext__())
-                    except StopAsyncIteration:
-                        break
-            finally:
-                loop.close()
-
+        # Pass the async generator directly to StreamingHttpResponse so the
+        # ASGI host (uvicorn) drives it on its own running loop. The old sync
+        # wrapper used `loop.run_until_complete(__anext__())` chunk-by-chunk,
+        # which under ASGI's sync_to_async wrap creates a fresh local loop per
+        # chunk — so the generator's `await` boundaries never resumed and
+        # everything past the first phase 1 yield was silently dropped.
         response = StreamingHttpResponse(
-            sync_tile_generator(),
+            tile_generator(),
             content_type="text/event-stream"
         )
         response["Cache-Control"] = "no-cache"
@@ -289,21 +276,8 @@ def calc_length(rP):
         length += math.sqrt(dx*dx + dy*dy) * 0.48
     return round(length)
 
-def calc_no_angles(rP):
-    sharp_angles = 0
-    for i in range(1, len(rP) - 1):
-        prev_v = (rP[i]["x"] - rP[i-1]["x"], rP[i]["y"] - rP[i-1]["y"])
-        curr_v = (rP[i+1]["x"] - rP[i]["x"], rP[i+1]["y"] - rP[i]["y"])
-        dot = prev_v[0]*curr_v[0] + prev_v[1]*curr_v[1]
-        prev_mag = math.sqrt(prev_v[0]**2 + prev_v[1]**2)
-        curr_mag = math.sqrt(curr_v[0]**2 + curr_v[1]**2)
-        if prev_mag == 0 or curr_mag == 0:
-            continue
-        cos_theta = max(-1.0, min(1.0, dot / (prev_mag * curr_mag)))  # clamp for floating point safety
-        angle = math.degrees(math.acos(cos_theta))
-        if angle > 60:
-            sharp_angles += 1
-    return sharp_angles
+def calc_no_angles(rP, scale=None):
+    return calc_route_noA(rP, scale)
 
 def calc_pos(rP, start, ziel):
     dx = ziel["x"] - start["x"]
@@ -313,70 +287,11 @@ def calc_pos(rP, start, ziel):
 
 from coursesetter.models import publishedFile
 
-def pathfinding_loop(cp_data, grid, blockedTerrain=None):
-    blockedTerrain = blockedTerrain or {"lines": [], "areas": []}
-    train_scale = 0.710
-
-    # Scale coordinates from map units to grid units
-    start = (
-        int(cp_data["start"]["x"] / train_scale),
-        int(cp_data["start"]["y"] / train_scale),
-    )
-    ziel = (
-        int(cp_data["ziel"]["x"] / train_scale),
-        int(cp_data["ziel"]["y"] / train_scale),
-    )
-
-    # Scale route points too
-    scaled_routes = []
-    for route in cp_data.get("route", []):
-        scaled_rP = [
-            {"x": int(pt["x"] / train_scale), "y": int(pt["y"] / train_scale)}
-            for pt in route.get("rP", [])
-        ]
-        scaled_routes.append({**route, "rP": scaled_rP})
-
-    # Step 1: Find path with margin growth (A* exploratory)
-    a_star_path, subgrid, offset, start_cP, ziel_cP = find_path_with_margin_growth(
-        grid,
-        start,
-        ziel,
-        scaled_routes
-    )
-    if a_star_path is None:
-        return None
-
-    # Step 2: Simplify waypoints & prepare grid for guided θ*
-    a_star_wps = simplify_wps(get_a_star_turns(a_star_path), subgrid)
-    inflated_subgrid = inflate_obstacles(subgrid, radius=1, dilation_block=150)
-    corridor_mask = generate_corridor_mask_numpy(a_star_wps, subgrid.shape, radius=40)
-    constrained_grid = np.where(corridor_mask == 1, inflated_subgrid, 0)
-
-    # Optional LOS cache
-    try:
-        cached_los = make_los_cached(constrained_grid)
-    except Exception:
-        cached_los = None
-
-    # Step 3: Run guided θ* to get final path
-    final_path = guided_theta_star_sync(
-        grid=constrained_grid,
-        start=start_cP,
-        goal=ziel_cP,
-        waypoints=a_star_wps,
-        cached_los=cached_los
-    )
-
-    if final_path is None:
-        return None
-
-    # Step 4: Simplify & scale path back to map units
-    theta_star_path = simplify_theta_path(final_path)
-    final_path_scaled = [
-        ((x + offset[0]) * train_scale, (y + offset[1]) * train_scale)
-        for x, y in theta_star_path
-    ]
-    return final_path_scaled
+def pathfinding_loop(cp_data, map_basename, blockedTerrain=None):
+    """Stub — the navgraph-backed batch pathfinder was retired together with
+    the navgraph module. Until an alternative batch path is wired up,
+    pathfinding_loop returns None so callers gracefully fall back / skip."""
+    return None
 
 def run_batch_async(data, map_basename, filename, user_kader, author):
     try:
@@ -410,7 +325,7 @@ def run_batch_async(data, map_basename, filename, user_kader, author):
                     "rP": rP,
                     "elevation": 0,
                     "length": length,
-                    "noA": calc_no_angles(rP),
+                    "noA": calc_no_angles(rP, data.get("scale")),
                     "pos": calc_pos(rP, cp["start"], cp["ziel"]),
                     "runTime": round(length / RUN_SPEED),
                 })

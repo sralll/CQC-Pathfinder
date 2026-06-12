@@ -15,8 +15,8 @@ html, body {
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 24px 16px;
     box-sizing: border-box;
+    overflow-y: auto;
 }
 
 .home-card {
@@ -25,7 +25,7 @@ html, body {
     display: flex;
     flex-direction: column;
     align-items: stretch;
-    gap: 22px;
+    gap: clamp(12px, 2.4vh, 22px);
 }
 
 /* ── Logo ─────────────────────────────────────────────── */
@@ -33,12 +33,12 @@ html, body {
 .home-logo-wrap {
     display: flex;
     justify-content: center;
-    margin-bottom: 4px;
+    width: 100%;
+    margin-top: 38px;
 }
 
 .home-logo {
-    width: 70%;
-    max-width: 280px;
+    width: 100%;
     height: auto;
     display: block;
 }
@@ -49,13 +49,14 @@ html, body {
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 12px;
+    width: 100%;
 }
 
 /* Athletes (non-trainer): only 3 tiles → Play spans the full top row,
    Resultate and Statistik share the row below. */
 .home-grid:not(.home-grid-trainer) .home-tile-primary {
     grid-column: 1 / -1;
-    aspect-ratio: 2 / 1;
+    min-height: clamp(104px, 14vh, 140px);
 }
 
 .home-tile {
@@ -64,7 +65,7 @@ html, body {
     align-items: center;
     justify-content: center;
     gap: 10px;
-    aspect-ratio: 1 / 1;
+    min-height: clamp(60px, 10vh, 100px);
     padding: 16px 12px;
     background: #1a1a1a;
     border: 0.5px solid #2e2e2e;
@@ -112,9 +113,13 @@ html, body {
 /* ── Feedback button ──────────────────────────────────── */
 
 .home-feedback {
-    display: block;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     text-align: center;
     padding: 11px 14px;
+    min-height: 44px;
+    box-sizing: border-box;
     background: #1a1a1a;
     border: 0.5px solid #2e2e2e;
     border-radius: 8px;
@@ -136,7 +141,7 @@ html, body {
     flex-wrap: wrap;
     justify-content: center;
     gap: 6px 16px;
-    margin-top: 4px;
+    margin-top: 0;
 }
 
 .home-links a {
@@ -154,6 +159,8 @@ html, body {
     font-size: 11px;
     color: #5b8db8;
     padding: 6px 10px;
+    min-height: 30px;
+    box-sizing: border-box;
     border: 0.5px solid rgba(91, 141, 184, 0.25);
     border-radius: 6px;
     background: rgba(91, 141, 184, 0.06);
@@ -161,18 +168,27 @@ html, body {
 
 /* ── Mobile scaling ───────────────────────────────────── */
 
-body.mobile .home-page    { padding: 20px 14px; }
-body.mobile .home-tile    { font-size: 19px; padding: 22px 14px; gap: 14px; }
-body.mobile .home-tile-label { font-size: 19px; }
-body.mobile .home-tile-icon x-icon { font-size: 40px; }
-body.mobile .home-feedback { font-size: 17px; padding: 16px 18px; }
-body.mobile .home-links a  { font-size: 16px; }
-body.mobile .home-update-info { font-size: 14px; }
+body.mobile .home-page    { padding: 14px; align-items: flex-start; }
+body.mobile .home-logo-wrap    { margin-top: 66px;}
+
+body.mobile .home-card    { max-width: 300px; margin: 0 auto; gap: 8px; }
+body.mobile .home-grid    { grid-template-columns: 1fr; gap: 8px; }
+body.mobile .home-grid:not(.home-grid-trainer) .home-tile-primary { grid-column: auto; min-height: 56px; }
+body.mobile .home-tile    { min-height: 56px; font-size: 18px; padding: 10px 14px; gap: 8px; }
+body.mobile .home-tile-label { font-size: 18px; }
+body.mobile .home-tile-icon x-icon { font-size: 30px; }
+body.mobile .home-feedback { min-height: 40px; font-size: 16px; padding: 9px 18px; }
+body.mobile .home-links a  { font-size: 15px; }
+body.mobile .home-update-info { min-height: 28px; font-size: 13px; padding: 5px 8px; }
 
 /* On narrow phones the tiles stack to a single column if very tight,
    otherwise keep the 2×2 grid which is comfortable on most devices. */
-@media (max-width: 360px) {
-    .home-grid { grid-template-columns: 1fr; }
-    .home-tile { aspect-ratio: auto; min-height: 90px; }
-    .home-grid:not(.home-grid-trainer) .home-tile-primary { aspect-ratio: auto; }
+@media (max-width: 700px) {
+    .home-page { padding: 14px; align-items: flex-start; }
+    .home-card { max-width: 300px; gap: 8px; }
+    .home-grid { grid-template-columns: 1fr; gap: 8px; }
+    .home-tile { min-height: 56px; padding: 10px 14px; gap: 8px; }
+    .home-grid:not(.home-grid-trainer) .home-tile-primary { grid-column: auto; }
+    .home-feedback { min-height: 40px; padding: 9px 18px; }
+    .home-update-info { min-height: 28px; padding: 5px 8px; }
 }

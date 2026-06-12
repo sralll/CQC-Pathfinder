@@ -7,7 +7,13 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 FILES_DIR = os.path.join(BASE_DIR, 'jsonfiles')
 MAPS_DIR = os.path.join(BASE_DIR, 'maps')
 
-load_dotenv()
+# Anchor the .env lookup to BASE_DIR so the same env is picked up regardless of
+# where the process is launched from (manage.py, uvicorn started in a parent
+# shell, IDE run configs, etc.). Without this, an uvicorn launched outside the
+# project dir loads no .env → DEBUG defaults to False → SESSION_COOKIE_SECURE
+# flips to True → browsers refuse to send the sessionid over plain HTTP and
+# every authed endpoint 302s to /login/.
+load_dotenv(BASE_DIR / ".env")
 
 DEBUG = os.environ.get('DEBUG', 'False') == 'True'
 
@@ -161,3 +167,7 @@ MEDIA_ROOT = os.environ.get('MEDIA_ROOT', '/app/media')
 MEDIA_URL = '/media/'
 
 UPLOAD_SECRET = os.environ.get('UPLOAD_SECRET', '')
+
+# Multiplier for OCAD-derived editor scale. Keep at 1.0 unless a side-by-side
+# comparison with an image import shows a systematic mismatch.
+OCAD_EDITOR_SCALE_FACTOR = float(os.environ.get('OCAD_EDITOR_SCALE_FACTOR', '1.0'))

@@ -28,7 +28,7 @@ class Migration(migrations.Migration):
                         verbose_name="ID",
                     ),
                 ),
-                ("auto_pathfind", models.BooleanField(default=False)),
+                ("auto_pathfind", models.BooleanField(default=True)),
                 ("auto_jump", models.BooleanField(default=True)),
                 ("autosave", models.BooleanField(default=False)),
                 (
@@ -226,7 +226,7 @@ class Migration(migrations.Migration):
                 ),
                 ("order", models.PositiveIntegerField()),
                 ("rP", models.JSONField(blank=True, null=True)),
-                ("noA", models.IntegerField(blank=True, null=True)),
+                ("noA", models.FloatField(blank=True, null=True)),
                 ("pos", models.FloatField(blank=True, null=True)),
                 ("length", models.IntegerField(blank=True, null=True)),
                 ("run_time", models.FloatField(blank=True, null=True)),

@@ -23,12 +23,23 @@ let tooltipEl = null;
 
 const PAGE = {
     isTrainer:      false,
-    competition:    true,            // false = training
+    mode:           'competition',   // 'competition' | 'training' | 'random'
     view:           'graph',         // 'graph' | 'table'
     selectedAthlete: null,           // { id, name } or null = own stats
     athletes:       [],
     tableRows:      [],              // raw rows from /stats/get-table
     tableSort:      { key: null, dir: 1 }, // dir 1 = ascending, -1 = descending
+};
+
+// Backwards-compat shim — older code reads PAGE.competition
+Object.defineProperty(PAGE, 'competition', {
+    get() { return PAGE.mode === 'competition'; },
+});
+
+const MODE_LABEL = {
+    competition: 'Wettkampf',
+    training:    'Training',
+    random:      'Infinity',
 };
 
 /* =========================================================
@@ -52,40 +63,34 @@ document.addEventListener('DOMContentLoaded', async () => {
 function updateNavTitle() {
     const el = document.getElementById('stats-nav-title');
     if (!el) return;
-    el.textContent = `Statistik (${PAGE.competition ? 'Wettkampf' : 'Training'})`;
+    el.textContent = `Statistik (${MODE_LABEL[PAGE.mode]})`;
 }
 
 function initModeToggle() {
-    const input = document.getElementById('mode-toggle-input');
-    if (!input) return;
-    input.checked = PAGE.competition;
-    updateModeIcons();
-    input.addEventListener('change', () => {
-        PAGE.competition = input.checked;
-        updateModeIcons();
-        updateNavTitle();
-        loadStats();
-    });
+    const slider = document.querySelector('.stats-3way');
+    if (!slider) return;
+    const thumb = document.getElementById('stats-3way-thumb');
+    const setThumbIcon = mode => {
+        const iconName = mode === 'training' ? 'book-open'
+                       : mode === 'random'   ? 'infinity'
+                       : 'trophy';
+        if (typeof window.icon === 'function') {
+            thumb.innerHTML = window.icon(iconName, '16px');
+        }
+    };
+    setThumbIcon(PAGE.mode);
 
-    // Mobile: tap to open mode-tip-box
-    document.querySelectorAll('.nav-mode-toggle .mode-icon-tip').forEach(tip => {
-        tip.addEventListener('click', e => {
-            e.stopPropagation();
-            const wasOpen = tip.classList.contains('tip-open');
-            document.querySelectorAll('.mode-icon-tip.tip-open').forEach(t => t.classList.remove('tip-open'));
-            if (!wasOpen) tip.classList.add('tip-open');
+    slider.querySelectorAll('.stats-3way-stop').forEach(stop => {
+        stop.addEventListener('click', () => {
+            const m = stop.dataset.mode;
+            if (m === PAGE.mode) return;
+            PAGE.mode = m;
+            slider.dataset.mode = m;
+            setThumbIcon(m);
+            updateNavTitle();
+            loadStats();
         });
     });
-    document.addEventListener('click', () => {
-        document.querySelectorAll('.mode-icon-tip.tip-open').forEach(t => t.classList.remove('tip-open'));
-    });
-}
-
-function updateModeIcons() {
-    document.querySelector('.nav-mode-toggle [data-mode="training"]')
-        ?.classList.toggle('mode-active', !PAGE.competition);
-    document.querySelector('.nav-mode-toggle [data-mode="competition"]')
-        ?.classList.toggle('mode-active',  PAGE.competition);
 }
 
 /* =========================================================
@@ -144,12 +149,24 @@ function setCardsLoading(loading) {
 ========================================================= */
 
 function initTrainerControls() {
+    const slider = document.querySelector('.stats-2way');
+    const thumb  = document.getElementById('stats-2way-thumb');
+    const setThumbIcon = view => {
+        if (typeof window.icon === 'function' && thumb) {
+            thumb.innerHTML = window.icon(view === 'table' ? 'table-cells' : 'chart-pie', '16px');
+        }
+    };
+    setThumbIcon(PAGE.view);
+
     document.querySelectorAll('.trainer-view-btn').forEach(btn => {
         btn.addEventListener('click', () => {
             if (btn.classList.contains('active')) return;
+            if (btn.disabled) return;
             PAGE.view = btn.dataset.view;
             document.querySelectorAll('.trainer-view-btn')
                 .forEach(b => b.classList.toggle('active', b === btn));
+            if (slider) slider.dataset.view = PAGE.view;
+            setThumbIcon(PAGE.view);
             applyView();
             loadStats();
         });
@@ -160,9 +177,9 @@ function initTrainerControls() {
     const dropdown = document.getElementById('trainer-athlete-dropdown');
 
     search.addEventListener('focus', () => {
-        // Clear the input on focus so the user can search again, but keep
-        // PAGE.selectedAthlete (and therefore the displayed stats) until they
-        // pick a different one.
+        // Clear the input on re-focus so the full list is shown again; the
+        // previously selected athlete (if any) stays selected until the user
+        // picks a different one or blurs without picking.
         search.value = '';
         clearBtn.classList.remove('visible');
         renderAthleteDropdown('', true);
@@ -264,10 +281,14 @@ function selectAthlete(athlete) {
     PAGE.selectedAthlete = athlete;
     const search   = document.getElementById('trainer-athlete-search');
     const clearBtn = document.getElementById('trainer-athlete-clear');
-    if (search)   search.value = athlete ? athlete.name : '';
+    if (search) {
+        search.value = athlete ? athlete.name : '';
+        // Leave the input — drop focus so the keyboard hides on mobile
+        // and the dropdown's blur-handler closes it cleanly.
+        search.blur();
+    }
     if (clearBtn) clearBtn.classList.toggle('visible', !!athlete);
     if (PAGE.view === 'table') {
-        // Just re-filter cached rows; no fetch needed
         renderTrainerTable(PAGE.tableRows);
     } else {
         loadStats();
@@ -298,7 +319,7 @@ async function loadStats() {
 async function loadGraphStats() {
     setCardsLoading(true);
     try {
-        const params = new URLSearchParams({ competition: String(PAGE.competition) });
+        const params = new URLSearchParams({ mode: PAGE.mode });
         if (PAGE.selectedAthlete) params.set('user_id', String(PAGE.selectedAthlete.id));
         const res = await fetch('/stats/get-stats/?' + params.toString());
         statsData = await res.json();
@@ -311,12 +332,11 @@ async function loadGraphStats() {
 }
 
 async function loadTrainerTable() {
-    const mode  = PAGE.competition ? 'competition' : 'training';
     const wrap  = document.getElementById('stats-table-wrap');
     const tbody = document.querySelector('#stats-table tbody');
     if (wrap) wrap.classList.add('loading');
     try {
-        const res = await fetch(`/stats/get-table/?mode=${mode}`);
+        const res = await fetch(`/stats/get-table/?mode=${PAGE.mode}`);
         if (!res.ok) {
             if (tbody) {
                 tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;color:#666;padding:24px;">Fehler beim Laden der Daten</td></tr>';
@@ -441,7 +461,7 @@ function updateTableSortIndicators() {
 
 function renderCharts() {
     if (!statsData) return;
-    const modeLabel = PAGE.competition ? 'Wettkampf' : 'Training';
+    const modeLabel = MODE_LABEL[PAGE.mode];
     const title = document.getElementById('stats-card-routes-title');
     if (title) title.textContent = `Routenwahl (${modeLabel})`;
     drawDonut();
@@ -533,12 +553,24 @@ function drawRing(svg, cx, cy, r, strokeWidth, stats, colors, who) {
         angle += fullArc;
 
         const seg = svgEl('path');
-        seg.setAttribute('d', arcPath(cx, cy, r, start, end));
+        const d   = arcPath(cx, cy, r, start, end);
+        seg.setAttribute('d', d);
         seg.setAttribute('fill', 'none');
         seg.setAttribute('stroke', colors[i]);
         seg.setAttribute('stroke-width', strokeWidth);
         seg.setAttribute('stroke-linecap', 'butt');
-        seg.setAttribute('class', 'stats-hover-target');
+        seg.setAttribute('class', 'stats-hover-target stats-donut-arc');
+
+        // Consecutive animation: each category gets its own 150 ms slot in a
+        // 600 ms total, ordered green → yellow → orange → red. Both rings
+        // (Team / Du) of the same category animate together.
+        const arcLenPx  = Math.abs(arcLen) * r + 4;
+        const slot      = 150; // ms
+        const delay     = i * slot;
+        seg.setAttribute('stroke-dasharray', `${arcLenPx} ${arcLenPx}`);
+        seg.style.strokeDashoffset = `${arcLenPx}`;
+        seg.style.transition = `stroke-dashoffset ${slot}ms cubic-bezier(0.4, 0, 0.2, 1) ${delay}ms`;
+        requestAnimationFrame(() => { seg.style.strokeDashoffset = '0'; });
 
         const pct = (value / stats.total) * 100;
         bindTooltipHtml(seg, `${escapeHtml(who)} · ${categoryLabelHtml(i, '12px')}: ${pct.toFixed(2)}%`);
@@ -618,14 +650,19 @@ function drawAvgChart() {
         ].forEach(bar => {
             const x = groupCx - bar.width / 2;
             const y = toY(bar.value);
+            const baseY = MT + chartH;
             const rect = svgEl('rect');
             rect.setAttribute('x', x);
             rect.setAttribute('y', y);
             rect.setAttribute('width', bar.width);
-            rect.setAttribute('height', Math.max(0, (MT + chartH) - y));
+            rect.setAttribute('height', Math.max(0, baseY - y));
             rect.setAttribute('fill', bar.color);
             rect.setAttribute('rx', 2);
-            rect.setAttribute('class', 'stats-hover-target');
+            rect.setAttribute('class', 'stats-hover-target stats-bar');
+            // Grow-from-baseline animation
+            rect.style.transformOrigin = `${x + bar.width / 2}px ${baseY}px`;
+            rect.style.transform = 'scaleY(0)';
+            requestAnimationFrame(() => { rect.style.transform = 'scaleY(1)'; });
             bindTooltip(rect, `${bar.who} · ${g.label}: ${bar.value.toFixed(2)}s`);
             svg.appendChild(rect);
         });
@@ -703,8 +740,9 @@ function drawActivityChart() {
     const H = svg.clientHeight || 220;
     svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
 
-    const monthly = statsData.activity || [];
-    if (!monthly.length) {
+    // statsData.activity is an array of ISO timestamp strings (one per result).
+    const timestamps = (statsData.activity || []).map(s => new Date(s));
+    if (!timestamps.length) {
         const t = svgEl('text');
         t.setAttribute('x', W / 2); t.setAttribute('y', H / 2);
         t.setAttribute('text-anchor', 'middle');
@@ -715,58 +753,34 @@ function drawActivityChart() {
         return;
     }
 
-    // Decide bucket granularity: monthly when the span is short enough,
-    // otherwise group by year. We also need the rendered bars to fit:
-    // each bar needs ≥6px (label) of horizontal space.
     const ML = 26, MR = 12, MT = 14, MB = 26;
     const chartW = W - ML - MR;
     const chartH = H - MT - MB;
 
-    const firstY  = parseInt(monthly[0].period.slice(0, 4), 10);
-    const firstM  = parseInt(monthly[0].period.slice(5, 7), 10);
-    const lastY   = parseInt(monthly[monthly.length - 1].period.slice(0, 4), 10);
-    const lastM   = parseInt(monthly[monthly.length - 1].period.slice(5, 7), 10);
-    const spanMonths = (lastY - firstY) * 12 + (lastM - firstM) + 1;
-    const maxBarsMonthly = Math.max(6, Math.floor(chartW / 12));   // ≥12px per month bar
-    const useYearly = spanMonths > Math.min(24, maxBarsMonthly);
+    const minDate = new Date(Math.min(...timestamps));
+    const maxDate = new Date(Math.max(...timestamps));
+    const dayMs   = 24 * 60 * 60 * 1000;
+    let spanDays  = Math.max(1, Math.ceil((maxDate - minDate) / dayMs) + 1);
 
-    let bars, labelFor;
-    if (useYearly) {
-        const byYear = {};
-        monthly.forEach(({ period, count }) => {
-            const y = period.slice(0, 4);
-            byYear[y] = (byYear[y] || 0) + count;
-        });
-        const ys = Object.keys(byYear);
-        const ymin = Math.min(...ys.map(Number));
-        const ymax = Math.max(...ys.map(Number));
-        bars = [];
-        for (let y = ymin; y <= ymax; y++) {
-            bars.push({ key: String(y), count: byYear[String(y)] || 0, label: String(y) });
-        }
-        labelFor = (_, i, n) => bars[i].label;   // label every year
-    } else {
-        // Fill in zero months between first and last so the axis is contiguous
-        bars = [];
-        let y = firstY, m = firstM;
-        const map = Object.fromEntries(monthly.map(o => [o.period, o.count]));
-        while (y < lastY || (y === lastY && m <= lastM)) {
-            const period = `${y}-${String(m).padStart(2, '0')}`;
-            bars.push({ key: period, count: map[period] || 0, year: y, month: m });
-            m++; if (m > 12) { m = 1; y++; }
-        }
-        // Sparser labels when there are many bars
-        const stride = Math.max(1, Math.ceil(bars.length / Math.max(4, Math.floor(chartW / 60))));
-        labelFor = (bar, i, n) => {
-            if (bar.month === 1) return String(bar.year);
-            if (i === 0 || i === n - 1)
-                return `${String(bar.month).padStart(2, '0')}/${String(bar.year).slice(2)}`;
-            if (i % stride !== 0) return null;
-            return `${String(bar.month).padStart(2, '0')}/${String(bar.year).slice(2)}`;
-        };
+    // Pick the smallest "nice" bin size such that the resulting bin count
+    // is ≤ TARGET_BINS. Bins are an integer number of days.
+    const TARGET_BINS = 50;
+    const NICE_DAYS   = [1, 2, 3, 7, 14, 21, 30, 60, 90, 180, 365];
+    let binDays = NICE_DAYS[NICE_DAYS.length - 1];
+    for (const d of NICE_DAYS) {
+        if (Math.ceil(spanDays / d) <= TARGET_BINS) { binDays = d; break; }
     }
 
-    const maxCount = Math.max(1, ...bars.map(b => b.count));
+    // Anchor the binning at minDate (midnight) so each bin starts cleanly.
+    const start0 = new Date(minDate.getFullYear(), minDate.getMonth(), minDate.getDate()).getTime();
+    const binCount = Math.max(1, Math.ceil((maxDate.getTime() - start0) / (binDays * dayMs)) + 1);
+    const bins = new Array(binCount).fill(0);
+    for (const t of timestamps) {
+        const idx = Math.floor((t.getTime() - start0) / (binDays * dayMs));
+        if (idx >= 0 && idx < binCount) bins[idx]++;
+    }
+
+    const maxCount = Math.max(1, ...bins);
     const step     = niceStep(maxCount, Math.max(1, Math.floor(chartH / 30))) || 1;
     const yMax     = Math.max(step, Math.ceil(maxCount / step) * step);
     const toY      = v => MT + chartH - (v / yMax) * chartH;
@@ -789,38 +803,51 @@ function drawActivityChart() {
         svg.appendChild(lbl);
     }
 
-    const n     = bars.length;
-    const slotW = chartW / n;
-    const barW  = Math.max(2, Math.min(useYearly ? 40 : 22, slotW * 0.7));
+    // X-axis labels: choose a stride so we end up with ~6-8 dated tick labels
+    const targetLabels = Math.max(4, Math.min(8, Math.floor(chartW / 60)));
+    const labelStride  = Math.max(1, Math.ceil(bins.length / targetLabels));
+    const labelFmt = binDays <= 14
+        ? d => `${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.`
+        : binDays <= 90
+        ? d => `${String(d.getMonth()+1).padStart(2,'0')}/${String(d.getFullYear()).slice(2)}`
+        : d => String(d.getFullYear());
 
-    bars.forEach((bar, i) => {
+    const slotW = chartW / bins.length;
+    const barW  = Math.max(1.5, slotW * 0.75);
+
+    bins.forEach((count, i) => {
+        const binStart = new Date(start0 + i * binDays * dayMs);
+        const binEnd   = new Date(start0 + (i + 1) * binDays * dayMs - 1);
         const x = ML + i * slotW + (slotW - barW) / 2;
-        const y = toY(bar.count);
+        const y = toY(count);
+        const baseY = MT + chartH;
         const rect = svgEl('rect');
         rect.setAttribute('x', x);
         rect.setAttribute('y', y);
         rect.setAttribute('width', barW);
-        rect.setAttribute('height', Math.max(0, (MT + chartH) - y));
-        rect.setAttribute('fill', bar.count > 0 ? '#e07020' : '#262626');
+        rect.setAttribute('height', Math.max(0, baseY - y));
+        rect.setAttribute('fill', count > 0 ? '#e07020' : '#262626');
         rect.setAttribute('rx', 1.5);
-        if (bar.count > 0) {
-            rect.setAttribute('class', 'stats-hover-target');
-            const labelText = useYearly
-                ? bar.label
-                : `${String(bar.month).padStart(2, '0')}/${bar.year}`;
-            bindTooltip(rect, `${labelText}: ${bar.count}`);
+        if (count > 0) {
+            rect.setAttribute('class', 'stats-hover-target stats-activity-bar');
+            rect.style.transformOrigin = `${x + barW / 2}px ${baseY}px`;
+            rect.style.transform = 'scaleY(0)';
+            requestAnimationFrame(() => { rect.style.transform = 'scaleY(1)'; });
+            const range = binDays === 1
+                ? labelFmt(binStart)
+                : `${labelFmt(binStart)} – ${labelFmt(binEnd)}`;
+            bindTooltip(rect, `${range}: ${count}`);
         }
         svg.appendChild(rect);
 
-        const label = labelFor(bar, i, n);
-        if (label) {
+        if (i % labelStride === 0 || i === bins.length - 1) {
             const lbl = svgEl('text');
             lbl.setAttribute('x', x + barW / 2);
             lbl.setAttribute('y', MT + chartH + 15);
             lbl.setAttribute('text-anchor', 'middle');
             lbl.setAttribute('fill', '#777');
             lbl.setAttribute('font-size', '9');
-            lbl.textContent = label;
+            lbl.textContent = labelFmt(binStart);
             svg.appendChild(lbl);
         }
     });
@@ -833,7 +860,7 @@ function drawActivityChart() {
 function renderFacts(facts) {
     const wrap = document.getElementById('stats-facts');
     wrap.innerHTML = '';
-    const modeLabel = PAGE.competition ? 'Wettkampf' : 'Training';
+    const modeLabel = MODE_LABEL[PAGE.mode];
     const items = [
         { value: facts.total_cp,          label: `Posten absolviert (${modeLabel})` },
         { value: `${facts.fastest_pct}%`, label: 'schnellste Route gewählt' },

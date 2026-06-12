@@ -72,7 +72,7 @@ class Route(models.Model):
     control_pair = models.ForeignKey(ControlPair, on_delete=models.CASCADE, related_name='routes')
     order = models.PositiveIntegerField()
     rP = models.JSONField(null=True, blank=True)
-    noA = models.IntegerField(null=True, blank=True)
+    noA = models.FloatField(null=True, blank=True)
     pos = models.FloatField(null=True, blank=True)
     length = models.IntegerField(null=True, blank=True)
     run_time = models.FloatField(null=True, blank=True)
@@ -94,7 +94,7 @@ class Route(models.Model):
 
 class EditorSettings(models.Model):
     profile = models.OneToOneField('account.Profile', on_delete=models.CASCADE, related_name='editor_settings')
-    auto_pathfind = models.BooleanField(default=False)
+    auto_pathfind = models.BooleanField(default=True)
     auto_jump = models.BooleanField(default=True)
     autosave = models.BooleanField(default=False)
 

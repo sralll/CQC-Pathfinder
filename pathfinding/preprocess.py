@@ -1,13 +1,20 @@
+"""Preprocessing helpers retained for the new navgraph-based pipeline.
+
+Only ``load_mask`` and ``apply_blocked_terrain`` are still used by the live
+views. The remaining helpers (margin-growth A*, theta* corridor, route mask,
+inflate_obstacles, extract_subgrid, move_to_nearest_free) are kept here as
+dead code for now so the diff stays reviewable; they will be removed once the
+navgraph pipeline has been verified end-to-end. The dead helpers don't load
+``a_star.py`` at import time anymore.
+"""
 from django.conf import settings
 import os
 
 from typing import Tuple, Optional
-from collections import deque 
+from collections import deque
 from typing import Union
 from PIL import Image, ImageDraw
 import numpy as np
-
-from .a_star import a_star
 
 def bresenham_line(x0, y0, x1, y1):
     points = []
@@ -221,44 +228,6 @@ def draw_route_mask(
                     output[y_min:y_max, x_min:x_max][mask] = 0
     return output
 
-def find_path_with_margin_growth(
-    grid: np.ndarray,
-    start: Tuple[int, int],
-    goal: Tuple[int, int],
-    routes: list,
-    initial_margin: int = 50,
-    max_margin: int = 400,
-    step: int = 50
-):
-    margin = initial_margin
-    path = None
-    last_exception = None
-
-    while margin <= max_margin:
-        try:
-            subgrid, offset, start_cP, ziel_cP, routes_cP = extract_subgrid(
-                grid=grid,
-                start=start,
-                goal=goal,
-                routes=routes,
-                margin=margin,
-            )
-
-            subgrid = draw_route_mask(subgrid, routes_cP, start_cP, ziel_cP, width=25)
-            start_cP = move_to_nearest_free(subgrid, start_cP)
-            ziel_cP = move_to_nearest_free(subgrid, ziel_cP)
-
-            path = a_star(subgrid, start_cP, ziel_cP)
-            if path is not None:
-                print(f"Path found with margin {margin}")
-                return path, subgrid, offset, start_cP, ziel_cP
-        except Exception as e:
-            last_exception = e
-
-        margin += step
-
-    # After loop, if still no path
-    print("Failed to find a path with all margin sizes.")
-    if last_exception:
-        print("Last error:", last_exception)
-    return None, None, None, None, None
+# find_path_with_margin_growth was removed when the visibility-graph pipeline
+# replaced the subgrid-A*/theta* loop. The new pipeline lives in
+# pathfinding.query.run via pathfinding.navgraph.

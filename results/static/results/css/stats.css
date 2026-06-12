@@ -7,31 +7,148 @@
     align-items: stretch;
     justify-content: flex-start;
     overflow-y: auto;
-    padding: 16px;
+    padding: 12px;
     box-sizing: border-box;
 }
 
 
-/* ── Nav: mode toggle (training / competition) ───────── */
+/* ── Stats page header (3-way mode toggle + trainer controls) ─ */
 
-.nav-mode-toggle {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    margin-left: 14px;
-}
-
-/* ── Trainer bar (view toggle + athlete picker) ──────── */
-
-#trainer-bar {
+#stats-header {
     display: flex;
     align-items: center;
     gap: 14px;
     width: 100%;
-    max-width: 1100px;
-    margin: 0 auto 12px;
+    margin: 0 0 12px;
     flex-wrap: wrap;
+    flex-shrink: 0;
 }
+
+/* ── 3-way slider toggle ──────────────────────────────── */
+
+.stats-3way {
+    --thumb-w: 44px;
+    --pad: 3px;
+    position: relative;
+    display: inline-flex;
+    align-items: stretch;
+    height: 36px;
+    width: calc(var(--thumb-w) * 3 + var(--pad) * 2);
+    background: #1a1a1a;
+    border: 1px solid #2e2e2e;
+    border-radius: 18px;
+    padding: var(--pad);
+    box-sizing: border-box;
+    user-select: none;
+    flex-shrink: 0;
+}
+
+.stats-3way-stop {
+    flex: 1;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    color: #444;                /* dim grey icon for inactive stops */
+    transition: color 0.12s;
+    z-index: 1;
+    border-radius: 14px;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+.stats-3way-stop:hover { color: #777; }
+.stats-3way-stop x-icon { display: inline-flex; }
+
+.stats-3way-thumb {
+    position: absolute;
+    top:  var(--pad);
+    left: var(--pad);
+    width:  var(--thumb-w);
+    height: calc(100% - var(--pad) * 2);
+    background: #e07020;
+    border-radius: 14px;
+    transition: transform 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    z-index: 2;                 /* sits above the stops; pointer-events:none so clicks pass through */
+    pointer-events: none;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.4);
+}
+
+.stats-3way[data-mode="training"]    .stats-3way-thumb { transform: translateX(0); }
+.stats-3way[data-mode="competition"] .stats-3way-thumb { transform: translateX(var(--thumb-w)); }
+.stats-3way[data-mode="random"]      .stats-3way-thumb { transform: translateX(calc(var(--thumb-w) * 2)); }
+
+body.mobile .stats-3way        { height: 44px; --thumb-w: 56px; border-radius: 22px; }
+body.mobile .stats-3way-thumb  { border-radius: 18px; }
+body.mobile .stats-3way-thumb x-icon { font-size: 20px; }
+
+/* ── 2-way slider toggle (Diagramm / Tabelle) — same look as 3-way ── */
+
+.stats-2way {
+    --thumb-w: 44px;
+    --pad: 3px;
+    position: relative;
+    display: inline-flex;
+    align-items: stretch;
+    height: 36px;
+    width: calc(var(--thumb-w) * 2 + var(--pad) * 2);
+    background: #1a1a1a;
+    border: 1px solid #2e2e2e;
+    border-radius: 18px;
+    padding: var(--pad);
+    box-sizing: border-box;
+    user-select: none;
+    flex-shrink: 0;
+}
+
+.stats-2way-stop {
+    flex: 1;
+    background: transparent !important;   /* override legacy .trainer-view-btn.active orange */
+    border: none;
+    cursor: pointer;
+    color: #444;
+    transition: color 0.12s;
+    z-index: 1;
+    border-radius: 14px;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+.stats-2way-stop:hover    { color: #777; }
+.stats-2way-stop:disabled { cursor: not-allowed; }
+.stats-2way-stop x-icon   { display: inline-flex; }
+
+.stats-2way-thumb {
+    position: absolute;
+    top:  var(--pad);
+    left: var(--pad);
+    width:  var(--thumb-w);
+    height: calc(100% - var(--pad) * 2);
+    background: #e07020;
+    border-radius: 14px;
+    transition: transform 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    z-index: 2;
+    pointer-events: none;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.4);
+}
+
+.stats-2way[data-view="graph"] .stats-2way-thumb { transform: translateX(0); }
+.stats-2way[data-view="table"] .stats-2way-thumb { transform: translateX(var(--thumb-w)); }
+
+.stats-2way.disabled-table .stats-2way-stop[data-view="table"] { opacity: 0.4; }
+
+body.mobile .stats-2way        { height: 44px; --thumb-w: 56px; border-radius: 22px; }
+body.mobile .stats-2way-thumb  { border-radius: 18px; }
+body.mobile .stats-2way-thumb x-icon { font-size: 20px; }
 
 .trainer-view-toggle {
     display: inline-flex;
@@ -131,17 +248,24 @@
 #stats-grid {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    grid-template-rows: repeat(2, minmax(0, 1fr));
-    gap: 16px;
+    grid-template-rows: repeat(2, minmax(260px, 1fr));
+    gap: 12px;
     width: 100%;
-    max-width: 1100px;
-    margin: 0 auto;
-    flex: 1;
+    margin: 0;
+    flex: 1 1 0;
     min-height: 0;
 }
 
-/* On desktop the page should fit the viewport, no overflow */
-body.desktop #play-wrap { overflow: hidden; }
+/* On desktop allow page scrolling only when the viewport is too short for
+   the minimum-height grid; otherwise everything fits inside the viewport. */
+body.desktop #play-wrap { overflow-y: auto; }
+body.desktop #stats-header { width: 100%; max-width: none; }
+
+/* Cards should never spill out of their grid cell. Once data loads the
+   contents (donut + legend, bars, facts grid) are sized inside the
+   constrained body — never bigger than the grid row gives us. */
+.stats-card { overflow: hidden; }
+.stats-card-body { min-height: 0; }
 
 .stats-card {
     position: relative;
@@ -149,7 +273,7 @@ body.desktop #play-wrap { overflow: hidden; }
     flex-direction: column;
     background: #1a1a1a;
     border: 0.5px solid #2e2e2e;
-    border-radius: 10px;
+    border-radius: 9px;
     padding: 14px 16px;
     min-width: 0;
     min-height: 0;
@@ -282,6 +406,23 @@ body.desktop #play-wrap { overflow: hidden; }
 
 .stats-hover-target { cursor: pointer; }
 
+/* ── Chart entry animations ──────────────────────────── */
+
+/* Donut: stroke an arc into existence by transitioning dashoffset → 0 */
+.stats-donut-arc {
+    transition: stroke-dashoffset 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Bar: grow from the baseline using scaleY (transform-origin set inline) */
+.stats-bar {
+    transition: transform 0.45s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Activity bar uses the same treatment */
+.stats-activity-bar {
+    transition: transform 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
 /* ── Facts card ──────────────────────────────────────── */
 
 #stats-facts {
@@ -322,8 +463,7 @@ body.desktop #play-wrap { overflow: hidden; }
 #stats-table-wrap {
     display: none;
     width: 100%;
-    max-width: 1100px;
-    margin: 0 auto;
+    margin: 0;
     background: #1a1a1a;
     border: 0.5px solid #2e2e2e;
     border-radius: 10px;
@@ -420,7 +560,7 @@ body.desktop #play-wrap { overflow: hidden; }
     }
     /* Facts card stays compact — it's 4 numbers, doesn't need a full screen */
     #stats-card-facts { grid-row: auto / span 1; }
-    #stats-card-facts .stats-card-body { min-height: 220px; }
+    #stats-card-facts .stats-card-body { min-height: 200px; }
 
     #trainer-bar          { gap: 8px; }
     #trainer-athlete-picker { max-width: none; }

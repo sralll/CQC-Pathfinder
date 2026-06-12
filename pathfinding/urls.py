@@ -5,6 +5,6 @@ urlpatterns = [
     path('get_mask/<str:filename>', views.get_mask, name='get_mask'),
     path('upload-mask/', views.upload_mask, name='upload_mask'),
     path('run_unet/', views.run_UNet_stream, name='run_unet'),
-    path("find/", views.find, name="find"),
+    # find/ + rebuild-navgraph/ were retired with the navgraph module.
     path("batch/", views.batch_pathfinding, name="batch_find"),
 ]

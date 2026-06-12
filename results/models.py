@@ -25,3 +25,33 @@ class Choice(models.Model):
     @property
     def selected_route_runtime(self):
         return self.selected_route.run_time if self.selected_route else None
+
+
+class RandomChoice(models.Model):
+    """One attempt of the procedurally-generated /play/random/ leg."""
+
+    user         = models.ForeignKey('auth.User', on_delete=models.SET_NULL,
+                                     null=True, blank=True, related_name='random_choices')
+    correct      = models.BooleanField()
+    choice_time  = models.FloatField()                         # seconds from reveal → decision
+    shorter_time = models.FloatField()                         # seconds the optimal route would have taken
+    longer_time  = models.FloatField()                         # seconds the slower route would have taken
+    timestamp    = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-timestamp']
+
+    @property
+    def chosen_time(self):
+        return self.shorter_time if self.correct else self.longer_time
+
+    @property
+    def pct_diff(self):
+        """How much slower the LONGER route is vs the shorter, as a fraction."""
+        if not self.shorter_time:
+            return 0.0
+        return (self.longer_time - self.shorter_time) / self.shorter_time
+
+    def __str__(self):
+        u = self.user.username if self.user else 'deleted'
+        return f"{u} · {'✓' if self.correct else '✗'} · {self.choice_time:.1f}s"

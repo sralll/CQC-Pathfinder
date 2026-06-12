@@ -30,14 +30,24 @@ const MAX_ZOOM   = 8;
 const RUN_SPEED  = 4.75;   // m/s — flat-terrain reference speed
 const routeColor = ['#DD0011', '#CC6000', '#008888', '#0055FF', '#5500BB', '#8800CC'];
 
+// Complex-CP reveal mechanic: routes are hidden until the athlete taps "Routen
+// anzeigen" or the map. choice_time runs at 1× before reveal and at 10× after
+// reveal (minus a short grace buffer so quick post-reveal clicks aren't punished).
+const COMPLEX_REVEAL_MULTIPLIER = 5;
+const COMPLEX_REVEAL_BUFFER     = 0.5;   // seconds at 1× after reveal
+const ROUTE_HIT_WIDTH           = 25;    // transparent on-map click target width
+
 let currentCpIndex    = -1;
 let camBounds         = null;   // { minRX, maxRX, minRY, maxRY, minScale } in rotated space; null during animation
 let currentRouteColors = [];    // colors[i] for cp.routes[i]
 let selectedRouteIdx   = null;  // index into cp.routes, or null for all
-let choiceStartTime    = null;  // performance.now() when routes became visible
+let choiceStartTime    = null;  // performance.now() when the CP became visible
+let revealTime         = null;  // performance.now() when routes were revealed (complex only)
+let pendingReveal      = null;  // cp awaiting reveal — set while the "Routen anzeigen" button is shown
 let buttonsDisabled    = false; // true after first submission for this CP
 let currentBtnFontSize = '12px'; // kept in sync with renderAllButtons for stats panel
 let replayMode         = false; // true → all CPs already done, no DB writes
+let lastChoiceTimes    = null;  // { total, real, penalty } — set on selection, shown in stats panel
 
 /* =========================================================
    INIT
@@ -72,20 +82,20 @@ function tryAdvance() {
 function showEndOfFileModal() {
     let modal = document.getElementById('play-end-modal');
     if (!modal) {
+        const homeIcon = (typeof window.icon === 'function') ? window.icon('home', '1.1em')
+                       : '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512" width="1.1em" height="1.1em" fill="currentColor"><path d="M575.8 255.5c0 18-15 32.1-32 32.1l-32 0 .7 160.2c0 2.7-.2 5.4-.5 8.1l0 16.2c0 22.1-17.9 40-40 40l-16 0c-1.1 0-2.2 0-3.3-.1-1.4 .1-2.8 .1-4.2 .1l-72 0c-22.1 0-40-17.9-40-40l0-88c0-17.7-14.3-32-32-32l-64 0c-17.7 0-32 14.3-32 32l0 88c0 22.1-17.9 40-40 40l-72 0c-1.5 0-3 0-4.5-.1-1.2 .1-2.4 .1-3.6 .1l-16 0c-22.1 0-40-17.9-40-40l0-112 0-1.4c0-5.1 .3-10.3 .9-15.3l0-58.7L32 287.6c-18 0-32-14-32-32.1 0-9 3-17 10-24L266.4 8c7-7 15-8 22-8s15 2 21 7l255.4 224.5c8 7 12 15 11 24z"/></svg>';
         modal = document.createElement('div');
         modal.id = 'play-end-modal';
         modal.innerHTML = `
             <div class="play-end-card">
-                <h3 class="play-end-title">Projekt abgeschlossen</h3>
-                <p class="play-end-sub">Was möchtest du als nächstes tun?</p>
+                <h3 class="play-end-title">Fertig</h3>
                 <div class="play-end-actions">
-                    <a class="play-end-btn"           href="/results/${fileId}/">Resultate ansehen</a>
-                    <a class="play-end-btn secondary" href="/play/">Zurück zur Projektliste</a>
-                    <a class="play-end-btn secondary" href="/">Startseite</a>
+                    <a class="play-end-btn"           href="/results/${fileId}/">Resultate</a>
+                    <a class="play-end-btn secondary" href="/play/">Play</a>
+                    <a class="play-end-btn secondary play-end-btn-icon" href="/" aria-label="Startseite">${homeIcon}</a>
                 </div>
             </div>`;
         document.body.appendChild(modal);
-        // Close on backdrop click
         modal.addEventListener('click', e => {
             if (e.target === modal) modal.classList.remove('open');
         });
@@ -95,19 +105,65 @@ function showEndOfFileModal() {
 
 function initKeyNav() {
     const container = document.getElementById('map-container');
+    const TAP_MAX_MOVE = 6;   // px — anything beyond this is a pan, not a tap
 
     // ── Desktop: spacebar / enter ────────────────────────────
     document.addEventListener('keydown', e => {
         if (e.key === ' ' || e.key === 'Enter') {
             e.preventDefault();
-            tryAdvance();
+            if (pendingReveal) revealRoutes(pendingReveal);
+            else               tryAdvance();
         }
     });
 
-    // ── Desktop: double-click on map ─────────────────────────
-    container.addEventListener('dblclick', () => {
-        tryAdvance();
+    // ── Double-tap / double-click on map advances ───────────
+    // We track this manually (instead of native dblclick) so we can ignore
+    // clicks that happened before the route was selected — the reveal-tap and
+    // the select-tap must not be counted toward the advance gesture.
+    let lastAdvanceClick = 0;
+    const DBL_WINDOW_MS = 400;
+    container.addEventListener('click', () => {
+        if (!buttonsDisabled) { lastAdvanceClick = 0; return; }
+        const now = performance.now();
+        if (now - lastAdvanceClick < DBL_WINDOW_MS) {
+            lastAdvanceClick = 0;
+            tryAdvance();
+        } else {
+            lastAdvanceClick = now;
+        }
     });
+
+    // ── Tap on map reveals routes for complex CPs ───────────
+    // Tracked separately from the camera-drag handler so reveals don't fire
+    // after a pan. Mouse + touch each track their own down-position.
+    let tapMouseDown = null;
+    container.addEventListener('mousedown', e => {
+        if (e.button !== 0) { tapMouseDown = null; return; }
+        tapMouseDown = { x: e.clientX, y: e.clientY };
+    });
+    container.addEventListener('mouseup', e => {
+        if (!tapMouseDown || !pendingReveal) { tapMouseDown = null; return; }
+        const dx = Math.abs(e.clientX - tapMouseDown.x);
+        const dy = Math.abs(e.clientY - tapMouseDown.y);
+        tapMouseDown = null;
+        if (dx <= TAP_MAX_MOVE && dy <= TAP_MAX_MOVE) revealRoutes(pendingReveal);
+    });
+
+    let tapTouchStart = null;
+    container.addEventListener('touchstart', e => {
+        tapTouchStart = e.touches.length === 1
+            ? { x: e.touches[0].clientX, y: e.touches[0].clientY }
+            : null;
+    }, { passive: true });
+    container.addEventListener('touchend', e => {
+        if (!tapTouchStart || !pendingReveal || !e.changedTouches.length) {
+            tapTouchStart = null; return;
+        }
+        const dx = Math.abs(e.changedTouches[0].clientX - tapTouchStart.x);
+        const dy = Math.abs(e.changedTouches[0].clientY - tapTouchStart.y);
+        tapTouchStart = null;
+        if (dx <= TAP_MAX_MOVE && dy <= TAP_MAX_MOVE) revealRoutes(pendingReveal);
+    }, { passive: true });
 
     // ── Mobile: swipe right-to-left on map ───────────────────
     let swipeStartX = null;
@@ -374,7 +430,7 @@ function drawBlockedTerrain() {
    ROUTES — DRAW
 ========================================================= */
 
-function createRoutePolyline(route, { stroke = 'black', strokeWidth = 1.5, opacity = 1 } = {}) {
+function createRoutePolyline(route, { stroke = 'black', strokeWidth = 1.5, opacity = 1, interactive = false } = {}) {
     if (!route?.rP || route.rP.length < 2) return null;
     const el = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
     el.setAttribute('points',           route.rP.map(p => `${p.x},${p.y}`).join(' '));
@@ -385,7 +441,12 @@ function createRoutePolyline(route, { stroke = 'black', strokeWidth = 1.5, opaci
     el.setAttribute('stroke-linejoin',  'round');
     el.setAttribute('vector-effect',    'non-scaling-stroke');
     el.setAttribute('opacity',          String(opacity));
-    el.setAttribute('pointer-events',   'none');
+    if (interactive) {
+        el.setAttribute('pointer-events', 'stroke');
+        el.style.cursor = 'pointer';
+    } else {
+        el.setAttribute('pointer-events', 'none');
+    }
     return el;
 }
 
@@ -419,6 +480,25 @@ function drawRoutes(cp) {
         });
         if (el) layer.appendChild(el);
     });
+
+    // Transparent fat hit-areas on top — let athletes pick a route directly on
+    // the map (finger is usually already hovering where they want to go).
+    // Only while the choice is still open.
+    if (!buttonsDisabled) {
+        cp.routes.forEach((route, i) => {
+            const hit = createRoutePolyline(route, {
+                stroke:      'transparent',
+                strokeWidth: ROUTE_HIT_WIDTH,
+                interactive: true,
+            });
+            if (!hit) return;
+            hit.addEventListener('click', e => {
+                e.stopPropagation();
+                selectRoute(cp, i);
+            });
+            layer.appendChild(hit);
+        });
+    }
 }
 
 /* =========================================================
@@ -441,6 +521,10 @@ function showControlPair(index) {
     selectedRouteIdx   = null;
     currentRouteColors = [];
     buttonsDisabled    = false;
+    revealTime         = null;
+    pendingReveal      = null;
+    lastChoiceTimes    = null;
+    stopCountdown();
     document.getElementById('route-layer').innerHTML   = '';
     document.getElementById('control-layer').innerHTML = '';
 
@@ -515,25 +599,23 @@ function showControlPair(index) {
         drawConnection(cp, group);
         document.getElementById('control-layer').appendChild(group);
 
-        if (!competitionMode && cp.complex) {
-            // Training mode: hide routes/buttons behind a reveal step first
+        if (cp.complex) {
+            // Hide routes/buttons behind a reveal step. Timer starts now (1×);
+            // after reveal it runs at COMPLEX_REVEAL_MULTIPLIER× past the buffer.
             const isDesktop = document.body.classList.contains('desktop');
             const revealFontSize = isDesktop
                 ? `${Math.min(28, Math.max(14, Math.round(56 / 1)))}px`
                 : `${Math.min(22, Math.max(8,  Math.round(44 / 1)))}px`;
+            choiceStartTime = performance.now();
+            pendingReveal   = cp;
             renderButtons([{
                 label:    'Routen anzeigen',
                 cls:      'route-btn route-btn-labeled',
                 bgColor:  '#e07020',
                 fontSize: revealFontSize,
-                action:   () => {
-                    drawRoutes(cp);
-                    choiceStartTime = performance.now();
-                    renderAllButtons(cp);
-                },
+                action:   () => revealRoutes(cp),
             }]);
         } else {
-            drawRoutes(cp);
             choiceStartTime = performance.now();
             renderAllButtons(cp);
         }
@@ -541,6 +623,58 @@ function showControlPair(index) {
 
     renderNavButtons();  // show nav state immediately while animating
     updateProgressBar();
+}
+
+function revealRoutes(cp) {
+    if (pendingReveal !== cp) return;
+    pendingReveal = null;
+    revealTime    = performance.now();
+    drawRoutes(cp);
+    renderAllButtons(cp);
+    startCountdown();
+}
+
+let _countdownTimer = null;
+function startCountdown() {
+    const bar  = document.getElementById('play-countdown');
+    const fill = document.getElementById('play-countdown-fill');
+    if (!bar || !fill) return;
+    if (_countdownTimer) { clearTimeout(_countdownTimer); _countdownTimer = null; }
+
+    bar.classList.remove('pulsing');
+    bar.classList.add('active');
+    fill.style.transition = 'none';
+    fill.style.width = '100%';
+    void fill.offsetWidth;   // force reflow so the next transition runs
+    fill.style.transition = `width ${COMPLEX_REVEAL_BUFFER}s linear`;
+    fill.style.width = '0%';
+
+    _countdownTimer = setTimeout(() => {
+        _countdownTimer = null;
+        if (bar.classList.contains('active')) bar.classList.add('pulsing');
+    }, COMPLEX_REVEAL_BUFFER * 1000);
+}
+
+function stopCountdown() {
+    if (_countdownTimer) { clearTimeout(_countdownTimer); _countdownTimer = null; }
+    const bar = document.getElementById('play-countdown');
+    if (bar) bar.classList.remove('active', 'pulsing');
+}
+
+function selectRoute(cp, i) {
+    if (buttonsDisabled) return;
+    const selecting = selectedRouteIdx !== i;
+    selectedRouteIdx = selecting ? i : null;
+    if (selecting) {
+        buttonsDisabled = true;
+        stopCountdown();
+        renderAllButtons(cp);
+        submitResult(cp, cp.routes[i]);
+        animateRoutes(cp, i);
+    } else {
+        drawRoutes(cp);
+        renderAllButtons(cp);
+    }
 }
 
 function assignRouteColors(routes) {
@@ -626,6 +760,19 @@ function renderStatsPanel(cp) {
     const isDesktop = document.body.classList.contains('desktop');
     const stacked   = !isDesktop && sorted.length > 3;
 
+    // Header: total choice time (bold), real time to decision, penalty.
+    if (lastChoiceTimes) {
+        const t = lastChoiceTimes;
+        const ICON_CLOCK = window.icon ? window.icon('clock',     '0.9em') : '';
+        const ICON_HOUR  = window.icon ? window.icon('hourglass', '0.9em') : '';
+        const header = document.createElement('div');
+        header.id = 'play-stats-header';
+        header.innerHTML =
+            `<span class="stats-choice-total"><span class="stats-icon">${ICON_CLOCK}</span>${(t.total).toFixed(2)}s</span>` +
+            `<span class="stats-choice-sub"><span class="stats-icon">${ICON_HOUR}</span>+${(t.penalty).toFixed(2)}s</span>`;
+        panel.appendChild(header);
+    }
+
     const inner = document.createElement('div');
     inner.id = 'play-stats-inner';
     if (stacked) inner.classList.add('stacked');
@@ -647,7 +794,11 @@ function renderStatsPanel(cp) {
 
         const lengthStr = route.length    ? `${Math.round(route.length)}m`    : '–';
         const elevStr   = route.elevation ? `${Math.round(route.elevation)}m` : '–';
-        const noALabel  = noATime === 1   ? '1 Ecke' : `${noATime} Ecken`;
+        // Inline SVG icons for compactness; window.icon returns a ready-to-use SVG string
+        const ICON_ELEV  = window.icon ? window.icon('elevation', '0.9em') : '';
+        const ICON_ANGLE = window.icon ? window.icon('angle',     '1em')   : '';
+        const elevLabel  = `<span class="stats-icon">${ICON_ELEV}</span>${elevStr}:`;
+        const noALabel   = `<span class="stats-icon">${ICON_ANGLE}</span>${noATime}:`;
 
         const col = document.createElement('div');
         col.className = 'stats-col';
@@ -655,8 +806,8 @@ function renderStatsPanel(cp) {
         col.innerHTML =
             `<span class="stats-total">${formatTime(route.run_time)}</span>` +
             row(`${lengthStr}:`, `+${formatTime(distTime)}`) +
-            (showElev    ? row(`${elevStr}:`,    `+${formatTime(elevTime)}`) : '') +
-            (showCorners ? row(`${noALabel}:`,   `+${noATime}s`)            : '');
+            (showElev    ? row(elevLabel, `+${formatTime(elevTime)}`) : '') +
+            (showCorners ? row(noALabel,  `+${noATime}s`)             : '');
         inner.appendChild(col);
     });
 
@@ -716,20 +867,7 @@ function renderAllButtons(cp) {
             disabled: buttonsDisabled,
             fastest,
             delta,
-            action:  () => {
-                if (buttonsDisabled) return;
-                const selecting = selectedRouteIdx !== i;
-                selectedRouteIdx = selecting ? i : null;
-                if (selecting) {
-                    buttonsDisabled = true;
-                    renderAllButtons(cp);          // re-render disabled
-                    submitResult(cp, cp.routes[i]);
-                    animateRoutes(cp, i);
-                } else {
-                    drawRoutes(cp);
-                    renderAllButtons(cp);
-                }
-            },
+            action:  () => selectRoute(cp, i),
         };
     }));
 }
@@ -1072,14 +1210,39 @@ function emitWave(pos, color) {
 ========================================================= */
 
 function submitResult(cp, route) {
+    // Front-end timing runs identically for replays — only the DB write below
+    // is skipped, so the countdown / penalty / stats display stay consistent.
+    let choiceTime = 0;
+    let totalReal  = 0;
+    let penalty    = 0;
+    if (choiceStartTime !== null) {
+        const now = performance.now();
+        totalReal = (now - choiceStartTime) / 1000;
+        if (revealTime !== null) {
+            // Complex CP — pre-reveal at 1×, first COMPLEX_REVEAL_BUFFER seconds
+            // after reveal also at 1×, then time runs COMPLEX_REVEAL_MULTIPLIER×.
+            const preReveal      = (revealTime - choiceStartTime) / 1000;
+            const postRealTime   = (now        - revealTime)      / 1000;
+            const grace          = Math.min(postRealTime, COMPLEX_REVEAL_BUFFER);
+            const punished       = Math.max(0, postRealTime - COMPLEX_REVEAL_BUFFER);
+            const postChoiceTime = grace + punished * COMPLEX_REVEAL_MULTIPLIER;
+            choiceTime           = preReveal + postChoiceTime;
+            penalty              = choiceTime - totalReal;
+            console.log(
+                `[complex CP ${cp.id}] real ${totalReal.toFixed(2)}s ` +
+                `(pre-reveal ${preReveal.toFixed(2)}s, post-reveal ${postRealTime.toFixed(2)}s) ` +
+                `→ choice_time ${choiceTime.toFixed(2)}s, penalty +${penalty.toFixed(2)}s`
+            );
+        } else {
+            choiceTime = totalReal;
+        }
+    }
+    lastChoiceTimes = { total: choiceTime, real: totalReal, penalty };
+
     // Replay mode: file is already fully played; do not write anything to the DB.
     // The server also enforces this (Choice.objects.get_or_create), but skipping
     // the request avoids unnecessary traffic.
     if (replayMode) return;
-
-    const choiceTime = choiceStartTime !== null
-        ? (performance.now() - choiceStartTime) / 1000
-        : 0;
 
     const csrf = document.cookie.match(/csrftoken=([^;]+)/)?.[1] ?? '';
 

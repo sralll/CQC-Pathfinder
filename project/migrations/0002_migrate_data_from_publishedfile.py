@@ -1,5 +1,10 @@
 from django.db import migrations
 
+# Canonical noA + run_time implementation lives in project/runtime.py so the
+# editor (JS) and every backend caller agree on the numbers.
+from project.runtime import calc_route_noA, calc_route_runtime
+
+
 def to_int(value):
     try:
         return int(value) if value != '' and value is not None else None
@@ -32,13 +37,15 @@ def migrate_data(apps, schema_editor):
         if map_file:
             map_file = map_file.split('/')[-1]
 
+        file_scale = to_float(data.get('scale'))
+
         new_file = File.objects.create(
             name=old.filename,
             team=team,
             label=None,
             published=old.published,
             author=old.author,
-            scale=to_float(data.get('scale')),
+            scale=file_scale,
             scaled=data.get('scaled', False),
             map_file=map_file,
             has_mask=data.get('has_mask', False),
@@ -56,15 +63,24 @@ def migrate_data(apps, schema_editor):
                 complex=cp_data.get('complex', False),
             )
             for route_order, route_data in enumerate(cp_data.get('route', [])):
+                rP        = route_data.get('rP') or []
+                length    = to_int(route_data.get('length'))
+                elevation = to_int(route_data.get('elevation'))
+                # Recompute noA + run_time from the polyline using the
+                # current shared algorithm so legacy data ends up on the
+                # same footing as anything created by the new editor.
+                new_noA      = calc_route_noA(rP, file_scale) if len(rP) >= 3 else 0
+                new_run_time = calc_route_runtime(length, new_noA, elevation)
+
                 Route.objects.create(
                     control_pair=cp,
                     order=route_order,
-                    rP=route_data.get('rP'),
-                    noA=to_int(route_data.get('noA')),
+                    rP=rP,
+                    noA=new_noA,
                     pos=to_float(route_data.get('pos')),
-                    length=to_int(route_data.get('length')),
-                    run_time=to_float(route_data.get('runTime')),
-                    elevation=to_int(route_data.get('elevation')),
+                    length=length,
+                    run_time=new_run_time,
+                    elevation=elevation,
                 )
 
 

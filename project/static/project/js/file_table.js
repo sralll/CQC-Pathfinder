@@ -124,10 +124,12 @@ export class FileTable {
         clearAllLayers();
         MaskLayer.clearMask();
         window.clearMaskUndoStacks?.();
-        maskGenInProgress = false;
-        hideMaskGenBar();
+        window.detachMaskGenerationUi?.();
         project = data.project;
+        window.markProjectPersistenceIds?.(project);
+        const repairedOrders = window.normalizeProjectOrders?.(project) || false;
         window.setReadOnly?.(data.project.read_only, data.project.locked_by_name, data.project.read_only_reason);
+        if (repairedOrders && !data.project.read_only) saveFile("repair_order");
         window.updateFilenameInput?.();
         window.updateNavPublishBtn?.();
         window.updateNavLabel?.();
@@ -150,6 +152,7 @@ export class FileTable {
             MaskLayer.applyMapDimensions();
             drawCourse();
             updateRoutes();   // ensure routes are visible after DOM is populated
+            fitMapToCamera();
             undoStack = []; redoStack = []; actionCount = 0;
             pushUndoState();
             window._updateScalePanel?.();

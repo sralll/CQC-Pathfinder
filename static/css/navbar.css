@@ -174,9 +174,6 @@ body.mobile .nav-ham-panel .nav-divider { display: none; }
    Applies when the device is a phone OR the viewport is narrow.
 ========================================================= */
 
-body.mobile #navbar,
-@media (max-width: 700px) { #navbar { } }
-
 body.mobile #navbar { height: 56px; font-size: 16px; }
 body.mobile .nav-ham-btn { height: 56px; padding: 0 16px; }
 body.mobile .nav-ham-btn x-icon { font-size: 20px; }
@@ -195,6 +192,18 @@ body.mobile .nav-ham-panel .fr-toggle-label { font-size: 16px; padding-top: 12px
 
 /* Pages that fix content below the navbar — update the offset */
 body.mobile #play-wrap { --navbar-h: 56px; }
+
+/* When the right-side section is inline (no hamburger), the children render
+   in line on mobile too. */
+body.mobile .nav-user-section-inline .nav-username,
+body.mobile .nav-user-section-inline .nav-team-static,
+body.mobile .nav-user-section-inline .nav-team-switcher {
+    display: inline-flex;
+    align-items: center;
+    padding: 0 4px;
+    font-size: 14px;
+}
+body.mobile .nav-user-section-inline .nav-home-btn { padding: 0 8px; }
 
 /* Inline mode-toggle in the navbar — base layout (used by stats + file_results
    + anywhere else that drops a mode toggle into the nav). The visual styling

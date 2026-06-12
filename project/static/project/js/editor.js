@@ -77,9 +77,9 @@ function initFilenameInput() {
     const input = document.getElementById("navbar-filename-input");
     if (!input) return;
 
-    // Sync project.name on every keystroke
+    // Sync project.name on every keystroke (works for both saved + fresh files)
     input.addEventListener("input", () => {
-        if (project.id) project.name = input.value;
+        project.name = input.value;
     });
 
     // Confirm rename on Enter
@@ -87,10 +87,16 @@ function initFilenameInput() {
         if (e.key === "Enter") { e.preventDefault(); input.blur(); }
     });
 
-    // Save on blur — validate uniqueness first
+    // Save on blur — validate uniqueness first. For a fresh (unsaved) file we
+    // just keep the typed name in JS state; it gets persisted whenever the
+    // first save fires (map upload, etc.).
     input.addEventListener("blur", () => {
-        if (!project.id) return;
         const newName = input.value.trim();
+        if (!project.id) {
+            project.name = newName || project.name || 'Neues Projekt';
+            input.value  = project.name;
+            return;
+        }
         if (!newName) {
             // Empty — revert
             input.value = project.name;
@@ -120,8 +126,11 @@ function initFilenameInput() {
 function updateFilenameInput() {
     const input = document.getElementById("navbar-filename-input");
     if (!input) return;
-    input.value    = project.id ? (project.name || "") : "";
-    input.disabled = !project.id || readOnly;
+    // Always reflect the in-memory project name — even for new files that
+    // haven't been saved to the DB yet. The JS state already carries a
+    // default name ('Neues Projekt') that is meaningful to the user.
+    input.value    = project.name || "";
+    input.disabled = readOnly;
 }
 window.updateFilenameInput = updateFilenameInput;
 
@@ -129,13 +138,19 @@ window.updateFilenameInput = updateFilenameInput;
 function updateNavPublishBtn() {
     const btn = document.getElementById("nav-publish-btn");
     if (!btn) return;
-    btn.disabled = !project.id;
+    // Always enabled — for a fresh file we'll save first inside the click handler
+    btn.disabled = false;
     btn.classList.toggle("publish-btn-active", !!(project.id && project.published));
 }
 window.updateNavPublishBtn = updateNavPublishBtn;
 
 async function toggleNavPublish() {
-    if (!project.id) return;
+    // For a fresh file the project hasn't been persisted yet — save first so
+    // we have an id to publish against.
+    if (!project.id) {
+        await saveFile("publish-init");
+        if (!project.id) return;   // save still failed; bail
+    }
     const csrf = document.cookie.match(/csrftoken=([^;]+)/)?.[1] ?? "";
     const res  = await fetch(`/editor/publish/${project.id}/`, {
         method: 'POST', headers: { 'X-CSRFToken': csrf },
@@ -276,6 +291,7 @@ async function toggleEditorSetting(setting) {
         const data = await res.json();
         if (data.auto_pathfind !== undefined) editorSettings.auto_pathfind = data.auto_pathfind;
         if (data.auto_jump     !== undefined) editorSettings.auto_jump     = data.auto_jump;
+        if (editorSettings.auto_pathfind) drainPendingAutoPathfindQueue();
     } catch (e) { console.warn('Failed to toggle setting', e); }
 }
 
@@ -464,7 +480,23 @@ window.addEventListener("beforeunload", e => {
 });
 
 function _projectBody() {
-    const cps = project.control_pairs;
+    const cps = (project.control_pairs || []).map(cp => ({
+        id: cp.id ?? null,
+        order: cp.order,
+        start: cp.start,
+        ziel: cp.ziel,
+        complex: !!cp.complex,
+        routes: (cp.routes || []).map(route => ({
+            id: route.id ?? null,
+            order: route.order,
+            rP: route.rP,
+            noA: route.noA,
+            pos: route.pos,
+            length: route.length,
+            run_time: route.run_time,
+            elevation: route.elevation,
+        })),
+    }));
     return {
         id:              project.id,
         name:            project.name,
@@ -479,6 +511,42 @@ function _projectBody() {
         n_routes:        cps.reduce((s, cp) => s + (cp.routes?.length ?? 0), 0),
     };
 }
+
+function markProjectPersistenceIds(targetProject = project) {
+    const fileId = targetProject?.id ?? null;
+    for (const cp of targetProject?.control_pairs || []) {
+        cp._fileId = cp.id ? fileId : null;
+        for (const route of cp.routes || []) {
+            route._fileId = route.id ? fileId : null;
+            route._cpDbId = route.id ? cp.id : null;
+        }
+    }
+}
+window.markProjectPersistenceIds = markProjectPersistenceIds;
+
+function normalizeProjectOrders(targetProject = project) {
+    if (!Array.isArray(targetProject?.control_pairs)) return false;
+    let changed = false;
+
+    targetProject.control_pairs.sort((a, b) => (Number(a?.order) || 0) - (Number(b?.order) || 0));
+    targetProject.control_pairs.forEach((cp, index) => {
+        if (cp.order !== index) changed = true;
+        cp.order = index;
+
+        if (!Array.isArray(cp.routes)) {
+            cp.routes = [];
+            return;
+        }
+        cp.routes.sort((a, b) => (Number(a?.order) || 0) - (Number(b?.order) || 0));
+        cp.routes.forEach((route, routeIndex) => {
+            if (route.order !== routeIndex) changed = true;
+            route.order = routeIndex;
+        });
+    });
+
+    return changed;
+}
+window.normalizeProjectOrders = normalizeProjectOrders;
 
 function saveFile(trigger = "save") {
     if (readOnly && trigger !== "duplicate") return;
@@ -522,9 +590,14 @@ function saveFile(trigger = "save") {
                     const cp = project.control_pairs.find(c => c.order === cpMap.order);
                     if (!cp) return;
                     cp.id = cpMap.id;
+                    cp._fileId = project.id;
                     cpMap.routes.forEach(rMap => {
                         const r = cp.routes.find(r => r.order === rMap.order);
-                        if (r) r.id = rMap.id;
+                        if (r) {
+                            r.id = rMap.id;
+                            r._fileId = project.id;
+                            r._cpDbId = cp.id;
+                        }
                     });
                 });
             }
@@ -593,22 +666,24 @@ function saveSnapshot(trigger = "autosave") {
     GRANULAR ELEMENT SAVES
 ========================================================= */
 
-function _saveElement(payloadOrFn) {
-    if (readOnly || !project.id) return Promise.resolve(null);
+function _saveElement(payloadOrFn, fileId = project.id) {
+    if (readOnly || !fileId) return Promise.resolve(null);
     _pendingSaves++;
     _saveQueue = _saveQueue.then(async () => {
         // Resolve payload lazily so callers can reference cp.id / route.id
         // that may have been written by an earlier queued save
         const payload = typeof payloadOrFn === 'function' ? payloadOrFn() : payloadOrFn;
+        if (!payload) return null;
         const csrf = document.cookie.match(/csrftoken=([^;]+)/)?.[1] ?? "";
         try {
             const res  = await fetch("/editor/save-element/", {
                 method:  "POST",
                 headers: { "Content-Type": "application/json", "X-CSRFToken": csrf },
-                body:    JSON.stringify({ file_id: project.id, ...payload }),
+                body:    JSON.stringify({ file_id: fileId, ...payload }),
             });
-            const d = await res.json();
-            if (d?.last_edited) project.last_edited = d.last_edited;
+            const d = await res.json().catch(() => ({}));
+            if (!res.ok || d?.error) throw new Error(d?.error || `HTTP ${res.status}`);
+            if (Number(project.id) === Number(fileId) && d?.last_edited) project.last_edited = d.last_edited;
             _clearSaveFailedWarning();
             return d;
         } catch (e) { console.warn("saveElement failed:", e); _showSaveFailedWarning(); return null; }
@@ -617,23 +692,61 @@ function _saveElement(payloadOrFn) {
     return _saveQueue;
 }
 
-function saveControlPair(cp) {
+// Held off the cp object so structuredClone(project) (undo snapshots) doesn't
+// choke on the Promise — DOMException: Promise could not be cloned.
+const _cpInFlightSave = new WeakMap();
+
+function saveControlPair(cp, fileId = project.id) {
+    if (!cp || !fileId) return Promise.resolve(null);
+    const inFlight = _cpInFlightSave.get(cp);
+    if (inFlight && Number(inFlight.fileId) === Number(fileId)) return inFlight.promise;
     // Pass a function so cp.id is read at execution time (after any prior saves set it)
-    _saveQueue = _saveElement(() => ({
+    const promise = _saveElement(() => ({
         type: 'control_pair',
-        control_pair: { db_id: cp.id ?? null, order: cp.order,
+        control_pair: { db_id: Number(cp._fileId) === Number(fileId) ? (cp.id ?? null) : null, order: cp.order,
                         start: cp.start, ziel: cp.ziel, complex: cp.complex },
-    })).then(data => { if (data?.db_id) cp.id = data.db_id; });
+    }), fileId).then(data => {
+        if (data?.db_id) {
+            cp.id = data.db_id;
+            cp._fileId = fileId;
+        }
+        return data;
+    }).finally(() => {
+        const current = _cpInFlightSave.get(cp);
+        if (current && current.promise === promise) _cpInFlightSave.delete(cp);
+    });
+    _cpInFlightSave.set(cp, { promise, fileId });
+    return promise;
+}
+
+function ensureControlPairSaved(cp, fileId = project.id) {
+    if (!cp || !fileId) return Promise.resolve(null);
+    if (cp.id && Number(cp._fileId) === Number(fileId)) return Promise.resolve({ db_id: cp.id });
+    return saveControlPair(cp, fileId);
 }
 
 function saveRoute(cp, route) {
-    // Lazy: cp.id may be set by a preceding saveControlPair in the queue
-    _saveQueue = _saveElement(() => ({
-        type: 'route', cp_db_id: cp.id ?? null,
-        route: { db_id: route.id ?? null, order: route.order,
-                 rP: route.rP, noA: route.noA, pos: route.pos,
-                 length: route.length, run_time: route.run_time, elevation: route.elevation },
-    })).then(data => { if (data?.db_id) route.id = data.db_id; });
+    const fileId = project.id;
+    if (!cp || !route || !fileId) return Promise.resolve(null);
+    return ensureControlPairSaved(cp, fileId).then(() => {
+        if (!cp.id || Number(cp._fileId) !== Number(fileId)) return null;
+        return _saveElement(() => ({
+            type: 'route', cp_db_id: cp.id,
+            route: {
+                db_id: (Number(route._fileId) === Number(fileId) && Number(route._cpDbId) === Number(cp.id)) ? (route.id ?? null) : null,
+                order: route.order,
+                rP: route.rP, noA: route.noA, pos: route.pos,
+                length: route.length, run_time: route.run_time, elevation: route.elevation,
+            },
+        }), fileId);
+    }).then(data => {
+        if (data?.db_id) {
+            route.id = data.db_id;
+            route._fileId = fileId;
+            route._cpDbId = cp.id;
+        }
+        return data;
+    });
 }
 
 function saveBlockedTerrain() {
@@ -740,6 +853,8 @@ const R_CONTROL = 25;
 const GAP = 8;
 const RUN_SPEED = 4.75;         // average running speed in m/s
 const PX_TO_M  = 0.48;         // pixels to metres conversion factor
+const PATHING_MASK_TRAIN_SCALE = 0.710;
+const CONTROL_POINT_PASSABLE_SNAP_M = 10;
 
 const camera = { x: 0, y: 0, zoom: 0.67 };
 
@@ -854,6 +969,7 @@ const ControlPairTool = (() => {
             originY: point.y,
         };
         pushUndoState("Posten verschoben");
+        setRouteDeletePreview(null);
         mapContainer.classList.add("dragging");
         mapContainer.style.cursor = "grabbing";
     }
@@ -871,9 +987,7 @@ const ControlPairTool = (() => {
 
         const moved   = Math.hypot(newX - drag.originX, newY - drag.originY);
         const willDel = moved > SNAP_DISTANCE_CONTROL_PAIR;
-        const ncp     = drag.controlPair.order;
-        mapContainer.querySelectorAll(`.route-polyline[data-ncp="${ncp}"], .route-bg[data-ncp="${ncp}"]`)
-            .forEach(el => el.setAttribute("opacity", willDel ? "0.2" : "1"));
+        setRouteDeletePreview(willDel ? drag.controlPair.order : null);
     }
 
     function stopDrag() {
@@ -881,12 +995,19 @@ const ControlPairTool = (() => {
         const cp        = drag.controlPair;
         const pointType = drag.pointType;
         const point     = cp[pointType];
+        const snappedPoint = _snapPointToPassableMask(point);
+        if (snappedPoint && Math.hypot(snappedPoint.x - point.x, snappedPoint.y - point.y) >= 0.01) {
+            point.x = snappedPoint.x;
+            point.y = snappedPoint.y;
+        }
         const moved     = Math.hypot(point.x - drag.originX, point.y - drag.originY);
         drag = null;
+        setRouteDeletePreview(null);
         mapContainer.classList.remove("dragging");
         mapContainer.style.cursor = "default";
         hideCrosshair();
-        if (moved > SNAP_DISTANCE_CONTROL_PAIR) {
+        const clearedRoutes = moved > SNAP_DISTANCE_CONTROL_PAIR;
+        if (clearedRoutes) {
             cp.routes.forEach(r => deleteRoute(cp, r));
             cp.routes = [];
         } else if (cp.routes.length) {
@@ -902,6 +1023,7 @@ const ControlPairTool = (() => {
                 calcRouteSide(cp, r);
             });
         }
+        _snapControlPairEndpointsToPassableMask(cp);
         drawRoutes();
         updateRoutes();
         updateCPList();
@@ -909,6 +1031,7 @@ const ControlPairTool = (() => {
             saveControlPair(cp);
             if (moved <= SNAP_DISTANCE_CONTROL_PAIR) cp.routes.forEach(r => saveRoute(cp, r));
         }
+        if (clearedRoutes) requestAutoPathfindForControlPair(cp);
     }
 
     const gesture = makePendingGesture({
@@ -989,6 +1112,7 @@ const RouteEditTool = (() => {
 
     function drawPreview() {
         clearEditLayer();
+        drawOriginal();
         if (!route || !previewPt) return;
         const prev = route.rP[route.rP.length - 1];
         if (!prev) return;
@@ -1004,8 +1128,9 @@ const RouteEditTool = (() => {
     }
 
     function drawOriginal() {
+        document.querySelectorAll(".route-edit-original-preview").forEach(el => el.remove());
         if (!originalPts || originalPts.length < 2) return;
-        const layer  = document.getElementById("route-layer");
+        const layer  = document.getElementById("edit-layer");
         const points = originalPts.map(p => `${p.x},${p.y}`).join(" ");
         const poly   = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
         poly.setAttribute("points", points);
@@ -1015,6 +1140,8 @@ const RouteEditTool = (() => {
         poly.setAttribute("stroke-linecap", "round");
         poly.setAttribute("stroke-linejoin", "round");
         poly.setAttribute("vector-effect", "non-scaling-stroke");
+        poly.setAttribute("pointer-events", "none");
+        poly.classList.add("route-edit-original-preview");
         layer.appendChild(poly);
     }
 
@@ -1043,6 +1170,28 @@ const RouteEditTool = (() => {
         return false;
     }
 
+    function addEditPoint(pt) {
+        if (!route) return;
+        const snapped = snapToZiel(pt);
+        if (tryReconnect(snapped.x, snapped.y)) return;
+            route.rP.push({ x: snapped.x, y: snapped.y });
+            calcRouteLength(route);
+            drawRoutes();
+            clearEditLayer();
+            drawOriginal();
+            updateRoutes();
+            updateCPList();
+        }
+
+    const gesture = makePendingGesture({
+        onDrag(downEvent) {
+            pan.start(downEvent.clientX, downEvent.clientY);
+        },
+        onClick(e, pt) {
+            addEditPoint(pt);
+        },
+    });
+
     return {
         defaultCursor: "default",
 
@@ -1070,12 +1219,14 @@ const RouteEditTool = (() => {
             mapContainer.classList.add("editing-route");
             mapContainer.style.cursor = this.defaultCursor;
             drawRoutes();
+            clearEditLayer();
             drawOriginal();
             updateRoutes();
         },
 
         onExit() {
             mapContainer.classList.remove("editing-route");
+            gesture.cancel();
             clearEditLayer();
             hideCrosshair();
             if (route) {
@@ -1089,23 +1240,19 @@ const RouteEditTool = (() => {
         },
 
         onMouseDown(e, pt) {
-            const snapped = snapToZiel(pt);
-            if (tryReconnect(snapped.x, snapped.y)) return;
-            route.rP.push({ x: snapped.x, y: snapped.y });
-            calcRouteLength(route);
-            drawRoutes();
-            drawOriginal();
-            updateRoutes();
-            updateCPList();
+            gesture.down(e, pt);
         },
 
         onMouseMove(e, pt) {
+            if (gesture.move(pt)) return;
             previewPt = snapToZiel(pt);
             updateCrosshair(previewPt.x, previewPt.y);
             drawPreview();
         },
 
-        onMouseUp(e, pt) {},
+        onMouseUp(e, pt) {
+            gesture.up(e, pt);
+        },
 
         onKeyDown(e) {
             if (e.key === "Escape") activateTool(RouteTool);
@@ -1419,6 +1566,9 @@ const MaskLayer = (() => {
             maskData = tc.getImageData(0, 0, img.naturalWidth, img.naturalHeight);
             renderDisplay();
             loaded = true;
+            // Hand the freshly-decoded greyscale to the client-side pathfinding
+            // worker so the next CP auto-fire can answer without re-decoding.
+            try { sendMaskToPathingWorker(mapFile, maskData); } catch (e) { console.warn("pathing worker: send mask failed", e); }
         };
         img.onerror = () => { loaded = false; };
         img.src = `/pathfinding/get_mask/mask_${stem}.png`;
@@ -1500,6 +1650,57 @@ const MaskLayer = (() => {
         }
     }
 
+    function nearestPassableMapPoint(point, maxMetres = CONTROL_POINT_PASSABLE_SNAP_M) {
+        if (!maskData || !point) return null;
+        const W = maskData.width;
+        const H = maskData.height;
+        const data = maskData.data;
+        const gx = Math.round(Number(point.x) / PATHING_MASK_TRAIN_SCALE);
+        const gy = Math.round(Number(point.y) / PATHING_MASK_TRAIN_SCALE);
+        if (!Number.isFinite(gx) || !Number.isFinite(gy)) return null;
+        if (gx < 0 || gx >= W || gy < 0 || gy >= H) return null;
+
+        function passable(x, y) {
+            return x >= 0 && x < W && y >= 0 && y < H && data[(y * W + x) * 4] >= 10;
+        }
+
+        if (passable(gx, gy)) return { x: point.x, y: point.y };
+
+        const maxMapPx = maxMetres / PX_TO_M;
+        const maxGridPx = Math.ceil(maxMapPx / PATHING_MASK_TRAIN_SCALE);
+        let best = null;
+        let bestD2 = Infinity;
+        for (let r = 1; r <= maxGridPx; r++) {
+            for (let dy = -r; dy <= r; dy++) {
+                const ys = gy + dy;
+                const xs = [gx - r, gx + r];
+                for (const x of xs) {
+                    if (!passable(x, ys)) continue;
+                    const d2 = (x - gx) * (x - gx) + dy * dy;
+                    if (d2 < bestD2) { bestD2 = d2; best = { x, y: ys }; }
+                }
+            }
+            for (let dx = -r + 1; dx <= r - 1; dx++) {
+                const xs = gx + dx;
+                const ys = [gy - r, gy + r];
+                for (const y of ys) {
+                    if (!passable(xs, y)) continue;
+                    const d2 = dx * dx + (y - gy) * (y - gy);
+                    if (d2 < bestD2) { bestD2 = d2; best = { x: xs, y }; }
+                }
+            }
+            if (best) {
+                const snappedMap = {
+                    x: best.x * PATHING_MASK_TRAIN_SCALE,
+                    y: best.y * PATHING_MASK_TRAIN_SCALE,
+                };
+                const movedM = Math.hypot(snappedMap.x - point.x, snappedMap.y - point.y) * PX_TO_M;
+                return movedM <= maxMetres ? snappedMap : null;
+            }
+        }
+        return null;
+    }
+
     return {
         clearMask() {
             ensureCanvas();
@@ -1513,6 +1714,7 @@ const MaskLayer = (() => {
         loadMask,
         applyMapDimensions,
         screenToMaskPx,
+        nearestPassableMapPoint,
         isLoaded:    () => loaded,
         resetStroke: ()  => { lastPx = null; },
         getBrush:    ()      => brushR,
@@ -1625,6 +1827,7 @@ function undoMask() {
     const diff = maskUndoStack.pop();
     maskRedoStack.push(diff);
     MaskLayer.applyDiff(diff, true);   // reverse: restore old values
+    sendMaskDiffToPathingWorker(project.map_file, diff, true);
     MaskLayer.saveMask(project.map_file);
 }
 
@@ -1633,6 +1836,7 @@ function redoMask() {
     const diff = maskRedoStack.pop();
     maskUndoStack.push(diff);
     MaskLayer.applyDiff(diff, false);  // forward: restore new values
+    sendMaskDiffToPathingWorker(project.map_file, diff, false);
     MaskLayer.saveMask(project.map_file);
 }
 
@@ -1732,6 +1936,7 @@ const MaskTool = (() => {
             if (wasPainting && project.map_file) {
                 const diff = MaskLayer.finishStroke();
                 pushMaskDiff(diff);              // mask-specific undo stack
+                sendMaskDiffToPathingWorker(project.map_file, diff, false);
                 MaskLayer.saveMask(project.map_file);
                 project.has_mask = true;
             }
@@ -1745,7 +1950,10 @@ const MaskTool = (() => {
     TOOL: BLOCK
 ========================================================= */
 
-const BLOCK_COLOR  = "rgb(160,51,240)";
+// Editor accent color — also drives blocked terrain, place-CP preview, and route
+// polyline fallback. Kept in sync with --cp-color in map_objects.css.
+const CP_COLOR     = "#a033f0";
+const BLOCK_COLOR  = CP_COLOR;
 const BLOCK_SNAP   = 8;   // world-space snap distance (SVG units)
 
 function ensureBlockedTerrain() {
@@ -2119,7 +2327,7 @@ const PlaceControlTool = (() => {
     let savedStart  = null;
     let savedZiel   = null;
 
-    const STROKE = "rgb(160, 51, 240)";
+    const STROKE = CP_COLOR;
     const SW     = "3";
 
     function svgEl(tag) { return document.createElementNS("http://www.w3.org/2000/svg", tag); }
@@ -2208,12 +2416,12 @@ const PlaceControlTool = (() => {
         onDrag(downEvent) { pan.start(downEvent.clientX, downEvent.clientY); },
         onClick(e, pt) {
             if (placing === "start") {
-                const snapped = snapToControlPoints(pt);
+                const snapped = _snapPointToPassableMask(snapToControlPoints(pt));
                 tempStart = { x: snapped.x, y: snapped.y };
                 placing   = "ziel";
                 updateCPList();
             } else {
-                const snapped = snapToControlPoints(pt);
+                const snapped = _snapPointToPassableMask(snapToControlPoints(pt));
                 pushUndoState(isOverwrite ? "Posten neu gezeichnet" : "Posten erstellt");
                 cp.start = tempStart;
                 cp.ziel  = { x: snapped.x, y: snapped.y };
@@ -2233,13 +2441,26 @@ const PlaceControlTool = (() => {
                 updateRoutes();
                 updateControlPairs(cp.order);
                 const confirmedOrder = cp.order;
+                const confirmedCp    = cp;
                 reset();
+
+                // auto-fire client θ* only. The worker generates the
+                // simplified A* polyline (route 1) and the θ* polyline
+                // (route 2) so the user can visually diff what θ* added on
+                // top of A*.
+                requestAutoPathfindForControlPair(confirmedCp);
+
                 const isLast = !project.control_pairs.some(c => c.order > confirmedOrder);
                 if (isLast) {
                     startNewPlacement();
                 } else {
                     setTool(ToolMode.CONTROL_PAIR);
                 }
+                requestAnimationFrame(() => {
+                    if (!project.control_pairs.includes(confirmedCp)) return;
+                    ensureControlPairGroupDrawn(confirmedCp);
+                    updateControlPairs(confirmedOrder);
+                });
             }
         },
     });
@@ -2263,9 +2484,10 @@ const PlaceControlTool = (() => {
         onEnter() {
             mapContainer.style.cursor = this.defaultCursor;
             mapContainer.classList.add("placing-control");
-            mapContainer.querySelectorAll(".control-pair-group.selected")
-                .forEach(el => el.classList.remove("selected"));
-            selection.ncp = -1;
+            // Keep selection.ncp AND the .selected CSS class on the group, so the
+            // just-created control pair stays highlighted after auto-startNewPlacement
+            // and its routes (auto-generated) remain visible in the cp-list sub-list
+            // during the next placement.
             updateCPList();
         },
 
@@ -2289,7 +2511,7 @@ const PlaceControlTool = (() => {
                 }
                 return;
             }
-            const snapped = snapToControlPoints(pt);
+            const snapped = _snapPointToPassableMask(snapToControlPoints(pt));
             updateCrosshair(snapped.x, snapped.y);
             drawPreview(snapped);
         },
@@ -2466,7 +2688,7 @@ const RCM = (() => {
         const cFill = currentToolMode === ToolMode.NONE ? COL_ORANGE : COL_DARK;
         const cg = svgEl("g"); cg.id = "rcm-center";
         cg.appendChild(svgEl("circle", { cx:0, cy:0, r:IR1, fill:cFill, stroke:"none" }));
-        cg.appendChild(centeredFO("no_tool"));
+        cg.appendChild(centeredFO("lock"));
         if (cFill !== COL_DARK) setIconColor(cg, "black");
         svg.appendChild(cg);
 
@@ -2736,6 +2958,7 @@ updateCameraTransform();
 
 function drawControlPairGroup(controlPair) {
     const layer = document.getElementById("control-layer");
+    layer.querySelector(`.control-pair-group[data-ncp="${controlPair.order}"]`)?.remove();
     const group = document.createElementNS("http://www.w3.org/2000/svg", "g");
     group.classList.add("control-pair-group");
     if (controlPair.order === selection.ncp) group.classList.add("selected");
@@ -2743,6 +2966,11 @@ function drawControlPairGroup(controlPair) {
     drawControlPair(controlPair, group);
     drawConnection(controlPair, group);
     layer.appendChild(group);
+}
+
+function ensureControlPairGroupDrawn(controlPair) {
+    if (!controlPair?.start || !controlPair?.ziel) return;
+    drawControlPairGroup(controlPair);
 }
 
 function drawControlPair(controlPair, parent) {
@@ -2754,8 +2982,10 @@ function drawControlPair(controlPair, parent) {
         circle.setAttribute("cy", point.y);
         circle.setAttribute("r", R_CONTROL);
         circle.setAttribute("fill", "transparent");
-        circle.setAttribute("stroke", "rgb(160, 51, 240)");
-        circle.setAttribute("stroke-width", "3");
+        // stroke + stroke-width are overridden by CSS (.control-pair-group rules
+        // in map_objects.css); kept here as a fallback. Color source of truth: --cp-color.
+        circle.setAttribute("stroke", CP_COLOR);
+        circle.setAttribute("stroke-width", "2");
         circle.setAttribute("vector-effect", "non-scaling-stroke");
         circle.dataset.ncp  = controlPair.order;
         circle.dataset.type = pointType;
@@ -2796,7 +3026,8 @@ function drawConnection(controlPair, parent) {
     hitLine.classList.add("hit");
 
     const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
-    setLineAttrs(line, "rgb(160, 51, 240)", "3");
+    // stroke + width are overridden by CSS; source of truth is --cp-color in map_objects.css.
+    setLineAttrs(line, CP_COLOR, "2");
     line.dataset.ncp = controlPair.order;
 
     drawConnectionArrow(start, ziel, angle, parent);
@@ -2815,8 +3046,9 @@ function drawConnectionArrow(start, ziel, angle, parent) {
         line.classList.add("arrow");
         line.setAttribute("x1", x1); line.setAttribute("y1", y1);
         line.setAttribute("x2", x2); line.setAttribute("y2", y2);
-        line.setAttribute("stroke", "rgb(160, 51, 240)");
-        line.setAttribute("stroke-width", "3");
+        // stroke + width are overridden by CSS; source of truth is --cp-color in map_objects.css.
+        line.setAttribute("stroke", CP_COLOR);
+        line.setAttribute("stroke-width", "2");
         line.setAttribute("stroke-linecap", "round");
         line.setAttribute("vector-effect", "non-scaling-stroke");
         return line;
@@ -2869,8 +3101,105 @@ function getControlPairCircle(target) {
     ROUTE — DRAW & INTERACT
 ========================================================= */
 
+const GENERATED_ROUTE_ANIM_COLOR = "#ff9800";
+const GENERATED_ROUTE_FALLBACK_DRAW_MS = 1000;
+const GENERATED_ROUTE_RUNTIME_SECONDS_PER_ANIM_SECOND = 60;
+let _generatedRouteAnimFrame = null;
+let _routeDeletePreviewNcp = null;
+
+function setRouteDeletePreview(ncp) {
+    const next = Number.isFinite(Number(ncp)) ? Number(ncp) : null;
+    if (_routeDeletePreviewNcp === next) return;
+    _routeDeletePreviewNcp = next;
+    updateRoutes();
+}
+
+function routeDeletePreviewOpacity(ncp, fallback = 1) {
+    return Number(ncp) === _routeDeletePreviewNcp ? 0.2 : fallback;
+}
+
+function routePolylineLength(route) {
+    const pts = route?.rP || [];
+    let total = 0;
+    for (let i = 1; i < pts.length; i++) {
+        total += Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);
+    }
+    return total;
+}
+
+function generatedRouteDrawMs(route) {
+    const rt = Number(route?.run_time);
+    if (Number.isFinite(rt) && rt > 0) {
+        return Math.max(120, (rt / GENERATED_ROUTE_RUNTIME_SECONDS_PER_ANIM_SECOND) * 1000);
+    }
+    return GENERATED_ROUTE_FALLBACK_DRAW_MS;
+}
+
+function routePointAtProgress(route, progress) {
+    const pts = route?.rP || [];
+    if (pts.length === 0) return null;
+    if (pts.length === 1) return pts[0];
+    const target = routePolylineLength(route) * Math.max(0, Math.min(1, progress));
+    let walked = 0;
+    for (let i = 1; i < pts.length; i++) {
+        const a = pts[i - 1];
+        const b = pts[i];
+        const seg = Math.hypot(b.x - a.x, b.y - a.y);
+        if (walked + seg >= target) {
+            const t = seg > 0 ? (target - walked) / seg : 1;
+            return {
+                x: a.x + (b.x - a.x) * t,
+                y: a.y + (b.y - a.y) * t,
+            };
+        }
+        walked += seg;
+    }
+    return pts[pts.length - 1];
+}
+
+function routeAnimationPhase(route, now = performance.now()) {
+    const anim = route?._generatedRouteAnim;
+    if (!anim) return null;
+    const elapsed = now - anim.start;
+    if (elapsed < anim.drawMs) {
+        return {
+            kind: "drawing",
+            progress: Math.max(0, Math.min(1, elapsed / anim.drawMs)),
+            remaining: Math.max(0, anim.drawMs - elapsed),
+        };
+    }
+    delete route._generatedRouteAnim;
+    return null;
+}
+
+function ensureRouteLayers() {
+    const root = document.getElementById("route-layer");
+    if (!root) return {};
+    let base = root.querySelector(":scope > #route-base-layer");
+    let active = root.querySelector(":scope > #route-active-layer");
+    let anim = root.querySelector(":scope > #route-animation-layer");
+    if (!base || !active || !anim) {
+        root.innerHTML = "";
+        base = document.createElementNS("http://www.w3.org/2000/svg", "g");
+        active = document.createElementNS("http://www.w3.org/2000/svg", "g");
+        anim = document.createElementNS("http://www.w3.org/2000/svg", "g");
+        base.id = "route-base-layer";
+        active.id = "route-active-layer";
+        anim.id = "route-animation-layer";
+        root.appendChild(base);
+        root.appendChild(active);
+        root.appendChild(anim);
+    }
+    Array.from(root.children).forEach(child => {
+        if (!["route-base-layer", "route-active-layer", "route-animation-layer"].includes(child.id)) {
+            child.remove();
+        }
+    });
+    return { root, base, active, anim };
+}
+
 function createRoutePolyline(route, {
-    stroke = "rgb(160, 51, 240)",
+    stroke = CP_COLOR,
     strokeWidth = 3,
     opacity = 1,
     className = "",
@@ -2894,65 +3223,157 @@ function createRoutePolyline(route, {
     return el;
 }
 
+function applyDashDraw(el, route, phase) {
+    let len = routePolylineLength(route);
+    try {
+        if (typeof el.getTotalLength === "function") len = el.getTotalLength();
+    } catch (_) {}
+    len = Math.max(1, len);
+    const offset = len * (1 - (phase?.progress || 0));
+    el.style.strokeDasharray = String(len);
+    el.style.strokeDashoffset = String(offset);
+    el.style.transition = "none";
+}
+
+function renderGeneratedRouteAnimation(layer, route, cp, phase) {
+    if (!layer || !route?.rP?.length || !phase) return;
+    const dataset = { ncp: cp.order, nr: route.order };
+    const previewOpacity = routeDeletePreviewOpacity(cp.order);
+    if (phase.kind === "drawing") {
+        const bg = createRoutePolyline(route, {
+            stroke: "white",
+            strokeWidth: 3,
+            opacity: previewOpacity,
+            className: "route-generated-anim",
+            dataset,
+        });
+        const fg = createRoutePolyline(route, {
+            stroke: GENERATED_ROUTE_ANIM_COLOR,
+            strokeWidth: 1.8,
+            opacity: previewOpacity,
+            className: "route-generated-anim",
+            dataset,
+        });
+        if (bg) {
+            layer.appendChild(bg);
+            applyDashDraw(bg, route, phase);
+        }
+        if (fg) {
+            layer.appendChild(fg);
+            applyDashDraw(fg, route, phase);
+        }
+        const front = routePointAtProgress(route, phase.progress);
+        if (front) {
+            const dot = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+            dot.setAttribute("cx", front.x);
+            dot.setAttribute("cy", front.y);
+            dot.setAttribute("r", "4.5");
+            dot.setAttribute("fill", GENERATED_ROUTE_ANIM_COLOR);
+            dot.setAttribute("stroke", "white");
+            dot.setAttribute("stroke-width", "1.4");
+            dot.setAttribute("opacity", String(previewOpacity));
+            dot.setAttribute("vector-effect", "non-scaling-stroke");
+            dot.setAttribute("pointer-events", "none");
+            dot.classList.add("route-generated-anim");
+            layer.appendChild(dot);
+        }
+        return;
+    }
+}
+
+function hasActiveGeneratedRouteAnimations() {
+    if (!project?.control_pairs) return false;
+    return project.control_pairs.some(cp => (cp.routes || []).some(route => !!route._generatedRouteAnim));
+}
+
+function scheduleGeneratedRouteAnimationFrame() {
+    if (_generatedRouteAnimFrame !== null) return;
+    const tick = () => {
+        _generatedRouteAnimFrame = null;
+        drawRoutes();
+        updateRoutes();
+        if (hasActiveGeneratedRouteAnimations()) {
+            _generatedRouteAnimFrame = requestAnimationFrame(tick);
+        }
+    };
+    _generatedRouteAnimFrame = requestAnimationFrame(tick);
+}
+
 function drawRoutes() {
-    const layer = document.getElementById("route-layer");
-    layer.innerHTML = "";
+    const { base, active, anim } = ensureRouteLayers();
+    if (!base || !anim) return;
+    base.innerHTML = "";
+    if (active) active.innerHTML = "";
+    anim.innerHTML = "";
     if (!project?.control_pairs) return;
+    const now = performance.now();
 
     project.control_pairs.forEach(cp => {
         cp.routes.forEach(route => {
+            const phase = routeAnimationPhase(route, now);
+            if (phase?.kind === "drawing") return;
             const el = createRoutePolyline(route, {
                 stroke: "white", strokeWidth: 3,
                 className: "route-bg",
                 dataset: { ncp: cp.order, nr: route.order },
             });
-            if (el) layer.appendChild(el);
+            if (el) base.appendChild(el);
         });
     });
 
     project.control_pairs.forEach(cp => {
         cp.routes.forEach(route => {
+            const phase = routeAnimationPhase(route, now);
+            if (phase?.kind === "drawing") {
+                renderGeneratedRouteAnimation(anim, route, cp, phase);
+                return;
+            }
             const el = createRoutePolyline(route, {
                 stroke: "black", strokeWidth: 1.5,
                 className: "route-polyline",
                 dataset: { ncp: cp.order, nr: route.order },
             });
-            if (el) layer.appendChild(el);
+            if (el) base.appendChild(el);
         });
     });
 }
 
 function updateRoutes() {
+    const { root: routeLayer, active: activeLayer } = ensureRouteLayers();
     mapContainer.querySelectorAll(".route-bg").forEach(el => {
         const isSelectedCp = Number(el.dataset.ncp) === selection.ncp;
+        const ncp = Number(el.dataset.ncp);
         el.setAttribute("stroke", isSelectedCp ? "white" : "transparent");
+        el.setAttribute("opacity", String(routeDeletePreviewOpacity(ncp)));
     });
 
     mapContainer.querySelectorAll(".route-polyline").forEach(el => {
-        const isSelectedCp = Number(el.dataset.ncp) === selection.ncp;
-        el.setAttribute("opacity", isSelectedCp ? "1" : "0.1");
+        const ncp = Number(el.dataset.ncp);
+        const isSelectedCp = ncp === selection.ncp;
+        el.setAttribute("opacity", String(routeDeletePreviewOpacity(ncp, isSelectedCp ? 1 : 0.1)));
         el.setAttribute("stroke", "black");
     });
 
     // active route rendered on top
-    const routeLayer = document.getElementById("route-layer");
-    routeLayer.querySelectorAll(".route-active").forEach(el => el.remove());
+    (activeLayer || routeLayer)?.querySelectorAll(".route-active").forEach(el => el.remove());
 
     const cp    = project.control_pairs.find(cp => cp.order === selection.ncp);
     const route = cp?.routes.find(r => r.order === selection.nr);
 
-    if (route) {
+    if (route && routeAnimationPhase(route)?.kind !== "drawing") {
         const bg = createRoutePolyline(route, {
             stroke: "white", strokeWidth: 3,
+            opacity: routeDeletePreviewOpacity(cp.order),
             className: "route-active",
         });
         const fg = createRoutePolyline(route, {
             stroke: "#E53935", strokeWidth: 1.5,
+            opacity: routeDeletePreviewOpacity(cp.order),
             className: "route-active",
             dataset: { ncp: cp.order, nr: route.order },
         });
-        if (bg) routeLayer.appendChild(bg);
-        if (fg) routeLayer.appendChild(fg);
+        if (bg) (activeLayer || routeLayer).appendChild(bg);
+        if (fg) (activeLayer || routeLayer).appendChild(fg);
     }
 
     // transparent hit strips — only needed in route modes
@@ -3110,20 +3531,59 @@ async function loadFiles() {
 
 let maskGenController  = null;
 let maskGenInProgress  = false;
+let maskGenSessionSeq  = 0;
+let activeMaskGenSession = null;
 
-function startMaskGeneration(mapFile, scale) {
+function maskGenerationEventMatchesSession(event, session) {
+    const eventFileId = Number(event.file_id);
+    if (!session || !Number.isFinite(eventFileId)) return false;
+    if (eventFileId !== session.fileId) return false;
+    if (event.filename && event.filename !== session.mapFile) return false;
+    if (event.map_file && event.map_file !== session.mapFile) return false;
+    if (activeMaskGenSession?.seq !== session.seq) return false;
+    if (Number(project.id) !== session.fileId) return false;
+    if (project.map_file !== session.mapFile) return false;
+    return true;
+}
+
+async function startMaskGeneration(mapFile, scale, fileId = null) {
     const bar    = document.getElementById("mask-gen-bar");
     const text   = document.getElementById("mask-gen-text");
     const cancel = document.getElementById("mask-gen-cancel");
     if (!bar) return;
 
+    const seq = ++maskGenSessionSeq;
+    const requestedMapFile = mapFile;
+    const requestedScale = scale;
     const prog = document.getElementById("mask-gen-progress");
     maskGenInProgress = true;
     if (currentToolMode === ToolMode.MASK) bar.style.display = "flex";
     text.textContent  = "Maske wird generiert…";
     if (prog) prog.value = 0;
 
-    maskGenController = new AbortController();
+    if (!fileId) {
+        await _saveQueue;
+        if (!project.id && !readOnly) await saveFile("mask_generation");
+        fileId = project.id;
+    }
+    fileId = Number(fileId);
+    if (!Number.isFinite(fileId)) {
+        if (seq === maskGenSessionSeq) {
+            maskGenInProgress = false;
+            text.innerHTML = `<span style="color:#ff6666">Fehler: Datei wurde noch nicht gespeichert.</span>`;
+        }
+        return;
+    }
+
+    const session = { seq, fileId, mapFile: requestedMapFile };
+    if (Number(project.id) !== fileId || project.map_file !== requestedMapFile) {
+        if (seq === maskGenSessionSeq) maskGenInProgress = false;
+        return;
+    }
+    activeMaskGenSession = session;
+
+    const controller = new AbortController();
+    maskGenController = controller;
     cancel.onclick = () => { bar.style.display = "none"; }; // hide only, fetch continues
 
     const csrfToken = document.cookie.match(/csrftoken=([^;]+)/)?.[1] ?? "";
@@ -3131,8 +3591,8 @@ function startMaskGeneration(mapFile, scale) {
     fetch("/editor/generate-mask/", {
         method:  "POST",
         headers: { "Content-Type": "application/json", "X-CSRFToken": csrfToken },
-        body:    JSON.stringify({ filename: mapFile, scale }),
-        signal:  maskGenController.signal,
+        body:    JSON.stringify({ filename: requestedMapFile, scale: requestedScale, file_id: fileId }),
+        signal:  controller.signal,
     })
         .then(res => {
             if (!res.ok) return res.text().then(t => { throw new Error(t); });
@@ -3151,32 +3611,46 @@ function startMaskGeneration(mapFile, scale) {
                         if (!line) continue;
                         try {
                             const d = JSON.parse(line.slice(5).trim());
+                            if (!maskGenerationEventMatchesSession(d, session)) {
+                                if (
+                                    activeMaskGenSession?.seq === session.seq &&
+                                    Number(d.file_id) === session.fileId &&
+                                    (d.done || d.error)
+                                ) {
+                                    maskGenInProgress = false;
+                                    activeMaskGenSession = null;
+                                }
+                                continue;
+                            }
                             if (d.current !== undefined) {
                                 const pct = Math.round((d.current / d.total) * 100);
                                 text.textContent = `Generiere Maske… ${pct}%`;
                                 if (prog) prog.value = pct;
                             } else if (d.done) {
+                                // Mask PNG is written. Load preview & mark
+                                // has_mask. (Navgraph pipeline was removed.)
                                 maskGenInProgress = false;
-                                if (project.map_file === mapFile) {
+                                activeMaskGenSession = null;
+                                if (project.map_file === requestedMapFile && Number(project.id) === fileId) {
                                     project.has_mask = true;
-                                    // Lightweight endpoint — works even for published/locked files
-                                    if (project.id) {
+                                    if (fileId) {
                                         const _csrf = document.cookie.match(/csrftoken=([^;]+)/)?.[1] ?? "";
                                         fetch("/editor/mark-has-mask/", {
                                             method:  "POST",
                                             headers: { "Content-Type": "application/json", "X-CSRFToken": _csrf },
-                                            body:    JSON.stringify({ file_id: project.id }),
+                                            body:    JSON.stringify({ file_id: fileId }),
                                         }).catch(e => console.warn("mark_has_mask failed:", e));
                                     }
                                     if (prog) prog.value = 100;
-                                    text.textContent = "Maske fertig — wird geladen…";
-                                    MaskLayer.loadMask(mapFile);
+                                    text.textContent = "Maske fertig";
+                                    MaskLayer.loadMask(requestedMapFile);
                                     MaskLayer.applyMapDimensions();
-                                    setTimeout(hideMaskGenBar, 2000);
-                                } else {
-                                    hideMaskGenBar();
+                                    drainPendingAutoPathfindQueue();
+                                    setTimeout(hideMaskGenBar, 1500);
                                 }
                             } else if (d.error) {
+                                maskGenInProgress = false;
+                                activeMaskGenSession = null;
                                 text.innerHTML = `<span style="color:#ff6666">Fehler: ${d.error}</span>`;
                             }
                         } catch (_) {}
@@ -3187,7 +3661,7 @@ function startMaskGeneration(mapFile, scale) {
             return read();
         })
         .catch(err => {
-            if (err.name !== "AbortError")
+            if (err.name !== "AbortError" && activeMaskGenSession?.seq === seq)
                 text.innerHTML = `<span style="color:#ff6666">Fehler: ${err.message}</span>`;
         });
 }
@@ -3196,6 +3670,14 @@ function hideMaskGenBar() {
     const bar = document.getElementById("mask-gen-bar");
     if (bar) bar.style.display = "none";
 }
+
+function detachMaskGenerationUi() {
+    maskGenSessionSeq++;
+    activeMaskGenSession = null;
+    maskGenInProgress = false;
+    hideMaskGenBar();
+}
+window.detachMaskGenerationUi = detachMaskGenerationUi;
 
 function showMaskGenBarIfActive() {
     if (!maskGenInProgress) return;
@@ -3206,6 +3688,10 @@ function showMaskGenBarIfActive() {
 function loadMap(filename) {
     document.getElementById('map-img').src = `/editor/map/${filename}`;
 }
+
+let ocadPreviewGeneration = 0;
+let ocadUploadSession = null;
+let localImagePreviewState = { generation: 0, prevSrc: null, prevDisplay: "", blobUrl: null };
 
 function emitPublishWave(btn) {
     const rect = btn.getBoundingClientRect();
@@ -3220,6 +3706,63 @@ function emitPublishWave(btn) {
 }
 window.emitPublishWave = emitPublishWave;
 
+function clearMapDisplayForUpload({ clearLayers = true } = {}) {
+    document.getElementById("map-svg-preview")?.remove();
+    const img = document.getElementById("map-img");
+    if (img) {
+        img.onload = null;
+        img.onerror = null;
+        img.style.display = "none";
+        img.removeAttribute("src");
+    }
+    MaskLayer.clearMask?.();
+    if (clearLayers) clearAllLayers();
+}
+
+function resetProjectForOcadUpload(session) {
+    const keepName = (project.name || currentProjectName || "Neues Projekt").trim() || "Neues Projekt";
+    const keepLabel = project.label || null;
+
+    setReadOnly(false);
+    checkinCurrentFile();
+    if (activeTool !== ControlPairTool) activateTool(ControlPairTool);
+    // Drop pathfinding worker debug PNGs from the previous project.
+    try { _clearDebugCorridors(); } catch (e) {}
+
+    project = {
+        id: null,
+        name: keepName,
+        published: false,
+        label: keepLabel,
+        scale: null,
+        scaled: false,
+        map_file: "",
+        has_mask: false,
+        blocked_terrain: null,
+        control_pairs: [],
+    };
+    selection.ncp = 0;
+    selection.nr = null;
+
+    undoStack = [];
+    redoStack = [];
+    actionCount = 0;
+    clearMaskUndoStacks();
+    updateUndoMenu();
+    _pendingAutoPathfindCps.clear();
+
+    clearMapDisplayForUpload({ clearLayers: true });
+    updateFilenameInput();
+    updateNavPublishBtn();
+    updateNavLabel();
+    updateCPList();
+    _updateScalePanel();
+
+    activeSubtool[ToolMode.CONTROL_PAIR] = "add";
+    setTool(ToolMode.CONTROL_PAIR);
+    ocadUploadSession = session;
+}
+
 async function uploadSelectedMap() {
     const input = document.getElementById("map-file-input");
     const file  = input?.files?.[0];
@@ -3227,8 +3770,25 @@ async function uploadSelectedMap() {
 
     const btn  = document.getElementById("upload-map-btn");
     const csrf = document.cookie.match(/csrftoken=([^;]+)/)?.[1] ?? "";
+    const isOcad = /\.(ocd|ocad)$/i.test(file.name);
 
     btn.disabled = true;   // keep the upload icon — spinner shown on the map itself
+    closeMapModal();
+    const previewGeneration = ++ocadPreviewGeneration;
+    if (isOcad) {
+        // resetProjectForOcadUpload wipes ui-layer (including any spinner), so
+        // the spinner must be (re-)shown afterwards to survive the reset.
+        resetProjectForOcadUpload({
+            generation: previewGeneration,
+            targetProjectId: project.id,
+            previewShown: false,
+        });
+        showMapSpinner();
+        showOcadSvgPreview(file, previewGeneration).catch(e => console.warn("OCAD SVG preview failed", e));
+    } else {
+        showMapSpinner();
+        showLocalImagePreview(file, previewGeneration);
+    }
 
     try {
         const fd = new FormData();
@@ -3240,57 +3800,213 @@ async function uploadSelectedMap() {
         });
         const data = await res.json();
         if (!res.ok || !data.map_file) {
+            hideMapSpinner();
+            if (!isOcad) revertLocalImagePreview(previewGeneration);
             alert(data.error || "Upload fehlgeschlagen.");
             btn.disabled = false;
             return;
         }
 
         // Clear leftover state from previously open files now that we're committing
-        setReadOnly(false);
-        checkinCurrentFile();
-        updateFilenameInput();
+        if (!isOcad) {
+            setReadOnly(false);
+            checkinCurrentFile();
+            updateFilenameInput();
         // New map replaces any previous editor state — wipe all undo history
-        undoStack = []; redoStack = []; actionCount = 0;
-        clearMaskUndoStacks();
-        updateUndoMenu();
+            undoStack = []; redoStack = []; actionCount = 0;
+            clearMaskUndoStacks();
+            _pendingAutoPathfindCps.clear();
+            updateUndoMenu();
+        }
 
         // Update project state and save so the file exists on the server
+        const session = isOcad && ocadUploadSession?.generation === previewGeneration
+            ? ocadUploadSession
+            : null;
+        if (session?.targetProjectId) project.id = session.targetProjectId;
         project.map_file = data.map_file;
-        project.scaled   = false;
-        project.scale    = null;
-        saveFile("map_upload");
+        const uploadedScale = Number(data.scale);
+        project.scale    = Number.isFinite(uploadedScale) && uploadedScale > 0 ? uploadedScale : null;
+        project.scaled   = !!data.scaled && !!project.scale;
+        project.has_mask = !!data.has_mask;
+        if (!session?.previewShown && !project.control_pairs.length && Array.isArray(data.control_pairs) && data.control_pairs.length) {
+            project.control_pairs = data.control_pairs.map((cp, i) => ({
+                order:   i,
+                start:   cp.start,
+                ziel:    cp.ziel,
+                complex: !!cp.complex,
+                routes:  Array.isArray(cp.routes) ? cp.routes : [],
+            }));
+            selection.ncp = 0;
+            selection.nr  = 0;
+        } else if (!session?.previewShown && !project.control_pairs.length) {
+            project.control_pairs = [];
+            selection.ncp = 0;
+            selection.nr  = 0;
+        }
+        const mapUploadSave = saveFile("map_upload");
 
-        // Close modal and load map in editor
-        closeMapModal();
-        _loadMapInEditor();
+        if (isOcad) {
+            // OCAD: swap the SVG preview for the server-rendered raster once available,
+            // then kick off the normal UNet mask pipeline.
+            _loadMapInEditor(() => {
+                if (data.auto_generate_mask && project.map_file === data.map_file && project.scale) {
+                    Promise.resolve(mapUploadSave).then(() => {
+                        if (project.map_file === data.map_file && project.scale && project.id) {
+                            startMaskGeneration(project.map_file, project.scale, project.id);
+                        }
+                    });
+                }
+            }, { preserveLayers: true, silentLoad: true });
+        }
+        // For PNG/JPEG the blob URL is already on screen — no second download needed.
 
     } catch (e) {
         console.error("uploadSelectedMap:", e);
+        hideMapSpinner();
+        if (!isOcad) revertLocalImagePreview(previewGeneration);
         alert("Upload fehlgeschlagen.");
         btn.disabled = false;
     }
 }
 
-function _loadMapInEditor() {
+function showLocalImagePreview(file, generation) {
     const img = document.getElementById("map-img");
-    if (!img || !project.map_file) return;
+    if (!img) return;
 
-    // Clear all leftover SVG elements and the previous map image
-    clearAllLayers();
-    MaskLayer.clearMask?.();
-    img.style.display = "none";
-    img.src = "";
+    const prevSrc = img.getAttribute("src") || null;
+    const prevDisplay = img.style.display || "";
+    const prevScale = project.scale;
+    const prevScaled = project.scaled;
+    const prevHasMask = project.has_mask;
+    if (localImagePreviewState.blobUrl) URL.revokeObjectURL(localImagePreviewState.blobUrl);
 
-    showMapSpinner();
+    const blobUrl = URL.createObjectURL(file);
+    localImagePreviewState = { generation, prevSrc, prevDisplay, prevScale, prevScaled, prevHasMask, blobUrl };
 
+    // New raster needs fresh calibration; clear stale scale/mask state so the
+    // immediate fit uses raw pixel dimensions instead of the previous map's scale.
+    project.scale = null;
+    project.scaled = false;
+    project.has_mask = false;
+
+    document.getElementById("map-svg-preview")?.remove();
     img.onload = () => {
+        if (localImagePreviewState.generation !== generation) return;
         hideMapSpinner();
         img.style.display = "block";
         applyProjectScale();
         MaskLayer.applyMapDimensions?.();
         drawCourse();
-        fitMapToCamera();
+        fitMapDimensionsToCamera(img.naturalWidth, img.naturalHeight);
         _updateScalePanel();
+    };
+    img.onerror = () => {
+        if (localImagePreviewState.generation !== generation) return;
+        hideMapSpinner();
+        console.warn("Local image preview failed to load");
+    };
+    img.src = blobUrl;
+}
+
+function revertLocalImagePreview(generation) {
+    if (localImagePreviewState.generation !== generation) return;
+    const img = document.getElementById("map-img");
+    if (!img) return;
+    if (localImagePreviewState.blobUrl) URL.revokeObjectURL(localImagePreviewState.blobUrl);
+    img.onload = null;
+    img.onerror = null;
+    project.scale = localImagePreviewState.prevScale ?? null;
+    project.scaled = localImagePreviewState.prevScaled ?? false;
+    project.has_mask = localImagePreviewState.prevHasMask ?? false;
+    const prevSrc = localImagePreviewState.prevSrc;
+    // Only restore server-side srcs; an earlier blob URL would already be revoked.
+    if (prevSrc && !prevSrc.startsWith("blob:")) {
+        img.src = prevSrc;
+        img.style.display = localImagePreviewState.prevDisplay;
+    } else {
+        img.removeAttribute("src");
+        img.style.display = "none";
+    }
+    localImagePreviewState = { generation: 0, prevSrc: null, prevDisplay: "", blobUrl: null };
+}
+
+async function showOcadSvgPreview(file, generation) {
+    if (!window.OcadBrowser?.renderSvgPreview) return null;
+    const started = performance.now();
+    const preview = await window.OcadBrowser.renderSvgPreview(file);
+    if (generation !== ocadPreviewGeneration) return null;
+    if (!preview?.svg) return null;
+
+    const img = document.getElementById("map-img");
+    const canvas = document.getElementById("mask-canvas");
+    const scaleLayer = document.getElementById("map-scale-layer");
+    if (!scaleLayer) return preview;
+    const session = ocadUploadSession?.generation === generation ? ocadUploadSession : null;
+
+    document.getElementById("map-svg-preview")?.remove();
+    if (img) {
+        img.style.display = "none";
+    }
+
+    project.scale = preview.scale;
+    project.scaled = !!preview.scale;
+    project.has_mask = false;
+    if (Array.isArray(preview.control_pairs) && preview.control_pairs.length) {
+        project.control_pairs = preview.control_pairs.map((cp, i) => ({
+            order:   i,
+            start:   cp.start,
+            ziel:    cp.ziel,
+            complex: !!cp.complex,
+            routes:  Array.isArray(cp.routes) ? cp.routes : [],
+        }));
+        selection.ncp = 0;
+        selection.nr = 0;
+    } else {
+        project.control_pairs = [];
+        selection.ncp = 0;
+        selection.nr = 0;
+    }
+
+    scaleLayer.insertBefore(preview.svg, canvas || null);
+    if (session) session.previewShown = true;
+    applyProjectScale();
+    drawCourse();
+    fitMapDimensionsToCamera(preview.width, preview.height);
+    _updateScalePanel();
+    hideMapSpinner();
+    console.log(`OCAD SVG preview rendered in ${Math.round(performance.now() - started)}ms`);
+    return preview;
+}
+
+function _loadMapInEditor(afterLoad = null, options = {}) {
+    const img = document.getElementById("map-img");
+    if (!img || !project.map_file) return;
+    const preserveLayers = !!options.preserveLayers;
+    const silentLoad = !!options.silentLoad;
+
+    // Clear all leftover SVG elements and the previous map image
+    if (!preserveLayers) {
+        clearAllLayers();
+        MaskLayer.clearMask?.();
+        document.getElementById("map-svg-preview")?.remove();
+    }
+    img.style.display = "none";
+    img.removeAttribute("src");
+
+    if (!silentLoad) showMapSpinner();
+
+    img.onload = () => {
+        ocadPreviewGeneration++;
+        document.getElementById("map-svg-preview")?.remove();
+        hideMapSpinner();
+        img.style.display = "block";
+        applyProjectScale();
+        MaskLayer.applyMapDimensions?.();
+        drawCourse();
+        if (!preserveLayers) fitMapToCamera();
+        _updateScalePanel();
+        if (typeof afterLoad === "function") afterLoad();
     };
     img.onerror = () => { hideMapSpinner(); console.warn("Map image failed to load"); };
     img.src = `/editor/map/${project.map_file}`;
@@ -3310,7 +4026,12 @@ function _updateScalePanel() {
     const toolWrap = document.getElementById("radial-toolbar-wrap");
     if (!panel || !toolWrap) return;
 
-    if (project.map_file && !project.scaled) {
+    // A local blob-URL preview counts as a visible map even before the backend
+    // has confirmed a server-side filename, so calibration starts immediately.
+    const mapImg = document.getElementById("map-img");
+    const hasVisibleMap = !!project.map_file || !!(mapImg?.getAttribute("src"));
+
+    if (hasVisibleMap && !project.scaled) {
         panel.style.display    = "flex";
         toolWrap.style.display = "none";
         // Auto-activate — no button click needed
@@ -3438,7 +4159,7 @@ function _openScaleModal() {
         _cancelScaleDrawing();
         applyProjectScale();
         fitMapToCamera();
-        saveFile("scale");
+        const scaleSave = saveFile("scale");
         saveSnapshot("autosave");
         _updateScalePanel();
         // Scaling is a point of no return — clear all undo history
@@ -3450,7 +4171,13 @@ function _openScaleModal() {
         setTool(ToolMode.CONTROL_PAIR);
         startNewPlacement();
         // Kick off mask generation silently in the background
-        startMaskGeneration(project.map_file, project.scale);
+        const maskMapFile = project.map_file;
+        const maskScale = project.scale;
+        Promise.resolve(scaleSave).then(() => {
+            if (project.map_file === maskMapFile && project.scale === maskScale && project.id) {
+                startMaskGeneration(maskMapFile, maskScale, project.id);
+            }
+        });
     };
 }
 
@@ -3490,6 +4217,7 @@ function closeFileModal() {
 }
 
 function createFile() {
+    detachMaskGenerationUi();
     closeFileModal();
     openMapModal();
 }
@@ -3527,7 +4255,12 @@ function initMapUpload() {
 
 function handleMapFile(file) {
     if (!file) return;
-    if (file.size > 15 * 1024 * 1024) { alert("Datei zu gross (max. 15 MB)"); return; }
+    const isOcad = /\.(ocd|ocad)$/i.test(file.name);
+    const maxSize = 15 * 1024 * 1024;
+    if (file.size > maxSize) {
+        alert(isOcad ? "Datei zu gross (max. 15 MB)" : "Datei zu gross (max. 15 MB)");
+        return;
+    }
     document.getElementById("selected-map-info").style.display = "flex";
     document.querySelector(".selected-map-name").textContent = file.name;
     document.getElementById("upload-map-btn").disabled = false;
@@ -3589,9 +4322,14 @@ function centerMap(imgWidth, imgHeight) {
 function fitMapToCamera() {
     const img = document.getElementById("map-img");
     if (!img || !img.naturalWidth) return;
+    fitMapDimensionsToCamera(img.naturalWidth, img.naturalHeight);
+}
+
+function fitMapDimensionsToCamera(width, height) {
+    if (!(width > 0) || !(height > 0)) return;
     const rect  = mapContainer.getBoundingClientRect();
-    const mapW  = img.naturalWidth  * (project.scale || 1);
-    const mapH  = img.naturalHeight * (project.scale || 1);
+    const mapW  = width  * (project.scale || 1);
+    const mapH  = height * (project.scale || 1);
     const MARGIN = 0.92;
     const zoom  = Math.min(
         Math.max(rect.width  / mapW * MARGIN, zoomMin),
@@ -3635,6 +4373,587 @@ function startNewRoute() {
     activateTool(NewRouteTool.init(cp));
 }
 
+// (visibility-graph pathfinding removed)
+
+const _activePathfindByCp = new Map();   // legacy — kept so undefined references don't throw if other code paths still mention it
+let _autoPathfindInFlight = 0;           // for UI badge
+let _pathfindUiUpdateFrame = null;
+
+function _setAutoPathfindBusy(busy) {
+    _autoPathfindInFlight = Math.max(0, _autoPathfindInFlight + (busy ? 1 : -1));
+    document.body.classList.toggle("auto-pathfind-busy", _autoPathfindInFlight > 0);
+}
+
+function _queuePathfindUiUpdate() {
+    if (_pathfindUiUpdateFrame !== null) return;
+    _pathfindUiUpdateFrame = requestAnimationFrame(() => {
+        _pathfindUiUpdateFrame = null;
+        updateCPList();
+    });
+}
+
+function _setPathfindBusyForCp(cp, busy) {
+    _setAutoPathfindBusy(busy);
+    if (!cp) {
+        _queuePathfindUiUpdate();
+        return;
+    }
+    const count = Math.max(0, (_activePathfindByCp.get(cp) || 0) + (busy ? 1 : -1));
+    if (count) _activePathfindByCp.set(cp, count);
+    else _activePathfindByCp.delete(cp);
+    _queuePathfindUiUpdate();
+}
+
+function _isPathfindBusyForCp(cp) {
+    return !!(cp && (_activePathfindByCp.get(cp) || _autoPathfindRunningCps.has(cp)));
+}
+
+function _canExpectAnotherPathfindRoute(cp) {
+    if (!cp) return false;
+    return (cp.routes?.length || 0) < AUTO_PATHFIND_MAX_ROUTES;
+}
+
+function _routeFromPolyline(cp, polyline) {
+    if (!polyline || polyline.length < 2) return null;
+    const route = {
+        id:       null,
+        order:    cp.routes.length,
+        rP:       polyline.map(([x, y]) => ({ x, y })),
+        noA:      null,
+        pos:      null,
+        length:   null,
+        run_time: null,
+        elevation: 0,
+    };
+    calcRouteLength(route);
+    calcRouteNoA(route);
+    calcRouteRunTime(route);
+    calcRouteSide(cp, route);
+    return route;
+}
+
+function projectStillContainsRoute(cp, route) {
+    return !!(cp && route && project?.control_pairs?.includes(cp) && cp.routes?.includes(route));
+}
+
+function _markGeneratedRouteAnimation(cp, route) {
+    if (!route?.rP?.length) return;
+    const anim = {
+        start: performance.now(),
+        drawMs: generatedRouteDrawMs(route),
+    };
+    route._generatedRouteAnim = anim;
+    scheduleGeneratedRouteAnimationFrame();
+    setTimeout(() => {
+        if (route._generatedRouteAnim !== anim) return;
+        delete route._generatedRouteAnim;
+        if (!projectStillContainsRoute(cp, route)) return;
+        scheduleGeneratedRouteAnimationFrame();
+    }, anim.drawMs);
+}
+
+function _appendRouteObject(cp, route, { animate = false } = {}) {
+    if (!route) return null;
+    route.order = cp.routes.length;
+    cp.routes.push(route);
+    if (animate) _markGeneratedRouteAnimation(cp, route);
+    saveRoute(cp, route);
+    return route;
+}
+
+function _appendRouteFromPolyline(cp, polyline, options = {}) {
+    return _appendRouteObject(cp, _routeFromPolyline(cp, polyline), options);
+}
+
+function _fastestRouteRunTime(cp) {
+    let fastest = Infinity;
+    for (const route of cp?.routes || []) {
+        const rt = Number(route?.run_time);
+        if (Number.isFinite(rt) && rt > 0 && rt < fastest) fastest = rt;
+    }
+    return fastest;
+}
+
+function _slowestRouteRunTime(cp) {
+    let slowest = -Infinity;
+    for (const route of cp?.routes || []) {
+        const rt = Number(route?.run_time);
+        if (Number.isFinite(rt) && rt > 0 && rt > slowest) slowest = rt;
+    }
+    return slowest;
+}
+
+function _syncRoutesToControlEndpoint(cp, pointType) {
+    const isStart = pointType === "start";
+    const point = cp?.[pointType];
+    if (!point) return;
+    for (const route of cp.routes || []) {
+        if (!route.rP?.length) continue;
+        const endpoint = isStart ? route.rP[0] : route.rP[route.rP.length - 1];
+        endpoint.x = point.x;
+        endpoint.y = point.y;
+        calcRouteLength(route);
+        calcRouteNoA(route);
+        calcRouteRunTime(route);
+        calcRouteSide(cp, route);
+        saveRoute(cp, route);
+    }
+}
+
+function _snapControlPairEndpointsToPassableMask(cp) {
+    if (!cp || !MaskLayer.isLoaded?.()) return false;
+    let changed = false;
+    for (const pointType of ["start", "ziel"]) {
+        const point = cp[pointType];
+        const snapped = MaskLayer.nearestPassableMapPoint?.(point, CONTROL_POINT_PASSABLE_SNAP_M);
+        if (!point || !snapped) continue;
+        if (Math.hypot(snapped.x - point.x, snapped.y - point.y) < 0.01) continue;
+        point.x = snapped.x;
+        point.y = snapped.y;
+        _syncRoutesToControlEndpoint(cp, pointType);
+        changed = true;
+    }
+    if (!changed) return false;
+    saveControlPair(cp);
+    updateControlPairGroup(cp);
+    drawRoutes();
+    updateRoutes();
+    updateCPList();
+    return true;
+}
+
+function _snapPointToPassableMask(point) {
+    if (!point || !MaskLayer.isLoaded?.()) return point;
+    return MaskLayer.nearestPassableMapPoint?.(point, CONTROL_POINT_PASSABLE_SNAP_M) || point;
+}
+
+function pathingRoutesPayload(routes) {
+    const out = [];
+    for (const route of routes || []) {
+        const rP = (route?.rP || [])
+            .map(p => ({ x: Number(p?.x), y: Number(p?.y) }))
+            .filter(p => Number.isFinite(p.x) && Number.isFinite(p.y));
+        if (rP.length >= 2) out.push({ rP });
+    }
+    return out;
+}
+
+function pathingPointPayload(point) {
+    return { x: Number(point?.x), y: Number(point?.y) };
+}
+
+function pathingBlockedTerrainPayload(blockedTerrain) {
+    const out = { lines: [], areas: [] };
+    for (const line of blockedTerrain?.lines || []) {
+        const start = pathingPointPayload(line?.start);
+        const end = pathingPointPayload(line?.end);
+        if (Number.isFinite(start.x) && Number.isFinite(start.y) && Number.isFinite(end.x) && Number.isFinite(end.y)) {
+            out.lines.push({ start, end });
+        }
+    }
+    for (const area of blockedTerrain?.areas || []) {
+        const points = (area?.points || [])
+            .map(pathingPointPayload)
+            .filter(p => Number.isFinite(p.x) && Number.isFinite(p.y));
+        if (points.length >= 3) out.areas.push({ points });
+    }
+    return out;
+}
+
+function assertPathingMessageCloneable(message) {
+    if (typeof structuredClone !== "function") return;
+    try {
+        structuredClone(message);
+    } catch (err) {
+        for (const [key, value] of Object.entries(message || {})) {
+            try { structuredClone(value); }
+            catch (fieldErr) {
+                console.warn("[theta-client] non-cloneable pathing field:", key, fieldErr);
+                break;
+            }
+        }
+        throw err;
+    }
+}
+
+/* =========================================================
+    CLIENT-SIDE θ*  (Web Worker, pure JS port of pathing/theta.py)
+    Worker lives once per editor session, owns the active mask + connectivity
+    labels. CP auto-fire posts {start, ziel, blockedTerrain}; the worker
+    replies with {path, timings}. Timings prefixed [theta-client] in console
+    so they line up with the [theta] lines the server emits in stdout.
+========================================================= */
+
+let _pathingWorker = null;
+let _pathingMaskKey = null;        // basename of the mask currently in the worker
+const _pathingPending = new Map(); // msgId -> {resolve}
+let _pathingMsgSeq = 0;
+const _pendingAutoPathfindCps = new Set();
+const _autoPathfindRunningCps = new Set();
+const AUTO_PATHFIND_MAX_ROUTES = 4;
+
+function _resolveAllPathingPending(error) {
+    for (const [msgId, slot] of _pathingPending.entries()) {
+        _pathingPending.delete(msgId);
+        slot.resolve({ type: "path", msgId, error });
+    }
+    _activePathfindByCp.clear();
+    while (_autoPathfindInFlight > 0) _setAutoPathfindBusy(false);
+    _queuePathfindUiUpdate();
+}
+
+function _canAutoPathfindCP(cp) {
+    if (readOnly || !editorSettings.auto_pathfind) return false;
+    if (!cp || !cp.start || !cp.ziel) return false;
+    if (!project.control_pairs.includes(cp)) return false;
+    if (!cp.complex && (cp.routes?.length || 0) >= AUTO_PATHFIND_MAX_ROUTES) return false;
+    return true;
+}
+
+function _maskReadyForAutoPathfind() {
+    return !!(project.map_file && project.has_mask && _pathingMaskKey === project.map_file);
+}
+
+function _fireAutoPathfindForCP(cp, source = "editor_auto") {
+    if (!_canAutoPathfindCP(cp) || !_maskReadyForAutoPathfind()) return false;
+    if (_autoPathfindRunningCps.has(cp)) return true;
+    _pendingAutoPathfindCps.delete(cp);
+    _autoPathfindRunningCps.add(cp);
+    (async () => {
+        try {
+            const targetRoutes = AUTO_PATHFIND_MAX_ROUTES;
+            let rejectedBlockers = [];
+            let rejectedAttemptsForSlot = 0;
+            while (_canAutoPathfindCP(cp) && _maskReadyForAutoPathfind() && (cp.routes?.length || 0) < targetRoutes) {
+                const before = cp.routes?.length || 0;
+                const result = await thetaCPClient(cp, source, { blockedRoutes: rejectedBlockers });
+                if (result?.distinct === false || result?.tooSlow === true) {
+                    if (result.blockedRoute) rejectedBlockers.push(result.blockedRoute);
+                    rejectedAttemptsForSlot++;
+                    if (rejectedAttemptsForSlot <= 1) continue;
+                    break;
+                }
+                if (result?.error) {
+                    if (!["max auto routes", "not distinct", "too slow"].includes(result.error)) {
+                        console.warn("theta (client) auto-fire failed", result.error);
+                    }
+                    break;
+                }
+                if ((cp.routes?.length || 0) <= before) break;
+                rejectedBlockers = [];
+                rejectedAttemptsForSlot = 0;
+            }
+        } catch (e) {
+            console.warn("theta (client) auto-fire failed", e);
+        } finally {
+            _autoPathfindRunningCps.delete(cp);
+        }
+    })();
+    return true;
+}
+
+function requestAutoPathfindForControlPair(cp) {
+    if (!_canAutoPathfindCP(cp)) {
+        _pendingAutoPathfindCps.delete(cp);
+        return;
+    }
+    if (_fireAutoPathfindForCP(cp)) return;
+    _pendingAutoPathfindCps.add(cp);
+}
+
+function drainPendingAutoPathfindQueue() {
+    if (!_maskReadyForAutoPathfind() || !editorSettings.auto_pathfind || readOnly) return;
+    for (const cp of [..._pendingAutoPathfindCps]) {
+        if (!_canAutoPathfindCP(cp)) {
+            _pendingAutoPathfindCps.delete(cp);
+            continue;
+        }
+        _fireAutoPathfindForCP(cp);
+    }
+}
+
+function _ensurePathingWorker() {
+    if (_pathingWorker) return _pathingWorker;
+    try {
+        _pathingWorker = new Worker("/static/js/pathing/worker.js", { type: "module" });
+    } catch (e) {
+        console.warn("pathing worker: failed to instantiate", e);
+        return null;
+    }
+    _pathingWorker.addEventListener("message", (e) => {
+        const m = e.data;
+        if (!m || m.type !== "path") return;
+        const slot = _pathingPending.get(m.msgId);
+        if (!slot) return;
+        _pathingPending.delete(m.msgId);
+        slot.resolve(m);
+    });
+    _pathingWorker.addEventListener("error", (e) => {
+        const message = e.message || "worker crashed";
+        console.warn("pathing worker error:", message, e);
+        _resolveAllPathingPending(message);
+        try { _pathingWorker?.terminate(); } catch (_) {}
+        _pathingWorker = null;
+        _pathingMaskKey = null;
+    });
+    _pathingWorker.addEventListener("messageerror", (e) => {
+        console.warn("pathing worker message error:", e);
+        _resolveAllPathingPending("worker message error");
+    });
+    return _pathingWorker;
+}
+
+function sendMaskToPathingWorker(mapFile, imgData) {
+    const w = _ensurePathingWorker();
+    if (!w || !imgData) return;
+    // Extract greyscale channel into a fresh Uint8Array we can transfer.
+    const W = imgData.width, H = imgData.height;
+    const greys = new Uint8Array(W * H);
+    const d = imgData.data;
+    for (let i = 0, j = 0; i < greys.length; i++, j += 4) greys[i] = d[j];
+    _pathingMaskKey = mapFile;
+    w.postMessage(
+        { type: "maskReady", filename: mapFile, width: W, height: H, buffer: greys.buffer },
+        [greys.buffer],
+    );
+    drainPendingAutoPathfindQueue();
+}
+
+function sendMaskDiffToPathingWorker(mapFile, diff, reverse = false) {
+    const w = _ensurePathingWorker();
+    if (!w || !mapFile || !diff?.indices?.length) return;
+    if (_pathingMaskKey !== mapFile) return;
+    const values = reverse ? diff.oldVals : diff.newVals;
+    if (!values || values.length !== diff.indices.length) return;
+    const indicesCopy = new Uint32Array(diff.indices);
+    const valuesCopy = new Uint8Array(values);
+    w.postMessage(
+        {
+            type: "maskDiff",
+            filename: mapFile,
+            indices: indicesCopy.buffer,
+            values: valuesCopy.buffer,
+        },
+        [indicesCopy.buffer, valuesCopy.buffer],
+    );
+}
+
+async function thetaCPClient(cp, source = "editor_auto", options = {}) {
+    if (!cp || !cp.start || !cp.ziel || !project.map_file) return { error: "missing inputs" };
+    if (readOnly) return { error: "read only" };
+    const isAuto = source === "editor_auto";
+    if (isAuto && !cp.complex && cp.routes.length >= AUTO_PATHFIND_MAX_ROUTES) return { error: "max auto routes" };
+    const w = _ensurePathingWorker();
+    if (!w) return { error: "worker unavailable" };
+    if (_pathingMaskKey !== project.map_file) return { error: "mask not yet loaded into worker" };
+    _snapControlPairEndpointsToPassableMask(cp);
+
+    const msgId = ++_pathingMsgSeq;
+    const wallStart = performance.now();
+    const existingRoutesPayload = pathingRoutesPayload(cp.routes);
+    const blockedRoutesPayload = pathingRoutesPayload(options.blockedRoutes);
+    const pathfindMessage = {
+        type: "pathfind",
+        msgId,
+        start: pathingPointPayload(cp.start),
+        ziel: pathingPointPayload(cp.ziel),
+        mapScale: Number.isFinite(Number(project.scale)) ? Number(project.scale) : null,
+        existingRoutes: existingRoutesPayload,
+        blockedRoutes: blockedRoutesPayload,
+        blockedTerrain: pathingBlockedTerrainPayload(project.blocked_terrain),
+    };
+    assertPathingMessageCloneable(pathfindMessage);
+    _setPathfindBusyForCp(cp, true);
+    let reply;
+    try {
+        reply = await new Promise((resolve, reject) => {
+            _pathingPending.set(msgId, { resolve });
+            try {
+                w.postMessage(pathfindMessage);
+            } catch (err) {
+                _pathingPending.delete(msgId);
+                reject(err);
+            }
+        });
+    } finally {
+        _setPathfindBusyForCp(cp, false);
+    }
+    const wallMs = Math.round(performance.now() - wallStart);
+
+    if (reply.error) {
+        console.warn(`[theta-client] ${wallMs}ms wall — ${reply.error}`);
+        if (!reply.path) return { error: reply.error };
+    }
+    const path = reply.path;
+    const hasThetaPath = path && path.length >= 2;
+    if (!hasThetaPath) return { error: reply.error || "empty path" };
+    const candidateRoute = _routeFromPolyline(cp, path);
+    if (!candidateRoute) return { error: "empty path" };
+    if (reply.timings) {
+        const ms = Object.fromEntries(Object.entries(reply.timings).map(([k, v]) => [k, Math.round(v)]));
+        console.log(`[theta-client] ${wallMs}ms wall (worker total ${ms.total}ms)`, ms);
+    }
+
+    //   2) θ* with the standard simplify_theta_path post-processing.
+    // Append only the final theta* polyline; raw A* stays in the debug PNG.
+    const existingRouteCount = cp.routes?.length || 0;
+    if (isAuto && existingRouteCount > 0 && reply.distinct === false) {
+        console.log(`[theta-client] candidate route rejected: ${reply.distinctReason || "not distinct"}`);
+        return {
+            path,
+            timings: reply.timings,
+            distinct: false,
+            distinctReason: reply.distinctReason || "not distinct",
+            blockedRoute: candidateRoute,
+            error: "not distinct",
+        };
+    }
+    if (isAuto && existingRouteCount === 1) {
+        const fastestRunTime = _fastestRouteRunTime(cp);
+        if (Number.isFinite(fastestRunTime) && candidateRoute.run_time > fastestRunTime * 1.5) {
+            console.log(
+                `[theta-client] candidate route rejected: second route runtime ${Math.round(candidateRoute.run_time)}s > 150% of fastest ${Math.round(fastestRunTime)}s`,
+            );
+            return {
+                path,
+                timings: reply.timings,
+                tooSlow: true,
+                runTime: candidateRoute.run_time,
+                fastestRunTime,
+                blockedRoute: candidateRoute,
+                error: "too slow",
+            };
+        }
+    } else if (isAuto && existingRouteCount >= 2) {
+        const slowestRunTime = _slowestRouteRunTime(cp);
+        if (Number.isFinite(slowestRunTime) && candidateRoute.run_time > slowestRunTime * 1.1) {
+            console.log(
+                `[theta-client] candidate route rejected: runtime ${Math.round(candidateRoute.run_time)}s > 110% of slowest accepted ${Math.round(slowestRunTime)}s`,
+            );
+            return {
+                path,
+                timings: reply.timings,
+                tooSlow: true,
+                runTime: candidateRoute.run_time,
+                slowestRunTime,
+                blockedRoute: candidateRoute,
+                error: "too slow",
+            };
+        }
+    }
+
+    pushUndoState("Theta*-Route (client) gefunden");
+    _appendRouteObject(cp, candidateRoute, { animate: true });
+    selection.nr = cp.routes.length - 1;
+    drawRoutes();
+    updateRoutes();
+    updateCPList();
+
+    const debugEntries = await buildPathDebugDownloads(cp, reply);
+    if (debugEntries.length) {
+        _setDebugCorridors(cp.order, debugEntries, {
+            offsetX: reply.debugOffsetX, offsetY: reply.debugOffsetY,
+            width:   reply.debugWidth,   height:  reply.debugHeight,
+        });
+        updateCPList();
+    }
+
+    return { path, timings: reply.timings, distinct: true, error: reply.error || null };
+}
+
+// Latest corridor-constrained debug grid per CP — object URLs are revoked
+// when replaced or when the editor closes the map. updateCPList renders a
+// small "Korridor ⬇" link on the CP that owns the freshest blob.
+const _debugCorridors = new Map();   // cp.order → {url, filename, meta}
+
+function renderPathDebugBlobFromGrid(buffer, width, height, path = null, color = [255, 64, 64]) {
+    if (!buffer || !(width > 0) || !(height > 0)) return Promise.resolve(null);
+    const grid = new Uint8Array(buffer);
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d");
+    const img = ctx.createImageData(width, height);
+    const d = img.data;
+    for (let i = 0, j = 0; i < grid.length; i++, j += 4) {
+        const v = grid[i];
+        d[j] = v; d[j + 1] = v; d[j + 2] = v; d[j + 3] = 255;
+    }
+    ctx.putImageData(img, 0, 0);
+    if (path && path.length >= 4) {
+        const lineWidth = Math.max(2, Math.round(Math.min(width, height) / 220));
+        ctx.save();
+        ctx.strokeStyle = `rgb(${color[0]}, ${color[1]}, ${color[2]})`;
+        ctx.lineWidth = lineWidth;
+        ctx.lineJoin = "round";
+        ctx.lineCap = "round";
+        ctx.beginPath();
+        ctx.moveTo(path[0], path[1]);
+        for (let i = 2; i + 1 < path.length; i += 2) ctx.lineTo(path[i], path[i + 1]);
+        ctx.stroke();
+        ctx.fillStyle = "#00ff80";
+        ctx.beginPath();
+        ctx.arc(path[0], path[1], lineWidth * 1.8, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = "#ffcc00";
+        ctx.beginPath();
+        ctx.arc(path[path.length - 2], path[path.length - 1], lineWidth * 1.8, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+    }
+    return new Promise(resolve => canvas.toBlob(resolve, "image/png"));
+}
+
+async function buildPathDebugDownloads(cp, reply) {
+    const W = reply.debugWidth;
+    const H = reply.debugHeight;
+    const base = `cp${cp.order}_${Math.round(cp.start.x)}-${Math.round(cp.start.y)}_to_${Math.round(cp.ziel.x)}-${Math.round(cp.ziel.y)}`;
+    const specs = [
+        ["A* raw", "astar_raw", reply.debugBaseGridBuffer, reply.debugPaths?.astar_raw, [255, 64, 64]],
+    ];
+    const links = [];
+    for (const [label, slug, buffer, path, color] of specs) {
+        let blob = null;
+        blob = await renderPathDebugBlobFromGrid(buffer, W, H, path, color);
+        if (!blob) continue;
+        links.push({
+            label,
+            url: URL.createObjectURL(blob),
+            filename: `${slug}_${base}.png`,
+        });
+    }
+    return links;
+}
+
+function _setDebugCorridors(cpOrder, links, meta) {
+    const old = _debugCorridors.get(cpOrder);
+    if (old) {
+        for (const link of old.links || []) {
+            try { URL.revokeObjectURL(link.url); } catch (e) {}
+        }
+    }
+    _debugCorridors.set(cpOrder, { links, meta });
+}
+
+function _clearDebugCorridors() {
+    for (const entry of _debugCorridors.values()) {
+        for (const link of entry.links || []) {
+            try { URL.revokeObjectURL(link.url); } catch (e) {}
+        }
+    }
+    _debugCorridors.clear();
+}
+
+function routeListDebugLink(cpOrder) {
+    const entry = _debugCorridors.get(cpOrder);
+    if (!entry?.links?.length) return "";
+    const { links, meta } = entry;
+    const title = `Debug grid: ${meta.width}x${meta.height}px @ (${meta.offsetX},${meta.offsetY})`;
+    return `<span class="cp-route-debug-links" title="${title}">
+        ${links.map(link => `<a class="cp-route-debug-link" href="${link.url}" download="${link.filename}" title="${link.label}" aria-label="${link.label}" onclick="event.stopPropagation()">${icon("bug", "0.9em")}</a>`).join("")}
+    </span>`;
+}
+
 function addAndPlaceControlPair() {
     if (readOnly) return;
     const selectedCp = project.control_pairs.find(c => c.order === selection.ncp);
@@ -3672,12 +4991,12 @@ function updateCPList() {
         const row = document.createElement("div");
         row.className = "cp-row" + (cp.order === selection.ncp ? " selected" : "");
         row.dataset.ncp = cp.order;
-
+        textRouten = cp.routes.length === 1 ? "Route" : "Routen";
         row.innerHTML = `
             ${readOnly ? '' : `<span class="cp-grip" title="Drag to reorder"></span>`}
             <span class="cp-row-label">
                 <span class="cp-posten-text">Posten ${cp.order + 1}</span>
-                <span class="cp-route-count">${cp.routes.length} Routen</span>
+                <span class="cp-route-count">${cp.routes.length} ${textRouten}</span>
             </span>
             <div class="cp-row-btns">
                 <button class="cp-mode-btn ${cp.complex ? "active" : ""}" data-mode="multi" title="Multi-Route"
@@ -3746,9 +5065,11 @@ function updateCPList() {
 
         list.appendChild(row);
 
-        // Route sub-list: shown in route mode AND in no_tool/view mode
+        // Route sub-list: shown in route mode, view mode, AND control_pair mode
+        // (so newly created control pairs reveal their auto-generated routes).
         const inRouteMode = activeTool === RouteTool || activeTool === RouteEditTool || activeTool === NewRouteTool
-                         || activeTool === ViewTool;
+                         || activeTool === ViewTool
+                         || activeTool === ControlPairTool || activeTool === PlaceControlTool;
         if (inRouteMode && cp.order === selection.ncp) {
             const routeList = document.createElement("div");
             routeList.className = "cp-route-list";
@@ -3831,15 +5152,37 @@ function updateCPList() {
                 const isDrawing   = activeTool === NewRouteTool;
                 newRouteRow.className = "cp-route-row cp-route-row-new" + (isDrawing ? " drawing" : "");
                 const partialLen  = isDrawing ? NewRouteTool.getPartialLength() : null;
+                const canThetaPathfind = !!(cp.start && cp.ziel && project.map_file);
+                const pathfindBusy = _isPathfindBusyForCp(cp);
+                const expectAnotherRoute = pathfindBusy && _canExpectAnotherPathfindRoute(cp);
+                const pathfindTitle = pathfindBusy
+                    ? (expectAnotherRoute ? "Pathfinding läuft - weitere Route möglich" : "Pathfinding läuft - keine weitere Route erwartet")
+                    : "Weitere Route berechnen";
+                const pathfindIcon = pathfindBusy
+                    ? `<x-icon name="spinner" class="spin" size="0.9em"></x-icon>`
+                    : icon("wand-magic-sparkles", "0.9em");
                 newRouteRow.innerHTML = `
                     <span class="route-name">Neue Route</span>
                     ${partialLen != null ? `<span class="route-stats"><span class="route-stat route-length">${partialLen}m</span></span>` : ""}
+                    ${routeListDebugLink(cp.order)}
+                    ${canThetaPathfind ? `<button type="button" class="cp-route-theta-btn" title="${pathfindTitle}" aria-label="${pathfindTitle}" ${pathfindBusy ? 'disabled aria-busy="true"' : ""}>${pathfindIcon}</button>` : ""}
                 `;
                 newRouteRow.addEventListener("click", e => {
+                    if (e.target.closest(".cp-route-theta-btn, .cp-route-debug-link")) return;
                     e.stopPropagation();
                     if (activeTool === NewRouteTool) activateTool(RouteTool);
                     else startNewRoute();
                 });
+                const thetaBtn = newRouteRow.querySelector(".cp-route-theta-btn");
+                if (thetaBtn) {
+                    thetaBtn.addEventListener("click", e => {
+                        e.stopPropagation();
+                        if (thetaBtn.disabled) return;
+                        if (activeTool === NewRouteTool) activateTool(RouteTool);
+                        selection.ncp = cp.order;
+                        thetaCPClient(cp, "editor_button");
+                    });
+                }
                 routeList.appendChild(newRouteRow);
             }
 
@@ -4098,62 +5441,193 @@ function calcRouteSide(cp, route) {
     route.pos = sum / rP.length;
 }
 
-// Distance window (px) used to measure direction change at each point.
-// Large enough to smooth over curve micro-segments, small enough to catch real corners.
-const SHARP_ANGLE_THRESHOLD_PX = 15;
-const SHARP_ANGLE_DEG          = 60;
+// ── NoA constants — kept in sync with project/runtime.py ───────────────────
+// Window length is coupled to the map's scale so the algorithm produces
+// comparable corner counts across maps at different zoom levels.
+const NOA_CLUSTER_WINDOW_M       = 20;
+const NOA_COUNTER_TURN_WINDOW_M  = 10;
+const NOA_ARTIFACT_WINDOW_M      = 3;
+const NOA_MIN_SEGMENT_M          = 1.5;
+const NOA_CORNER_DEG             = 60;
+const NOA_EPSILON_DEG            = 2;
+const NOA_MIN_EFFECT_DEG         = 30;
+const NOA_COUNTER_MIN_DEG        = 30;
 
-function calcRouteNoA(route) {
+function noaMetresToRouteUnits(metres) {
+    return metres / PX_TO_M;
+}
+
+function normalizeTurnRad(angle) {
+    while (angle > Math.PI) angle -= 2 * Math.PI;
+    while (angle < -Math.PI) angle += 2 * Math.PI;
+    return angle;
+}
+
+function roundNoA(value) {
+    return Math.round(value * 10) / 10;
+}
+
+function simplifiedNoAPoints(points) {
+    const minStep = noaMetresToRouteUnits(NOA_MIN_SEGMENT_M);
+    const out = [];
+
+    for (const p of points || []) {
+        if (!Number.isFinite(p?.x) || !Number.isFinite(p?.y)) continue;
+        const current = { x: p.x, y: p.y };
+        const prev = out[out.length - 1];
+        if (!prev || Math.hypot(current.x - prev.x, current.y - prev.y) >= minStep) {
+            out.push(current);
+        }
+    }
+
+    const last = points?.[points.length - 1];
+    if (out.length && last && Number.isFinite(last.x) && Number.isFinite(last.y)) {
+        out[out.length - 1] = { x: last.x, y: last.y };
+    }
+    return out;
+}
+
+/* Count corners along route.rP using a windowed cumulative-turn rule:
+ *  • A single junction turn ≥ NOA_CORNER_DEG counts as one corner immediately,
+ *    even if another sharp turn is right next to it (no skip-ahead).
+ *  • Smaller turns accumulate into a sliding window of `noaDistanceWindow(scale)`
+ *    pixels. When the sum reaches the corner threshold, one corner is counted
+ *    and the window is cleared.
+ *  • Turns more than `window` pixels behind drop off, so isolated small bends
+ *    along long straight stretches never sum to a corner.
+ */
+function calcRouteNoA_oldWindowed(route) {
     const rP = route.rP;
     if (!rP || rP.length < 3) { route.noA = 0; return; }
 
-    // Build cumulative pixel-distance array along the polyline
-    const cum = [0];
-    for (let i = 1; i < rP.length; i++)
-        cum.push(cum[i - 1] + Math.hypot(rP[i].x - rP[i - 1].x, rP[i].y - rP[i - 1].y));
-    const total = cum[cum.length - 1];
+    const scale       = (typeof project !== 'undefined') ? project.scale : null;
+    const window      = noaDistanceWindow(scale);
+    const minLeg      = noaMinLeg(scale);
+    const minSpan     = noaMinSpan(scale);
+    const cornerRad   = NOA_CORNER_DEG  * Math.PI / 180;
+    const epsRad      = NOA_EPSILON_DEG * Math.PI / 180;
 
-    // Return the interpolated point at cumulative distance d
-    function ptAt(d) {
-        d = Math.max(0, Math.min(d, total));
-        for (let i = 1; i < cum.length; i++) {
-            if (cum[i] >= d) {
-                const segLen = cum[i] - cum[i - 1];
-                const t = segLen > 0 ? (d - cum[i - 1]) / segLen : 0;
-                return { x: rP[i-1].x + (rP[i].x - rP[i-1].x) * t,
-                         y: rP[i-1].y + (rP[i].y - rP[i-1].y) * t };
-            }
-        }
-        return rP[rP.length - 1];
+    // Cumulative pixel-distance + per-segment heading + per-segment length.
+    const cum      = [0];
+    const headings = [];
+    const segLen   = [];
+    for (let i = 1; i < rP.length; i++) {
+        const dx = rP[i].x - rP[i - 1].x;
+        const dy = rP[i].y - rP[i - 1].y;
+        const len = Math.hypot(dx, dy);
+        cum.push(cum[i - 1] + len);
+        segLen.push(len);
+        headings.push((dx === 0 && dy === 0) ? null : Math.atan2(dy, dx));
     }
 
-    const thresh   = SHARP_ANGLE_THRESHOLD_PX;
-    const cosLimit = Math.cos(SHARP_ANGLE_DEG * Math.PI / 180);
-    let noA        = 0;
-    let skipUntil  = 0;   // cumulative dist — skip points inside the last detected corner
+    // Collect non-trivial turns with their local-leg lengths.
+    const turns = [];
+    for (let i = 1; i < headings.length; i++) {
+        const h1 = headings[i - 1], h2 = headings[i];
+        if (h1 === null || h2 === null) continue;
+        let t = Math.abs(h2 - h1);
+        if (t > Math.PI) t = 2 * Math.PI - t;
+        if (t < epsRad) continue;
+        // cum[i] is the cumulative distance to the start of segment i — i.e.
+        // the junction point between segment i-1 and segment i.
+        turns.push({ pos: cum[i], t, legBefore: segLen[i - 1], legAfter: segLen[i] });
+    }
 
-    for (let i = 1; i < rP.length - 1; i++) {
-        const d = cum[i];
-        if (d < skipUntil) continue;
+    let noA = 0;
+    let win = [];   // active sliding window: [{ pos, t }]
 
-        const before = ptAt(d - thresh);
-        const after  = ptAt(d + thresh);
+    for (const { pos, t, legBefore, legAfter } of turns) {
+        while (win.length && pos - win[0].pos > window) win.shift();
 
-        const inX = rP[i].x - before.x,  inY = rP[i].y - before.y;
-        const outX = after.x - rP[i].x,  outY = after.y - rP[i].y;
-
-        const inLen  = Math.hypot(inX, inY);
-        const outLen = Math.hypot(outX, outY);
-        if (inLen < 1 || outLen < 1) continue;
-
-        const cosAngle = (inX * outX + inY * outY) / (inLen * outLen);
-        if (cosAngle < cosLimit) {          // angle > SHARP_ANGLE_DEG
+        // A "sharp" turn only counts on its own when BOTH adjacent legs are
+        // long enough to be visible in the editor — pixel-level zigzag
+        // artefacts have legs of 1-2 px and end up folded into the window.
+        if (t >= cornerRad && Math.min(legBefore, legAfter) >= minLeg) {
             noA++;
-            skipUntil = d + thresh;         // don't double-count the same corner
+            win = [];
+            continue;
+        }
+
+        win.push({ pos, t });
+        let sum = 0;
+        for (const w of win) sum += w.t;
+        const span = win.length > 0 ? pos - win[0].pos : 0;
+        // Cumulative corner only fires once the accumulating turns also span
+        // a visible stretch of polyline — prevents 3-4 sharp 1-px zigzag
+        // jitters from being read as a sweeping turn.
+        if (sum >= cornerRad && span >= minSpan) {
+            noA++;
+            win = [];
         }
     }
 
     route.noA = noA;
+}
+
+function calcRouteNoA(route) {
+    const rP = simplifiedNoAPoints(route.rP);
+    if (!rP || rP.length < 3) { route.noA = 0; return; }
+
+    const epsRad = NOA_EPSILON_DEG * Math.PI / 180;
+
+    const cum      = [0];
+    const headings = [];
+    const segLen   = [];
+    for (let i = 1; i < rP.length; i++) {
+        const dx = rP[i].x - rP[i - 1].x;
+        const dy = rP[i].y - rP[i - 1].y;
+        const len = Math.hypot(dx, dy) * PX_TO_M;
+        cum.push(cum[i - 1] + len);
+        segLen.push(len);
+        headings.push((dx === 0 && dy === 0) ? null : Math.atan2(dy, dx));
+    }
+
+    const turns = [];
+    for (let i = 1; i < headings.length; i++) {
+        const h1 = headings[i - 1], h2 = headings[i];
+        if (h1 === null || h2 === null) continue;
+        const signed = normalizeTurnRad(h2 - h1);
+        const abs = Math.abs(signed);
+        if (abs < epsRad) continue;
+        if (Math.min(segLen[i - 1], segLen[i]) < NOA_MIN_SEGMENT_M) continue;
+        turns.push({ pos: cum[i], signedDeg: signed * 180 / Math.PI, absDeg: abs * 180 / Math.PI });
+    }
+
+    let noA = 0;
+    for (let i = 0; i < turns.length;) {
+        const cluster = [turns[i++]];
+        while (i < turns.length && turns[i].pos - cluster[0].pos <= NOA_CLUSTER_WINDOW_M) {
+            cluster.push(turns[i++]);
+        }
+
+        const span = cluster[cluster.length - 1].pos - cluster[0].pos;
+        const totalAbs = cluster.reduce((sum, turn) => sum + turn.absDeg, 0);
+        const net = Math.abs(cluster.reduce((sum, turn) => sum + turn.signedDeg, 0));
+        const maxTurn = Math.max(...cluster.map(turn => turn.absDeg));
+        if (span <= NOA_ARTIFACT_WINDOW_M && net < NOA_MIN_EFFECT_DEG && totalAbs >= NOA_CORNER_DEG) continue;
+
+        const directionDeg = Math.max(maxTurn, net);
+        if (directionDeg >= NOA_MIN_EFFECT_DEG || totalAbs >= NOA_CORNER_DEG) {
+            noA += directionDeg / NOA_CORNER_DEG;
+        }
+
+        let counterDeg = 0;
+        for (let j = 0; j < cluster.length; j++) {
+            let localAbs = 0;
+            let localNet = 0;
+            for (let k = j; k < cluster.length; k++) {
+                if (cluster[k].pos - cluster[j].pos > NOA_COUNTER_TURN_WINDOW_M) break;
+                localAbs += cluster[k].absDeg;
+                localNet += cluster[k].signedDeg;
+            }
+            counterDeg = Math.max(counterDeg, localAbs - Math.abs(localNet));
+        }
+        if (counterDeg >= NOA_COUNTER_MIN_DEG) {
+            noA += counterDeg / (2 * NOA_CORNER_DEG);
+        }
+    }
+
+    route.noA = roundNoA(noA);
 }
 
 function calcRouteRunTime(route) {
@@ -4296,14 +5770,14 @@ const subtoolPanel = document.getElementById("subtool-panel");
 const SUBTOOL_DEFS = {
     [ToolMode.CONTROL_PAIR]: [
         { id: "add",  icon: "circle-xmark-r", title: "Add control pair", transform: "rotate(45deg)" },
-        { id: "drag", icon: "no_tool",        title: "Drag controls" },
+        { id: "drag", icon: "drag-fist",      title: "Drag controls" },
     ],
     [ToolMode.ROUTE]: [
         { id: "new",    icon: "plus",   title: "New route" },
         { id: "select", icon: "pencil", title: "Select route" },
     ],
     [ToolMode.MASK]: [
-        { id: "pan",   icon: "no_tool",      title: "Pan" },
+        { id: "pan",   icon: "lock",      title: "Pan" },
         { id: "draw",  icon: "pencil",       title: "Draw" },
         { id: "erase", icon: "eraser",       title: "Erase" },
     ],
@@ -4458,7 +5932,7 @@ function buildToolbar() {
         seg.setAttribute("transform", `rotate(${index * segmentAngle})`);
         seg.querySelector(".label-wrap").setAttribute("transform", `rotate(${-index * segmentAngle})`);
 
-        const toolName = seg.dataset.tool;
+        const toolName = seg.dataset.tool === ToolMode.NONE ? "lock" : seg.dataset.tool;
         const iconDef  = ICONS[toolName];
         const iconPath = seg.querySelector(".tool-icon");
         if (iconDef && iconPath) {

@@ -24,8 +24,33 @@ def play(request, file_id, mode):
 
 @login_required
 def random_play(request):
-    """Procedurally-generated single-obstacle scenarios. Front-end only."""
+    """Procedurally-generated single-obstacle scenarios."""
     return render(request, 'results/random_play.html')
+
+
+@login_required
+@require_POST
+def submit_random_choice(request):
+    import json
+    try:
+        data         = json.loads(request.body)
+        correct      = bool(data['correct'])
+        choice_time  = float(data['choice_time'])
+        shorter_time = float(data['shorter_time'])
+        longer_time  = float(data['longer_time'])
+
+        from .models import RandomChoice
+        RandomChoice.objects.create(
+            user         = request.user,
+            correct      = correct,
+            choice_time  = choice_time,
+            shorter_time = shorter_time,
+            longer_time  = longer_time,
+        )
+        return JsonResponse({'status': 'saved'})
+    except Exception as e:
+        traceback.print_exc()
+        return JsonResponse({'error': str(e)}, status=500)
 
 
 @login_required
@@ -465,15 +490,49 @@ def _aggregate_choices(choices, min_time_per_cp):
     }
 
 
+def _bucket_random(rc):
+    """Classify a RandomChoice the same way the donut buckets Choices."""
+    if rc.correct:
+        return 'fastest', 0.0
+    diff = rc.longer_time - rc.shorter_time
+    pct  = diff / rc.shorter_time if rc.shorter_time else 0
+    if   pct < 0.05: bucket = 'less_5'
+    elif pct < 0.10: bucket = 'between_5_10'
+    else:            bucket = 'more_10'
+    return bucket, max(0.0, diff)
+
+
+def _aggregate_random(rcs):
+    counts = {b: 0 for b in CHOICE_BUCKETS}
+    sum_choice_time = 0.0
+    sum_route_diff  = 0.0
+    n = 0
+    for rc in rcs:
+        bucket, lost = _bucket_random(rc)
+        counts[bucket]  += 1
+        sum_choice_time += rc.choice_time or 0
+        sum_route_diff  += lost
+        n += 1
+    return {
+        'total':           n,
+        'counts':          counts,
+        'avg_choice_time': round(sum_choice_time / n, 2) if n else 0,
+        'avg_route_diff':  round(sum_route_diff  / n, 2) if n else 0,
+    }
+
+
 @login_required
 @require_GET
 def get_user_stats(request):
-    from .models import Choice
+    from .models import Choice, RandomChoice
     from collections import defaultdict
     from django.contrib.auth.models import User
 
     is_trainer = request.user.is_superuser or request.user.groups.filter(name='Trainer').exists()
-    competition_flag = request.GET.get('competition', 'true').lower() != 'false'
+    mode = (request.GET.get('mode') or '').lower()
+    # Backwards-compat: ?competition=true|false was the old flag
+    if not mode:
+        mode = 'competition' if request.GET.get('competition', 'true').lower() != 'false' else 'training'
 
     target_user = request.user
     if is_trainer:
@@ -483,6 +542,57 @@ def get_user_stats(request):
                 target_user = User.objects.get(id=int(uid))
             except (User.DoesNotExist, ValueError):
                 pass
+
+    # ── Random mode: aggregate RandomChoice rows independent of team / file ──
+    if mode == 'random':
+        target_rcs = list(
+            RandomChoice.objects.filter(user=target_user).order_by('timestamp')
+        )
+        team_rcs = target_rcs   # No team aggregation for random plays for now
+        try:
+            profile     = request.user.profile
+            active_team = profile.active_team
+        except Exception:
+            active_team = None
+        if active_team:
+            team_rcs = list(
+                RandomChoice.objects
+                .filter(user__profile__active_team=active_team)
+                .order_by('timestamp')
+            )
+
+        user_stats = _aggregate_random(target_rcs)
+        team_stats = _aggregate_random(team_rcs)
+
+        # Send raw timestamps; the client bins them dynamically (~50 bars)
+        activity = [rc.timestamp.isoformat() for rc in target_rcs if rc.timestamp]
+
+        longest_streak = 0
+        current_run    = 0
+        for rc in target_rcs:
+            if rc.correct:
+                current_run += 1
+                longest_streak = max(longest_streak, current_run)
+            else:
+                current_run = 0
+
+        fastest_pct = round(user_stats['counts']['fastest'] / user_stats['total'] * 100, 1) if user_stats['total'] else 0
+        return JsonResponse({
+            'user':        user_stats,
+            'team':        team_stats,
+            'activity':    activity,
+            'facts': {
+                'total_cp':       user_stats['total'],
+                'fastest_pct':    fastest_pct,
+                'longest_streak': longest_streak,
+                'current_streak': current_run,
+            },
+            'target_name': target_user.get_full_name() or target_user.username,
+            'mode':        'random',
+        })
+
+    # ── Choice mode (competition or training) ──
+    competition_flag = (mode == 'competition')
 
     profile     = request.user.profile
     active_team = profile.active_team
@@ -515,12 +625,8 @@ def get_user_stats(request):
     team_stats = _aggregate_choices(choices,      min_time_per_cp)
     user_stats = _aggregate_choices(user_choices, min_time_per_cp)
 
-    # Activity: completed control pairs per month (covers multi-year history)
-    activity_map = defaultdict(int)
-    for c in user_choices:
-        if c.timestamp:
-            activity_map[c.timestamp.strftime('%Y-%m')] += 1
-    activity = [{'period': period, 'count': activity_map[period]} for period in sorted(activity_map)]
+    # Activity: raw ISO timestamps; the client picks a bin width that targets ~50 bars
+    activity = [c.timestamp.isoformat() for c in user_choices if c.timestamp]
 
     # Streaks: longest & current run of consecutive "fastest route chosen" choices
     longest_streak = 0
@@ -546,7 +652,150 @@ def get_user_stats(request):
             'current_streak': current_run,
         },
         'target_name': target_user.get_full_name() or target_user.username,
+        'mode':        mode,
     })
+
+
+@login_required
+@require_GET
+def get_stats_table(request):
+    """Per-athlete trainer table — competition / training / random.
+
+    Returns a JSON array starting with a 'Kaderdurchschnitt' summary row,
+    followed by one row per athlete in the requester's active team who has
+    data in the chosen mode. Each row has the same keys regardless of mode
+    so the existing renderer doesn't need to branch.
+    """
+    from .models import Choice, RandomChoice
+    from django.contrib.auth.models import User
+
+    mode = (request.GET.get('mode') or 'competition').lower()
+    is_trainer = request.user.is_superuser or request.user.groups.filter(name='Trainer').exists()
+    if not is_trainer:
+        return JsonResponse({'error': 'Not authorized'}, status=403)
+
+    profile     = request.user.profile
+    active_team = profile.active_team
+    if not active_team:
+        return JsonResponse([], safe=False)
+
+    team_users = list(
+        User.objects
+            .filter(profile__active_team=active_team)
+            .exclude(groups__name='Trainer')
+            .order_by('last_name', 'first_name')
+    )
+    team_user_ids = {u.id for u in team_users}
+
+    def aggregate_rows(rows, classify):
+        """`rows` are raw items (Choice or RandomChoice). `classify(row)` →
+        (bucket_name, time_lost_seconds, choice_time_seconds) or None when
+        the row can't be evaluated."""
+        counts = {'fastest': 0, 'less_5': 0, 'between_5_10': 0, 'more_10': 0}
+        sum_choice = 0.0
+        sum_error  = 0.0
+        total      = 0
+        for r in rows:
+            c = classify(r)
+            if c is None:
+                continue
+            bucket, lost, choice_t = c
+            counts[bucket]  += 1
+            sum_error       += lost
+            sum_choice      += choice_t or 0
+            total           += 1
+        if total == 0:
+            return None
+        return {
+            'posten':          total,
+            'avg_choice_time': round(sum_choice / total, 2),
+            'avg_error':       round(sum_error  / total, 2),
+            'schnellste':      round(counts['fastest']       / total * 100, 1),
+            'lt5':             round(counts['less_5']        / total * 100, 1),
+            'lt10':            round(counts['between_5_10']  / total * 100, 1),
+            'gt10':            round(counts['more_10']       / total * 100, 1),
+        }
+
+    # ── Mode-specific data + classifier ────────────────────────────────
+    if mode == 'random':
+        rcs = list(RandomChoice.objects.filter(user_id__in=team_user_ids))
+        per_user = {}
+        for rc in rcs:
+            per_user.setdefault(rc.user_id, []).append(rc)
+
+        def classify(rc):
+            if rc.correct:
+                return ('fastest', 0.0, rc.choice_time)
+            diff = rc.longer_time - rc.shorter_time
+            pct  = diff / rc.shorter_time if rc.shorter_time else 0
+            if   pct < 0.05: bucket = 'less_5'
+            elif pct < 0.10: bucket = 'between_5_10'
+            else:            bucket = 'more_10'
+            return (bucket, max(0.0, diff), rc.choice_time)
+
+        all_rows  = rcs
+        get_rows  = lambda uid: per_user.get(uid, [])
+    else:
+        competition_flag = (mode == 'competition')
+        choices = list(
+            Choice.objects
+                  .filter(competition=competition_flag, user_id__in=team_user_ids)
+                  .select_related('selected_route')
+        )
+        per_user = {}
+        for c in choices:
+            per_user.setdefault(c.user_id, []).append(c)
+
+        cp_ids = {c.control_pair_id for c in choices if c.control_pair_id}
+        cps = (
+            ControlPair.objects
+                       .filter(id__in=cp_ids)
+                       .prefetch_related(Prefetch('routes', queryset=Route.objects.all()))
+        )
+        min_time_per_cp = {}
+        for cp in cps:
+            times = [r.run_time for r in cp.routes.all() if r.run_time]
+            min_time_per_cp[cp.id] = min(times) if times else None
+
+        def classify(c):
+            cp_min = min_time_per_cp.get(c.control_pair_id)
+            if not cp_min or not c.selected_route or not c.selected_route.run_time:
+                return None
+            diff = c.selected_route.run_time - cp_min
+            pct  = diff / cp_min
+            if   diff <= 0:  bucket = 'fastest'
+            elif pct < 0.05: bucket = 'less_5'
+            elif pct < 0.10: bucket = 'between_5_10'
+            else:            bucket = 'more_10'
+            return (bucket, max(0.0, diff), c.choice_time)
+
+        all_rows  = choices
+        get_rows  = lambda uid: per_user.get(uid, [])
+
+    # ── Build rows ────────────────────────────────────────────────────
+    data = []
+
+    summary = aggregate_rows(all_rows, classify)
+    if summary:
+        data.append({
+            'athlete':      'Kaderdurchschnitt',
+            'sensitivity':  '-',
+            'roi_slope':    '- (-)',
+            **summary,
+        })
+
+    for u in team_users:
+        s = aggregate_rows(get_rows(u.id), classify)
+        if s is None:
+            continue
+        data.append({
+            'athlete':      u.get_full_name() or u.username,
+            'sensitivity':  '-',
+            'roi_slope':    '- (-)',
+            **s,
+        })
+
+    return JsonResponse(data, safe=False)
 
 
 @login_required

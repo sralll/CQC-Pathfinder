@@ -108,45 +108,66 @@ body.mode-mask #mask-controls { display: flex; flex-direction: column; gap: 10px
     z-index: 2;
     overflow: visible;
 }
-#control-layer {
-    opacity: 0.8;
+/* Editor accent color — control pairs, blocked-terrain hatch, place-CP preview,
+   and route polyline fallback all use this. Change here to recolor everything. */
+:root {
+    --cp-color: #a033f0;
+}
+
+#block-hatch line {
+    stroke: var(--cp-color);
 }
 
 .control-pair-element {
     pointer-events: all;
-    transition: stroke 0.12s
+    transition: stroke 0.12s, stroke-width 0.12s, opacity 0.12s;
 }
 
+/* Default (non-selected) */
+.control-pair-group {
+    opacity: 0.5;
+}
+.control-pair-group .control-circle,
+.control-pair-group line:not(.hit):not(.arrow) {
+    stroke: var(--cp-color);
+    stroke-width: 2px;
+}
+.control-pair-group:not(.selected) line.arrow {
+    stroke: transparent;
+}
+
+/* Selected (and hover, for affordance) */
+.control-pair-group.selected,
+.control-pair-group:hover {
+    opacity: 0.8;
+}
 .control-pair-group:hover .control-circle,
 .control-pair-group.selected .control-circle,
 .control-pair-group:hover line:not(.hit):not(.arrow),
 .control-pair-group.selected line:not(.hit) {
-    stroke: rgb(183, 54, 255);
-    stroke-width: 4px;
-}
-
-#map-container.editing-route .control-pair-group:not(.selected):hover .control-circle,
-#map-container.editing-route .control-pair-group:not(.selected):hover line:not(.hit):not(.arrow) {
-    stroke: rgb(160, 51, 240);
+    stroke: var(--cp-color);
     stroke-width: 3px;
 }
+.control-pair-group.selected line.arrow {
+    stroke: var(--cp-color);
+}
 
-#map-container.placing-control .control-pair-group:hover .control-circle,
-#map-container.placing-control .control-pair-group:hover line:not(.hit):not(.arrow),
+/* Tool modes where hovering a non-selected pair should NOT visually highlight it */
+#map-container.editing-route .control-pair-group:not(.selected):hover,
+#map-container.placing-control .control-pair-group:not(.selected):hover,
+#map-container.drawing-route .control-pair-group:not(.selected):hover,
+#map-container.mode-block .control-pair-group:not(.selected):hover {
+    opacity: 0.5;
+}
+#map-container.editing-route .control-pair-group:not(.selected):hover .control-circle,
+#map-container.editing-route .control-pair-group:not(.selected):hover line:not(.hit):not(.arrow),
+#map-container.placing-control .control-pair-group:not(.selected):hover .control-circle,
+#map-container.placing-control .control-pair-group:not(.selected):hover line:not(.hit):not(.arrow),
 #map-container.drawing-route .control-pair-group:not(.selected):hover .control-circle,
 #map-container.drawing-route .control-pair-group:not(.selected):hover line:not(.hit):not(.arrow),
-#map-container.mode-block .control-pair-group:hover .control-circle,
-#map-container.mode-block .control-pair-group:hover line:not(.hit):not(.arrow) {
-    stroke: rgb(160, 51, 240);
-    stroke-width: 3px;
-}
-
-.control-pair-group.selected line.arrow {
-    stroke: rgb(183, 54, 255);
-}
-
-.control-pair-group:not(.selected) line.arrow {
-    stroke: transparent;
+#map-container.mode-block .control-pair-group:not(.selected):hover .control-circle,
+#map-container.mode-block .control-pair-group:not(.selected):hover line:not(.hit):not(.arrow) {
+    stroke-width: 2px;
 }
 
 
@@ -204,6 +225,11 @@ body.mode-mask #mask-controls { display: flex; flex-direction: column; gap: 10px
 .route-polyline.route-selected {
     opacity: 1;
     stroke: yellow;
+}
+
+.route-generated-anim {
+    pointer-events: none;
+    paint-order: stroke;
 }
 
 #editor-wrap {

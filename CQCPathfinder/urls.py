@@ -22,7 +22,8 @@ urlpatterns = [
 
     # Play
     path('play/',                            results_views.index,              name='results_home'),
-    path('play/random/',                     results_views.random_play,        name='random_play'),
+    path('play/infinity/',                   results_views.random_play,        name='infinity_play'),
+    path('play/infinity/submit-choice/',     results_views.submit_random_choice, name='submit_infinity_choice'),
     path('play/<int:file_id>/<str:mode>/',   results_views.play,               name='play'),
     path('play/get-files/',                  results_views.get_files,          name='play_get_files'),
     path('play/get-file/<int:file_id>/',     results_views.get_file,           name='play_get_file'),
@@ -39,7 +40,7 @@ urlpatterns = [
     path('stats/',                           results_views.stats_view,         name='results_stats'),
     path('stats/get-stats/',                 results_views.get_user_stats,     name='stats_get_stats'),
     path('stats/get-athletes/',              results_views.get_team_athletes,  name='stats_get_athletes'),
-    path('stats/get-table/',                 views.trainer_stats,              name='stats_get_table'),
+    path('stats/get-table/',                 results_views.get_stats_table,    name='stats_get_table'),
 
     path('play-old/', include('play.urls')),
 

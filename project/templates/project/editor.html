@@ -7,6 +7,7 @@
 {% endblock %}
 
 {% block scripts %}
+<script defer src="{% static 'project/js/ocad-browser.js' %}"></script>
 <script defer src="{% static 'project/js/editor.js' %}"></script>
 <script type="module" src="{% static 'project/js/projecttable.js' %}"></script>
 {% endblock %}
@@ -73,7 +74,7 @@
             <div id="scale-panel" style="display:none;">
                 <div class="scale-panel-info">
                     <div class="scale-step"><span class="scale-step-num">1</span>Zwei Punkte auf der Karte heraussuchen.</div>
-                    <div class="scale-step"><span class="scale-step-num">2</span>Abstand messen (z.&nbsp;B. mit <a href="https://earth.google.com" target="_blank" rel="noopener noreferrer">Google Earth</a>).</div>
+                    <div class="scale-step"><span class="scale-step-num">2</span>Abstand messen (<a href="https://earth.google.com" target="_blank" rel="noopener noreferrer">Google Earth</a>, <a href="https://www.google.com/maps" target="_blank" rel="noopener noreferrer">Google Maps</a>).</div>
                     <div class="scale-step"><span class="scale-step-num">3</span>Punkte auf der Karte anklicken und Distanz eingeben.</div>
                 </div>
                 <div id="scale-status" class="scale-status">Klicke ersten Punkt auf der Karte…</div>
@@ -195,8 +196,8 @@
                     <pattern id="block-hatch" x="0" y="0" width="8" height="8"
                              patternUnits="userSpaceOnUse"
                              patternTransform="rotate(45 0 0)">
-                        <line x1="0" y1="0" x2="0" y2="8" stroke="rgb(160, 51, 240)" stroke-width="3"/>
-                        <line x1="0" y1="0" x2="8" y2="0" stroke="rgb(160, 51, 240)" stroke-width="3"/>
+                        <line x1="0" y1="0" x2="0" y2="8" stroke="#ff00cc" stroke-width="3"/>
+                        <line x1="0" y1="0" x2="8" y2="0" stroke="#ff00cc" stroke-width="3"/>
                     </pattern>
                 </defs>
                 <g id="viewport">
@@ -300,9 +301,9 @@
             <div id="map-dropzone" class="map-dropzone">
                 <x-icon name="cloud-arrow-up" size="3rem"></x-icon>
                 <div class="map-upload-title">Karte ablegen</div>
-                <div class="map-upload-subtitle">PNG oder JPEG • max. 15 MB</div>
+                <div class="map-upload-subtitle">PNG, JPEG oder OCAD • max. 50 MB</div>
                 <button id="browse-map-btn" type="button" class="browse-btn">Durchsuchen</button>
-                <input type="file" id="map-file-input" accept="image/*" hidden>
+                <input type="file" id="map-file-input" accept="image/*,.ocd,.ocad" hidden>
             </div>
             <div id="selected-map-info" class="selected-map-info" style="display:none;">
                 <div class="selected-map-name">Keine Datei gewählt</div>

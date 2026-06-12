@@ -773,6 +773,7 @@ async function createFileWithTitle() {
     project.has_mask      = false;
     project.blocked_terrain = null;
     project.control_pairs = [];
+    window.detachMaskGenerationUi?.();
 
     // Leftover state from previously opened files is cleared on map upload
 
