@@ -1,80 +1,83 @@
 from django.db import migrations
 
-# Canonical noA + runtime implementation. Same module is imported from the
-# project/0002 migration and the recalc-runtimes management command, so the
-# numbers stay consistent across migrations + UI.
-from project.runtime import calc_route_noA, calc_route_runtime
-
 
 def migrate_data(apps, schema_editor):
-    Route       = apps.get_model('project',  'Route')
-    OldResult   = apps.get_model('play',     'UserResult')
-    Choice      = apps.get_model('results',  'Choice')
-    ControlPair = apps.get_model('project',  'ControlPair')
+    Route = apps.get_model('project', 'Route')
+    OldResult = apps.get_model('play', 'UserResult')
+    Choice = apps.get_model('results', 'Choice')
+    ControlPair = apps.get_model('project', 'ControlPair')
 
-    # ── Step 1: recompute Route.noA and Route.run_time for every route ──
-    # The editor used to count corners as a single-vertex angle; the new
-    # method uses a windowed cumulative turn that scales with the file's
-    # map scale. Back-fill historic routes so Choices created below (and
-    # any other view that reads Route.run_time) match the editor's
-    # current numbers.
-    recalc_count = 0
-    skipped      = 0
-    for r in Route.objects.iterator():
-        rP = r.rP or []
-        if len(rP) < 2:
-            r.noA, r.run_time = 0, None
-            r.save(update_fields=['noA', 'run_time'])
-            skipped += 1
+    print("Skipping route runtime recalculation; project.0002 already populated Route.noA and Route.run_time.")
+
+    control_pairs_by_key = {}
+    for cp_id, file_name, cp_order in (
+        ControlPair.objects
+        .select_related('file')
+        .values_list('id', 'file__name', 'order')
+        .order_by('id')
+    ):
+        # Matches the old migration's `.first()` behavior when filenames are not unique.
+        control_pairs_by_key.setdefault((file_name, cp_order), cp_id)
+
+    routes_by_key = {}
+    for route_id, cp_id, route_order in Route.objects.values_list('id', 'control_pair_id', 'order').order_by('id'):
+        routes_by_key.setdefault((cp_id, route_order), route_id)
+
+    created_before = Choice.objects.count()
+    staged = []
+    processed = 0
+    missing_cp = 0
+    missing_route = 0
+    batch_size = 1000
+
+    def flush():
+        if staged:
+            Choice.objects.bulk_create(staged, batch_size=batch_size, ignore_conflicts=True)
+            staged.clear()
+
+    for old in OldResult.objects.all().iterator(chunk_size=batch_size):
+        processed += 1
+        cp_id = control_pairs_by_key.get((old.filename, old.control_pair_index))
+        if not cp_id:
+            missing_cp += 1
             continue
-        scale       = r.control_pair.file.scale if r.control_pair_id else None
-        new_noA     = calc_route_noA(rP, scale)
-        new_runtime = calc_route_runtime(r.length, new_noA, r.elevation)
-        r.noA, r.run_time = new_noA, new_runtime
-        r.save(update_fields=['noA', 'run_time'])
-        recalc_count += 1
-    print(f"Recalculated {recalc_count} routes ({skipped} skipped — too few points)")
 
-    # ── Step 2: migrate UserResult → Choice ──
-    created = 0
-    for old in OldResult.objects.select_related('user').all():
-        cp = ControlPair.objects.filter(
-            file__name=old.filename,
-            order=old.control_pair_index,
-        ).first()
-        if not cp:
-            print(f"CP not found: {old.filename} index {old.control_pair_index}")
-            continue
-
-        selected_route = None
+        selected_route_id = None
         if old.selected_route is not None:
-            selected_route = Route.objects.filter(
-                control_pair=cp,
-                order=old.selected_route,
-            ).first()
+            selected_route_id = routes_by_key.get((cp_id, old.selected_route))
+            if not selected_route_id:
+                missing_route += 1
 
-        try:
-            Choice.objects.create(
-                user           = old.user,
-                control_pair   = cp,
-                selected_route = selected_route,
-                choice_time    = old.choice_time,
-                competition    = old.competition,
-                timestamp      = old.timestamp,
-            )
-            created += 1
-        except Exception as e:
-            print(f"FAILED: {old.filename} CP {old.control_pair_index} user {old.user} — {e}")
-            continue
+        staged.append(Choice(
+            user_id=old.user_id,
+            control_pair_id=cp_id,
+            selected_route_id=selected_route_id,
+            choice_time=old.choice_time,
+            competition=old.competition,
+            timestamp=old.timestamp,
+        ))
 
-    print(f"Done. {created} new Choices created; total in DB: {Choice.objects.count()}")
+        if len(staged) >= batch_size:
+            flush()
+
+    flush()
+
+    created_after = Choice.objects.count()
+    print(
+        "Done. "
+        f"Processed {processed} old results; "
+        f"created {created_after - created_before} new Choices; "
+        f"{missing_cp} missing control pairs; "
+        f"{missing_route} missing selected routes; "
+        f"total in DB: {created_after}"
+    )
 
 
 class Migration(migrations.Migration):
 
     dependencies = [
         ('results', '0001_initial'),
-        ('play',    '0006_userresult_longest_route_runtime'),
+        ('play', '0006_userresult_longest_route_runtime'),
         ('project', '0003_create_editor_settings_for_existing_users'),
     ]
 
