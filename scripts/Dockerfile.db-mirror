@@ -1,0 +1,8 @@
+FROM postgres:16-bookworm
+
+WORKDIR /app
+
+COPY scripts/mirror_prod_to_staging.sh /app/scripts/mirror_prod_to_staging.sh
+RUN chmod +x /app/scripts/mirror_prod_to_staging.sh
+
+CMD ["bash", "/app/scripts/mirror_prod_to_staging.sh"]
