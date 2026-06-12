@@ -10,12 +10,14 @@ from django.views.generic import RedirectView
 
 from main import views
 from results import views as results_views
+from CQCPathfinder import internal_views
 
 urlpatterns = [
     path('editor/', include('project.urls')),
     path('account/', include('account.urls')),
 
     path("admin/", admin.site.urls),
+    path("internal/sync-volume-to-r2/", internal_views.trigger_volume_sync, name="trigger_volume_sync"),
     path("", include("main.urls")),
     path('coursesetter/', include('coursesetter.urls')),
     path("pathfinding/", include("pathfinding.urls")),

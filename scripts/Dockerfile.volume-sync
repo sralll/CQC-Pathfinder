@@ -1,11 +1,8 @@
-FROM rclone/rclone:1.68
+FROM alpine:3.20
 
-# rclone's base image uses /data as the workdir and sets rclone as the entrypoint.
-# Override both so we can run our own script.
+RUN apk add --no-cache bash curl ca-certificates
+
 WORKDIR /app
-ENTRYPOINT []
-
-RUN apk add --no-cache bash findutils
 
 COPY scripts/sync_volume_r2.sh /app/sync_volume_r2.sh
 RUN chmod +x /app/sync_volume_r2.sh
