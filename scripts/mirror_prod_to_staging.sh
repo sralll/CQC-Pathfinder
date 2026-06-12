@@ -46,23 +46,38 @@ trap cleanup EXIT
 
 log "Starting production to staging database mirror."
 log "Creating production database dump..."
+dump_start=$SECONDS
 pg_dump --format=custom --no-owner --no-acl --file="$DUMP_FILE" "$PROD_URL"
+log "Production dump completed in $((SECONDS - dump_start))s."
 
 log "Resetting staging public schema..."
+reset_start=$SECONDS
 psql "$TARGET_URL" \
   --set=ON_ERROR_STOP=1 \
   --command="DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;"
+log "Staging schema reset completed in $((SECONDS - reset_start))s."
 
 log "Restoring production dump into staging..."
+restore_start=$SECONDS
 pg_restore \
   --no-owner \
   --no-acl \
   --dbname="$TARGET_URL" \
   "$DUMP_FILE"
+log "Staging restore completed in $((SECONDS - restore_start))s."
 
 if [[ "${RUN_DJANGO_MIGRATIONS_AFTER_RESTORE:-true}" == "true" && -f "manage.py" ]]; then
+  export DATABASE_URL="$TARGET_URL"
+  export SECRET_KEY="${SECRET_KEY:-db-mirror-temporary-secret-key}"
+
   log "Running Django migrations on staging..."
+  migrate_start=$SECONDS
   python manage.py migrate --noinput
+  log "Django migrations completed in $((SECONDS - migrate_start))s."
+elif [[ "${RUN_DJANGO_MIGRATIONS_AFTER_RESTORE:-true}" != "true" ]]; then
+  log "Skipping Django migrations because RUN_DJANGO_MIGRATIONS_AFTER_RESTORE is not true."
+else
+  log "Skipping Django migrations because manage.py was not found in this container."
 fi
 
-log "Database mirror completed successfully."
+log "Database mirror completed successfully in ${SECONDS}s."
