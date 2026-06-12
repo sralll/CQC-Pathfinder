@@ -3,6 +3,7 @@ from django.db import migrations
 
 def migrate_data(apps, schema_editor):
     Route = apps.get_model('project', 'Route')
+    OldFile = apps.get_model('coursesetter', 'publishedFile')
     OldResult = apps.get_model('play', 'UserResult')
     Choice = apps.get_model('results', 'Choice')
     ControlPair = apps.get_model('project', 'ControlPair')
@@ -11,6 +12,27 @@ def migrate_data(apps, schema_editor):
     print("Skipping route runtime recalculation; project.0002 already populated Route.noA and Route.run_time.")
 
     team_ids_by_name = dict(Team.objects.values_list('name', 'id'))
+
+    def runtime_key(value):
+        try:
+            return round(float(value), 2)
+        except (TypeError, ValueError):
+            return None
+
+    legacy_route_order_by_team_key = {}
+    legacy_route_order_by_file_key = {}
+    for file_name, team_name, data in (
+        OldFile.objects
+        .select_related('kader')
+        .values_list('filename', 'kader__name', 'data')
+    ):
+        for cp_order, cp_data in enumerate((data or {}).get('cP', [])):
+            for route_order, route_data in enumerate(cp_data.get('route', [])):
+                key = runtime_key(route_data.get('runTime'))
+                if key is None:
+                    continue
+                legacy_route_order_by_team_key.setdefault((file_name, cp_order, team_name, key), route_order)
+                legacy_route_order_by_file_key.setdefault((file_name, cp_order, key), route_order)
 
     control_pairs_by_team_key = {}
     control_pairs_by_file_key = {}
@@ -35,6 +57,7 @@ def migrate_data(apps, schema_editor):
     processed = 0
     missing_cp = 0
     missing_route = 0
+    recovered_route = 0
     batch_size = 1000
 
     def flush():
@@ -56,8 +79,22 @@ def migrate_data(apps, schema_editor):
             continue
 
         selected_route_id = None
-        if old.selected_route is not None:
-            selected_route_id = routes_by_key.get((cp_id, old.selected_route))
+        selected_route_order = old.selected_route
+        if selected_route_order is None:
+            key = runtime_key(old.selected_route_runtime)
+            if key is not None:
+                selected_route_order = legacy_route_order_by_team_key.get(
+                    (old.filename, old.control_pair_index, team_name, key)
+                )
+                if selected_route_order is None:
+                    selected_route_order = legacy_route_order_by_file_key.get(
+                        (old.filename, old.control_pair_index, key)
+                    )
+                if selected_route_order is not None:
+                    recovered_route += 1
+
+        if selected_route_order is not None:
+            selected_route_id = routes_by_key.get((cp_id, selected_route_order))
             if not selected_route_id:
                 missing_route += 1
 
@@ -82,6 +119,7 @@ def migrate_data(apps, schema_editor):
         f"Processed {processed} old results; "
         f"created {created_after - created_before} new Choices; "
         f"{missing_cp} missing control pairs; "
+        f"{recovered_route} selected routes recovered from legacy runtimes; "
         f"{missing_route} missing selected routes; "
         f"total in DB: {created_after}"
     )
