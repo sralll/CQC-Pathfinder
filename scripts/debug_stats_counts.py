@@ -45,6 +45,40 @@ print({
     ).count(),
 })
 
+print({
+    "old_comp_kader_trainers": UserResult.objects.filter(
+        kader__name=TEAM,
+        competition=True,
+        user__groups__name="Trainer",
+    ).count(),
+    "old_comp_kader_non_trainers": UserResult.objects.filter(
+        kader__name=TEAM,
+        competition=True,
+    ).exclude(user__groups__name="Trainer").count(),
+    "new_comp_team_trainers": Choice.objects.filter(
+        team=team,
+        competition=True,
+        user__groups__name="Trainer",
+    ).count(),
+    "new_comp_team_non_trainers": Choice.objects.filter(
+        team=team,
+        competition=True,
+    ).exclude(user__groups__name="Trainer").count(),
+    "new_comp_team_classifiable_trainers": Choice.objects.filter(
+        team=team,
+        competition=True,
+        selected_route__isnull=False,
+        selected_route__run_time__isnull=False,
+        user__groups__name="Trainer",
+    ).count(),
+    "new_comp_team_classifiable_non_trainers": Choice.objects.filter(
+        team=team,
+        competition=True,
+        selected_route__isnull=False,
+        selected_route__run_time__isnull=False,
+    ).exclude(user__groups__name="Trainer").count(),
+})
+
 qs = UserResult.objects.filter(
     kader__name=TEAM,
     competition=True,

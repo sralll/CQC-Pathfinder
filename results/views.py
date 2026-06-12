@@ -4,6 +4,7 @@ from django.http import JsonResponse, FileResponse, HttpResponseNotFound
 from django.views.decorators.http import require_GET, require_POST
 from django.db.models import Count, Min, Q, Prefetch
 from django.conf import settings
+from django.core.cache import cache
 from project.models import File, ControlPair, Route
 import traceback
 import os
@@ -47,6 +48,10 @@ def submit_random_choice(request):
             shorter_time = shorter_time,
             longer_time  = longer_time,
         )
+        try:
+            _clear_stats_cache_for_team(request.user.profile.active_team)
+        except Exception:
+            pass
         return JsonResponse({'status': 'saved'})
     except Exception as e:
         traceback.print_exc()
@@ -241,6 +246,8 @@ def submit_result(request):
                 'competition':    competition,
             },
         )
+        if created:
+            _clear_stats_cache_for_team(getattr(request.user.profile, 'active_team', None))
         return JsonResponse({'status': 'saved' if created else 'skipped'})
     except Exception as e:
         traceback.print_exc()
@@ -447,16 +454,46 @@ def stats_view(request):
 
 
 CHOICE_BUCKETS = ('fastest', 'less_5', 'between_5_10', 'more_10')
+STATS_TEAM_CACHE_TIMEOUT = getattr(settings, 'STATS_TEAM_CACHE_TIMEOUT', 600)
+
+
+def _team_choice_cache_key(team_id, competition_flag):
+    return f"stats:team-choice:v1:{team_id}:{int(competition_flag)}"
+
+
+def _team_random_cache_key(team_id):
+    return f"stats:team-random:v1:{team_id}"
+
+
+def _stats_table_cache_key(team_id, mode):
+    return f"stats:table:v1:{team_id}:{mode}"
+
+
+def _clear_stats_cache_for_team(team):
+    if not team:
+        return
+    cache.delete(_team_choice_cache_key(team.id, True))
+    cache.delete(_team_choice_cache_key(team.id, False))
+    cache.delete(_team_random_cache_key(team.id))
+    for mode in ('competition', 'training', 'random'):
+        cache.delete(_stats_table_cache_key(team.id, mode))
 
 
 def _bucket_choice(choice, min_time_per_cp):
     """Classify a competition Choice by how much slower than the fastest
     route the selected route was. Returns (bucket, time_lost) or None if
     the choice can't be evaluated (no route data)."""
-    cp_min = min_time_per_cp.get(choice.control_pair_id)
-    if not cp_min or not choice.selected_route or not choice.selected_route.run_time:
+    if isinstance(choice, dict):
+        control_pair_id = choice.get('control_pair_id')
+        selected_runtime = choice.get('selected_route__run_time')
+    else:
+        control_pair_id = choice.control_pair_id
+        selected_runtime = choice.selected_route.run_time if choice.selected_route else None
+
+    cp_min = min_time_per_cp.get(control_pair_id)
+    if not cp_min or not selected_runtime:
         return None
-    diff = choice.selected_route.run_time - cp_min
+    diff = selected_runtime - cp_min
     pct  = diff / cp_min
     if diff <= 0:
         bucket = 'fastest'
@@ -467,6 +504,32 @@ def _bucket_choice(choice, min_time_per_cp):
     else:
         bucket = 'more_10'
     return bucket, max(0.0, diff)
+
+
+def _choice_row_queryset(qs):
+    return qs.values(
+        'id',
+        'user_id',
+        'control_pair_id',
+        'selected_route_id',
+        'selected_route__run_time',
+        'choice_time',
+        'timestamp',
+    )
+
+
+def _min_time_per_cp(cp_ids):
+    if not cp_ids:
+        return {}
+    return {
+        row['control_pair_id']: row['min_time']
+        for row in (
+            Route.objects
+            .filter(control_pair_id__in=cp_ids, run_time__isnull=False)
+            .values('control_pair_id')
+            .annotate(min_time=Min('run_time'))
+        )
+    }
 
 
 def _aggregate_choices(choices, min_time_per_cp):
@@ -480,7 +543,8 @@ def _aggregate_choices(choices, min_time_per_cp):
             continue
         bucket, time_lost = classified
         counts[bucket]  += 1
-        sum_choice_time += c.choice_time or 0
+        choice_time = c.get('choice_time') if isinstance(c, dict) else c.choice_time
+        sum_choice_time += choice_time or 0
         sum_route_diff  += time_lost
         n += 1
     return {
@@ -489,6 +553,49 @@ def _aggregate_choices(choices, min_time_per_cp):
         'avg_choice_time': round(sum_choice_time / n, 2) if n else 0,
         'avg_route_diff':  round(sum_route_diff  / n, 2) if n else 0,
     }
+
+
+def _team_choice_filter(active_team):
+    return (
+        Q(team=active_team) |
+        Q(team__isnull=True, user__profile__active_team=active_team)
+    )
+
+
+def _aggregate_choice_queryset(qs):
+    choices = list(_choice_row_queryset(qs))
+    cp_ids = {c['control_pair_id'] for c in choices if c['control_pair_id']}
+    return _aggregate_choices(choices, _min_time_per_cp(cp_ids))
+
+
+def _cached_team_choice_stats(active_team, competition_flag):
+    cache_key = _team_choice_cache_key(active_team.id, competition_flag)
+    stats = cache.get(cache_key)
+    if stats is not None:
+        return stats
+
+    from .models import Choice
+    stats = _aggregate_choice_queryset(
+        Choice.objects
+        .filter(competition=competition_flag)
+        .filter(_team_choice_filter(active_team))
+    )
+    cache.set(cache_key, stats, STATS_TEAM_CACHE_TIMEOUT)
+    return stats
+
+
+def _cached_team_random_stats(active_team):
+    cache_key = _team_random_cache_key(active_team.id)
+    stats = cache.get(cache_key)
+    if stats is not None:
+        return stats
+
+    from .models import RandomChoice
+    stats = _aggregate_random(
+        list(RandomChoice.objects.filter(user__profile__active_team=active_team))
+    )
+    cache.set(cache_key, stats, STATS_TEAM_CACHE_TIMEOUT)
+    return stats
 
 
 def _bucket_random(rc):
@@ -555,15 +662,9 @@ def get_user_stats(request):
             active_team = profile.active_team
         except Exception:
             active_team = None
-        if active_team:
-            team_rcs = list(
-                RandomChoice.objects
-                .filter(user__profile__active_team=active_team)
-                .order_by('timestamp')
-            )
 
         user_stats = _aggregate_random(target_rcs)
-        team_stats = _aggregate_random(team_rcs)
+        team_stats = _cached_team_random_stats(active_team) if active_team else _aggregate_random(team_rcs)
 
         # Send raw timestamps; the client bins them dynamically (~50 bars)
         activity = [rc.timestamp.isoformat() for rc in target_rcs if rc.timestamp]
@@ -601,39 +702,31 @@ def get_user_stats(request):
     # Compare against everyone sharing the requester's active team
     # (falls back to "just the target user" if there's no active team)
     if active_team:
-        team_filter = (
-            Q(team=active_team) |
-            Q(team__isnull=True, user__profile__active_team=active_team)
-        )
+        team_filter = _team_choice_filter(active_team)
     else:
         team_filter = Q(user=target_user)
 
-    choices = list(
-        Choice.objects
+    user_choices = list(
+        _choice_row_queryset(Choice.objects
         .filter(competition=competition_flag)
         .filter(team_filter)
-        .select_related('selected_route')
+        .filter(user_id=target_user.id)
         .order_by('timestamp')
+        )
     )
 
-    cp_ids = {c.control_pair_id for c in choices if c.control_pair_id}
-    cps = (
-        ControlPair.objects
-        .filter(id__in=cp_ids)
-        .prefetch_related(Prefetch('routes', queryset=Route.objects.all()))
+    cp_ids = {c['control_pair_id'] for c in user_choices if c['control_pair_id']}
+    min_time_per_cp = _min_time_per_cp(cp_ids)
+
+    team_stats = (
+        _cached_team_choice_stats(active_team, competition_flag)
+        if active_team
+        else _aggregate_choices(user_choices, min_time_per_cp)
     )
-    min_time_per_cp = {}
-    for cp in cps:
-        times = [r.run_time for r in cp.routes.all() if r.run_time]
-        min_time_per_cp[cp.id] = min(times) if times else None
-
-    user_choices = [c for c in choices if c.user_id == target_user.id]
-
-    team_stats = _aggregate_choices(choices,      min_time_per_cp)
     user_stats = _aggregate_choices(user_choices, min_time_per_cp)
 
     # Activity: raw ISO timestamps; the client picks a bin width that targets ~50 bars
-    activity = [c.timestamp.isoformat() for c in user_choices if c.timestamp]
+    activity = [c['timestamp'].isoformat() for c in user_choices if c['timestamp']]
 
     # Streaks: longest & current run of consecutive "fastest route chosen" choices
     longest_streak = 0
@@ -685,6 +778,11 @@ def get_stats_table(request):
     active_team = profile.active_team
     if not active_team:
         return JsonResponse([], safe=False)
+
+    table_cache_key = _stats_table_cache_key(active_team.id, mode)
+    cached_table = cache.get(table_cache_key)
+    if cached_table is not None:
+        return JsonResponse(cached_table, safe=False)
 
     team_users = list(
         User.objects
@@ -745,40 +843,33 @@ def get_stats_table(request):
     else:
         competition_flag = (mode == 'competition')
         choices = list(
-            Choice.objects
+            _choice_row_queryset(Choice.objects
                   .filter(competition=competition_flag, user_id__in=team_user_ids)
                   .filter(
                       Q(team=active_team) |
                       Q(team__isnull=True, user__profile__active_team=active_team)
                   )
-                  .select_related('selected_route')
+            )
         )
         per_user = {}
         for c in choices:
-            per_user.setdefault(c.user_id, []).append(c)
+            per_user.setdefault(c['user_id'], []).append(c)
 
-        cp_ids = {c.control_pair_id for c in choices if c.control_pair_id}
-        cps = (
-            ControlPair.objects
-                       .filter(id__in=cp_ids)
-                       .prefetch_related(Prefetch('routes', queryset=Route.objects.all()))
-        )
-        min_time_per_cp = {}
-        for cp in cps:
-            times = [r.run_time for r in cp.routes.all() if r.run_time]
-            min_time_per_cp[cp.id] = min(times) if times else None
+        cp_ids = {c['control_pair_id'] for c in choices if c['control_pair_id']}
+        min_time_per_cp = _min_time_per_cp(cp_ids)
 
         def classify(c):
-            cp_min = min_time_per_cp.get(c.control_pair_id)
-            if not cp_min or not c.selected_route or not c.selected_route.run_time:
+            cp_min = min_time_per_cp.get(c['control_pair_id'])
+            selected_runtime = c['selected_route__run_time']
+            if not cp_min or not selected_runtime:
                 return None
-            diff = c.selected_route.run_time - cp_min
+            diff = selected_runtime - cp_min
             pct  = diff / cp_min
             if   diff <= 0:  bucket = 'fastest'
             elif pct < 0.05: bucket = 'less_5'
             elif pct < 0.10: bucket = 'between_5_10'
             else:            bucket = 'more_10'
-            return (bucket, max(0.0, diff), c.choice_time)
+            return (bucket, max(0.0, diff), c['choice_time'])
 
         all_rows  = choices
         get_rows  = lambda uid: per_user.get(uid, [])
@@ -806,6 +897,7 @@ def get_stats_table(request):
             **s,
         })
 
+    cache.set(table_cache_key, data, STATS_TEAM_CACHE_TIMEOUT)
     return JsonResponse(data, safe=False)
 
 

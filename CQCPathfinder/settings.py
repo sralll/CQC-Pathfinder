@@ -150,6 +150,14 @@ USE_TZ = True
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
+CACHES = {
+    'default': {
+        'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+        'LOCATION': 'cqc-pathfinder',
+    }
+}
+STATS_TEAM_CACHE_TIMEOUT = int(os.environ.get('STATS_TEAM_CACHE_TIMEOUT', '600'))
+
 STATIC_URL = '/static/'
 STATICFILES_DIRS = [os.path.join(BASE_DIR, 'static')]
 STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
