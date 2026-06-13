@@ -1,49 +1,44 @@
 /* =========================================================
    LOGIN — sign-in screen, matches the home page aesthetic
+   Uses tokens from theme.css.
 ========================================================= */
 
 html, body {
     height: 100%;
     margin: 0;
-    background: #151515;
-    color: #ddd;
-    font-family: Arial, sans-serif;
 }
 
-/* Hide the (empty) navbar on the login screen — nothing useful in it
-   until the user is signed in */
+/* Hide the (empty) navbar on the login screen */
 #navbar { display: none; }
 
 .login-page {
-    min-height: 100vh;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 24px 16px;
+    --pad: 16px;
+    position: relative;
+    width: 100vw;
+    height: 100vh;
     box-sizing: border-box;
+    padding: var(--pad);
+    background-image: url("../img/logo.svg");
+    background-repeat: no-repeat;
+    background-position: 50% 38.89%;
+    background-origin: content-box;
+    background-size: contain;
 }
 
-.login-card {
-    width: 100%;
-    max-width: 380px;
+/* ── Field overlay — sits inside the "Q" of the logo ──────────
+   The "50% 38.89%" anchor point matches background-position above,
+   so the overlay stays centred on the "Q" at any logo scale.
+========================================================== */
+
+.login-overlay {
+    position: absolute;
+    left: 50%;
+    top: 38.89%;
+    transform: translate(-50%, -50%);
+    width: 250px;
     display: flex;
     flex-direction: column;
-    gap: 18px;
-}
-
-/* ── Logo ─────────────────────────────────────────────── */
-
-.login-logo-wrap {
-    display: flex;
-    justify-content: center;
-    margin-bottom: 4px;
-}
-
-.login-logo {
-    width: 70%;
-    max-width: 240px;
-    height: auto;
-    display: block;
+    gap: 10px;
 }
 
 /* ── Error banner ─────────────────────────────────────── */
@@ -53,8 +48,8 @@ html, body {
     border: 0.5px solid rgba(244, 67, 54, 0.40);
     color: #ff8a80;
     padding: 9px 12px;
-    border-radius: 6px;
-    font-size: 13px;
+    border-radius: var(--radius);
+    font-size: var(--font-md);
     text-align: center;
 }
 
@@ -74,8 +69,8 @@ html, body {
 }
 
 .login-field-label {
-    font-size: 11px;
-    color: #888;
+    font-size: var(--font-xs);
+    color: var(--text-muted);
     text-transform: uppercase;
     letter-spacing: 0.06em;
     padding-left: 2px;
@@ -84,41 +79,41 @@ html, body {
 .login-field input {
     width: 100%;
     box-sizing: border-box;
-    background: #1a1a1a;
-    border: 1px solid #2e2e2e;
-    border-radius: 6px;
-    color: #fff;
-    font-size: 15px;
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text-strong);
+    font-size: var(--font-md);
     font-family: inherit;
     padding: 11px 13px;
     outline: none;
-    transition: border-color 0.15s, background 0.15s;
+    transition: border-color var(--t-med), background var(--t-med);
+    min-height: var(--touch-target);
 }
-.login-field input:hover  { border-color: #3a3a3a; }
-.login-field input:focus  { border-color: #e07020; background: #1c1c1c; }
+.login-field input:hover  { border-color: var(--border-strong); }
+.login-field input:focus  { border-color: var(--brand); background: var(--bg-3); }
 
 /* Disable Chrome's yellow autofill while keeping the text readable */
 .login-field input:-webkit-autofill,
 .login-field input:-webkit-autofill:hover,
 .login-field input:-webkit-autofill:focus {
-    -webkit-text-fill-color: #fff;
-    -webkit-box-shadow: 0 0 0 1000px #1a1a1a inset;
+    -webkit-text-fill-color: var(--text-strong);
+    -webkit-box-shadow: 0 0 0 1000px var(--bg-2) inset;
     transition: background-color 5000s ease-in-out 0s;
 }
 
-/* Password input grouped with the submit-icon button — same pattern as the
-   editor's "project-title-input + create-file" save-group. */
+/* Password input grouped with the submit-icon button */
 .login-input-group {
     display: flex;
     align-items: stretch;
-    background: #1a1a1a;
-    border: 1px solid #2e2e2e;
-    border-radius: 6px;
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
     overflow: hidden;
-    transition: border-color 0.15s, background 0.15s;
+    transition: border-color var(--t-med), background var(--t-med);
 }
-.login-input-group:hover            { border-color: #3a3a3a; }
-.login-input-group:focus-within     { border-color: #e07020; background: #1c1c1c; }
+.login-input-group:hover            { border-color: var(--border-strong); }
+.login-input-group:focus-within     { border-color: var(--brand); background: var(--bg-3); }
 
 /* The password input inside the group drops its own border/radius */
 .login-input-group input {
@@ -139,35 +134,38 @@ html, body {
     justify-content: center;
     min-width: 52px;
     padding: 0 16px;
-    background: linear-gradient(180deg, #e07020 0%, #c95e16 100%);
+    background: var(--brand-gradient);
     border: none;
-    border-left: 1px solid #2e2e2e;
-    color: #fff;
+    border-left: 1px solid var(--border);
+    color: #000;
     cursor: pointer;
-    transition: background 0.15s, transform 0.06s;
+    transition: background var(--t-med), transform 0.06s;
 }
-.login-submit:hover  { background: linear-gradient(180deg, #f08030 0%, #d56a18 100%); }
+.login-submit:hover  { background: var(--brand-gradient-h); }
 .login-submit:active { transform: scale(0.98); }
 
-/* ── Reset-password link ──────────────────────────────── */
+/* ── Mobile scaling ─────────────────────────────────────
+   On narrow/portrait screens the logo's wide aspect ratio
+   leaves too little space inside the "Q" for the form, so
+   the background is zoomed in (cropping the side circles)
+   while the 50% / 38.89% anchor keeps the "Q" centred.
+========================================================== */
 
-.login-reset-link {
-    align-self: center;
-    color: #777;
-    font-size: 12px;
-    text-decoration: none;
-    margin-top: 2px;
-    transition: color 0.1s;
-}
-.login-reset-link:hover { color: #ccc; text-decoration: underline; }
-
-/* ── Mobile scaling ───────────────────────────────────── */
-
-body.mobile .login-page         { padding: 22px 14px; }
-body.mobile .login-card         { gap: 24px; max-width: 460px; }
-body.mobile .login-field-label  { font-size: 15px; }
-body.mobile .login-field input  { font-size: 19px; padding: 16px 18px; }
+body.mobile .login-page         { --pad: 14px; background-size: 320% auto; }
+body.mobile .login-overlay      { gap: 14px; width: min(80%, 300px); }
+body.mobile .login-field-label  { font-size: var(--font-md); }
+body.mobile .login-field input  { font-size: var(--font-lg); padding: 16px 18px; }
 body.mobile .login-submit       { min-width: 76px; padding: 0 24px; }
 body.mobile .login-submit x-icon { font-size: 26px; }
-body.mobile .login-reset-link   { font-size: 16px; }
-body.mobile .login-error        { font-size: 17px; padding: 13px 15px; }
+body.mobile .login-error        { font-size: var(--font-lg); padding: 13px 15px; }
+
+/* On narrow phones (also catches small windowed desktops) */
+@media (max-width: 700px) {
+    .login-page         { --pad: 14px; background-size: 320% auto; }
+    .login-overlay      { gap: 14px; width: min(80%, 300px); }
+    .login-field-label  { font-size: var(--font-md); }
+    .login-field input  { font-size: var(--font-lg); padding: 16px 18px; }
+    .login-submit       { min-width: 76px; padding: 0 24px; }
+    .login-submit x-icon { font-size: 26px; }
+    .login-error        { font-size: var(--font-lg); padding: 13px 15px; }
+}

@@ -7,12 +7,7 @@
 
 {% block content %}
 <div class="login-page">
-    <div class="login-card">
-
-        <div class="login-logo-wrap">
-            <img class="login-logo" src="{% static 'img/logo.svg' %}" alt="CQC Pathfinder">
-        </div>
-
+    <div class="login-overlay">
         {% if form.errors %}
         <div class="login-error">Falsche Benutzerdaten</div>
         {% endif %}
@@ -37,8 +32,6 @@
                 </div>
             </label>
         </form>
-
-        <a class="login-reset-link" href="{% url 'password_reset' %}">Passwort vergessen?</a>
     </div>
 </div>
 {% endblock %}

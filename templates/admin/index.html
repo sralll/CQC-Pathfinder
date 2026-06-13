@@ -13,6 +13,14 @@
 
 {% block content %}
 <div id="content-main">
+  {% if user.is_superuser %}
+  <div class="module" style="margin-bottom: 18px;">
+    <h2>Custom views</h2>
+    <ul style="padding: 8px 14px; list-style: disc;">
+      <li><a href="{% url 'admin:r2_browser' %}">R2 storage browser</a> — list files in the Cloudflare R2 bucket.</li>
+    </ul>
+  </div>
+  {% endif %}
   {% include "admin/app_list.html" with app_list=app_list show_changelinks=True %}
 </div>
 {% endblock %}

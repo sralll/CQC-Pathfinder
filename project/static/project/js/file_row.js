@@ -28,7 +28,7 @@ export class FileRow {
                     ${this.file.can_edit ? `<button class="label-remove-btn" title="Label entfernen">×</button>` : ''}
                 </div>` : ''}
             </td>
-            <td style="text-align:center;">${this.file.cp_count}</td>
+            <td style="text-align:left;">${this.file.cp_count}</td>
             <td>
                 ${this.file.author || ''}
                 ${this.file.is_locked ? `<span class="file-lock-warning" title="${this.file.locked_by_name} bearbeitet gerade">${icon("lock", "1em")}</span>` : ''}
@@ -45,9 +45,6 @@ export class FileRow {
                     <div class="file-action-group">
                         <button class="action-btn danger-btn delete-btn" ${this.file.is_locked ? 'disabled title="Datei wird gerade bearbeitet"' : ''}>
                             ${icon("trash")}
-                        </button>
-                        <button class="action-btn" ${this.file.is_locked ? 'disabled title="Datei wird gerade bearbeitet"' : ''}>
-                            ${icon("industry")}
                         </button>
                     </div>` : ''}
             </td>

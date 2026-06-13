@@ -721,6 +721,9 @@ def save_element(request):
             route.run_time  = route_data.get('run_time')
             route.elevation = route_data.get('elevation')
             route.save()
+            if not cp.complex and cp.routes.count() > 2:
+                cp.complex = True
+                cp.save(update_fields=['complex'])
             file.author      = request.user.first_name or request.user.username
             file.last_edited = tz.now()
             file.locked_by   = request.user
@@ -962,8 +965,8 @@ async def generate_mask(request):
     TILE_SIZE      = 2048
     overlap        = int(TILE_SIZE * 0.2)
     step           = TILE_SIZE - overlap
-    tiles_y        = math.ceil((img_h - overlap) / step)
-    tiles_x        = math.ceil((img_w - overlap) / step)
+    tiles_y        = max(1, math.ceil(img_h / step))
+    tiles_x        = max(1, math.ceil(img_w / step))
     total_tiles    = max(1, tiles_y * tiles_x)
 
     def _predict(tile_np):

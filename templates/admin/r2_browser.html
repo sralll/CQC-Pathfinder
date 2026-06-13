@@ -1,0 +1,124 @@
+{% extends "admin/base_site.html" %}
+{% load i18n static %}
+
+{% block title %}R2 Storage{% endblock %}
+
+{% block extrastyle %}{{ block.super }}
+<style>
+    .r2-meta {
+        padding: 12px 16px;
+        margin: 0 0 16px;
+        border: 1px solid var(--hairline-color, #e5e5e5);
+        border-radius: 6px;
+        background: var(--body-quiet-color, #f8f8f8);
+        font-size: 13px;
+    }
+    .r2-meta code { font-family: monospace; }
+    .r2-tabs {
+        display: flex;
+        gap: 6px;
+        margin: 0 0 14px;
+    }
+    .r2-tab {
+        display: inline-block;
+        padding: 6px 14px;
+        border-radius: 4px;
+        text-decoration: none;
+        background: var(--body-quiet-color, #f0f0f0);
+        color: var(--body-fg, #333);
+        font-size: 13px;
+    }
+    .r2-tab.active {
+        background: var(--primary, #79aec8);
+        color: var(--header-link-color, #fff);
+        font-weight: 600;
+    }
+    .r2-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 13px;
+    }
+    .r2-table th, .r2-table td {
+        padding: 7px 10px;
+        text-align: left;
+        border-bottom: 1px solid var(--hairline-color, #ddd);
+    }
+    .r2-table th { background: var(--body-quiet-color, #f5f5f5); font-weight: 600; }
+    .r2-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
+    .r2-empty { padding: 28px; text-align: center; color: var(--body-quiet-color, #888); }
+    .r2-error {
+        padding: 14px 16px;
+        margin: 16px 0;
+        background: rgba(244, 67, 54, 0.1);
+        border: 1px solid rgba(244, 67, 54, 0.4);
+        border-radius: 6px;
+        color: var(--body-fg, #333);
+    }
+    .r2-pagination { margin-top: 12px; text-align: center; }
+    .r2-pagination a { padding: 6px 14px; text-decoration: none; }
+</style>
+{% endblock %}
+
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+    <a href="{% url 'admin:index' %}">{% translate 'Home' %}</a>
+    &rsaquo; R2 Storage
+</div>
+{% endblock %}
+
+{% block content %}
+<h1>R2 Storage Browser</h1>
+
+<div class="r2-meta">
+    <div><strong>Endpoint:</strong> <code>{{ endpoint_label }}</code></div>
+    <div><strong>Bucket:</strong> <code>{{ bucket_label }}</code></div>
+</div>
+
+{% if error %}
+<div class="r2-error">{{ error }}</div>
+{% endif %}
+
+<div class="r2-tabs">
+    {% for sub in subdirs %}
+        {% with prefix=sub|add:"/" %}
+        <a class="r2-tab {% if active_prefix == prefix %}active{% endif %}"
+           href="?prefix={{ prefix }}">{{ sub }}/</a>
+        {% endwith %}
+    {% endfor %}
+</div>
+
+{% if objects %}
+<table class="r2-table">
+    <thead>
+        <tr>
+            <th>Key</th>
+            <th class="num">Size</th>
+            <th>Modified</th>
+            <th>ETag</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for obj in objects %}
+        <tr>
+            <td>{{ obj.key }}</td>
+            <td class="num">{{ obj.size_human }}</td>
+            <td>{{ obj.last_modified|date:"Y-m-d H:i" }}</td>
+            <td><code style="font-size: 11px;">{{ obj.etag }}</code></td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+<div style="margin-top: 8px; color: #888; font-size: 12px;">
+    Showing {{ object_count }} object{{ object_count|pluralize }}.
+</div>
+
+{% if next_token %}
+<div class="r2-pagination">
+    <a href="?prefix={{ active_prefix }}&token={{ next_token }}" class="button">Next page →</a>
+</div>
+{% endif %}
+{% elif not error %}
+<div class="r2-empty">No objects found under <code>{{ active_prefix }}</code>.</div>
+{% endif %}
+{% endblock %}

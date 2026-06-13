@@ -157,8 +157,8 @@ def run_UNet_stream(request):
         OVERLAP_RATIO = 0.2
         overlap = int(TILE_SIZE * OVERLAP_RATIO)
         step = TILE_SIZE - overlap
-        tiles_y = math.ceil((img_h - overlap) / step)
-        tiles_x = math.ceil((img_w - overlap) / step)
+        tiles_y = max(1, math.ceil(img_h / step))
+        tiles_x = max(1, math.ceil(img_w / step))
         total_tiles = max(1, tiles_y * tiles_x)
         processed_tiles = 0
 
@@ -230,6 +230,20 @@ def run_UNet_stream(request):
             visual[output_img == 32] = map_object.cross
             visual[output_img == 33] = map_object.fast
             visual[output_img == 34] = map_object.impassable
+
+            expansion_value = map_object.slow
+            impassable = (visual[:, :, 0] == map_object.impassable)
+            expanded = np.zeros_like(impassable, dtype=bool)
+            expanded[:-1, :] |= impassable[1:, :]
+            expanded[1:, :] |= impassable[:-1, :]
+            expanded[:, :-1] |= impassable[:, 1:]
+            expanded[:, 1:] |= impassable[:, :-1]
+            expanded[:-1, :-1] |= impassable[1:, 1:]
+            expanded[:-1, 1:] |= impassable[1:, :-1]
+            expanded[1:, :-1] |= impassable[:-1, 1:]
+            expanded[1:, 1:] |= impassable[:-1, :-1]
+            darken = expanded & ~impassable & (visual[:, :, 0] > expansion_value)
+            visual[darken] = expansion_value
 
             visual_img = np.repeat(visual, 3, axis=2)
             final_img = Image.fromarray(visual_img.astype(np.uint8))

@@ -5,7 +5,7 @@ from django.conf import settings
 from django.conf.urls.static import static
 
 from django.contrib.auth import views as auth_views
-from CQCPathfinder.forms import StyledLoginForm
+from CQCPathfinder.forms import StyledLoginForm, StyledPasswordChangeForm
 from django.views.generic import RedirectView
 
 from main import views
@@ -51,8 +51,11 @@ urlpatterns = [
     path('logout/', views.logout_view, name='logout'),
        
     # password change (when logged in)
-    path('password_change/', auth_views.PasswordChangeView.as_view(), name='password_change'),
-    path('password_change/done/', auth_views.PasswordChangeDoneView.as_view(), name='password_change_done'),
+    path('password_change/', auth_views.PasswordChangeView.as_view(
+        form_class=StyledPasswordChangeForm,
+        template_name='registration/password_change_form.html',
+        success_url='/',
+    ), name='password_change'),
 
     # password reset (via email)
     path('password_reset/', auth_views.PasswordResetView.as_view(), name='password_reset'),

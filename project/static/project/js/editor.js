@@ -292,6 +292,13 @@ async function toggleEditorSetting(setting) {
         if (data.auto_pathfind !== undefined) editorSettings.auto_pathfind = data.auto_pathfind;
         if (data.auto_jump     !== undefined) editorSettings.auto_jump     = data.auto_jump;
         if (editorSettings.auto_pathfind) drainPendingAutoPathfindQueue();
+        if (setting === 'auto_pathfind') {
+            if (editorSettings.auto_pathfind) {
+                showMaskGenBarIfActive();
+            } else if (currentToolMode !== ToolMode.MASK) {
+                hideMaskGenBar();
+            }
+        }
     } catch (e) { console.warn('Failed to toggle setting', e); }
 }
 
@@ -318,7 +325,7 @@ function captureState(label = "") {
     };
 }
 
-function pushUndoState(label = "Aktion") {
+function pushUndoState(label = "Geladen") {
     undoStack.push(captureState(label));
     if (undoStack.length > UNDO_MAX) undoStack.shift();
     redoStack = [];
@@ -456,6 +463,18 @@ document.addEventListener("DOMContentLoaded", () => {
             if (typeof window.openFileModal === 'function') window.openFileModal();
         }
     }, true);
+
+    // ── Enter → confirm OCD import when options are visible ─
+    window.addEventListener("keydown", e => {
+        if (e.key !== "Enter") return;
+        if (!document.getElementById("modal-map")?.classList.contains("open")) return;
+        const ocadBtn = document.getElementById("ocad-upload-btn");
+        if (ocadBtn && document.getElementById("ocad-import-options")?.style.display !== "none") {
+            e.preventDefault();
+            ocadBtn.click();
+            return;
+        }
+    });
 });
 
 let _saveQueue    = Promise.resolve();
@@ -995,7 +1014,7 @@ const ControlPairTool = (() => {
         const cp        = drag.controlPair;
         const pointType = drag.pointType;
         const point     = cp[pointType];
-        const snappedPoint = _snapPointToPassableMask(point);
+        const snappedPoint = _movePointToNearestPassableIfImpassable(point);
         if (snappedPoint && Math.hypot(snappedPoint.x - point.x, snappedPoint.y - point.y) >= 0.01) {
             point.x = snappedPoint.x;
             point.y = snappedPoint.y;
@@ -1023,7 +1042,6 @@ const ControlPairTool = (() => {
                 calcRouteSide(cp, r);
             });
         }
-        _snapControlPairEndpointsToPassableMask(cp);
         drawRoutes();
         updateRoutes();
         updateCPList();
@@ -1331,6 +1349,7 @@ const NewRouteTool = (() => {
         calcRouteSide(cp, route);
         cp.routes.push(route);
         saveRoute(cp, route);
+        _autoUpgradeComplex(cp);
         selection.nr = route.order;
         drawRoutes();
         updateRoutes();
@@ -1353,7 +1372,18 @@ const NewRouteTool = (() => {
             if (route.rP.length === 0) {
                 if (!cp.start) return;
                 const snappedStart = snapToStartPt(pt);
-                if (Math.hypot(snappedStart.x - cp.start.x, snappedStart.y - cp.start.y) > 0.5) return;
+                const isStartClick = Math.hypot(snappedStart.x - cp.start.x, snappedStart.y - cp.start.y) <= 0.5;
+                if (!isStartClick) {
+                    const targetCp = getControlPairFromElement(e.target);
+                    if (targetCp && targetCp !== cp) {
+                        const changed = targetCp.order !== selection.ncp;
+                        updateControlPairs(targetCp.order);
+                        updateRoutes();
+                        if (changed) centerOnControlPair(targetCp.order);
+                        NewRouteTool.switchCp(targetCp);
+                    }
+                    return;
+                }
                 route.rP.push({ x: cp.start.x, y: cp.start.y });
             } else {
                 const snapped = snapToZielPt(pt);
@@ -1512,6 +1542,9 @@ const MaskLayer = (() => {
     let brushR = 5;
     const BRUSH_MIN = 1;
     const BRUSH_MAX = 25;
+    const MASK_IMPASSABLE = 0;
+    const MASK_FAST = 241;
+    const MASK_EXPANSION = 255 - 24;
 
     let canvas        = null;
     let ctx           = null;
@@ -1520,6 +1553,10 @@ const MaskLayer = (() => {
     let lastMapFile   = null;
     let lastPx        = null;
     let _strokeBefore = null;  // R-channel snapshot before current stroke (for diff)
+    let _saveTimer    = null;
+    let _saveInFlight = false;
+    let _saveQueued   = false;
+    let _saveMapFile  = null;
 
     function ensureCanvas() {
         if (!canvas) {
@@ -1585,6 +1622,14 @@ const MaskLayer = (() => {
         return { x: mapX * ratioX, y: mapY * ratioY };
     }
 
+    function darkenPixel(idx, value) {
+        const d = maskData.data;
+        if (d[idx] <= value) return false;
+        d[idx] = d[idx+1] = d[idx+2] = value;
+        d[idx+3] = 255;
+        return true;
+    }
+
     // Edit maskData pixels in a circle, then re-render display
     function editCircle(cx, cy, maskValue) {
         if (!maskData) return;
@@ -1593,24 +1638,47 @@ const MaskLayer = (() => {
         const x1 = Math.min(W-1, Math.ceil (cx + brushR));
         const y0 = Math.max(0,   Math.floor(cy - brushR));
         const y1 = Math.min(H-1, Math.ceil (cy + brushR));
+        const px0 = Math.max(0,   x0 - 1);
+        const px1 = Math.min(W-1, x1 + 1);
+        const py0 = Math.max(0,   y0 - 1);
+        const py1 = Math.min(H-1, y1 + 1);
         const r2 = brushR * brushR;
         const d  = maskData.data;
+        const touchedBlack = [];
         for (let y = y0; y <= y1; y++) {
             for (let x = x0; x <= x1; x++) {
                 if ((x-cx)*(x-cx) + (y-cy)*(y-cy) <= r2) {
                     const i = (y * W + x) * 4;
                     d[i] = d[i+1] = d[i+2] = maskValue;
                     d[i+3] = 255;
+                    if (maskValue === MASK_IMPASSABLE) touchedBlack.push(y * W + x);
+                }
+            }
+        }
+        if (maskValue === MASK_IMPASSABLE) {
+            for (const idx of touchedBlack) {
+                const x = idx % W;
+                const y = Math.floor(idx / W);
+                for (let dy = -1; dy <= 1; dy++) {
+                    const ny = y + dy;
+                    if (ny < 0 || ny >= H) continue;
+                    for (let dx = -1; dx <= 1; dx++) {
+                        if (dx === 0 && dy === 0) continue;
+                        const nx = x + dx;
+                        if (nx < 0 || nx >= W) continue;
+                        const ni = (ny * W + nx) * 4;
+                        if (d[ni] !== MASK_IMPASSABLE) darkenPixel(ni, MASK_EXPANSION);
+                    }
                 }
             }
         }
         // Re-render only the affected region
-        const patch = ctx.createImageData(x1-x0+1, y1-y0+1);
+        const patch = ctx.createImageData(px1-px0+1, py1-py0+1);
         const pd = patch.data;
-        for (let y = y0; y <= y1; y++) {
-            for (let x = x0; x <= x1; x++) {
+        for (let y = py0; y <= py1; y++) {
+            for (let x = px0; x <= px1; x++) {
                 const si = (y * W + x) * 4;
-                const pi = ((y-y0)*(x1-x0+1) + (x-x0)) * 4;
+                const pi = ((y-py0)*(px1-px0+1) + (x-px0)) * 4;
                 if (d[si] < 10) {
                     pd[pi] = 220; pd[pi+1] = 0; pd[pi+2] = 0; pd[pi+3] = 255;
                 } else {
@@ -1618,7 +1686,7 @@ const MaskLayer = (() => {
                 }
             }
         }
-        ctx.putImageData(patch, x0, y0);
+        ctx.putImageData(patch, px0, py0);
     }
 
     function strokeLine(clientX, clientY, maskValue) {
@@ -1728,8 +1796,8 @@ const MaskLayer = (() => {
             const ratioX = canvas.width / (mapImg.naturalWidth || canvas.width);
             return brushR / ratioX * (project.scale || 1) * camera.zoom;
         },
-        draw(clientX, clientY)  { strokeLine(clientX, clientY, 0);   },
-        erase(clientX, clientY) { strokeLine(clientX, clientY, 241); },
+        draw(clientX, clientY)  { strokeLine(clientX, clientY, MASK_IMPASSABLE); },
+        erase(clientX, clientY) { strokeLine(clientX, clientY, MASK_FAST); },
 
         // ── Diff-based undo support ────────────────────────────
         startStroke() {
@@ -1771,23 +1839,50 @@ const MaskLayer = (() => {
 
         saveMask(mapFile) {
             if (!maskData) return;
-            // Write maskData to an offscreen canvas and save as PNG
-            const off  = document.createElement("canvas");
-            off.width  = maskData.width;
-            off.height = maskData.height;
-            off.getContext("2d").putImageData(maskData, 0, 0);
-            const csrf = document.cookie.match(/csrftoken=([^;]+)/)?.[1] ?? "";
-            off.toBlob(blob => {
-                const form = new FormData();
-                form.append("filename", mapFile);
-                const stem = mapFile.replace(/\.[^.]+$/, "");
-                form.append("file", blob, `mask_${stem}.png`);
-                fetch("/editor/save-mask/", {
-                    method:  "POST",
-                    headers: { "X-CSRFToken": csrf },
-                    body:    form,
-                });
-            }, "image/png");
+            _saveMapFile = mapFile;
+            _saveQueued = true;
+            if (_saveTimer) clearTimeout(_saveTimer);
+            _saveTimer = setTimeout(() => {
+                _saveTimer = null;
+                runQueuedSave();
+            }, 120);
+
+            function runQueuedSave() {
+                if (_saveInFlight || !_saveQueued || !maskData) return;
+                _saveQueued = false;
+                _saveInFlight = true;
+                const requestIdle = window.requestIdleCallback || (cb => setTimeout(cb, 0));
+                requestIdle(() => saveNow(_saveMapFile), { timeout: 500 });
+            }
+
+            function saveNow(filename) {
+                if (!maskData) { _saveInFlight = false; return; }
+                const off  = document.createElement("canvas");
+                off.width  = maskData.width;
+                off.height = maskData.height;
+                off.getContext("2d").putImageData(maskData, 0, 0);
+                const csrf = document.cookie.match(/csrftoken=([^;]+)/)?.[1] ?? "";
+                off.toBlob(blob => {
+                    if (!blob) {
+                        _saveInFlight = false;
+                        if (_saveQueued) runQueuedSave();
+                        return;
+                    }
+                    const form = new FormData();
+                    form.append("filename", filename);
+                    const stem = filename.replace(/\.[^.]+$/, "");
+                    form.append("file", blob, `mask_${stem}.png`);
+                    fetch("/editor/save-mask/", {
+                        method:  "POST",
+                        headers: { "X-CSRFToken": csrf },
+                        body:    form,
+                    }).catch(err => console.warn("Mask save failed:", err))
+                      .finally(() => {
+                          _saveInFlight = false;
+                          if (_saveQueued) runQueuedSave();
+                      });
+                }, "image/png");
+            }
         },
     };
 })();
@@ -1887,7 +1982,7 @@ const MaskTool = (() => {
         onExit() {
             mapContainer.classList.remove("mode-mask", "mask-editing");
             document.body.classList.remove("mode-mask");
-            hideMaskGenBar();
+            if (!editorSettings.auto_pathfind) hideMaskGenBar();
             painting = false;
             MaskLayer.resetStroke();
             brushCursorEl().style.display = "none";
@@ -2074,6 +2169,11 @@ function drawBlockedTerrain() {
     });
 }
 
+const _blockEraserCursor = (() => {
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 576 512"><path fill="%23ff6666" d="M178.5 416l123 0 65.3-65.3-173.5-173.5-126.7 126.7 112 112zM224 480l-45.5 0c-17 0-33.3-6.7-45.3-18.7L17 345C6.1 334.1 0 319.4 0 304s6.1-30.1 17-41L263 17C273.9 6.1 288.6 0 304 0s30.1 6.1 41 17L527 199c10.9 10.9 17 25.6 17 41s-6.1 30.1-17 41l-135 135 120 0c17.7 0 32 14.3 32 32s-14.3 32-32 32l-288 0z"/></svg>`;
+    return `url("data:image/svg+xml,${svg}") 0 0, pointer`;
+})();
+
 const BlockTool = (() => {
     let lineStart  = null;   // {x,y} world — line mode first point
     let polyPoints = [];     // [{x,y}] world — polygon points so far
@@ -2256,7 +2356,7 @@ const BlockTool = (() => {
             if (S === "erase") {
                 hideCrosshair();
                 const hit = e.target?.closest?.(".block-hit");
-                mapContainer.style.cursor = hit ? "pointer" : "default";
+                mapContainer.style.cursor = hit ? _blockEraserCursor : "default";
                 return;
             }
             if (S === "line" || S === "polygon") {
@@ -2416,12 +2516,12 @@ const PlaceControlTool = (() => {
         onDrag(downEvent) { pan.start(downEvent.clientX, downEvent.clientY); },
         onClick(e, pt) {
             if (placing === "start") {
-                const snapped = _snapPointToPassableMask(snapToControlPoints(pt));
+                const snapped = _movePointToNearestPassableIfImpassable(snapToControlPoints(pt));
                 tempStart = { x: snapped.x, y: snapped.y };
                 placing   = "ziel";
                 updateCPList();
             } else {
-                const snapped = _snapPointToPassableMask(snapToControlPoints(pt));
+                const snapped = _movePointToNearestPassableIfImpassable(snapToControlPoints(pt));
                 pushUndoState(isOverwrite ? "Posten neu gezeichnet" : "Posten erstellt");
                 cp.start = tempStart;
                 cp.ziel  = { x: snapped.x, y: snapped.y };
@@ -2511,7 +2611,7 @@ const PlaceControlTool = (() => {
                 }
                 return;
             }
-            const snapped = _snapPointToPassableMask(snapToControlPoints(pt));
+            const snapped = snapToControlPoints(pt);
             updateCrosshair(snapped.x, snapped.y);
             drawPreview(snapped);
         },
@@ -2597,6 +2697,10 @@ const RCM = (() => {
     let menuEl = null, overlayEl = null;
     let downAt = 0, downPos = null;
     let hoveredTool = null, hoveredSub = null, open = false;
+    let sticky = false;
+    let lastRightUpTime = 0;
+    let escHandler = null;
+    const DBLCLICK_MS = 400;
 
     const rad    = d => d * Math.PI / 180;
     // Segments start at -135° → midpoints at -90(N), 0(E), 90(S), 180(W)
@@ -2605,8 +2709,8 @@ const RCM = (() => {
 
     // Colors matching the sidebar tool wheel
     const COL_DARK   = "#252525";
-    const COL_ORANGE = "#ff9800";
-    const COL_HOVER  = "#ffbb44"; // slightly brighter on hover-of-hover
+    const COL_ORANGE = "#e07020";
+    const COL_HOVER  = "#f08030"; // slightly brighter on hover-of-hover
 
     function slicePath(r1, r2, a1, a2) {
         const large = (a2 - a1) >= 180 ? 1 : 0;
@@ -2703,17 +2807,24 @@ const RCM = (() => {
     function rebuildOuter(mode) {
         const outerG = menuEl?.querySelector("#rcm-outer");
         if (!outerG) return;
-        outerG.innerHTML = "";
+        const oldGroups = outerG.querySelectorAll(".rcm-subtools");
+        oldGroups.forEach(g => {
+            g.classList.remove("rcm-subtools-enter");
+            g.classList.add("rcm-subtools-exit");
+            g.addEventListener("animationend", () => g.remove(), { once: true });
+        });
         if (!mode || mode === ToolMode.NONE) return;
         const defs = SUBTOOL_DEFS[mode];
         if (!defs?.length) return;
+        const subtoolsG = svgEl("g", { class: "rcm-subtools rcm-subtools-enter" });
         const base = segA1(MENU_TOOLS.indexOf(mode));
         const sub  = SECTOR / defs.length;
         defs.forEach((def, si) => {
             const a1 = base + si*sub;
-            outerG.appendChild(makeSegment(OR1, OR2, a1, a1+sub, a1+sub/2,
+            subtoolsG.appendChild(makeSegment(OR1, OR2, a1, a1+sub, a1+sub/2,
                 def.icon, def.transform, "sub", def.id, COL_DARK));
         });
+        outerG.appendChild(subtoolsG);
     }
 
     function hitTest(cx, cy) {
@@ -2794,6 +2905,9 @@ const RCM = (() => {
             });
 
             rebuildOuter(hoveredTool === ToolMode.NONE ? null : hoveredTool);
+            menuEl.querySelectorAll("[data-sub]").forEach(g => {
+                applySegmentState(g, false, g.dataset.sub === newSub, COL_DARK);
+            });
         }
         if (newSub !== hoveredSub) {
             hoveredSub = newSub;
@@ -2832,8 +2946,43 @@ const RCM = (() => {
         overlayEl = document.createElement("div");
         overlayEl.style.cssText = "position:fixed;inset:0;z-index:99998;background:transparent;cursor:default;";
         overlayEl.addEventListener("mousemove",   e => updateHover(e.clientX, e.clientY));
-        overlayEl.addEventListener("mouseup",     e => { if (e.button===2) RCM.onUp(e); });
+        overlayEl.addEventListener("mouseup",     e => {
+            if (e.button === 2 && sticky) { stickySelect(); return; }
+            if (e.button === 2) RCM.onUp(e);
+        });
         overlayEl.addEventListener("contextmenu", e => e.preventDefault());
+        overlayEl.addEventListener("click", e => {
+            if (!sticky) return;
+            e.preventDefault();
+            e.stopPropagation();
+            stickySelect();
+        });
+        overlayEl.addEventListener("wheel", e => {
+            if (hoveredTool !== ToolMode.MASK) return;
+            if (hoveredSub !== "draw" && hoveredSub !== "erase") return;
+            e.preventDefault();
+            MaskLayer.adjustBrush(e.deltaY > 0 ? 1 : -1);
+            const sizeSlider = document.getElementById("mask-size-slider");
+            if (sizeSlider) sizeSlider.value = MaskLayer.getBrush();
+            let ring = menuEl?.querySelector("#rcm-brush-ring");
+            if (!ring) {
+                ring = svgEl("circle", { id:"rcm-brush-ring", cx:0, cy:0, fill:"none",
+                    stroke:"white", "stroke-width":"1.5", "stroke-dasharray":"4 3", opacity:"0.7" });
+                menuEl?.appendChild(ring);
+            }
+            ring.setAttribute("r", MaskLayer.brushScreenRadius());
+        }, { passive: false });
+
+        escHandler = e => {
+            if (e.key === "Escape" && open) {
+                e.preventDefault();
+                sticky = false;
+                downPos = null;
+                closeMenu();
+                hoveredTool = null; hoveredSub = null;
+            }
+        };
+        document.addEventListener("keydown", escHandler);
 
         document.body.appendChild(overlayEl);
         document.body.appendChild(menuEl);
@@ -2844,17 +2993,28 @@ const RCM = (() => {
 
     function closeMenu() {
         open = false;
+        sticky = false;
         overlayEl?.remove(); overlayEl = null;
         menuEl?.remove();    menuEl    = null;
+        if (escHandler) { document.removeEventListener("keydown", escHandler); escHandler = null; }
+    }
+
+    function stickySelect() {
+        const _tool = hoveredTool, _sub = hoveredSub;
+        closeMenu();
+        hoveredTool = null; hoveredSub = null;
+        applySelection(_tool, _sub);
     }
 
     return {
         onDown(e) {
-            if (readOnly) return;   // no tool-picker in locked/published files
+            if (readOnly) return;
+            if (sticky && open) return;
             downAt = Date.now(); downPos = {x:e.clientX, y:e.clientY};
             hoveredTool = null; hoveredSub = null; open = false;
         },
         onMove(e) {
+            if (sticky && open) { updateHover(e.clientX, e.clientY); return; }
             if (!downPos) return;
             if (!open) {
                 const moved = Math.hypot(e.clientX-downPos.x, e.clientY-downPos.y);
@@ -2863,15 +3023,25 @@ const RCM = (() => {
             if (open) updateHover(e.clientX, e.clientY);
         },
         onUp(e) {
+            if (sticky && open) return;
             // Guard against double-fire: overlay + window both emit mouseup
             if (!open && !downPos) return;
+            const now = Date.now();
+            if (!open && now - lastRightUpTime < DBLCLICK_MS) {
+                sticky = true;
+                openMenu(downPos.x, downPos.y);
+                downPos = null;
+                lastRightUpTime = 0;
+                return;
+            }
+            lastRightUpTime = now;
             const wasOpen = open, _tool = hoveredTool, _sub = hoveredSub;
             downPos = null;
             closeMenu();
             hoveredTool = null; hoveredSub = null;
             applySelection(wasOpen ? _tool : null, wasOpen ? _sub : null);
         },
-        cancel() { downPos = null; closeMenu(); },
+        cancel() { downPos = null; lastRightUpTime = 0; closeMenu(); },
     };
 })();
 
@@ -2882,6 +3052,61 @@ function initInput() {
     window.addEventListener("keydown",   onKeyDown);
     window.addEventListener("wheel",     onWheel, { passive: false });
     window.addEventListener("contextmenu", e => e.preventDefault());
+    initTouchInput();
+}
+
+function initTouchInput() {
+    let lastTouchDist = 0;
+    let lastTouchMid = null;
+    let touchPanning = false;
+
+    mapContainer.addEventListener("touchstart", e => {
+        if (!mapContainer.contains(e.target) || e.target.closest("#overview-sidebar")) return;
+        if (e.touches.length === 2) {
+            e.preventDefault();
+            const t = e.touches;
+            lastTouchDist = Math.hypot(t[1].clientX - t[0].clientX, t[1].clientY - t[0].clientY);
+            lastTouchMid = { x: (t[0].clientX + t[1].clientX) / 2, y: (t[0].clientY + t[1].clientY) / 2 };
+        } else if (e.touches.length === 1) {
+            touchPanning = true;
+            lastTouchMid = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+        }
+    }, { passive: false });
+
+    mapContainer.addEventListener("touchmove", e => {
+        if (!mapContainer.contains(e.target) || e.target.closest("#overview-sidebar")) return;
+        if (e.touches.length === 2) {
+            e.preventDefault();
+            const t = e.touches;
+            const dist = Math.hypot(t[1].clientX - t[0].clientX, t[1].clientY - t[0].clientY);
+            const mid = { x: (t[0].clientX + t[1].clientX) / 2, y: (t[0].clientY + t[1].clientY) / 2 };
+            const rect = mapContainer.getBoundingClientRect();
+            const cx = mid.x - rect.left, cy = mid.y - rect.top;
+            const wx = (cx - camera.x) / camera.zoom, wy = (cy - camera.y) / camera.zoom;
+            const factor = dist / (lastTouchDist || dist);
+            camera.zoom = Math.max(zoomMin, Math.min(zoomMax, camera.zoom * factor));
+            camera.x = cx - wx * camera.zoom + (mid.x - lastTouchMid.x);
+            camera.y = cy - wy * camera.zoom + (mid.y - lastTouchMid.y);
+            updateCameraTransform();
+            lastTouchDist = dist;
+            lastTouchMid = mid;
+            touchPanning = false;
+        } else if (e.touches.length === 1 && touchPanning) {
+            e.preventDefault();
+            const dx = e.touches[0].clientX - lastTouchMid.x;
+            const dy = e.touches[0].clientY - lastTouchMid.y;
+            camera.x += dx;
+            camera.y += dy;
+            updateCameraTransform();
+            lastTouchMid = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+        }
+    }, { passive: false });
+
+    mapContainer.addEventListener("touchend", () => {
+        lastTouchDist = 0;
+        lastTouchMid = null;
+        touchPanning = false;
+    });
 }
 
 let _scaleDownPos    = null;   // screen pos at mousedown
@@ -3067,15 +3292,23 @@ function drawConnectionArrow(start, ziel, angle, parent) {
 }
 
 function clickControlPairGroup(target) {
-    if (!target?.closest) return false;
-    const group = target.closest(".control-pair-group");
-    if (!group) return false;
-    const ncp     = Number(group.dataset.ncp);
+    const cp = getControlPairFromElement(target);
+    if (!cp) return false;
+    const ncp     = cp.order;
     const changed = ncp !== selection.ncp;
     updateControlPairs(ncp);
     updateRoutes();
     if (changed) centerOnControlPair(ncp);
     return true;
+}
+
+function getControlPairFromElement(target) {
+    if (!target?.closest) return null;
+    const group = target.closest(".control-pair-group");
+    if (!group) return null;
+    const ncp = Number(group.dataset.ncp);
+    if (!Number.isFinite(ncp)) return null;
+    return project.control_pairs.find(c => c.order === ncp) || null;
 }
 
 function updateControlPairs(ncp) {
@@ -3101,7 +3334,8 @@ function getControlPairCircle(target) {
     ROUTE — DRAW & INTERACT
 ========================================================= */
 
-const GENERATED_ROUTE_ANIM_COLOR = "#ff9800";
+const GENERATED_ROUTE_ANIM_COLOR = "#E53935";
+const GENERATED_ROUTE_HOLD_MS = 5000;
 const GENERATED_ROUTE_FALLBACK_DRAW_MS = 1000;
 const GENERATED_ROUTE_RUNTIME_SECONDS_PER_ANIM_SECOND = 60;
 let _generatedRouteAnimFrame = null;
@@ -3167,6 +3401,9 @@ function routeAnimationPhase(route, now = performance.now()) {
             progress: Math.max(0, Math.min(1, elapsed / anim.drawMs)),
             remaining: Math.max(0, anim.drawMs - elapsed),
         };
+    }
+    if (elapsed < anim.drawMs + (anim.holdMs || 0)) {
+        return { kind: "holding" };
     }
     delete route._generatedRouteAnim;
     return null;
@@ -3283,7 +3520,11 @@ function renderGeneratedRouteAnimation(layer, route, cp, phase) {
 
 function hasActiveGeneratedRouteAnimations() {
     if (!project?.control_pairs) return false;
-    return project.control_pairs.some(cp => (cp.routes || []).some(route => !!route._generatedRouteAnim));
+    const now = performance.now();
+    return project.control_pairs.some(cp => (cp.routes || []).some(route => {
+        const phase = routeAnimationPhase(route, now);
+        return phase?.kind === "drawing";
+    }));
 }
 
 function scheduleGeneratedRouteAnimationFrame() {
@@ -3328,9 +3569,11 @@ function drawRoutes() {
                 renderGeneratedRouteAnimation(anim, route, cp, phase);
                 return;
             }
+            const isHolding = phase?.kind === "holding";
             const el = createRoutePolyline(route, {
-                stroke: "black", strokeWidth: 1.5,
-                className: "route-polyline",
+                stroke: isHolding ? GENERATED_ROUTE_ANIM_COLOR : "black",
+                strokeWidth: 1.5,
+                className: isHolding ? "route-polyline route-holding" : "route-polyline",
                 dataset: { ncp: cp.order, nr: route.order },
             });
             if (el) base.appendChild(el);
@@ -3350,8 +3593,9 @@ function updateRoutes() {
     mapContainer.querySelectorAll(".route-polyline").forEach(el => {
         const ncp = Number(el.dataset.ncp);
         const isSelectedCp = ncp === selection.ncp;
-        el.setAttribute("opacity", String(routeDeletePreviewOpacity(ncp, isSelectedCp ? 1 : 0.1)));
-        el.setAttribute("stroke", "black");
+        const isHolding = el.classList.contains("route-holding");
+        el.setAttribute("opacity", String(routeDeletePreviewOpacity(ncp, isSelectedCp || isHolding ? 1 : 0.1)));
+        if (!isHolding) el.setAttribute("stroke", "black");
     });
 
     // active route rendered on top
@@ -3557,7 +3801,7 @@ async function startMaskGeneration(mapFile, scale, fileId = null) {
     const requestedScale = scale;
     const prog = document.getElementById("mask-gen-progress");
     maskGenInProgress = true;
-    if (currentToolMode === ToolMode.MASK) bar.style.display = "flex";
+    if (currentToolMode === ToolMode.MASK || editorSettings.auto_pathfind) bar.style.display = "flex";
     text.textContent  = "Maske wird generiert…";
     if (prog) prog.value = 0;
 
@@ -3652,6 +3896,8 @@ async function startMaskGeneration(mapFile, scale, fileId = null) {
                                 maskGenInProgress = false;
                                 activeMaskGenSession = null;
                                 text.innerHTML = `<span style="color:#ff6666">Fehler: ${d.error}</span>`;
+                                const spinnerEl = bar.querySelector('x-icon[name="spinner"]');
+                                if (spinnerEl) spinnerEl.style.display = "none";
                             }
                         } catch (_) {}
                     }
@@ -3661,8 +3907,11 @@ async function startMaskGeneration(mapFile, scale, fileId = null) {
             return read();
         })
         .catch(err => {
-            if (err.name !== "AbortError" && activeMaskGenSession?.seq === seq)
+            if (err.name !== "AbortError" && activeMaskGenSession?.seq === seq) {
                 text.innerHTML = `<span style="color:#ff6666">Fehler: ${err.message}</span>`;
+                const spinnerEl = bar.querySelector('x-icon[name="spinner"]');
+                if (spinnerEl) spinnerEl.style.display = "none";
+            }
         });
 }
 
@@ -3683,6 +3932,27 @@ function showMaskGenBarIfActive() {
     if (!maskGenInProgress) return;
     const bar = document.getElementById("mask-gen-bar");
     if (bar) bar.style.display = "flex";
+}
+
+function showRasterizingBar() {
+    const bar    = document.getElementById("mask-gen-bar");
+    const text   = document.getElementById("mask-gen-text");
+    const prog   = document.getElementById("mask-gen-progress");
+    const cancel = document.getElementById("mask-gen-cancel");
+    if (!bar) return;
+    if (text) text.textContent = "Karte wird rasterisiert…";
+    if (prog) prog.style.display = "none";
+    if (cancel) cancel.style.display = "none";
+    bar.style.display = "flex";
+}
+
+function hideRasterizingBar() {
+    const bar    = document.getElementById("mask-gen-bar");
+    const prog   = document.getElementById("mask-gen-progress");
+    const cancel = document.getElementById("mask-gen-cancel");
+    if (prog) prog.style.display = "";
+    if (cancel) cancel.style.display = "";
+    if (bar && !maskGenInProgress) bar.style.display = "none";
 }
 
 function loadMap(filename) {
@@ -3765,14 +4035,15 @@ function resetProjectForOcadUpload(session) {
 
 async function uploadSelectedMap() {
     const input = document.getElementById("map-file-input");
-    const file  = input?.files?.[0];
+    const file  = _droppedMapFile || input?.files?.[0];
+    _droppedMapFile = null;
     if (!file) return;
 
-    const btn  = document.getElementById("upload-map-btn");
     const csrf = document.cookie.match(/csrftoken=([^;]+)/)?.[1] ?? "";
     const isOcad = /\.(ocd|ocad)$/i.test(file.name);
 
-    btn.disabled = true;   // keep the upload icon — spinner shown on the map itself
+    const ocadBtn = document.getElementById("ocad-upload-btn");
+    if (ocadBtn) ocadBtn.disabled = true;
     closeMapModal();
     const previewGeneration = ++ocadPreviewGeneration;
     if (isOcad) {
@@ -3784,7 +4055,7 @@ async function uploadSelectedMap() {
             previewShown: false,
         });
         showMapSpinner();
-        showOcadSvgPreview(file, previewGeneration).catch(e => console.warn("OCAD SVG preview failed", e));
+        showRasterizingBar();
     } else {
         showMapSpinner();
         showLocalImagePreview(file, previewGeneration);
@@ -3801,9 +4072,10 @@ async function uploadSelectedMap() {
         const data = await res.json();
         if (!res.ok || !data.map_file) {
             hideMapSpinner();
+            if (isOcad) hideRasterizingBar();
             if (!isOcad) revertLocalImagePreview(previewGeneration);
             alert(data.error || "Upload fehlgeschlagen.");
-            btn.disabled = false;
+            if (ocadBtn) ocadBtn.disabled = false;
             return;
         }
 
@@ -3829,17 +4101,19 @@ async function uploadSelectedMap() {
         project.scale    = Number.isFinite(uploadedScale) && uploadedScale > 0 ? uploadedScale : null;
         project.scaled   = !!data.scaled && !!project.scale;
         project.has_mask = !!data.has_mask;
-        if (!session?.previewShown && !project.control_pairs.length && Array.isArray(data.control_pairs) && data.control_pairs.length) {
+        const importPosten = !isOcad || _ocadImportChoices.posten;
+        const importRouten = !isOcad || _ocadImportChoices.routen;
+        if (importPosten && !project.control_pairs.length && Array.isArray(data.control_pairs) && data.control_pairs.length) {
             project.control_pairs = data.control_pairs.map((cp, i) => ({
                 order:   i,
                 start:   cp.start,
                 ziel:    cp.ziel,
-                complex: !!cp.complex,
-                routes:  Array.isArray(cp.routes) ? cp.routes : [],
+                complex: importRouten ? !!cp.complex : false,
+                routes:  importRouten && Array.isArray(cp.routes) ? cp.routes : [],
             }));
             selection.ncp = 0;
             selection.nr  = 0;
-        } else if (!session?.previewShown && !project.control_pairs.length) {
+        } else if (!project.control_pairs.length) {
             project.control_pairs = [];
             selection.ncp = 0;
             selection.nr  = 0;
@@ -3847,9 +4121,10 @@ async function uploadSelectedMap() {
         const mapUploadSave = saveFile("map_upload");
 
         if (isOcad) {
-            // OCAD: swap the SVG preview for the server-rendered raster once available,
+            // OCAD: keep the spinner visible until the server-rendered raster is available,
             // then kick off the normal UNet mask pipeline.
             _loadMapInEditor(() => {
+                hideRasterizingBar();
                 if (data.auto_generate_mask && project.map_file === data.map_file && project.scale) {
                     Promise.resolve(mapUploadSave).then(() => {
                         if (project.map_file === data.map_file && project.scale && project.id) {
@@ -3864,9 +4139,10 @@ async function uploadSelectedMap() {
     } catch (e) {
         console.error("uploadSelectedMap:", e);
         hideMapSpinner();
+        if (isOcad) hideRasterizingBar();
         if (!isOcad) revertLocalImagePreview(previewGeneration);
         alert("Upload fehlgeschlagen.");
-        btn.disabled = false;
+        if (ocadBtn) ocadBtn.disabled = false;
     }
 }
 
@@ -4075,7 +4351,7 @@ function _undoScalePoint() {
         mapContainer.style.cursor = "default";
         if (_scaleP1) {
             _drawRuler(_scaleP1, _scaleP1);
-            _setScaleStatus("Klicke zweiten Punkt…  (Ctrl+Z: zurück)");
+            _setScaleStatus("Klicke zweiten Punkt…");
         }
     } else if (_scaleP1) {
         // Undo first point
@@ -4134,7 +4410,7 @@ function _openScaleModal() {
     ratioInp.value = "4000";
     submitBtn.disabled = true;
 
-    const check = () => { submitBtn.disabled = !(parseFloat(distInp.value) > 0); };
+    const check = () => { submitBtn.disabled = !(resolveScaleDistanceMeters(distInp.value) > 0); };
     distInp.oninput  = check;
     ratioInp.oninput = check;
 
@@ -4145,7 +4421,7 @@ function _openScaleModal() {
     setTimeout(() => distInp.focus(), 50);
 
     submitBtn.onclick = () => {
-        const meters   = parseFloat(distInp.value);
+        const meters   = resolveScaleDistanceMeters(distInp.value);
         const mapScale = parseFloat(ratioInp.value) || 4000;
         if (!(meters > 0) || !(_scalePixelDist > 0)) return;
 
@@ -4183,6 +4459,39 @@ function _openScaleModal() {
 
 // ── Mouse interception for ruler drawing ───────────────────
 
+function resolveScaleDistanceMeters(value) {
+    const coords = parseScaleCoordinatePairs(value);
+    if (coords) return haversineMeters(coords[0], coords[1]);
+    const text = String(value || "").trim();
+    if (!/^\d+(?:[.,]\d+)?(?:\s*m)?$/i.test(text)) return NaN;
+    const direct = parseFloat(text.replace(",", "."));
+    return direct > 0 ? direct : NaN;
+}
+
+function parseScaleCoordinatePairs(value) {
+    const text = String(value || "");
+    const matches = [...text.matchAll(/(-?\d+(?:[.,]\d+)?)\s*,\s*(-?\d+(?:[.,]\d+)?)/g)]
+        .map(m => ({
+            lat: Number(m[1].replace(",", ".")),
+            lon: Number(m[2].replace(",", ".")),
+        }))
+        .filter(p => Number.isFinite(p.lat) && Number.isFinite(p.lon)
+            && Math.abs(p.lat) <= 90 && Math.abs(p.lon) <= 180);
+    return matches.length >= 2 ? [matches[0], matches[1]] : null;
+}
+
+function haversineMeters(a, b) {
+    const toRad = deg => deg * Math.PI / 180;
+    const R = 6371008.8;
+    const dLat = toRad(b.lat - a.lat);
+    const dLon = toRad(b.lon - a.lon);
+    const lat1 = toRad(a.lat);
+    const lat2 = toRad(b.lat);
+    const h = Math.sin(dLat / 2) ** 2
+        + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2;
+    return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+
 function _scaleHandleUp(e) {
     const pt = screenToWorld(e.clientX, e.clientY);
 
@@ -4190,7 +4499,7 @@ function _scaleHandleUp(e) {
         // First point
         _scaleP1 = pt;
         _drawRuler(pt, pt);
-        _setScaleStatus("Klicke zweiten Punkt…  (Ctrl+Z: zurück)");
+        _setScaleStatus("Klicke zweiten Punkt…");
     } else {
         // Second point
         _scalePixelDist = Math.hypot(pt.x - _scaleP1.x, pt.y - _scaleP1.y);
@@ -4225,12 +4534,12 @@ function createFile() {
 function openMapModal() {
     document.getElementById("modal-map").classList.add("open");
     // Reset any leftover selection from a previous upload
-    document.getElementById("selected-map-info").style.display = "none";
-    document.querySelector(".selected-map-name").textContent = "";
-    const uploadBtn = document.getElementById("upload-map-btn");
-    if (uploadBtn) uploadBtn.disabled = true;
+    document.getElementById("map-dropzone").style.display = "";
+    document.getElementById("ocad-import-options").style.display = "none";
     const fileInput = document.getElementById("map-file-input");
     if (fileInput) fileInput.value = "";
+    _droppedMapFile = null;
+    _ocadImportChoices = { posten: true, routen: true };
     initMapUpload();
 }
 
@@ -4253,17 +4562,55 @@ function initMapUpload() {
     };
 }
 
+let _droppedMapFile = null;
+let _ocadImportChoices = { posten: true, routen: true };
+
 function handleMapFile(file) {
     if (!file) return;
     const isOcad = /\.(ocd|ocad)$/i.test(file.name);
-    const maxSize = 15 * 1024 * 1024;
+    const maxSize = (isOcad ? 50 : 15) * 1024 * 1024;
     if (file.size > maxSize) {
-        alert(isOcad ? "Datei zu gross (max. 15 MB)" : "Datei zu gross (max. 15 MB)");
+        alert(isOcad ? "Datei zu gross (max. 50 MB)" : "Datei zu gross (max. 15 MB)");
         return;
     }
-    document.getElementById("selected-map-info").style.display = "flex";
-    document.querySelector(".selected-map-name").textContent = file.name;
-    document.getElementById("upload-map-btn").disabled = false;
+    _droppedMapFile = file;
+
+    if (isOcad) {
+        _showOcadImportOptions(file);
+    } else {
+        uploadSelectedMap();
+    }
+}
+
+function _showOcadImportOptions(file) {
+    document.getElementById("map-dropzone").style.display = "none";
+    const panel = document.getElementById("ocad-import-options");
+    panel.style.display = "flex";
+    panel.querySelector(".ocad-import-file-name").textContent = file.name;
+
+    const postenCb = document.getElementById("ocad-import-posten");
+    const routenCb = document.getElementById("ocad-import-routen");
+    postenCb.checked = true;
+    routenCb.checked = true;
+    routenCb.disabled = false;
+    routenCb.closest(".ocad-import-check").querySelector("span").classList.remove("ocad-check-disabled");
+    _ocadImportChoices = { posten: true, routen: true };
+
+    postenCb.onchange = () => {
+        _ocadImportChoices.posten = postenCb.checked;
+        if (!postenCb.checked) {
+            routenCb.checked = false;
+            routenCb.disabled = true;
+            routenCb.closest(".ocad-import-check").querySelector("span").classList.add("ocad-check-disabled");
+            _ocadImportChoices.routen = false;
+        } else {
+            routenCb.disabled = false;
+            routenCb.closest(".ocad-import-check").querySelector("span").classList.remove("ocad-check-disabled");
+        }
+    };
+    routenCb.onchange = () => {
+        _ocadImportChoices.routen = routenCb.checked;
+    };
 }
 
 /* =========================================================
@@ -4278,6 +4625,34 @@ function initMenus() {
             menu.classList.add("open");
         });
         menu.addEventListener("mouseleave", () => menu.classList.remove("open"));
+    });
+
+    document.getElementById("batch-switch-lr")?.addEventListener("click", () => {
+        if (readOnly || !project?.control_pairs?.length) return;
+        pushUndoState("Postentypen angepasst");
+        let changed = 0;
+        project.control_pairs.forEach(cp => {
+            if (cp.complex && cp.routes.length == 2) {
+                cp.complex = false;
+                saveControlPair(cp);
+                changed++;
+            } else if (!cp.complex && cp.routes.length != 2) {
+                cp.complex = true;
+                saveControlPair(cp);
+                changed++;
+            }
+        });
+        if (changed) { updateCPList(); drawCourse(); }
+    });
+
+    document.getElementById("batch-auto-pathfind")?.addEventListener("click", () => {
+        if (readOnly || !project?.control_pairs?.length) return;
+        pushUndoState("Batch Pathing");
+        project.control_pairs.forEach(cp => {
+            if (cp.start && cp.ziel && project.map_file) {
+                requestAutoPathfindForControlPair(cp);
+            }
+        });
     });
 }
 
@@ -4404,6 +4779,15 @@ function _setPathfindBusyForCp(cp, busy) {
     _queuePathfindUiUpdate();
 }
 
+function _clearPathfindBusyForCp(cp) {
+    if (!cp) {
+        _queuePathfindUiUpdate();
+        return;
+    }
+    _autoPathfindRunningCps.delete(cp);
+    _queuePathfindUiUpdate();
+}
+
 function _isPathfindBusyForCp(cp) {
     return !!(cp && (_activePathfindByCp.get(cp) || _autoPathfindRunningCps.has(cp)));
 }
@@ -4441,15 +4825,31 @@ function _markGeneratedRouteAnimation(cp, route) {
     const anim = {
         start: performance.now(),
         drawMs: generatedRouteDrawMs(route),
+        holdMs: GENERATED_ROUTE_HOLD_MS,
     };
     route._generatedRouteAnim = anim;
     scheduleGeneratedRouteAnimationFrame();
     setTimeout(() => {
         if (route._generatedRouteAnim !== anim) return;
+        if (!projectStillContainsRoute(cp, route)) return;
+        drawRoutes();
+        updateRoutes();
+    }, anim.drawMs);
+    setTimeout(() => {
+        if (route._generatedRouteAnim !== anim) return;
         delete route._generatedRouteAnim;
         if (!projectStillContainsRoute(cp, route)) return;
-        scheduleGeneratedRouteAnimationFrame();
-    }, anim.drawMs);
+        drawRoutes();
+        updateRoutes();
+    }, anim.drawMs + anim.holdMs);
+}
+
+function _autoUpgradeComplex(cp) {
+    if (!cp.complex && cp.routes.length != 2) {
+        cp.complex = true;
+        saveControlPair(cp);
+        updateCPList();
+    }
 }
 
 function _appendRouteObject(cp, route, { animate = false } = {}) {
@@ -4458,6 +4858,7 @@ function _appendRouteObject(cp, route, { animate = false } = {}) {
     cp.routes.push(route);
     if (animate) _markGeneratedRouteAnimation(cp, route);
     saveRoute(cp, route);
+    _autoUpgradeComplex(cp);
     return route;
 }
 
@@ -4522,7 +4923,7 @@ function _snapControlPairEndpointsToPassableMask(cp) {
     return true;
 }
 
-function _snapPointToPassableMask(point) {
+function _movePointToNearestPassableIfImpassable(point) {
     if (!point || !MaskLayer.isLoaded?.()) return point;
     return MaskLayer.nearestPassableMapPoint?.(point, CONTROL_POINT_PASSABLE_SNAP_M) || point;
 }
@@ -4647,6 +5048,7 @@ function _fireAutoPathfindForCP(cp, source = "editor_auto") {
             console.warn("theta (client) auto-fire failed", e);
         } finally {
             _autoPathfindRunningCps.delete(cp);
+            _queuePathfindUiUpdate();
         }
     })();
     return true;
@@ -4655,6 +5057,7 @@ function _fireAutoPathfindForCP(cp, source = "editor_auto") {
 function requestAutoPathfindForControlPair(cp) {
     if (!_canAutoPathfindCP(cp)) {
         _pendingAutoPathfindCps.delete(cp);
+        if ((cp?.routes?.length || 0) >= AUTO_PATHFIND_MAX_ROUTES) _clearPathfindBusyForCp(cp);
         return;
     }
     if (_fireAutoPathfindForCP(cp)) return;
@@ -4842,7 +5245,7 @@ async function thetaCPClient(cp, source = "editor_auto", options = {}) {
         }
     }
 
-    pushUndoState("Theta*-Route (client) gefunden");
+    pushUndoState("automatische Route");
     _appendRouteObject(cp, candidateRoute, { animate: true });
     selection.nr = cp.routes.length - 1;
     drawRoutes();
@@ -4950,7 +5353,7 @@ function routeListDebugLink(cpOrder) {
     const { links, meta } = entry;
     const title = `Debug grid: ${meta.width}x${meta.height}px @ (${meta.offsetX},${meta.offsetY})`;
     return `<span class="cp-route-debug-links" title="${title}">
-        ${links.map(link => `<a class="cp-route-debug-link" href="${link.url}" download="${link.filename}" title="${link.label}" aria-label="${link.label}" onclick="event.stopPropagation()">${icon("bug", "0.9em")}</a>`).join("")}
+        ${links.map(link => `<a class="cp-route-debug-link" href="${link.url}" download="${link.filename}" title="${link.label}" aria-label="${link.label}" onclick="event.stopPropagation()">${icon("mask", "0.9em")}</a>`).join("")}
     </span>`;
 }
 
@@ -4992,11 +5395,13 @@ function updateCPList() {
         row.className = "cp-row" + (cp.order === selection.ncp ? " selected" : "");
         row.dataset.ncp = cp.order;
         textRouten = cp.routes.length === 1 ? "Route" : "Routen";
+        const cpBusy = _isPathfindBusyForCp(cp);
         row.innerHTML = `
             ${readOnly ? '' : `<span class="cp-grip" title="Drag to reorder"></span>`}
             <span class="cp-row-label">
                 <span class="cp-posten-text">Posten ${cp.order + 1}</span>
                 <span class="cp-route-count">${cp.routes.length} ${textRouten}</span>
+                ${cpBusy ? `<x-icon name="spinner" class="spin cp-busy-spinner" size="1em"></x-icon>` : ''}
             </span>
             <div class="cp-row-btns">
                 <button class="cp-mode-btn ${cp.complex ? "active" : ""}" data-mode="multi" title="Multi-Route"
@@ -5047,7 +5452,7 @@ function updateCPList() {
                 e.stopPropagation();
                 const complex = btn.dataset.mode === "multi";
                 if (cp.complex === complex) return;
-                if (!complex && cp.routes.length > 2) {
+                if (!complex && cp.routes.length !== 2) {
                     const counter = row.querySelector(".cp-route-count");
                     if (counter) {
                         counter.classList.remove("cp-route-count-flash");
@@ -5100,6 +5505,7 @@ function updateCPList() {
                         <span class="route-stat route-length">${length}</span>
                         ${runtimeHtml}
                     </span>
+                    ${routeListDebugLink(cp.order)}
                     <label class="route-elevation-label">
                         <input class="route-elevation-input" type="number" min="0" step="1"
                             value="${route.elevation ?? ""}" placeholder="—"
@@ -5150,30 +5556,30 @@ function updateCPList() {
             if (!readOnly) {
                 const newRouteRow = document.createElement("div");
                 const isDrawing   = activeTool === NewRouteTool;
-                newRouteRow.className = "cp-route-row cp-route-row-new" + (isDrawing ? " drawing" : "");
+                newRouteRow.className = "cp-route-row cp-route-row-new cp-route-row-split" + (isDrawing ? " drawing" : "");
                 const partialLen  = isDrawing ? NewRouteTool.getPartialLength() : null;
                 const canThetaPathfind = !!(cp.start && cp.ziel && project.map_file);
                 const pathfindBusy = _isPathfindBusyForCp(cp);
                 const expectAnotherRoute = pathfindBusy && _canExpectAnotherPathfindRoute(cp);
                 const pathfindTitle = pathfindBusy
                     ? (expectAnotherRoute ? "Pathfinding läuft - weitere Route möglich" : "Pathfinding läuft - keine weitere Route erwartet")
-                    : "Weitere Route berechnen";
+                    : "+ automatische Route";
                 const pathfindIcon = pathfindBusy
-                    ? `<x-icon name="spinner" class="spin" size="0.9em"></x-icon>`
-                    : icon("wand-magic-sparkles", "0.9em");
+                    ? `<x-icon name="spinner" class="spin" size="1em"></x-icon>`
+                    : icon("wand-magic-sparkles", "1em");
                 newRouteRow.innerHTML = `
-                    <span class="route-name">Neue Route</span>
-                    ${partialLen != null ? `<span class="route-stats"><span class="route-stat route-length">${partialLen}m</span></span>` : ""}
-                    ${routeListDebugLink(cp.order)}
-                    ${canThetaPathfind ? `<button type="button" class="cp-route-theta-btn" title="${pathfindTitle}" aria-label="${pathfindTitle}" ${pathfindBusy ? 'disabled aria-busy="true"' : ""}>${pathfindIcon}</button>` : ""}
+                    <button type="button" class="cp-new-route-draw-btn">
+                        <span>Neue Route</span>
+                        ${partialLen != null ? `<span class="route-stat route-length">${partialLen}m</span>` : ""}
+                    </button>
+                    ${canThetaPathfind ? `<button type="button" class="cp-new-route-pathfind-btn" title="${pathfindTitle}" aria-label="${pathfindTitle}" ${pathfindBusy ? 'disabled aria-busy="true"' : ""}>${pathfindIcon}</button>` : ""}
                 `;
-                newRouteRow.addEventListener("click", e => {
-                    if (e.target.closest(".cp-route-theta-btn, .cp-route-debug-link")) return;
+                newRouteRow.querySelector(".cp-new-route-draw-btn")?.addEventListener("click", e => {
                     e.stopPropagation();
                     if (activeTool === NewRouteTool) activateTool(RouteTool);
                     else startNewRoute();
                 });
-                const thetaBtn = newRouteRow.querySelector(".cp-route-theta-btn");
+                const thetaBtn = newRouteRow.querySelector(".cp-new-route-pathfind-btn");
                 if (thetaBtn) {
                     thetaBtn.addEventListener("click", e => {
                         e.stopPropagation();
@@ -5200,7 +5606,9 @@ function updateCPList() {
 
     if (currentToolMode !== ToolMode.NONE) {
         const addBtn = document.createElement("button");
-        addBtn.className = "cp-add-btn";
+        const isAddingControlPair = currentToolMode === ToolMode.CONTROL_PAIR
+            && activeSubtool[ToolMode.CONTROL_PAIR] === "add";
+        addBtn.className = "cp-add-btn" + (isAddingControlPair ? " adding" : "");
         addBtn.innerHTML = `${icon("plus", "0.8em")} Posten`;
         addBtn.addEventListener("click", startNewPlacement);
         list.appendChild(addBtn);
@@ -5898,7 +6306,7 @@ function setTool(mode) {
         const active = seg.dataset.tool === mode;
         seg.classList.toggle("active", active);
         const bg = seg.querySelector(".segment-bg");
-        if (bg) bg.style.fill = active ? "#ff9800" : "";
+        if (bg) bg.style.fill = active ? "#e07020" : "";
         if (active) seg.parentNode.appendChild(seg);
     });
 

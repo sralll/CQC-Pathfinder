@@ -1,5 +1,6 @@
 /* =========================================================
    PLAY MODE — full-screen map + bottom action bar
+   Built on shared theme tokens.
 ========================================================= */
 
 :root {
@@ -13,12 +14,8 @@ html, body {
     width: 100%;
     height: 100%;
     overflow: hidden;
-    font-family: Arial, sans-serif;
-    background: #151515;
-    color: #ccc;
     margin: 0;
-    /* Prevent the browser's edge-swipe "back" gesture from interfering with
-       swipe-to-advance during play */
+    /* Prevent the browser's edge-swipe "back" gesture from interfering */
     overscroll-behavior-x: none;
     overscroll-behavior-y: contain;
 }
@@ -42,7 +39,7 @@ html, body {
     flex-direction: column;
 }
 
-/* Desktop: limit the play column to a square (width = viewport height) */
+/* Desktop: limit the play column to a square */
 body.desktop #play-wrap {
     align-items: center;
 }
@@ -65,16 +62,13 @@ body.desktop #play-btn-bar {
     cursor: grab;
 }
 
-
 #map-container.panning { cursor: grabbing; }
 
-/* Camera: the single element JS applies pan/zoom transform to */
 #camera {
     position: absolute;
     top: 0;
     left: 0;
     transform-origin: 0 0;
-    /* transform: translate(Xpx, Ypx) scale(S)  — set by JS */
 }
 
 #map-scale-layer {
@@ -83,7 +77,7 @@ body.desktop #play-btn-bar {
 
 #map-img {
     display: block;
-    max-width: none;      /* must not be constrained — JS controls size */
+    max-width: none;
     user-select: none;
     -webkit-user-drag: none;
 }
@@ -111,7 +105,7 @@ body.desktop #play-btn-bar {
     width: 100%;
     max-height: 0;
     overflow: hidden;
-    background: #1a1a1a;
+    background: var(--bg-2);
     transition: max-height 0.25s ease;
 }
 
@@ -121,7 +115,7 @@ body.desktop #play-stats-panel {
 
 #play-stats-panel.visible {
     max-height: 200px;
-    border-bottom: 0.5px solid #2e2e2e;
+    border-bottom: 0.5px solid var(--border);
 }
 
 #play-stats-header {
@@ -134,17 +128,17 @@ body.desktop #play-stats-panel {
     line-height: 1.3;
 }
 .stats-choice-total {
-    font-size: 14px;
+    font-size: var(--font-md);
     font-weight: 700;
-    color: #ddd;
+    color: var(--text);
 }
 .stats-choice-sub {
     font-size: 10px;
     font-weight: 400;
-    color: #666;
+    color: var(--text-muted);
 }
-body.desktop .stats-choice-total { font-size: 16px; }
-body.desktop .stats-choice-sub   { font-size: 11px; }
+body.desktop .stats-choice-total { font-size: var(--font-lg); }
+body.desktop .stats-choice-sub   { font-size: var(--font-xs); }
 
 #play-stats-inner {
     display: flex;
@@ -159,14 +153,14 @@ body.desktop .stats-choice-sub   { font-size: 11px; }
     flex-direction: column;
     gap: 1px;
     padding: 4px 5px;
-    border-top: 2px solid;   /* color set inline by JS */
+    border-top: 2px solid;
     overflow: hidden;
 }
 
 .stats-total {
-    font-size: 11px;
+    font-size: var(--font-xs);
     font-weight: 600;
-    color: #ccc;
+    color: var(--text-soft);
     line-height: 1.4;
     white-space: nowrap;
 }
@@ -174,32 +168,27 @@ body.desktop .stats-choice-sub   { font-size: 11px; }
 .stats-row {
     font-size: 10px;
     font-weight: 400;
-    color: #666;
+    color: var(--text-muted);
     line-height: 1.4;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
 }
 
-/* Mobile >3 routes: stack label above indented value */
 #play-stats-inner.stacked .stats-row {
     display: flex;
     flex-direction: column;
     white-space: normal;
 }
-#play-stats-inner.stacked .stats-label {
-    color: #555;
-}
+#play-stats-inner.stacked .stats-label { color: var(--text-dim); }
 #play-stats-inner.stacked .stats-value {
     padding-left: 6px;
-    color: #888;
+    color: var(--text-muted);
 }
 
-body.desktop .stats-total { font-size: 12px; }
-body.desktop .stats-row   { font-size: 11px; }
+body.desktop .stats-total { font-size: var(--font-sm); }
+body.desktop .stats-row   { font-size: var(--font-xs); }
 
-/* Inline icon inside a stats-row label (used for elevation + angle/corners
-   so the row stays compact on narrow phones) */
 .stats-icon {
     display: inline-flex;
     align-items: center;
@@ -209,14 +198,14 @@ body.desktop .stats-row   { font-size: 11px; }
 }
 
 /* =========================================================
-   COUNTDOWN BAR  (complex-CP reveal buffer indicator)
+   COUNTDOWN BAR
 ========================================================= */
 
 #play-countdown {
     height: 3px;
     flex-shrink: 0;
     width: 100%;
-    background: #c43030;     /* visible once the grey fill empties */
+    background: #c43030;
     display: none;
 }
 body.desktop #play-countdown { width: min(100%, 100vh); }
@@ -225,12 +214,10 @@ body.desktop #play-countdown { width: min(100%, 100vh); }
 #play-countdown-fill {
     height: 100%;
     width: 100%;
-    background: #cccccc;     /* bright grey when full */
-    /* transition duration set inline by JS */
+    background: #cccccc;
     transform-origin: left center;
 }
 
-/* When the buffer is over, the now fully-red bar pulses until selection. */
 #play-countdown.pulsing { animation: countdown-pulse 0.7s ease-in-out infinite; }
 @keyframes countdown-pulse {
     0%, 100% { opacity: 1; }
@@ -248,8 +235,8 @@ body.desktop #play-countdown { width: min(100%, 100vh); }
     align-items: center;
     gap: 6px;
     padding: 3px;
-    background: #1a1a1a;
-    border-top: 0.5px solid #2e2e2e;
+    background: var(--bg-2);
+    border-top: 0.5px solid var(--border);
 }
 
 /* =========================================================
@@ -270,14 +257,14 @@ body.desktop #play-progress {
 #play-progress-fill {
     height: 100%;
     width: 0%;
-    background: #e07020;
+    background: var(--brand);
     transition: width 0.4s ease;
 }
 
 body.training-mode      #play-progress-fill,
 body.replay-mode        #play-progress-fill,
 body.has-prior-results  #play-progress-fill {
-    background: #888;
+    background: var(--text-muted);
 }
 
 .play-btn {
@@ -286,9 +273,9 @@ body.has-prior-results  #play-progress-fill {
     min-width: 0;
     background: none;
     border: none;
-    border-right: 0.5px solid #2e2e2e;
-    color: #888;
-    font-size: 12px;
+    border-right: 0.5px solid var(--border);
+    color: var(--text-muted);
+    font-size: var(--font-sm);
     font-family: inherit;
     cursor: pointer;
     display: flex;
@@ -297,20 +284,20 @@ body.has-prior-results  #play-progress-fill {
     justify-content: center;
     gap: 3px;
     padding: 4px 2px;
-    transition: background 0.12s, color 0.12s;
+    transition: background var(--t-fast), color var(--t-fast);
     user-select: none;
     -webkit-tap-highlight-color: transparent;
 }
 
 .play-btn:last-child { border-right: none; }
-.play-btn:hover      { background: #222; color: #ccc; }
-.play-btn:active     { background: #2e2e2e; }
+.play-btn:hover      { background: var(--bg-3); color: var(--text-soft); }
+.play-btn:active     { background: var(--bg-4); }
 
-.play-btn.active     { color: #e07020; }
-.play-btn.active:hover { background: #222; color: #ff9933; }
+.play-btn.active     { color: var(--brand); }
+.play-btn.active:hover { background: var(--bg-3); color: var(--brand-hover); }
 
 .play-btn.danger       { color: #884444; }
-.play-btn.danger:hover { background: #222; color: #ff6666; }
+.play-btn.danger:hover { background: var(--bg-3); color: #ff6666; }
 
 .play-btn:disabled {
     opacity: 0.25;
@@ -333,14 +320,14 @@ body.has-prior-results  #play-progress-fill {
     flex: 1;
     height: calc(var(--btn-bar-h) - 6px);
     min-width: 0;
-    border-radius: 8px;
+    border-radius: var(--radius);
     border: none;
     padding: 0;
     opacity: 0.65;
     box-shadow:
         inset 0 1px 0 rgba(255,255,255,0.30),
         0 2px 5px rgba(0,0,0,0.55);
-    transition: opacity 0.15s, box-shadow 0.15s;
+    transition: opacity var(--t-med), box-shadow var(--t-med);
 }
 .play-btn.route-btn:hover  { opacity: 0.85; }
 .play-btn.route-btn:active { opacity: 1; }
@@ -348,51 +335,46 @@ body.has-prior-results  #play-progress-fill {
     opacity: 1;
     box-shadow:
         inset 0 1px 0 rgba(255,255,255,0.40),
-        0 0 0 2.5px #fff,
+        0 0 0 2.5px var(--text-strong),
         0 2px 6px rgba(0,0,0,0.6);
 }
 
-/* Non-complex CP: labeled variant — just add text styling */
 .play-btn.route-btn.route-btn-labeled {
-    color: #fff;
+    color: var(--text-strong);
     font-weight: 700;
     line-height: 1;
     text-shadow: 0 1px 2px rgba(0,0,0,0.45);
 }
 
-/* ── Post-choice states (buttonsDisabled = true) ──────────── */
+/* Post-choice states */
 
-/* Default: dimmed, shows delta text */
 .play-btn.route-btn:disabled {
     opacity: 0.5;
     cursor: default;
     pointer-events: none;
 }
 
-/* Selected by user: white ring + glow */
 .play-btn.route-btn.active:disabled {
     opacity: 1;
     cursor: default;
     pointer-events: none;
     box-shadow:
         inset 0 1px 0 rgba(255,255,255,0.40),
-        0 0 0 2.5px #fff,
+        0 0 0 2.5px var(--text-strong),
         0 0 12px rgba(255,255,255,0.55),
         0 2px 6px rgba(0,0,0,0.6);
 }
 
-/* Fastest route: just the trophy icon, no border effect — always white */
 .play-btn.route-btn.route-btn-fastest,
 .play-btn.route-btn.route-btn-fastest:disabled,
 .play-btn.route-btn.route-btn-fastest.active,
 .play-btn.route-btn.route-btn-fastest.active:disabled {
-    color: #fff;
+    color: var(--text-strong);
     opacity: 1;
     cursor: default;
     pointer-events: none;
 }
 
-/* Delta text inside non-fastest buttons */
 .route-btn-delta {
     display: flex;
     flex-direction: column;
@@ -410,7 +392,6 @@ body.has-prior-results  #play-progress-fill {
     white-space: nowrap;
 }
 
-/* Desktop, ≤4 routes: single line with parentheses */
 body.desktop .route-btn-delta:not(.two-lines) {
     flex-direction: row;
     gap: 2px;
@@ -420,8 +401,7 @@ body.desktop .route-btn-delta:not(.two-lines) .route-btn-delta-abs::before { con
 body.desktop .route-btn-delta:not(.two-lines) .route-btn-delta-abs::after  { content: ")"; }
 
 /* =========================================================
-   END-OF-FILE MODAL — appears when last CP is done and the
-   user tries to advance to the next control
+   END-OF-FILE MODAL
 ========================================================= */
 
 #play-end-modal {
@@ -444,76 +424,77 @@ body.desktop .route-btn-delta:not(.two-lines) .route-btn-delta-abs::after  { con
 }
 
 .play-end-card {
-    background: #1c1c1c;
-    border: 0.5px solid #333;
-    border-radius: 10px;
-    padding: 22px 22px 18px;
-    box-shadow: 0 10px 40px rgba(0,0,0,0.7);
+    background: var(--bg-2);
+    border: 0.5px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 24px 24px 20px;
+    box-shadow: var(--shadow-modal);
     min-width: 280px;
     max-width: 92vw;
     text-align: center;
 }
 
 .play-end-title {
-    margin: 0 0 4px;
-    font-size: 16px;
+    margin: 0 0 6px;
+    font-size: var(--font-lg);
     font-weight: 600;
-    color: #fff;
+    color: var(--text-strong);
 }
 .play-end-sub {
-    margin: 0 0 16px;
-    font-size: 12px;
-    color: #888;
+    margin: 0 0 18px;
+    font-size: var(--font-sm);
+    color: var(--text-muted);
 }
 
 .play-end-actions {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 10px;
 }
 
 .play-end-btn {
     display: block;
-    background: #e07020;
-    color: #fff;
+    background: var(--brand);
+    color: var(--text-strong);
     border: none;
-    border-radius: 6px;
-    padding: 11px 16px;
-    font-size: 13px;
+    border-radius: var(--radius);
+    padding: 12px 18px;
+    font-size: var(--font-sm);
     font-weight: 600;
     cursor: pointer;
-    transition: background 0.12s;
+    transition: background var(--t-fast);
     text-decoration: none;
     font-family: inherit;
+    min-height: var(--touch-target);
+    box-sizing: border-box;
 }
-.play-end-btn:hover { background: #f08030; }
+.play-end-btn:hover { background: var(--brand-hover); }
 .play-end-btn.secondary {
-    background: #262626;
-    color: #ccc;
+    background: var(--bg-4);
+    color: var(--text);
 }
-.play-end-btn.secondary:hover { background: #333; color: #fff; }
+.play-end-btn.secondary:hover { background: var(--bg-3); color: var(--text-strong); }
 
 /* =========================================================
-   MOBILE TYPOGRAPHY — make tap targets and text larger on
-   actual phones (the JS adds body.mobile based on UA)
+   MOBILE TYPOGRAPHY
 ========================================================= */
 
-body.mobile { --btn-bar-h: 90px; }
-body.mobile .play-btn          { font-size: 16px; }
-body.mobile .play-btn-label    { font-size: 16px; }
-body.mobile .route-btn-delta-rel { font-size: 16px; }
-body.mobile .route-btn-delta-abs { font-size: 14px; }
-body.mobile .play-end-title { font-size: 22px; }
-body.mobile .play-end-sub   { font-size: 16px; }
-body.mobile .play-end-btn   { font-size: 17px; padding: 16px 20px; }
-body.mobile .stats-choice-total { font-size: 18px; }
-body.mobile .stats-choice-sub   { font-size: 13px; }
+body.mobile { --btn-bar-h: 92px; }
+body.mobile .play-btn          { font-size: var(--font-lg); }
+body.mobile .play-btn-label    { font-size: var(--font-lg); }
+body.mobile .route-btn-delta-rel { font-size: var(--font-lg); }
+body.mobile .route-btn-delta-abs { font-size: var(--font-md); }
+body.mobile .play-end-title { font-size: var(--font-2xl); }
+body.mobile .play-end-sub   { font-size: var(--font-lg); }
+body.mobile .play-end-btn   { font-size: var(--font-lg); padding: 16px 22px; }
+body.mobile .stats-choice-total { font-size: var(--font-lg); }
+body.mobile .stats-choice-sub   { font-size: var(--font-sm); }
 
-/* Icon-only end-of-file action button (e.g. home) */
+/* Icon-only end-of-file action button */
 .play-end-btn.play-end-btn-icon {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    padding: 9px 16px;
+    padding: 12px 18px;
 }
 .play-end-btn.play-end-btn-icon svg { display: block; }

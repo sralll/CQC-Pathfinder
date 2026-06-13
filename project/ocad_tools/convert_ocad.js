@@ -138,6 +138,15 @@ function isCourseDisplayObject(object) {
   return COURSE_DISPLAY_EXCLUDED_SYMS.has(Number(object.sym));
 }
 
+function makeRenderableObjectFilter(ocadFile) {
+  const symbolByNumber = new Map((ocadFile.symbols || []).map((symbol) => [Number(symbol.symNum), symbol]));
+  return (object) => {
+    if (isCourseDisplayObject(object)) return false;
+    const symbol = symbolByNumber.get(Number(object.sym));
+    return !symbol || Number(symbol.status || 0) === 0;
+  };
+}
+
 function extractControlPoints(ocadFile, bounds, rasterScale, editorScale) {
   const points = {};
 
@@ -790,7 +799,7 @@ async function main() {
   const maskHeight = Math.max(1, Math.round((height * editorScale) / TRAIN_SCALE));
 
   if (!maskOnly) {
-    const mapObjects = (ocadFile.objects || []).filter((object) => !isCourseDisplayObject(object));
+    const mapObjects = (ocadFile.objects || []).filter(makeRenderableObjectFilter(ocadFile));
     const svg = serializeOcadSvg(ocadFile, mapObjects, width, height);
 
     fs.mkdirSync(path.dirname(pngOut), { recursive: true });

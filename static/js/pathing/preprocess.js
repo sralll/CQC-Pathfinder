@@ -196,7 +196,7 @@ export function corridorMask(polyline, sw, sh, radius) {
 // subgrid before applying the corridor mask, so theta* sees an obstacle halo
 // that costs ~10× more to traverse than fast terrain but is still passable
 // for narrow corridors.
-export function inflateObstacles(grid, w, h, radius = 1, dilationBlock = 150) {
+export function inflateObstacles(grid, w, h, radius = 1, dilationBlock = 255 - 24) {
     const out = new Uint8Array(grid);
     for (let y = 0; y < h; y++) {
         for (let x = 0; x < w; x++) {
@@ -212,7 +212,7 @@ export function inflateObstacles(grid, w, h, radius = 1, dilationBlock = 150) {
                     if (grid[ny * w + nx] === 0) { nearObstacle = true; break; }
                 }
             }
-            if (nearObstacle) out[idx] = dilationBlock;
+            if (nearObstacle && grid[idx] > dilationBlock) out[idx] = dilationBlock;
         }
     }
     return out;

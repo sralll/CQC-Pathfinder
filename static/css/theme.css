@@ -1,0 +1,258 @@
+/* =========================================================
+   THEME — shared design tokens for CQC Pathfinder.
+   Loaded from base.html so every page (home, results, stats,
+   file_results, play, random_play, login, feedback, editor)
+   reads the same palette, typography and spacing scale.
+========================================================= */
+
+:root {
+    /* ── Brand / accent ─────────────────────────────────── */
+    --brand:           #e07020;
+    --brand-hover:     #f08030;
+    --brand-active:    #c95e16;
+    --brand-soft:      rgba(224, 112, 32, 0.15);
+    --brand-outline:   rgba(224, 112, 32, 0.35);
+    --brand-gradient:  linear-gradient(180deg, #e07020 0%, #c95e16 100%);
+    --brand-gradient-h:linear-gradient(180deg, #f08030 0%, #d56a18 100%);
+
+    /* ── Backgrounds ────────────────────────────────────── */
+    --bg-0: #111;          /* navbar / deepest */
+    --bg-1: #151515;       /* page */
+    --bg-2: #1a1a1a;       /* card / panel */
+    --bg-3: #1f1f1f;       /* hovered row / nested */
+    --bg-4: #252525;       /* button hover */
+
+    /* ── Borders ────────────────────────────────────────── */
+    --border-soft:   #222;
+    --border:        #2e2e2e;
+    --border-strong: #3a3a3a;
+
+    /* ── Text ───────────────────────────────────────────── */
+    --text-strong: #fff;
+    --text:        #ddd;
+    --text-soft:   #aaa;
+    --text-muted:  #888;
+    --text-dim:    #555;
+    --text-faint:  #444;
+
+    --info:    #5b8db8;
+    --success: #4CAF50;
+    --warn:    #FFC107;
+    --danger:  #F44336;
+
+    /* ── Typography ─────────────────────────────────────── */
+    --font-stack: 'Segoe UI', Roboto, Arial, sans-serif;
+    --font-xs:    11px;
+    --font-sm:    12px;
+    --font-md:    14px;
+    --font-lg:    16px;
+    --font-xl:    20px;
+    --font-2xl:   24px;
+
+    /* ── Radius & spacing ───────────────────────────────── */
+    --radius-sm: 4px;
+    --radius:    6px;
+    --radius-lg: 10px;
+    --radius-xl: 14px;
+
+    /* ── Effects ────────────────────────────────────────── */
+    --shadow-card:  0 2px 8px rgba(0, 0, 0, 0.45);
+    --shadow-pop:   0 4px 16px rgba(0, 0, 0, 0.5);
+    --shadow-modal: 0 10px 40px rgba(0, 0, 0, 0.7);
+    --t-fast: 0.12s;
+    --t-med:  0.15s;
+
+    /* ── Mobile touch target ────────────────────────────── */
+    --touch-target: 44px;
+
+    /* ── Z scale (kept for backwards compat with base.html) */
+    --z-background: 0;
+    --z-map:        10;
+    --z-svg:        20;
+    --z-controls:   30;
+    --z-routes:     40;
+    --z-selection:  50;
+    --z-ui:         100;
+    --z-dropdown:   200;
+    --z-modal:      1000;
+}
+
+/* =========================================================
+   GLOBAL BASE — applied everywhere via base.html
+========================================================= */
+
+html, body {
+    font-family: var(--font-stack);
+    color: var(--text);
+    background: var(--bg-1);
+}
+
+/* iOS Safari likes to bump font size up on landscape — clamp it.
+   Wrapped in @supports so Firefox (which rejects the percentage
+   value for this prefixed property) skips it without warning. */
+@supports (-webkit-text-size-adjust: 100%) {
+    html { -webkit-text-size-adjust: 100%; }
+}
+
+/* Native form elements inherit the brand color where possible */
+input, button, select, textarea {
+    font-family: inherit;
+    color: inherit;
+}
+
+:focus-visible {
+    outline: 2px solid var(--brand-outline);
+    outline-offset: 1px;
+}
+
+::selection { background: var(--brand-soft); color: var(--text-strong); }
+
+/* =========================================================
+   UNIFIED BUTTONS — opt-in classes
+   .ui-btn        → neutral pill (dark background, border)
+   .ui-btn-primary→ orange CTA
+   .ui-btn-ghost  → transparent text-only button
+   .ui-btn-icon   → square icon button
+   On mobile every variant grows to >=44px tap target.
+========================================================= */
+
+.ui-btn,
+.ui-btn-primary,
+.ui-btn-ghost,
+.ui-btn-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    font-family: inherit;
+    font-size: var(--font-md);
+    font-weight: 500;
+    line-height: 1;
+    cursor: pointer;
+    border-radius: var(--radius);
+    padding: 9px 14px;
+    border: 0.5px solid var(--border);
+    background: var(--bg-2);
+    color: var(--text);
+    text-decoration: none;
+    transition: background var(--t-med), color var(--t-med),
+                border-color var(--t-med), transform 0.06s;
+    user-select: none;
+    white-space: nowrap;
+}
+
+.ui-btn:hover,
+.ui-btn-primary:hover,
+.ui-btn-ghost:hover,
+.ui-btn-icon:hover {
+    background: var(--bg-3);
+    color: var(--text-strong);
+    border-color: var(--border-strong);
+}
+
+.ui-btn:active,
+.ui-btn-primary:active,
+.ui-btn-ghost:active,
+.ui-btn-icon:active { transform: scale(0.98); }
+
+.ui-btn:disabled,
+.ui-btn-primary:disabled,
+.ui-btn-ghost:disabled,
+.ui-btn-icon:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+    pointer-events: none;
+}
+
+.ui-btn-primary {
+    background: var(--brand-gradient);
+    border-color: transparent;
+    color: var(--text-strong);
+    font-weight: 600;
+}
+.ui-btn-primary:hover {
+    background: var(--brand-gradient-h);
+    border-color: transparent;
+    color: var(--text-strong);
+}
+
+.ui-btn-ghost {
+    background: transparent;
+    border-color: transparent;
+    color: var(--text-soft);
+}
+.ui-btn-ghost:hover {
+    background: var(--bg-3);
+    color: var(--text-strong);
+    border-color: transparent;
+}
+
+.ui-btn-icon {
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    flex-shrink: 0;
+}
+
+/* =========================================================
+   UNIFIED CARD — opt-in class for content panels
+========================================================= */
+
+.ui-card {
+    background: var(--bg-2);
+    border: 0.5px solid var(--border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-card);
+}
+
+/* =========================================================
+   UNIFIED INPUTS — opt-in class for text inputs / selects
+========================================================= */
+
+.ui-input {
+    width: 100%;
+    box-sizing: border-box;
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-size: var(--font-md);
+    padding: 9px 12px;
+    outline: none;
+    transition: border-color var(--t-med), background var(--t-med);
+}
+.ui-input:hover  { border-color: var(--border-strong); }
+.ui-input:focus  { border-color: var(--brand); background: var(--bg-3); }
+.ui-input::placeholder { color: var(--text-faint); }
+
+/* =========================================================
+   MOBILE TOUCH TARGETS — anything that the user taps must
+   be at least 44px tall once body.mobile is set by JS.
+   Editor pages opt out by adding body.no-mobile-scale.
+========================================================= */
+
+body.mobile:not(.no-mobile-scale) .ui-btn,
+body.mobile:not(.no-mobile-scale) .ui-btn-primary,
+body.mobile:not(.no-mobile-scale) .ui-btn-ghost {
+    min-height: var(--touch-target);
+    padding: 12px 18px;
+    font-size: var(--font-lg);
+}
+
+body.mobile:not(.no-mobile-scale) .ui-btn-icon {
+    width: var(--touch-target);
+    height: var(--touch-target);
+}
+
+body.mobile:not(.no-mobile-scale) .ui-input {
+    font-size: var(--font-lg);
+    padding: 12px 14px;
+    min-height: var(--touch-target);
+}
+
+/* =========================================================
+   COMPATIBILITY — older nav/home/login/results files still
+   use bare hex values. Re-declare the legacy hex tokens to
+   the brand variables here so a single CSS change cascades.
+   (Kept defensive — bare hex remains valid CSS as is.)
+========================================================= */

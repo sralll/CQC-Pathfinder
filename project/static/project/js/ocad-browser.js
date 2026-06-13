@@ -14297,6 +14297,15 @@ function isCourseDisplayObject(object) {
   return COURSE_DISPLAY_EXCLUDED_SYMS.has(Number(object.sym));
 }
 
+function makeRenderableObjectFilter(ocadFile) {
+  const symbolByNumber = new Map((ocadFile.symbols || []).map((symbol) => [Number(symbol.symNum), symbol]));
+  return (object) => {
+    if (isCourseDisplayObject(object)) return false;
+    const symbol = symbolByNumber.get(Number(object.sym));
+    return !symbol || Number(symbol.status || 0) === 0;
+  };
+}
+
 function extractControlPoints(ocadFile, bounds, rasterScale, editorScale) {
   const points = {};
 
@@ -14672,7 +14681,7 @@ async function renderSvgPreview(file, options = {}) {
   const metersPerRasterPixel = mapScale / OCAD_UNITS_PER_METER_ON_PAPER / rasterScale;
   const width = Math.max(1, Math.round(widthUnits * rasterScale));
   const height = Math.max(1, Math.round(heightUnits * rasterScale));
-  const objects = (ocadFile.objects || []).filter((object) => !isCourseDisplayObject(object));
+  const objects = (ocadFile.objects || []).filter(makeRenderableObjectFilter(ocadFile));
   const svg = ocadToSvg(ocadFile, {
     document,
     exportHidden: true,

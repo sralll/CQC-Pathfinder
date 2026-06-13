@@ -1,5 +1,6 @@
 /* =========================================================
    STATS PAGE — personal & team performance overview
+   Built on shared theme tokens.
 ========================================================= */
 
 #play-wrap {
@@ -7,10 +8,9 @@
     align-items: stretch;
     justify-content: flex-start;
     overflow-y: auto;
-    padding: 12px;
+    padding: 14px;
     box-sizing: border-box;
 }
-
 
 /* ── Stats page header (3-way mode toggle + trainer controls) ─ */
 
@@ -34,8 +34,8 @@
     align-items: stretch;
     height: 36px;
     width: calc(var(--thumb-w) * 3 + var(--pad) * 2);
-    background: #1a1a1a;
-    border: 1px solid #2e2e2e;
+    background: var(--bg-2);
+    border: 1px solid var(--border);
     border-radius: 18px;
     padding: var(--pad);
     box-sizing: border-box;
@@ -48,8 +48,8 @@
     background: transparent;
     border: none;
     cursor: pointer;
-    color: #444;                /* dim grey icon for inactive stops */
-    transition: color 0.12s;
+    color: var(--text-faint);
+    transition: color var(--t-fast);
     z-index: 1;
     border-radius: 14px;
     padding: 0;
@@ -57,7 +57,7 @@
     align-items: center;
     justify-content: center;
 }
-.stats-3way-stop:hover { color: #777; }
+.stats-3way-stop:hover { color: var(--text-muted); }
 .stats-3way-stop x-icon { display: inline-flex; }
 
 .stats-3way-thumb {
@@ -66,14 +66,14 @@
     left: var(--pad);
     width:  var(--thumb-w);
     height: calc(100% - var(--pad) * 2);
-    background: #e07020;
+    background: var(--brand);
     border-radius: 14px;
     transition: transform 0.22s cubic-bezier(0.4, 0, 0.2, 1);
     display: flex;
     align-items: center;
     justify-content: center;
-    color: #fff;
-    z-index: 2;                 /* sits above the stops; pointer-events:none so clicks pass through */
+    color: var(--text-strong);
+    z-index: 2;
     pointer-events: none;
     box-shadow: 0 2px 5px rgba(0,0,0,0.4);
 }
@@ -82,7 +82,7 @@
 .stats-3way[data-mode="competition"] .stats-3way-thumb { transform: translateX(var(--thumb-w)); }
 .stats-3way[data-mode="random"]      .stats-3way-thumb { transform: translateX(calc(var(--thumb-w) * 2)); }
 
-body.mobile .stats-3way        { height: 44px; --thumb-w: 56px; border-radius: 22px; }
+body.mobile .stats-3way        { height: var(--touch-target); --thumb-w: 56px; border-radius: 22px; }
 body.mobile .stats-3way-thumb  { border-radius: 18px; }
 body.mobile .stats-3way-thumb x-icon { font-size: 20px; }
 
@@ -96,8 +96,8 @@ body.mobile .stats-3way-thumb x-icon { font-size: 20px; }
     align-items: stretch;
     height: 36px;
     width: calc(var(--thumb-w) * 2 + var(--pad) * 2);
-    background: #1a1a1a;
-    border: 1px solid #2e2e2e;
+    background: var(--bg-2);
+    border: 1px solid var(--border);
     border-radius: 18px;
     padding: var(--pad);
     box-sizing: border-box;
@@ -107,11 +107,11 @@ body.mobile .stats-3way-thumb x-icon { font-size: 20px; }
 
 .stats-2way-stop {
     flex: 1;
-    background: transparent !important;   /* override legacy .trainer-view-btn.active orange */
+    background: transparent !important;
     border: none;
     cursor: pointer;
-    color: #444;
-    transition: color 0.12s;
+    color: var(--text-faint);
+    transition: color var(--t-fast);
     z-index: 1;
     border-radius: 14px;
     padding: 0;
@@ -119,7 +119,7 @@ body.mobile .stats-3way-thumb x-icon { font-size: 20px; }
     align-items: center;
     justify-content: center;
 }
-.stats-2way-stop:hover    { color: #777; }
+.stats-2way-stop:hover    { color: var(--text-muted); }
 .stats-2way-stop:disabled { cursor: not-allowed; }
 .stats-2way-stop x-icon   { display: inline-flex; }
 
@@ -129,13 +129,13 @@ body.mobile .stats-3way-thumb x-icon { font-size: 20px; }
     left: var(--pad);
     width:  var(--thumb-w);
     height: calc(100% - var(--pad) * 2);
-    background: #e07020;
+    background: var(--brand);
     border-radius: 14px;
     transition: transform 0.22s cubic-bezier(0.4, 0, 0.2, 1);
     display: flex;
     align-items: center;
     justify-content: center;
-    color: #fff;
+    color: var(--text-strong);
     z-index: 2;
     pointer-events: none;
     box-shadow: 0 2px 5px rgba(0,0,0,0.4);
@@ -146,29 +146,29 @@ body.mobile .stats-3way-thumb x-icon { font-size: 20px; }
 
 .stats-2way.disabled-table .stats-2way-stop[data-view="table"] { opacity: 0.4; }
 
-body.mobile .stats-2way        { height: 44px; --thumb-w: 56px; border-radius: 22px; }
+body.mobile .stats-2way        { height: var(--touch-target); --thumb-w: 56px; border-radius: 22px; }
 body.mobile .stats-2way-thumb  { border-radius: 18px; }
 body.mobile .stats-2way-thumb x-icon { font-size: 20px; }
 
 .trainer-view-toggle {
     display: inline-flex;
-    background: #1a1a1a;
-    border: 0.5px solid #2e2e2e;
-    border-radius: 6px;
+    background: var(--bg-2);
+    border: 0.5px solid var(--border);
+    border-radius: var(--radius);
     overflow: hidden;
 }
 
 .trainer-view-btn {
     background: transparent;
     border: none;
-    color: #888;
-    padding: 6px 14px;
-    font-size: 12px;
+    color: var(--text-muted);
+    padding: 8px 14px;
+    font-size: var(--font-sm);
     cursor: pointer;
-    transition: background 0.15s, color 0.15s;
+    transition: background var(--t-med), color var(--t-med);
 }
-.trainer-view-btn:hover  { color: #ccc; background: #222; }
-.trainer-view-btn.active { color: #fff; background: #e07020; }
+.trainer-view-btn:hover  { color: var(--text); background: var(--bg-3); }
+.trainer-view-btn.active { color: var(--text-strong); background: var(--brand); }
 
 #trainer-athlete-picker {
     position: relative;
@@ -180,34 +180,35 @@ body.mobile .stats-2way-thumb x-icon { font-size: 20px; }
 #trainer-athlete-search {
     width: 100%;
     box-sizing: border-box;
-    background: #1a1a1a;
-    border: 1px solid #2e2e2e;
-    border-radius: 5px;
-    color: #ccc;
-    font-size: 13px;
-    padding: 7px 28px 7px 11px;
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-size: var(--font-sm);
+    padding: 9px 30px 9px 12px;
     outline: none;
-    transition: border-color 0.15s;
+    transition: border-color var(--t-med);
 }
-#trainer-athlete-search:focus      { border-color: #555; }
-#trainer-athlete-search::placeholder { color: #444; }
+#trainer-athlete-search:focus      { border-color: var(--brand); }
+#trainer-athlete-search::placeholder { color: var(--text-faint); }
 
 #trainer-athlete-clear {
     position: absolute;
-    right: 5px;
+    right: 6px;
     top: 50%;
     transform: translateY(-50%);
     background: none;
     border: none;
-    color: #555;
+    color: var(--text-dim);
     cursor: pointer;
-    font-size: 16px;
+    font-size: var(--font-lg);
     line-height: 1;
-    padding: 0 4px;
+    padding: 4px 6px;
+    border-radius: var(--radius-sm);
     display: none;
 }
-#trainer-athlete-clear.visible        { display: block; color: #ff6666; }
-#trainer-athlete-clear.visible:hover  { color: #fff; }
+#trainer-athlete-clear.visible        { display: block; color: var(--danger); }
+#trainer-athlete-clear.visible:hover  { color: var(--text-strong); }
 
 .trainer-dropdown {
     display: none;
@@ -217,31 +218,31 @@ body.mobile .stats-2way-thumb x-icon { font-size: 20px; }
     right: 0;
     max-height: 260px;
     overflow-y: auto;
-    background: #1a1a1a;
-    border: 0.5px solid #333;
-    border-radius: 6px;
-    box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+    background: var(--bg-2);
+    border: 0.5px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-pop);
     z-index: 1000;
 }
 .trainer-dropdown.open { display: block; }
 
 .trainer-athlete-option {
-    padding: 7px 12px;
-    color: #aaa;
-    font-size: 12px;
+    padding: 8px 12px;
+    color: var(--text-soft);
+    font-size: var(--font-sm);
     cursor: pointer;
     transition: background 0.1s, color 0.1s;
 }
-.trainer-athlete-option:hover { background: #252525; color: #fff; }
-.trainer-athlete-option.active { color: #e07020; }
+.trainer-athlete-option:hover { background: var(--bg-4); color: var(--text-strong); }
+.trainer-athlete-option.active { color: var(--brand); }
 .trainer-athlete-option.trainer-own {
-    border-bottom: 0.5px solid #2e2e2e;
+    border-bottom: 0.5px solid var(--border);
     font-style: italic;
 }
 .trainer-athlete-empty {
-    padding: 10px 12px;
-    color: #555;
-    font-size: 11px;
+    padding: 12px;
+    color: var(--text-dim);
+    font-size: var(--font-xs);
     text-align: center;
 }
 
@@ -256,14 +257,9 @@ body.mobile .stats-2way-thumb x-icon { font-size: 20px; }
     min-height: 0;
 }
 
-/* On desktop allow page scrolling only when the viewport is too short for
-   the minimum-height grid; otherwise everything fits inside the viewport. */
 body.desktop #play-wrap { overflow-y: auto; }
 body.desktop #stats-header { width: 100%; max-width: none; }
 
-/* Cards should never spill out of their grid cell. Once data loads the
-   contents (donut + legend, bars, facts grid) are sized inside the
-   constrained body — never bigger than the grid row gives us. */
 .stats-card { overflow: hidden; }
 .stats-card-body { min-height: 0; }
 
@@ -271,12 +267,13 @@ body.desktop #stats-header { width: 100%; max-width: none; }
     position: relative;
     display: flex;
     flex-direction: column;
-    background: #1a1a1a;
-    border: 0.5px solid #2e2e2e;
-    border-radius: 9px;
+    background: var(--bg-2);
+    border: 0.5px solid var(--border);
+    border-radius: var(--radius-lg);
     padding: 14px 16px;
     min-width: 0;
     min-height: 0;
+    box-shadow: var(--shadow-card);
 }
 
 .stats-card-head {
@@ -288,26 +285,26 @@ body.desktop #stats-header { width: 100%; max-width: none; }
 
 .stats-card-title {
     margin: 0;
-    font-size: 13px;
+    font-size: var(--font-md);
     font-weight: 600;
-    color: #ddd;
+    color: var(--text);
 }
 
 .stats-card-expand {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 22px;
-    height: 22px;
+    width: 24px;
+    height: 24px;
     background: transparent;
     border: none;
-    color: #555;
+    color: var(--text-dim);
     cursor: pointer;
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     padding: 0;
-    transition: color 0.15s, background 0.15s;
+    transition: color var(--t-med), background var(--t-med);
 }
-.stats-card-expand:hover { color: #ccc; background: #222; }
+.stats-card-expand:hover { color: var(--text); background: var(--bg-3); }
 .stats-card-expand svg   { display: block; }
 
 .stats-card-body {
@@ -327,14 +324,12 @@ body.desktop #stats-header { width: 100%; max-width: none; }
     width: 28px;
     height: 28px;
     margin: -14px 0 0 -14px;
-    border: 2px solid #2e2e2e;
-    border-top-color: #e07020;
+    border: 2px solid var(--border);
+    border-top-color: var(--brand);
     border-radius: 50%;
     animation: stats-spin 0.8s linear infinite;
 }
 @keyframes stats-spin { to { transform: rotate(360deg); } }
-
-/* ── Expand: one card fills the whole grid area ──────── */
 
 #stats-grid.has-expanded > .stats-card:not(.expanded) { display: none; }
 #stats-grid.has-expanded > .stats-card.expanded {
@@ -361,8 +356,8 @@ body.desktop #stats-header { width: 100%; max-width: none; }
     justify-content: center;
     gap: 6px 14px;
     margin-top: 8px;
-    font-size: 11px;
-    color: #999;
+    font-size: var(--font-xs);
+    color: var(--text-soft);
     flex-shrink: 0;
 }
 
@@ -383,45 +378,32 @@ body.desktop #stats-header { width: 100%; max-width: none; }
 .stats-donut-legend-icon {
     display: inline-flex;
     align-items: center;
-    color: #4CAF50;
+    color: var(--success);
 }
 
 /* ── Tooltip (donut + bar hover) ─────────────────────── */
 
 .stats-tooltip {
     position: fixed;
-    background: #1c1c1c;
-    border: 0.5px solid #333;
-    border-radius: 4px;
-    padding: 4px 8px;
-    font-size: 11px;
-    color: #ddd;
+    background: var(--bg-2);
+    border: 0.5px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 5px 9px;
+    font-size: var(--font-xs);
+    color: var(--text);
     pointer-events: none;
     opacity: 0;
     transition: opacity 0.1s ease;
     z-index: 10000;
     white-space: nowrap;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+    box-shadow: var(--shadow-card);
 }
 
 .stats-hover-target { cursor: pointer; }
 
-/* ── Chart entry animations ──────────────────────────── */
-
-/* Donut: stroke an arc into existence by transitioning dashoffset → 0 */
-.stats-donut-arc {
-    transition: stroke-dashoffset 0.6s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-/* Bar: grow from the baseline using scaleY (transform-origin set inline) */
-.stats-bar {
-    transition: transform 0.45s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-/* Activity bar uses the same treatment */
-.stats-activity-bar {
-    transition: transform 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-}
+.stats-donut-arc { transition: stroke-dashoffset 0.6s cubic-bezier(0.4, 0, 0.2, 1); }
+.stats-bar { transition: transform 0.45s cubic-bezier(0.4, 0, 0.2, 1); }
+.stats-activity-bar { transition: transform 0.4s cubic-bezier(0.4, 0, 0.2, 1); }
 
 /* ── Facts card ──────────────────────────────────────── */
 
@@ -438,23 +420,23 @@ body.desktop #stats-header { width: 100%; max-width: none; }
     align-items: center;
     justify-content: center;
     gap: 4px;
-    background: #151515;
-    border: 0.5px solid #262626;
-    border-radius: 8px;
+    background: var(--bg-1);
+    border: 0.5px solid var(--border);
+    border-radius: var(--radius-lg);
     padding: 10px 6px;
     text-align: center;
 }
 
 .stats-fact-value {
-    font-size: 19px;
+    font-size: var(--font-xl);
     font-weight: 700;
-    color: #e07020;
+    color: var(--brand);
     font-variant-numeric: tabular-nums;
 }
 
 .stats-fact-label {
     font-size: 10px;
-    color: #888;
+    color: var(--text-muted);
     line-height: 1.3;
 }
 
@@ -464,37 +446,38 @@ body.desktop #stats-header { width: 100%; max-width: none; }
     display: none;
     width: 100%;
     margin: 0;
-    background: #1a1a1a;
-    border: 0.5px solid #2e2e2e;
-    border-radius: 10px;
+    background: var(--bg-2);
+    border: 0.5px solid var(--border);
+    border-radius: var(--radius-lg);
     overflow-x: auto;
+    box-shadow: var(--shadow-card);
 }
 
 #stats-table {
     width: 100%;
     border-collapse: collapse;
-    font-size: 12px;
-    color: #ccc;
+    font-size: var(--font-sm);
+    color: var(--text);
     min-width: 720px;
 }
 
 #stats-table thead th {
     position: sticky;
     top: 0;
-    background: #1a1a1a;
-    color: #aaa;
+    background: var(--bg-2);
+    color: var(--text-soft);
     font-weight: 500;
     text-align: right;
-    padding: 9px 8px;
-    border-bottom: 0.5px solid #2e2e2e;
+    padding: 10px 9px;
+    border-bottom: 0.5px solid var(--border);
     white-space: nowrap;
 }
 
 #stats-table thead th.stats-th-name { text-align: left; }
 
 #stats-table tbody td {
-    padding: 8px;
-    border-bottom: 0.5px solid #232323;
+    padding: 9px;
+    border-bottom: 0.5px solid var(--border-soft);
     text-align: right;
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
@@ -502,30 +485,26 @@ body.desktop #stats-header { width: 100%; max-width: none; }
 
 #stats-table tbody td:first-child {
     text-align: left;
-    color: #ddd;
+    color: var(--text);
 }
 
-#stats-table tbody tr:hover td { background: #222; }
+#stats-table tbody tr:hover td { background: var(--bg-3); }
 
 #stats-table tbody tr.stats-table-summary td {
-    color: #fff;
+    color: var(--text-strong);
     font-weight: 600;
-    background: #1f1f1f;
-    border-bottom: 0.5px solid #3a3a3a;
+    background: var(--bg-3);
+    border-bottom: 0.5px solid var(--border-strong);
 }
-#stats-table tbody tr.stats-table-summary:hover td { background: #262626; }
+#stats-table tbody tr.stats-table-summary:hover td { background: var(--bg-4); }
 
-/* ── Sort indicators on trainer-table headers ────────── */
-
-#stats-table thead th[data-sort]        { user-select: none; }
-#stats-table thead th[data-sort]:hover  { color: #ddd; background: #1f1f1f; }
+#stats-table thead th[data-sort]        { user-select: none; cursor: pointer; }
+#stats-table thead th[data-sort]:hover  { color: var(--text); background: var(--bg-3); }
 .stats-th-sort {
     font-size: 10px;
     margin-left: 2px;
-    color: #e07020;
+    color: var(--brand);
 }
-
-/* ── Greying while reloading the trainer table ───────── */
 
 #stats-table-wrap.loading { position: relative; }
 #stats-table-wrap.loading tbody { opacity: 0.35; pointer-events: none; }
@@ -535,8 +514,8 @@ body.desktop #stats-header { width: 100%; max-width: none; }
     top: 50%; left: 50%;
     width: 28px; height: 28px;
     margin: -14px 0 0 -14px;
-    border: 2px solid #2e2e2e;
-    border-top-color: #e07020;
+    border: 2px solid var(--border);
+    border-top-color: var(--brand);
     border-radius: 50%;
     animation: stats-spin 0.8s linear infinite;
 }
@@ -545,7 +524,7 @@ body.desktop #stats-header { width: 100%; max-width: none; }
 
 @media (max-width: 700px) {
     html, body { overflow: auto; }
-    body.desktop #play-wrap { overflow: auto; }   /* override desktop lock when on small viewport */
+    body.desktop #play-wrap { overflow: auto; }
     #play-wrap {
         height: auto;
         min-height: calc(100vh - var(--navbar-h));
@@ -554,37 +533,36 @@ body.desktop #stats-header { width: 100%; max-width: none; }
     #stats-grid {
         grid-template-columns: 1fr;
         grid-template-rows: none;
-        grid-auto-rows: minmax(62vh, auto);   /* tall enough that one chart almost fills the screen */
+        grid-auto-rows: minmax(60vh, auto);
         flex: none;
         min-height: 0;
     }
-    /* Facts card stays compact — it's 4 numbers, doesn't need a full screen */
     #stats-card-facts { grid-row: auto / span 1; }
     #stats-card-facts .stats-card-body { min-height: 200px; }
 
     #trainer-bar          { gap: 8px; }
     #trainer-athlete-picker { max-width: none; }
     .nav-mode-toggle      { margin-left: 6px; }
-    #stats-table          { font-size: 12px; min-width: 0; }
-    #stats-table thead th { padding: 7px 5px; font-size: 12px; }
-    #stats-table tbody td { padding: 6px 5px; }
+    #stats-table          { font-size: var(--font-sm); min-width: 0; }
+    #stats-table thead th { padding: 8px 6px; font-size: var(--font-sm); }
+    #stats-table tbody td { padding: 8px 6px; }
     .stats-card-expand    { display: none; }
 }
 
-/* Mobile typography — phones get noticeably larger text */
-body.mobile .stats-card-title       { font-size: 17px; }
+/* Mobile typography */
+body.mobile .stats-card-title       { font-size: var(--font-lg); }
 body.mobile .stats-fact-value       { font-size: 28px; }
-body.mobile .stats-fact-label       { font-size: 14px; }
-body.mobile .stats-donut-legend     { font-size: 15px; gap: 8px 18px; }
-body.mobile .trainer-view-btn      { font-size: 16px; padding: 11px 18px; }
-body.mobile #trainer-athlete-search { font-size: 17px; padding: 12px 34px 12px 14px; }
-body.mobile .trainer-athlete-option { font-size: 16px; padding: 12px 16px; }
-body.mobile #stats-table            { font-size: 15px; }
-body.mobile #stats-table thead th   { font-size: 15px; padding: 11px 6px; }
-body.mobile #stats-table tbody td   { padding: 10px 6px; }
-body.mobile .stats-tooltip          { font-size: 14px; padding: 7px 11px; }
+body.mobile .stats-fact-label       { font-size: var(--font-sm); }
+body.mobile .stats-donut-legend     { font-size: var(--font-md); gap: 8px 18px; }
+body.mobile .trainer-view-btn       { font-size: var(--font-lg); padding: 12px 18px; min-height: var(--touch-target); }
+body.mobile #trainer-athlete-search { font-size: var(--font-lg); padding: 13px 36px 13px 14px; min-height: var(--touch-target); }
+body.mobile .trainer-athlete-option { font-size: var(--font-lg); padding: 14px 16px; min-height: var(--touch-target); box-sizing: border-box; }
+body.mobile #stats-table            { font-size: var(--font-md); }
+body.mobile #stats-table thead th   { font-size: var(--font-md); padding: 12px 7px; }
+body.mobile #stats-table tbody td   { padding: 11px 7px; }
+body.mobile .stats-tooltip          { font-size: var(--font-md); padding: 8px 12px; }
 
-/* Crown column in trainer table: align icon to the right like the other numeric cells */
+/* Crown column in trainer table */
 #stats-table thead th.stats-th-crown {
     text-align: right;
 }
@@ -596,6 +574,6 @@ body.mobile .stats-tooltip          { font-size: 14px; padding: 7px 11px; }
 .stats-cell-crown {
     display: inline-flex;
     align-items: center;
-    color: #4CAF50;
+    color: var(--success);
     vertical-align: middle;
 }

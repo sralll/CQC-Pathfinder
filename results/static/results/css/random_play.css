@@ -1,37 +1,38 @@
 /* =========================================================
    RANDOM PLAY — overrides for play.css. Reuses #play-wrap,
    #map-container, #play-btn-bar, #play-progress structure.
+   Built on shared theme tokens.
 ========================================================= */
 
-/* HUD strip on top: attempts left · last choice time centre · streak/flame right */
+/* HUD strip on top */
 #rp-hud {
     flex-shrink: 0;
     width: 100%;
     display: grid;
     grid-template-columns: 1fr 1fr 1fr;
     align-items: center;
-    background: #161616;
-    border-bottom: 0.5px solid #2a2a2a;
+    background: var(--bg-2);
+    border-bottom: 0.5px solid var(--border);
     padding: 6px 14px;
     box-sizing: border-box;
-    min-height: 42px;
+    min-height: 44px;
 }
 body.desktop #rp-hud { width: min(100%, 100vh); }
 
 .rp-hud-attempts {
     justify-self: start;
-    font-size: 18px;
+    font-size: var(--font-lg);
     font-weight: 700;
-    color: #777;
+    color: var(--text-muted);
     font-variant-numeric: tabular-nums;
     line-height: 1;
 }
 
 .rp-hud-choice-time {
     justify-self: center;
-    font-size: 16px;
+    font-size: var(--font-lg);
     font-weight: 600;
-    color: #ccc;
+    color: var(--text-soft);
     font-variant-numeric: tabular-nums;
     line-height: 1;
     min-height: 1em;
@@ -43,11 +44,11 @@ body.desktop #rp-hud { width: min(100%, 100vh); }
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    color: #666;             /* default flame colour (no streak) */
+    color: var(--text-muted);
     transition: color 0.2s ease, transform 0.2s ease;
 }
 .rp-hud-flame.is-record {
-    color: #e07020;
+    color: var(--brand);
     transform: scale(1.05);
 }
 .rp-hud-flame x-icon { font-size: 32px; }
@@ -58,21 +59,19 @@ body.desktop #rp-hud { width: min(100%, 100vh); }
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 12px;
+    font-size: var(--font-sm);
     font-weight: 700;
-    color: #fff;
+    color: var(--text-strong);
     pointer-events: none;
-    /* Nudge the number into the flame body, away from the wick at the top */
     transform: translateY(3px);
 }
 
-body.mobile .rp-hud-attempts    { font-size: 22px; }
+body.mobile .rp-hud-attempts    { font-size: var(--font-2xl); }
 body.mobile .rp-hud-choice-time { font-size: 19px; }
 body.mobile .rp-hud-flame x-icon { font-size: 38px; }
-body.mobile .rp-hud-streak      { font-size: 14px; transform: translateY(4px); }
+body.mobile .rp-hud-streak      { font-size: var(--font-md); transform: translateY(4px); }
 
-/* Map: the SVG fills the play.css map-container, overriding play.css's
-   camera/scale-layer chain (we don't pan/zoom in random play). */
+/* Map fills the play.css map-container */
 .rp-play-wrap #camera,
 .rp-play-wrap #map-scale-layer {
     position: absolute;
@@ -88,16 +87,13 @@ body.mobile .rp-hud-streak      { font-size: 14px; transform: translateY(4px); }
     background: #FFE9A7;   /* IOF open yellow base */
 }
 
-/* The SVG rotation group is animated when scenes transition */
 #rp-rotation { transition: none; }
 
-/* The crown / delta replace the Links/Rechts label inside the same span,
-   so the layout slot is identical and centered. */
 .rp-play-wrap .play-btn .play-btn-label.rp-btn-crown {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    color: #fff;
+    color: var(--text-strong);
 }
 
 .rp-play-wrap .play-btn .play-btn-label.route-btn-delta {

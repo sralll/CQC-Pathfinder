@@ -46,6 +46,20 @@
         <div id="undo-dropdown" class="nav-dropdown" style="min-width:220px;max-height:320px;overflow-y:auto;"></div>
     </div>
 
+    <div id="menu-batch" class="nav-menu-item">
+        <x-icon name="industry" size="13px"></x-icon>
+        <div class="nav-dropdown" onclick="event.stopPropagation();" style="min-width:200px;">
+            <div id="batch-switch-lr" class="nav-dropdown-item">
+                <x-icon name="arrows-split" size="12px" style="transform:scaleY(-1)"></x-icon>
+                <span>Alle Posten</span>
+            </div>
+            <div id="batch-auto-pathfind" class="nav-dropdown-item">
+                <x-icon name="wand-magic-sparkles" size="12px"></x-icon>
+                <span>Alle Posten</span>
+            </div>
+        </div>
+    </div>
+
     <div id="menu-einstellungen" class="nav-menu-item">
         Einstellungen
         <div class="nav-dropdown" onclick="event.stopPropagation();">
@@ -73,9 +87,9 @@
         <div id="sidebar-top">
             <div id="scale-panel" style="display:none;">
                 <div class="scale-panel-info">
-                    <div class="scale-step"><span class="scale-step-num">1</span>Zwei Punkte auf der Karte heraussuchen.</div>
-                    <div class="scale-step"><span class="scale-step-num">2</span>Abstand messen (<a href="https://earth.google.com" target="_blank" rel="noopener noreferrer">Google Earth</a>, <a href="https://www.google.com/maps" target="_blank" rel="noopener noreferrer">Google Maps</a>).</div>
-                    <div class="scale-step"><span class="scale-step-num">3</span>Punkte auf der Karte anklicken und Distanz eingeben.</div>
+                    <div class="scale-step"><span class="scale-step-num">1</span><span class="scale-step-text">Zwei Punkte auf der Karte heraussuchen.</span></div>
+                    <div class="scale-step"><span class="scale-step-num">2</span><span class="scale-step-text">Abstand messen (<a href="https://earth.google.com" target="_blank" rel="noopener noreferrer">Google Earth</a>, <a href="https://www.google.com/maps" target="_blank" rel="noopener noreferrer">Google Maps</a>).</span></div>
+                    <div class="scale-step"><span class="scale-step-num">3</span><span class="scale-step-text">Punkte auf der Karte anklicken und Distanz eingeben.</span></div>
                 </div>
                 <div id="scale-status" class="scale-status">Klicke ersten Punkt auf der Karte…</div>
             </div>
@@ -237,7 +251,9 @@
             <div class="modal-header-center">
                 <div class="search-wrapper">
                     <input type="text" id="project-search" placeholder="Suchen...">
-                    <button id="clear-search-btn" class="search-clear" type="button">×</button>
+                    <button id="clear-search-btn" class="search-clear" type="button">
+                        <x-icon name="xmark" size="1.2rem"></x-icon>
+                    </button>
                 </div>
             </div>
             <div class="modal-header-right">
@@ -301,15 +317,27 @@
             <div id="map-dropzone" class="map-dropzone">
                 <x-icon name="cloud-arrow-up" size="3rem"></x-icon>
                 <div class="map-upload-title">Karte ablegen</div>
-                <div class="map-upload-subtitle">PNG, JPEG oder OCAD • max. 50 MB</div>
+                <div class="map-upload-subtitle">PNG, JPEG oder OCAD • max. 15 MB</div>
                 <button id="browse-map-btn" type="button" class="browse-btn">Durchsuchen</button>
                 <input type="file" id="map-file-input" accept="image/*,.ocd,.ocad" hidden>
             </div>
-            <div id="selected-map-info" class="selected-map-info" style="display:none;">
-                <div class="selected-map-name">Keine Datei gewählt</div>
-                <button id="upload-map-btn" class="toolbar-btn" disabled title="Karte hochladen">
-                    <x-icon name="upload" size="1.5rem"></x-icon>
-                </button>
+            <div id="ocad-import-options" class="ocad-import-options" style="display:none;">
+                <div class="ocad-import-file-name"></div>
+                <div class="ocad-import-checks">
+                    <label class="ocad-import-check disabled">
+                        <x-icon name="check" size="14px"></x-icon>
+                        <span>Karte</span>
+                    </label>
+                    <label class="ocad-import-check">
+                        <input type="checkbox" id="ocad-import-posten" checked>
+                        <span>Posten</span>
+                    </label>
+                    <label class="ocad-import-check">
+                        <input type="checkbox" id="ocad-import-routen" checked>
+                        <span>Routen</span>
+                    </label>
+                </div>
+                <button id="ocad-upload-btn" class="browse-btn ocad-upload-btn">Importieren</button>
             </div>
         </div>
     </div>
@@ -321,8 +349,9 @@
     <div class="modal-scale-box" style="pointer-events:auto;">
         <div class="scale-modal-body">
             <label class="scale-modal-label">
-                Gemessene Distanz
-                <input type="number" id="scale-distance-m" min="1" step="1" placeholder="Gemessene Distanz (m)">
+                Distanz oder Koordinaten
+                <input type="text" id="scale-distance-m" inputmode="decimal" autocomplete="off"
+                       placeholder='1234 m oder Punkt 1: "46.907604, 7.165145", Punkt 2: "46.914287, 7.138275"'>
             </label>
             <div class="scale-ratio-row">
                 <span class="scale-ratio-text">Massstab&nbsp;&nbsp;1 :</span>

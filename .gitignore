@@ -32,3 +32,8 @@ svg_icons/
 
 desktop.ini
 
+changes.txt
+
+*.ocd
+
+*.json

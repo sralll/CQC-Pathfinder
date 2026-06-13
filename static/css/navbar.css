@@ -10,10 +10,10 @@
     height: 28px;
     display: flex;
     align-items: center;
-    background: #111;
-    border-bottom: 0.5px solid #222;
+    background: var(--bg-0);
+    border-bottom: 0.5px solid var(--border-soft);
     z-index: 10;
-    font-family: Arial, sans-serif;
+    font-family: var(--font-stack);
 }
 
 /* ── Layout helpers ───────────────────────────────────── */
@@ -38,7 +38,7 @@
 .nav-divider {
     width: 1px;
     height: 16px;
-    background: #333;
+    background: var(--border);
     flex-shrink: 0;
 }
 
@@ -49,18 +49,18 @@
     display: flex;
     align-items: center;
     height: 100%;
-    padding: 0 6px;
-    color: #aaa;
-    font-size: 14px;
-    border-radius: 3px;
+    padding: 0 8px;
+    color: var(--text-soft);
+    font-size: var(--font-md);
+    border-radius: var(--radius-sm);
     cursor: pointer;
     user-select: none;
 }
 
 .nav-menu-item:hover,
 .nav-menu-item.open {
-    background: #1e1e1e;
-    color: #fff;
+    background: var(--bg-3);
+    color: var(--text-strong);
 }
 
 .nav-dropdown {
@@ -69,9 +69,10 @@
     top: 100%;
     left: 0;
     min-width: 180px;
-    background: #1a1a1a;
-    border: 0.5px solid #333;
-    border-radius: 0 0 6px 6px;
+    background: var(--bg-2);
+    border: 0.5px solid var(--border);
+    border-radius: 0 0 var(--radius) var(--radius);
+    box-shadow: var(--shadow-pop);
     z-index: 100;
 }
 
@@ -82,28 +83,33 @@
     align-items: center;
     justify-content: space-between;
     padding: 7px 14px;
-    color: #ccc;
-    font-size: 13px;
+    color: var(--text);
+    font-size: var(--font-sm);
     cursor: pointer;
 }
 
-.nav-dropdown div:hover { background: #222; color: #fff; }
+.nav-dropdown div:hover { background: var(--bg-3); color: var(--text-strong); }
 
-.menu-shortcut { color: #888; font-size: 12px; }
+.nav-dropdown-item {
+    justify-content: flex-start !important;
+    gap: 8px;
+}
+
+.menu-shortcut { color: var(--text-muted); font-size: var(--font-sm); }
 
 /* ── Results nav link ─────────────────────────────────── */
 
 .nav-results-link {
-    font-size: 12px;
-    color: #aaa;
+    font-size: var(--font-sm);
+    color: var(--text-soft);
     text-decoration: none;
     padding: 0 6px;
     white-space: nowrap;
     transition: color 0.1s;
 }
 
-.nav-results-link:hover { color: #fff; }
-.nav-results-link.active { color: #e07020; }
+.nav-results-link:hover { color: var(--text-strong); }
+.nav-results-link.active { color: var(--brand); }
 
 /* ── Mobile hamburger ─────────────────────────────────── */
 
@@ -113,14 +119,14 @@
     justify-content: center;
     background: none;
     border: none;
-    color: #888;
+    color: var(--text-muted);
     cursor: pointer;
     padding: 0 10px;
     height: 28px;
     flex-shrink: 0;
     transition: color 0.1s;
 }
-.nav-ham-btn:hover { color: #fff; }
+.nav-ham-btn:hover { color: var(--text-strong); }
 
 /* Desktop: panel children flow inline as if the wrapper doesn't exist */
 body.desktop .nav-ham-panel { display: contents; }
@@ -133,37 +139,39 @@ body.mobile .nav-ham-panel {
     position: fixed;
     top: 28px;
     flex-direction: column;
-    background: #1a1a1a;
-    border: 0.5px solid #333;
+    background: var(--bg-2);
+    border: 0.5px solid var(--border);
     border-top: none;
     z-index: 10002;
     min-width: 200px;
     padding: 6px 0;
-    box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+    box-shadow: var(--shadow-pop);
 }
 body.mobile .nav-ham-panel.open { display: flex; }
 
 /* Left panel anchors left */
-body.mobile #nav-panel-left  { left: 0; border-radius: 0 0 6px 0; }
+body.mobile #nav-panel-left  { left: 0; border-radius: 0 0 var(--radius) 0; }
 /* Right panel anchors right */
-body.mobile .nav-ham-panel-right { right: 0; border-radius: 0 0 0 6px; }
+body.mobile .nav-ham-panel-right { right: 0; border-radius: 0 0 0 var(--radius); }
 
 /* Item styles inside mobile dropdown */
 body.mobile .nav-ham-panel .nav-results-link {
     display: block;
-    padding: 9px 16px;
-    font-size: 13px;
-    color: #ccc;
+    padding: 11px 16px;
+    font-size: var(--font-md);
+    color: var(--text);
+    min-height: var(--touch-target);
+    box-sizing: border-box;
 }
-body.mobile .nav-ham-panel .nav-results-link:hover { color: #fff; background: #222; }
+body.mobile .nav-ham-panel .nav-results-link:hover { color: var(--text-strong); background: var(--bg-3); }
 
-body.mobile .nav-ham-panel .fr-toggle-wrap  { padding: 9px 16px; }
-body.mobile .nav-ham-panel .fr-toggle-label { font-size: 12px; color: #ccc; }
+body.mobile .nav-ham-panel .fr-toggle-wrap  { padding: 11px 16px; min-height: var(--touch-target); box-sizing: border-box; }
+body.mobile .nav-ham-panel .fr-toggle-label { font-size: var(--font-sm); color: var(--text); }
 
-body.mobile .nav-ham-panel .nav-username    { display: block; padding: 9px 16px; font-size: 13px; }
-body.mobile .nav-ham-panel .nav-team-static { display: block; padding: 9px 16px; font-size: 13px; color: #aaa; }
-body.mobile .nav-ham-panel .nav-team-switcher { padding: 9px 16px; font-size: 13px; }
-body.mobile .nav-ham-panel .nav-home-btn    { padding: 9px 16px; display: flex; }
+body.mobile .nav-ham-panel .nav-username    { display: block; padding: 11px 16px; font-size: var(--font-md); }
+body.mobile .nav-ham-panel .nav-team-static { display: block; padding: 11px 16px; font-size: var(--font-md); color: var(--text-soft); }
+body.mobile .nav-ham-panel .nav-team-switcher { padding: 11px 16px; font-size: var(--font-md); }
+body.mobile .nav-ham-panel .nav-home-btn    { padding: 11px 16px; display: flex; }
 
 /* Hide vertical dividers inside dropdowns */
 body.mobile .nav-ham-panel .nav-divider { display: none; }
@@ -171,24 +179,23 @@ body.mobile .nav-ham-panel .nav-divider { display: none; }
 /* =========================================================
    MOBILE SCALING — high-DPI phones get a noticeably taller
    navbar with larger touch targets and readable text.
-   Applies when the device is a phone OR the viewport is narrow.
 ========================================================= */
 
-body.mobile #navbar { height: 56px; font-size: 16px; }
-body.mobile .nav-ham-btn { height: 56px; padding: 0 16px; }
+body.mobile #navbar { height: 56px; font-size: var(--font-lg); }
+body.mobile .nav-ham-btn { height: 56px; padding: 0 16px; min-width: var(--touch-target); }
 body.mobile .nav-ham-btn x-icon { font-size: 20px; }
 body.mobile .nav-ham-panel { top: 56px; }
 body.mobile .nav-results-link,
 body.mobile .nav-username,
 body.mobile .nav-team-static,
-body.mobile .nav-team-switcher { font-size: 16px; }
+body.mobile .nav-team-switcher { font-size: var(--font-lg); }
 body.mobile .nav-home-btn svg { width: 20px; height: 20px; }
-body.mobile .fr-nav-title { font-size: 16px; }
+body.mobile .fr-nav-title { font-size: var(--font-lg); }
 body.mobile .nav-ham-panel .nav-results-link,
 body.mobile .nav-ham-panel .nav-username,
 body.mobile .nav-ham-panel .nav-team-static,
 body.mobile .nav-ham-panel .nav-team-switcher,
-body.mobile .nav-ham-panel .fr-toggle-label { font-size: 16px; padding-top: 12px; padding-bottom: 12px; }
+body.mobile .nav-ham-panel .fr-toggle-label { font-size: var(--font-lg); padding-top: 13px; padding-bottom: 13px; }
 
 /* Pages that fix content below the navbar — update the offset */
 body.mobile #play-wrap { --navbar-h: 56px; }
@@ -201,7 +208,7 @@ body.mobile .nav-user-section-inline .nav-team-switcher {
     display: inline-flex;
     align-items: center;
     padding: 0 4px;
-    font-size: 14px;
+    font-size: var(--font-md);
 }
 body.mobile .nav-user-section-inline .nav-home-btn { padding: 0 8px; }
 
@@ -218,3 +225,20 @@ body.mobile .nav-user-section-inline .nav-home-btn { padding: 0 8px; }
 /* Inline mode-toggle in the navbar — stays visible on mobile rather than
    being hidden inside the hamburger panel */
 body.mobile .nav-mode-toggle { gap: 10px; margin-left: 10px; }
+
+/* Navbar title (e.g. file name on file_results, "Statistik" on stats)
+   must shrink/truncate before colliding with the user section on narrow
+   phones. The fr-nav-title and stats title both use nav-center. */
+.nav-center {
+    max-width: calc(100% - 220px);
+    overflow: hidden;
+}
+.nav-center > * {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+@media (max-width: 420px) {
+    .nav-center { max-width: calc(100% - 170px); }
+    .fr-nav-title { font-size: var(--font-md) !important; max-width: 100%; }
+}

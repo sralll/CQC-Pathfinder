@@ -1,13 +1,11 @@
 /* =========================================================
    HOME — landing page with role-aware app shortcuts
+   Uses shared tokens from theme.css.
 ========================================================= */
 
 html, body {
     height: 100%;
     margin: 0;
-    background: #151515;
-    color: #ddd;
-    font-family: Arial, sans-serif;
 }
 
 .home-page {
@@ -52,8 +50,7 @@ html, body {
     width: 100%;
 }
 
-/* Athletes (non-trainer): only 3 tiles → Play spans the full top row,
-   Resultate and Statistik share the row below. */
+/* Athletes (non-trainer): only 3 tiles → Play spans the full top row */
 .home-grid:not(.home-grid-trainer) .home-tile-primary {
     grid-column: 1 / -1;
     min-height: clamp(104px, 14vh, 140px);
@@ -67,48 +64,49 @@ html, body {
     gap: 10px;
     min-height: clamp(60px, 10vh, 100px);
     padding: 16px 12px;
-    background: #1a1a1a;
-    border: 0.5px solid #2e2e2e;
-    border-radius: 10px;
-    color: #ccc;
+    background: var(--bg-2);
+    border: 0.5px solid var(--border);
+    border-radius: var(--radius-lg);
+    color: var(--text);
     text-decoration: none;
-    font-size: 15px;
+    font-size: var(--font-lg);
     font-weight: 500;
-    transition: background 0.15s, border-color 0.15s, color 0.15s, transform 0.06s;
+    transition: background var(--t-med), border-color var(--t-med),
+                color var(--t-med), transform 0.06s;
     text-align: center;
     user-select: none;
 }
 
 .home-tile:hover {
-    background: #222;
-    border-color: #3a3a3a;
-    color: #fff;
+    background: var(--bg-3);
+    border-color: var(--border-strong);
+    color: var(--text-strong);
 }
 .home-tile:active { transform: scale(0.98); }
 
 .home-tile-icon {
-    color: #888;
+    color: var(--text-muted);
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: color 0.15s;
+    transition: color var(--t-med);
 }
-.home-tile:hover .home-tile-icon { color: #e07020; }
+.home-tile:hover .home-tile-icon { color: var(--brand); }
 
 .home-tile-label {
-    font-size: 15px;
+    font-size: var(--font-lg);
     line-height: 1;
 }
 
 /* Primary tile — Play stands out */
 .home-tile-primary {
-    background: linear-gradient(180deg, #e07020 0%, #c95e16 100%);
-    border-color: #d56a1a;
-    color: #fff;
+    background: var(--brand-gradient);
+    border-color: transparent;
+    color: var(--text-strong);
 }
 .home-tile-primary .home-tile-icon       { color: rgba(255,255,255,0.92); }
-.home-tile-primary:hover                  { background: linear-gradient(180deg, #f08030 0%, #d56a18 100%); color: #fff; border-color: #f08030; }
-.home-tile-primary:hover .home-tile-icon { color: #fff; }
+.home-tile-primary:hover                  { background: var(--brand-gradient-h); color: var(--text-strong); border-color: transparent; }
+.home-tile-primary:hover .home-tile-icon { color: var(--text-strong); }
 
 /* ── Feedback button ──────────────────────────────────── */
 
@@ -120,18 +118,22 @@ html, body {
     padding: 11px 14px;
     min-height: 44px;
     box-sizing: border-box;
-    background: #1a1a1a;
-    border: 0.5px solid #2e2e2e;
-    border-radius: 8px;
-    color: #aaa;
+    background: var(--bg-2);
+    border: 0.5px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text-soft);
     text-decoration: none;
-    font-size: 13px;
-    transition: background 0.15s, color 0.15s, border-color 0.15s;
+    font-size: var(--font-md);
+    transition: background var(--t-med), color var(--t-med), border-color var(--t-med);
+    /* .home-card's gap already adds clamp(12px, 2.4vh, 22px) above this
+       element — pull it back down to the .home-grid tile gap (12px) so
+       both gaps match. */
+    margin-top: calc(12px - clamp(12px, 2.4vh, 22px));
 }
 .home-feedback:hover {
-    background: #222;
-    color: #fff;
-    border-color: #3a3a3a;
+    background: var(--bg-3);
+    color: var(--text-strong);
+    border-color: var(--border-strong);
 }
 
 /* ── Bottom links row ─────────────────────────────────── */
@@ -145,50 +147,53 @@ html, body {
 }
 
 .home-links a {
-    color: #777;
-    font-size: 12px;
+    color: var(--text-muted);
+    font-size: var(--font-sm);
     text-decoration: none;
     transition: color 0.1s;
+    padding: 4px 6px;
 }
-.home-links a:hover { color: #ccc; text-decoration: underline; }
+.home-links a:hover { color: var(--text); text-decoration: underline; }
 
 /* ── Trainer update note ──────────────────────────────── */
 
 .home-update-info {
     text-align: center;
-    font-size: 11px;
-    color: #5b8db8;
+    font-size: var(--font-xs);
+    color: var(--info);
     padding: 6px 10px;
     min-height: 30px;
     box-sizing: border-box;
     border: 0.5px solid rgba(91, 141, 184, 0.25);
-    border-radius: 6px;
+    border-radius: var(--radius);
     background: rgba(91, 141, 184, 0.06);
 }
 
 /* ── Mobile scaling ───────────────────────────────────── */
 
-body.mobile .home-page    { padding: 14px; align-items: flex-start; }
+body.mobile .home-page         { padding: 14px; align-items: flex-start; }
 body.mobile .home-logo-wrap    { margin-top: 66px;}
 
-body.mobile .home-card    { max-width: 300px; margin: 0 auto; gap: 8px; }
-body.mobile .home-grid    { grid-template-columns: 1fr; gap: 8px; }
-body.mobile .home-grid:not(.home-grid-trainer) .home-tile-primary { grid-column: auto; min-height: 56px; }
-body.mobile .home-tile    { min-height: 56px; font-size: 18px; padding: 10px 14px; gap: 8px; }
-body.mobile .home-tile-label { font-size: 18px; }
+body.mobile .home-card         { max-width: 340px; margin: 0 auto; gap: 10px; }
+body.mobile .home-grid         { grid-template-columns: 1fr; gap: 10px; }
+body.mobile .home-grid:not(.home-grid-trainer) .home-tile-primary { grid-column: auto; min-height: 64px; }
+body.mobile .home-tile         { min-height: 64px; font-size: var(--font-lg); padding: 12px 14px; gap: 10px; }
+body.mobile .home-tile-label   { font-size: var(--font-lg); }
 body.mobile .home-tile-icon x-icon { font-size: 30px; }
-body.mobile .home-feedback { min-height: 40px; font-size: 16px; padding: 9px 18px; }
-body.mobile .home-links a  { font-size: 15px; }
-body.mobile .home-update-info { min-height: 28px; font-size: 13px; padding: 5px 8px; }
+body.mobile .home-feedback     { min-height: var(--touch-target); font-size: var(--font-lg); padding: 11px 18px; margin-top: 0; }
+body.mobile .home-links        { flex-wrap: nowrap; gap: 4px; }
+body.mobile .home-links a      { font-size: 10px; padding: 4px 4px; white-space: nowrap; }
+body.mobile .home-update-info  { min-height: 32px; font-size: var(--font-sm); padding: 6px 10px; }
 
-/* On narrow phones the tiles stack to a single column if very tight,
-   otherwise keep the 2×2 grid which is comfortable on most devices. */
+/* On narrow phones (also catches small windowed desktops) */
 @media (max-width: 700px) {
-    .home-page { padding: 14px; align-items: flex-start; }
-    .home-card { max-width: 300px; gap: 8px; }
-    .home-grid { grid-template-columns: 1fr; gap: 8px; }
-    .home-tile { min-height: 56px; padding: 10px 14px; gap: 8px; }
+    .home-page    { padding: 14px; align-items: flex-start; }
+    .home-card    { max-width: 340px; gap: 10px; }
+    .home-grid    { grid-template-columns: 1fr; gap: 10px; }
+    .home-tile    { min-height: 64px; padding: 12px 14px; gap: 10px; }
     .home-grid:not(.home-grid-trainer) .home-tile-primary { grid-column: auto; }
-    .home-feedback { min-height: 40px; padding: 9px 18px; }
-    .home-update-info { min-height: 28px; padding: 5px 8px; }
+    .home-feedback   { min-height: var(--touch-target); padding: 11px 18px; margin-top: 0; }
+    .home-links      { flex-wrap: nowrap; gap: 4px; }
+    .home-links a    { font-size: 10px; padding: 4px 4px; white-space: nowrap; }
+    .home-update-info { min-height: 32px; padding: 6px 10px; }
 }

@@ -140,7 +140,7 @@ def extract_subgrid(
 
     return subgrid, (x_min, y_min), start_sub, goal_sub, adjusted_routes
 
-def inflate_obstacles(grid: np.ndarray, radius: int = 1, dilation_block: int = 100) -> np.ndarray: # tune
+def inflate_obstacles(grid: np.ndarray, radius: int = 1, dilation_block: int = 255 - 24) -> np.ndarray:
     h, w = grid.shape
     inflated_grid = grid.copy()
 
@@ -154,7 +154,8 @@ def inflate_obstacles(grid: np.ndarray, radius: int = 1, dilation_block: int = 1
                         ny, nx = y + dy, x + dx
                         if 0 <= ny < h and 0 <= nx < w:
                             if grid[ny, nx] == 0:
-                                inflated_grid[y, x] = dilation_block
+                                if grid[y, x] > dilation_block:
+                                    inflated_grid[y, x] = dilation_block
                                 break
                     else:
                         continue

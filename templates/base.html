@@ -7,29 +7,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>QCQ Pathfinder</title>
     <link rel="icon" href="{% static 'favicon.ico' %}" type="image/x-icon">
+    <link rel="stylesheet" href="{% static 'css/theme.css' %}">
     <link rel="stylesheet" href="{% static 'css/navbar.css' %}">
 
     <style>
-        :root {
-            --font-xs: 11px;
-            --font-sm: 12px;
-            --font-md: 14px;
-            --font-lg: 16px;
-            --font-xl: 20px;
-
-            --z-background: 0;
-            --z-map: 10;
-            --z-svg: 20;
-
-            --z-controls: 30;
-            --z-routes: 40;
-            --z-selection: 50;
-
-            --z-ui: 100;
-            --z-dropdown: 200;
-            --z-modal: 1000;
-        }
-
         /* ── Global navbar user section ── */
         .nav-user-section {
             display: flex;
@@ -41,33 +22,33 @@
         }
 
         .nav-username {
-            font-size: 12px;
-            color: #ccc;
+            font-size: var(--font-sm);
+            color: var(--text);
             white-space: nowrap;
         }
 
         /* Team name — no dropdown (single team) */
         .nav-team-static {
-            font-size: 12px;
-            color: #666;
+            font-size: var(--font-sm);
+            color: var(--text-muted);
             white-space: nowrap;
         }
 
         /* Team switcher — shown when user has multiple teams */
         .nav-team-switcher {
             position: relative;
-            font-size: 12px;
-            color: #666;
+            font-size: var(--font-sm);
+            color: var(--text-muted);
             padding: 3px 6px;
-            border-radius: 4px;
+            border-radius: var(--radius-sm);
             cursor: pointer;
             user-select: none;
             white-space: nowrap;
-            transition: color 0.15s, background 0.15s;
+            transition: color var(--t-med), background var(--t-med);
         }
         .nav-team-switcher:hover {
-            color: #aaa;
-            background: #1e1e1e;
+            color: var(--text-soft);
+            background: var(--bg-3);
         }
         .nav-team-switcher::after {
             content: ' ▾';
@@ -81,40 +62,42 @@
             position: absolute;
             right: 0;
             top: calc(100% + 4px);
-            background: #1a1a1a;
-            border: 1px solid #333;
-            border-radius: 6px;
+            background: var(--bg-2);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
             min-width: 140px;
             padding: 4px 0;
             z-index: 10001;
-            box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+            box-shadow: var(--shadow-pop);
         }
         .nav-team-switcher.open .nav-team-dropdown { display: block; }
 
         .nav-team-option {
             display: block;
-            padding: 6px 14px;
-            font-size: 12px;
-            color: #aaa;
+            padding: 8px 14px;
+            font-size: var(--font-sm);
+            color: var(--text-soft);
             text-decoration: none;
             white-space: nowrap;
             transition: background 0.1s, color 0.1s;
         }
-        .nav-team-option:hover  { background: #252525; color: #fff; }
-        .nav-team-option.active { color: #fff; font-weight: 600; }
+        .nav-team-option:hover  { background: var(--bg-4); color: var(--text-strong); }
+        .nav-team-option.active { color: var(--brand); font-weight: 600; }
 
         /* Home icon button */
         .nav-home-btn {
             display: flex;
             align-items: center;
-            color: #555;
+            color: var(--text-dim);
             text-decoration: none;
             padding: 3px 4px;
-            border-radius: 4px;
-            transition: color 0.15s, background 0.15s;
+            border-radius: var(--radius-sm);
+            transition: color var(--t-med), background var(--t-med);
             flex-shrink: 0;
         }
-        .nav-home-btn:hover { color: #aaa; background: #1e1e1e; }
+        .nav-home-btn:hover { color: var(--brand); background: var(--bg-3); }
+
+        body.mobile .nav-team-option { padding: 12px 16px; font-size: var(--font-md); }
     </style>
     {% block styles %}{% endblock %}
     {% block script %}{% endblock %}

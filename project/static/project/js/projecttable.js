@@ -11,7 +11,7 @@ window._fileTable = table;
 let activeLabelFilter = null;
 let activeAuthorFilters = [];
 let activeTeamFilters = [];
-let sortState = { key: null, dir: 1 };
+let sortState = { key: "last_edited", dir: -1 };
 
 /* =========================================================
     INIT
@@ -97,7 +97,7 @@ function renderTableHeader() {
                     <span class="filter-indicator active-filter-icon">${icon("filter", "0.8em")}</span>
                 </span>
             </th>
-            <th class="col-cp" data-sort="cp_count" style="text-align:center;">
+            <th class="col-cp" data-sort="cp_count" style="text-align:right;">
                 <span class="sortable">Posten <span id="sort-cp_count" class="sort-indicator"></span></span>
             </th>
             <th class="col-author">
@@ -177,9 +177,9 @@ function applySorting(data) {
 
 function getSortIcon(k) {
     if (sortState.key !== k) return "";
-    const down = `<span class="sort-icon-box">${icon("chevron-down", "0.7em")}</span>`;
-    const up   = `<span class="sort-icon-box">${icon("chevron-up",   "0.7em")}</span>`;
-    return (k === "name") ? (sortState.dir === 1 ? down : up) : (sortState.dir === -1 ? down : up);
+    const isDesc = (k === "name") ? (sortState.dir === 1) : (sortState.dir === -1);
+    const arrow = isDesc ? "↓" : "↑";
+    return `<span class="sort-icon-box active">${arrow}</span>`;
 }
 
 function updateSortIndicators() {
@@ -232,12 +232,14 @@ function renderLabelFilterDropdown() {
             <div class="filter-clear-left" onclick="event.stopPropagation(); clearLabelFilter()"><b>Alle</b></div>
             <button class="filter-close-btn" onclick="event.stopPropagation(); closeAllFilters()" type="button">✕</button>
         </div>
-        ${getAllLabels().map(label => `
-            <div class="filter-option" onclick="event.stopPropagation(); setLabelFilter(${label.id})">
-                ${label.name}
-                ${activeLabelFilter === label.id ? icon("square-check") : icon("square")}
-            </div>
-        `).join('')}
+        <div class="filter-options-list">
+            ${getAllLabels().map(label => `
+                <div class="filter-option" onclick="event.stopPropagation(); setLabelFilter(${label.id})">
+                    ${label.name}
+                    ${activeLabelFilter === label.id ? icon("square-check") : icon("square")}
+                </div>
+            `).join('')}
+        </div>
     `;
 }
 
@@ -267,12 +269,14 @@ function renderAuthorFilterDropdown() {
             <div class="filter-clear-left" onclick="event.stopPropagation(); clearAuthorFilters()"><b>Alle</b></div>
             <button class="filter-close-btn" onclick="event.stopPropagation(); closeAllFilters()" type="button">✕</button>
         </div>
-        ${getAllAuthors().map(author => `
-            <div class="filter-option" onclick="event.stopPropagation(); toggleAuthorSelection('${author.replace(/'/g, "\\'")}')">
-                ${author}
-                ${activeAuthorFilters.includes(author) ? icon("square-check") : icon("square")}
-            </div>
-        `).join('')}
+        <div class="filter-options-list">
+            ${getAllAuthors().map(author => `
+                <div class="filter-option" onclick="event.stopPropagation(); toggleAuthorSelection('${author.replace(/'/g, "\\'")}')">
+                    ${author}
+                    ${activeAuthorFilters.includes(author) ? icon("square-check") : icon("square")}
+                </div>
+            `).join('')}
+        </div>
     `;
 }
 
@@ -307,12 +311,14 @@ function renderTeamFilterDropdown() {
             <div class="filter-clear-left" onclick="event.stopPropagation(); clearTeamFilters()"><b>Alle</b></div>
             <button class="filter-close-btn" onclick="event.stopPropagation(); closeAllFilters()" type="button">✕</button>
         </div>
-        ${orderedTeams.map(team => `
-            <div class="filter-option" onclick="event.stopPropagation(); toggleTeamSelection('${team.replace(/'/g, "\\'")}')">
-                <span class="${team === userTeam ? 'user-active-team' : ''}">${team}</span>
-                ${activeTeamFilters.includes(team) ? icon("square-check") : icon("square")}
-            </div>
-        `).join('')}
+        <div class="filter-options-list">
+            ${orderedTeams.map(team => `
+                <div class="filter-option" onclick="event.stopPropagation(); toggleTeamSelection('${team.replace(/'/g, "\\'")}')">
+                    <span class="${team === userTeam ? 'user-active-team' : ''}">${team}</span>
+                    ${activeTeamFilters.includes(team) ? icon("square-check") : icon("square")}
+                </div>
+            `).join('')}
+        </div>
     `;
 }
 
@@ -377,7 +383,7 @@ function clearSearch() {
     activeLabelFilter = null;
     activeAuthorFilters = [];
     activeTeamFilters = [];
-    sortState = { key: null, dir: 1 };
+    sortState = { key: "last_edited", dir: -1 };
     applyFilters();
 }
 
@@ -386,7 +392,7 @@ function updateClearButton() {
     const clearBtn = document.querySelector(".search-clear");
     const hasSearch = !!input.value.trim();
     const hasFilters = activeLabelFilter !== null || activeAuthorFilters.length > 0 || activeTeamFilters.length > 0;
-    clearBtn.style.display = (hasSearch || hasFilters) ? "block" : "none";
+    clearBtn.style.display = (hasSearch || hasFilters) ? "flex" : "none";
 }
 
 /* =========================================================
@@ -416,7 +422,7 @@ function initButtons() {
     document.getElementById("label-dropdown-btn")?.addEventListener("click", toggleLabelDropdown);
     document.getElementById("close-map-modal-btn")?.addEventListener("click", closeMapModal);
     document.getElementById("browse-map-btn")?.addEventListener("click", () => document.getElementById("map-file-input")?.click());
-    document.getElementById("upload-map-btn")?.addEventListener("click", uploadSelectedMap);
+    document.getElementById("ocad-upload-btn")?.addEventListener("click", uploadSelectedMap);
 }
 
 /* =========================================================
@@ -450,8 +456,8 @@ function renderLabelManageDropdown() {
     drop.id = "label-manage-dropdown";
     drop.style.cssText = `
         position:fixed;z-index:10001;background:#1a1a1a;border:1px solid #333;
-        border-radius:6px;min-width:260px;box-shadow:0 4px 16px #0008;
-        padding:6px 0;
+        border-radius:6px;min-width:260px;max-height:320px;overflow-y:auto;
+        box-shadow:0 4px 16px #0008;padding:6px 0;
     `;
 
     // Position below the button
@@ -613,23 +619,29 @@ function renderLabelManageDropdown() {
 
         // ── Add new label ────────────────────────────────────
         const addRow = document.createElement("div");
-        addRow.style.cssText = "display:flex;align-items:stretch;gap:6px;padding:5px 12px;";
+        addRow.style.cssText = "display:flex;align-items:center;gap:6px;padding:5px 12px;";
 
         const inp = document.createElement("input");
         inp.type        = "text";
         inp.maxLength   = 25;
         inp.placeholder = "Neues Label…";
         inp.style.cssText = `flex:1;background:#2a2a2a;border:1px solid #3a3a3a;border-radius:4px;
-            color:#ccc;font-size:12px;padding:0 7px;outline:none;`;
+            color:#ccc;font-size:13px;padding:4px 8px;min-height:32px;outline:none;`;
 
         const addBtn = document.createElement("button");
         addBtn.textContent = "+";
-        addBtn.style.cssText = `background:#2b2b2b;border:1px solid #444;color:#5baa7a;border-radius:4px;
-            padding:0 9px;font-size:15px;cursor:pointer;font-weight:bold;line-height:1;`;
+        addBtn.style.cssText = `display:flex;align-items:center;justify-content:center;width:32px;height:32px;
+            flex-shrink:0;background:#2a2a2a;border:1px solid #444;color:#999;border-radius:4px;
+            font-size:16px;cursor:pointer;font-weight:bold;`;
 
         async function doCreate() {
             const name = inp.value.trim();
             if (!name) return;
+            if ((window.allLabels || []).some(l => l.name.toLowerCase() === name.toLowerCase())) {
+                inp.style.borderColor = "#c0392b";
+                setTimeout(() => { inp.style.borderColor = "#3a3a3a"; }, 1200);
+                return;
+            }
             // Optimistic: add temp label immediately
             const tempId    = `_tmp_${Date.now()}`;
             const tempLabel = { id: tempId, name, color: '#5b8db8' };
