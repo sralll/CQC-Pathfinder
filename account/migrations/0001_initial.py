@@ -95,13 +95,13 @@ class Migration(migrations.Migration):
                 ("comment", models.TextField(max_length=1000)),
                 ("created_at", models.DateTimeField(auto_now_add=True)),
                 (
-                    "profile",
+                    "user",
                     models.ForeignKey(
                         blank=True,
                         null=True,
                         on_delete=django.db.models.deletion.SET_NULL,
                         related_name="feedback",
-                        to="account.profile",
+                        to=settings.AUTH_USER_MODEL,
                     ),
                 ),
             ],

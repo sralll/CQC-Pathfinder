@@ -1,5 +1,5 @@
 from django import forms
-from .models import Feedback
+from account.models import Feedback
 
 class FeedbackForm(forms.ModelForm):
     class Meta:
@@ -10,7 +10,7 @@ class FeedbackForm(forms.ModelForm):
                 'rows': 5,
                 'cols': 60,
                 'maxlength': 1000,
-                'placeholder': 'Kommentare sind anonym',
+                'placeholder': 'Dein Feedback...',
                 'style': 'width: 100%; max-width: 750px;',
                 }),
         }

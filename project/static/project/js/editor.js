@@ -354,6 +354,7 @@ function restoreState(state) {
 function undo() {
     if (readOnly) return;
     if (!undoStack.length) return;
+    cancelAllPathfinding();
     if (undoStack[undoStack.length - 1].isMaskUndo) {
         redoStack.push({ label: "Maske bearbeitet", isMaskUndo: true });
         undoStack.pop();
@@ -371,6 +372,7 @@ function undo() {
 function redo() {
     if (readOnly) return;
     if (!redoStack.length) return;
+    cancelAllPathfinding();
     if (redoStack[redoStack.length - 1].isMaskUndo) {
         undoStack.push({ label: "Maske bearbeitet", isMaskUndo: true });
         redoStack.pop();
@@ -4582,30 +4584,62 @@ function handleMapFile(file) {
     }
 }
 
-function _showOcadImportOptions(file) {
+async function _showOcadImportOptions(file) {
     document.getElementById("map-dropzone").style.display = "none";
     const panel = document.getElementById("ocad-import-options");
     panel.style.display = "flex";
     panel.querySelector(".ocad-import-file-name").textContent = file.name;
 
-    const postenCb = document.getElementById("ocad-import-posten");
-    const routenCb = document.getElementById("ocad-import-routen");
-    postenCb.checked = true;
-    routenCb.checked = true;
-    routenCb.disabled = false;
-    routenCb.closest(".ocad-import-check").querySelector("span").classList.remove("ocad-check-disabled");
-    _ocadImportChoices = { posten: true, routen: true };
+    const postenRow   = document.getElementById("ocad-import-posten-row");
+    const routenRow   = document.getElementById("ocad-import-routen-row");
+    const postenCb    = document.getElementById("ocad-import-posten");
+    const routenCb    = document.getElementById("ocad-import-routen");
+    const importBtn   = document.getElementById("ocad-upload-btn");
+    const checkingMsg = panel.querySelector(".ocad-import-checking");
+
+    // Hide the Posten/Routen options until we know what the file contains
+    postenRow.style.display = "none";
+    routenRow.style.display = "none";
+    checkingMsg.style.display = "";
+    importBtn.disabled = true;
+
+    let hasControls = true;
+    let hasRoutes   = true;
+    try {
+        const info = await window.OcadBrowser?.getControlsInfo?.(file);
+        if (info) {
+            hasControls = !!info.hasControls;
+            hasRoutes   = !!info.hasRoutes;
+        }
+    } catch (e) {
+        console.warn("OCAD content check failed:", e);
+    }
+
+    // The user may have picked a different file while the check was running
+    if (_droppedMapFile !== file) return;
+
+    checkingMsg.style.display = "none";
+    importBtn.disabled = false;
+
+    postenRow.style.display = hasControls ? "" : "none";
+    routenRow.style.display = hasRoutes ? "" : "none";
+
+    postenCb.checked = hasControls;
+    routenCb.checked = hasRoutes;
+    routenCb.disabled = !hasControls;
+    routenRow.querySelector("span").classList.toggle("ocad-check-disabled", !hasControls);
+    _ocadImportChoices = { posten: hasControls, routen: hasRoutes };
 
     postenCb.onchange = () => {
         _ocadImportChoices.posten = postenCb.checked;
         if (!postenCb.checked) {
             routenCb.checked = false;
             routenCb.disabled = true;
-            routenCb.closest(".ocad-import-check").querySelector("span").classList.add("ocad-check-disabled");
+            routenRow.querySelector("span").classList.add("ocad-check-disabled");
             _ocadImportChoices.routen = false;
-        } else {
+        } else if (hasRoutes) {
             routenCb.disabled = false;
-            routenCb.closest(".ocad-import-check").querySelector("span").classList.remove("ocad-check-disabled");
+            routenRow.querySelector("span").classList.remove("ocad-check-disabled");
         }
     };
     routenCb.onchange = () => {
@@ -4992,6 +5026,7 @@ let _pathingMsgSeq = 0;
 const _pendingAutoPathfindCps = new Set();
 const _autoPathfindRunningCps = new Set();
 const AUTO_PATHFIND_MAX_ROUTES = 4;
+let _pathfindGeneration = 0;
 
 function _resolveAllPathingPending(error) {
     for (const [msgId, slot] of _pathingPending.entries()) {
@@ -5001,6 +5036,13 @@ function _resolveAllPathingPending(error) {
     _activePathfindByCp.clear();
     while (_autoPathfindInFlight > 0) _setAutoPathfindBusy(false);
     _queuePathfindUiUpdate();
+}
+
+function cancelAllPathfinding() {
+    _pathfindGeneration++;
+    _pendingAutoPathfindCps.clear();
+    _autoPathfindRunningCps.clear();
+    _resolveAllPathingPending("cancelled");
 }
 
 function _canAutoPathfindCP(cp) {
@@ -5144,6 +5186,7 @@ function sendMaskDiffToPathingWorker(mapFile, diff, reverse = false) {
 async function thetaCPClient(cp, source = "editor_auto", options = {}) {
     if (!cp || !cp.start || !cp.ziel || !project.map_file) return { error: "missing inputs" };
     if (readOnly) return { error: "read only" };
+    const gen = _pathfindGeneration;
     const isAuto = source === "editor_auto";
     if (isAuto && !cp.complex && cp.routes.length >= AUTO_PATHFIND_MAX_ROUTES) return { error: "max auto routes" };
     const w = _ensurePathingWorker();
@@ -5244,6 +5287,8 @@ async function thetaCPClient(cp, source = "editor_auto", options = {}) {
             };
         }
     }
+
+    if (gen !== _pathfindGeneration) return { error: "cancelled" };
 
     pushUndoState("automatische Route");
     _appendRouteObject(cp, candidateRoute, { animate: true });

@@ -144,28 +144,71 @@ html, body {
 .login-submit:hover  { background: var(--brand-gradient-h); }
 .login-submit:active { transform: scale(0.98); }
 
-/* ── Mobile scaling ─────────────────────────────────────
-   On narrow/portrait screens the logo's wide aspect ratio
-   leaves too little space inside the "Q" for the form, so
-   the background is zoomed in (cropping the side circles)
-   while the 50% / 38.89% anchor keeps the "Q" centred.
+/* Hidden by default — shown only in the stacked fallback */
+.login-logo { display: none; }
+
+/* ── Stacked fallback ──────────────────────────────────
+   On narrow / mobile screens the logo is too small for
+   the form to sit inside the "Q", so we stack: logo on
+   top, fields below, both the same width.
 ========================================================== */
 
-body.mobile .login-page         { --pad: 14px; background-size: 320% auto; }
-body.mobile .login-overlay      { gap: 14px; width: min(80%, 300px); }
-body.mobile .login-field-label  { font-size: var(--font-md); }
-body.mobile .login-field input  { font-size: var(--font-lg); padding: 16px 18px; }
-body.mobile .login-submit       { min-width: 76px; padding: 0 24px; }
-body.mobile .login-submit x-icon { font-size: 26px; }
-body.mobile .login-error        { font-size: var(--font-lg); padding: 13px 15px; }
+@media (max-width: 876px), (max-height: 570px) {
+    .login-page {
+        --pad: 14px;
+        background-image: none;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 28px;
+    }
 
-/* On narrow phones (also catches small windowed desktops) */
-@media (max-width: 700px) {
-    .login-page         { --pad: 14px; background-size: 320% auto; }
-    .login-overlay      { gap: 14px; width: min(80%, 300px); }
+    .login-logo {
+        display: block;
+        width: min(82%, 340px);
+        height: auto;
+    }
+
+    .login-overlay {
+        position: static;
+        transform: none;
+        width: min(82%, 340px);
+        gap: 14px;
+    }
+
     .login-field-label  { font-size: var(--font-md); }
     .login-field input  { font-size: var(--font-lg); padding: 16px 18px; }
     .login-submit       { min-width: 76px; padding: 0 24px; }
     .login-submit x-icon { font-size: 26px; }
     .login-error        { font-size: var(--font-lg); padding: 13px 15px; }
 }
+
+body.mobile .login-page {
+    --pad: 14px;
+    background-image: none;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 28px;
+}
+
+body.mobile .login-logo {
+    display: block;
+    width: min(82%, 340px);
+    height: auto;
+}
+
+body.mobile .login-overlay {
+    position: static;
+    transform: none;
+    width: min(82%, 340px);
+    gap: 14px;
+}
+
+body.mobile .login-field-label  { font-size: var(--font-md); }
+body.mobile .login-field input  { font-size: var(--font-lg); padding: 16px 18px; }
+body.mobile .login-submit       { min-width: 76px; padding: 0 24px; }
+body.mobile .login-submit x-icon { font-size: 26px; }
+body.mobile .login-error        { font-size: var(--font-lg); padding: 13px 15px; }

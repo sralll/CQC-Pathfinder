@@ -151,7 +151,19 @@ class DeviceAdmin(admin.ModelAdmin):
 # --- Feedback admin ---
 @admin.register(Feedback)
 class FeedbackAdmin(admin.ModelAdmin):
-    list_display = ('profile', 'created_at', 'short_comment')
+    list_display = ('user_full_name', 'user_active_team', 'created_at', 'short_comment')
+
+    def user_full_name(self, obj):
+        if obj.user:
+            return obj.user.get_full_name() or obj.user.username
+        return '-'
+    user_full_name.short_description = "User"
+
+    def user_active_team(self, obj):
+        if obj.user and hasattr(obj.user, 'profile'):
+            return obj.user.profile.active_team or '-'
+        return '-'
+    user_active_team.short_description = "Team"
 
     def short_comment(self, obj):
         return obj.comment[:100] + ('...' if len(obj.comment) > 100 else '')

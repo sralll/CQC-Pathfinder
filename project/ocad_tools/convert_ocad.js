@@ -142,6 +142,7 @@ function makeRenderableObjectFilter(ocadFile) {
   const symbolByNumber = new Map((ocadFile.symbols || []).map((symbol) => [Number(symbol.symNum), symbol]));
   return (object) => {
     if (isCourseDisplayObject(object)) return false;
+    if (isActualRouteObject(object, symbolByNumber)) return false;
     const symbol = symbolByNumber.get(Number(object.sym));
     return !symbol || Number(symbol.status || 0) === 0;
   };
@@ -384,9 +385,11 @@ function makeRoute(rP, cp, order, scale, source) {
 
 function isActualRouteObject(object, symbolByNumber) {
   const sym = Number(object.sym);
+  if (sym === 10602010) return true;
   const symbol = symbolByNumber.get(sym);
-  const description = String(symbol?.description || "").toLowerCase();
-  return sym === 10602010 || description === "fastest route";
+  if (!symbol || Number(symbol.type) !== 2) return false;
+  // Covers "Fastest route", "Shortest Route", "Alternative Routes", etc.
+  return /\broutes?\b/i.test(symbol.description || "");
 }
 
 function buildActualRouteIndex(ocadFile, bounds, rasterScale, editorScale) {

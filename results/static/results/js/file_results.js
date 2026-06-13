@@ -243,6 +243,19 @@ function renderTable(rows) {
             render();
         });
     });
+
+    const checkAll = document.getElementById('fr-check-all');
+    if (checkAll) {
+        const visibleUids = rows.map(r => r.user_id);
+        const allChecked  = visibleUids.length > 0 && visibleUids.every(uid => selectedIds.has(uid));
+        checkAll.checked       = allChecked;
+        checkAll.indeterminate = !allChecked && visibleUids.some(uid => selectedIds.has(uid));
+        checkAll.onchange = () => {
+            if (checkAll.checked) visibleUids.forEach(uid => selectedIds.add(uid));
+            else                  visibleUids.forEach(uid => selectedIds.delete(uid));
+            render();
+        };
+    }
 }
 
 /* =========================================================

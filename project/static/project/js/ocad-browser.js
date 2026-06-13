@@ -14301,6 +14301,7 @@ function makeRenderableObjectFilter(ocadFile) {
   const symbolByNumber = new Map((ocadFile.symbols || []).map((symbol) => [Number(symbol.symNum), symbol]));
   return (object) => {
     if (isCourseDisplayObject(object)) return false;
+    if (isActualRouteObject(object, symbolByNumber)) return false;
     const symbol = symbolByNumber.get(Number(object.sym));
     return !symbol || Number(symbol.status || 0) === 0;
   };
@@ -14543,9 +14544,11 @@ function makeRoute(rP, cp, order, scale, source) {
 
 function isActualRouteObject(object, symbolByNumber) {
   const sym = Number(object.sym);
+  if (sym === 10602010) return true;
   const symbol = symbolByNumber.get(sym);
-  const description = String(symbol?.description || "").toLowerCase();
-  return sym === 10602010 || description === "fastest route";
+  if (!symbol || Number(symbol.type) !== 2) return false;
+  // Covers "Fastest route", "Shortest Route", "Alternative Routes", etc.
+  return /\broutes?\b/i.test(symbol.description || "");
 }
 
 function buildActualRouteIndex(ocadFile, bounds, rasterScale, editorScale) {
@@ -14665,6 +14668,21 @@ function buildControlPairs(courses, points, routeIndex, editorScale) {
   return controlPairs;
 }
 
+async function getControlsInfo(file) {
+  const buffer = Buffer.from(await file.arrayBuffer());
+  const ocadFile = await readOcad(buffer);
+  const bounds = ocadFile.getBounds();
+  const controlPoints = extractControlPoints(ocadFile, bounds, 1, 1);
+  const courses = extractCourses(ocadFile);
+  const routeIndex = buildActualRouteIndex(ocadFile, bounds, 1, 1);
+  const controlPairs = buildControlPairs(courses, controlPoints, routeIndex, 1);
+
+  return {
+    hasControls: controlPairs.length > 0,
+    hasRoutes: controlPairs.some((cp) => Array.isArray(cp.routes) && cp.routes.length > 0),
+  };
+}
+
 async function renderSvgPreview(file, options = {}) {
   const calibrationFactor = Number(options.scaleFactor || 1);
   const buffer = Buffer.from(await file.arrayBuffer());
@@ -14735,6 +14753,7 @@ async function renderSvgPreview(file, options = {}) {
 
 window.OcadBrowser = {
   renderSvgPreview,
+  getControlsInfo,
 };
 
 },{"buffer":16,"ocad2geojson":19}]},{},[56]);

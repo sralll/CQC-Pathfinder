@@ -1,4 +1,4 @@
-"""Recompute Route.noA and Route.run_time for every Route in the database.
+"""Recompute Route.length, noA and run_time for every Route in the database.
 
 The original data migration (results/0002) included this step, but it has
 already been applied — so this command lets you re-run the calculation
@@ -12,11 +12,11 @@ Usage:
 
 from django.core.management.base import BaseCommand
 
-from project.runtime import calc_route_noA, calc_route_runtime
+from project.runtime import calc_route_length, calc_route_noA, calc_route_runtime
 
 
 class Command(BaseCommand):
-    help = "Recompute Route.noA and Route.run_time for all routes (or a single file)."
+    help = "Recompute Route.length, noA and run_time for all routes (or a single file)."
 
     def add_arguments(self, parser):
         parser.add_argument('--dry', action='store_true',
@@ -50,30 +50,35 @@ class Command(BaseCommand):
                     skipped += 1
                 continue
 
-            scale   = r.control_pair.file.scale if r.control_pair_id else None
-            new_noA = calc_route_noA(rP, scale)
-            new_rt  = calc_route_runtime(r.length, new_noA, r.elevation)
+            # Match the editor's live calc, which works on the raw rP pixel
+            # coordinates and does NOT apply the map scale.
+            new_length = calc_route_length(rP)
+            new_noA    = calc_route_noA(rP)
+            new_rt     = calc_route_runtime(new_length, new_noA, r.elevation)
 
+            len_diff = (r.length or 0) != new_length
             noa_diff = (r.noA or 0) != new_noA
             rt_diff  = (r.run_time is None) != (new_rt is None) or (
                 r.run_time is not None and new_rt is not None
                 and abs(r.run_time - new_rt) > 1e-6
             )
 
-            if not (noa_diff or rt_diff):
+            if not (len_diff or noa_diff or rt_diff):
                 unchanged += 1
                 continue
 
             if dry:
                 self.stdout.write(
                     f"  route {r.id:6d} (cp {r.control_pair_id}): "
+                    f"length {r.length} → {new_length}, "
                     f"noA {r.noA} → {new_noA}, "
                     f"run_time {r.run_time and round(r.run_time, 2)} → {new_rt and round(new_rt, 2)}"
                 )
             else:
+                r.length   = new_length
                 r.noA      = new_noA
                 r.run_time = new_rt
-                r.save(update_fields=['noA', 'run_time'])
+                r.save(update_fields=['length', 'noA', 'run_time'])
             changed += 1
 
         self.stdout.write(self.style.SUCCESS(

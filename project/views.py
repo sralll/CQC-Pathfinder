@@ -38,48 +38,56 @@ def _normalize_order_payload(control_pairs):
 
 
 class _MaskGenerationJob:
+    """Thread-safe progress holder for one background mask-generation run.
+
+    The heavy work runs in a non-daemon worker thread (`_run_mask_generation`)
+    that pushes coarse progress through the thread-safe `update()`. The SSE view
+    consumes it via the async `stream()`, which simply polls the latest
+    snapshot. Because the producer (worker thread) and the consumer (SSE
+    connection) are decoupled, the worker keeps running — and still writes the
+    mask to the volume + flips File.has_mask — after the client closes the
+    stream (navigates away / loads another file)."""
+
     def __init__(self, key, event_base):
         self.key = key
         self.event_base = event_base
-        self.history = []
-        self.subscribers = set()
+        self._lock = threading.Lock()
+        self._state = {}          # latest progress, e.g. {'current', 'total'}
         self.done = False
 
-    def _format_event(self, event):
-        import json as _json
-        return f"data: {_json.dumps(event)}\n\n"
-
-    async def publish(self, payload):
-        event = {**self.event_base, **payload}
-        with _mask_generation_jobs_lock:
-            self.history.append(event)
+    def update(self, payload):
+        """Called from the worker thread to record progress / completion."""
+        with self._lock:
+            self._state.update(payload)
             if payload.get('done') or payload.get('error'):
                 self.done = True
-            subscribers = list(self.subscribers)
-        for queue in subscribers:
-            queue.put_nowait(event)
-        return event
 
-    async def stream(self):
+    def _snapshot(self):
+        with self._lock:
+            return dict(self._state), self.done
+
+    def _format(self, payload):
+        import json as _json
+        return f"data: {_json.dumps({**self.event_base, **payload})}\n\n"
+
+    async def stream(self, poll_interval=0.4, max_seconds=1800):
+        """SSE generator: emit the latest snapshot whenever it changes. Ending
+        this generator (client disconnect) does NOT stop the worker thread."""
         import asyncio
-        queue = asyncio.Queue()
-        with _mask_generation_jobs_lock:
-            history = list(self.history)
-            if not self.done:
-                self.subscribers.add(queue)
-        try:
-            for event in history:
-                yield self._format_event(event)
-                if event.get('done') or event.get('error'):
-                    return
-            while True:
-                event = await queue.get()
-                yield self._format_event(event)
-                if event.get('done') or event.get('error'):
-                    return
-        finally:
-            with _mask_generation_jobs_lock:
-                self.subscribers.discard(queue)
+        import time as _time
+        start = _time.time()
+        last = None
+        while True:
+            state, done = self._snapshot()
+            if state and state != last:
+                yield self._format(state)
+                last = dict(state)
+            if done:
+                return
+            if _time.time() - start > max_seconds:
+                yield self._format({'error': 'Zeitüberschreitung bei der Maskengenerierung'})
+                return
+            await asyncio.sleep(poll_interval)
 
 
 def _create_db_snapshot(file, user, trigger):
@@ -834,6 +842,167 @@ def save_mask(request):
     return JsonResponse({'status': 'ok'})
 
 
+def _run_mask_generation(*, job, job_key, map_path, scale, mask_filename,
+                         filename, file_id, lock_path):
+    """Heavy UNet mask generation, run in a non-daemon background thread.
+
+    Fully decoupled from the request/SSE connection, so it always runs to
+    completion and writes the mask to the shared volume even if the user
+    disconnects. A non-daemon thread (unlike asyncio.create_task) also survives
+    gunicorn's --max-requests worker recycle: the interpreter joins it on
+    shutdown, within the 900s --graceful-timeout, which covers a mask run.
+    Releases the ~GB tile buffer + the ONNX session's native memory on exit."""
+    import gc
+    import math
+    import time
+    from io import BytesIO
+    from types import SimpleNamespace
+
+    import numpy as np
+    from PIL import Image
+    from django.db import close_old_connections, connection
+
+    t0 = time.time()
+    img = output_img = ort_session = None
+    close_old_connections()
+    try:
+        import onnxruntime as ort
+
+        Image.MAX_IMAGE_PIXELS = None
+        SCALE_FACTOR = scale / 0.710 * 4000 / 4000
+        with open(map_path, 'rb') as f:
+            img = Image.open(f); img.load(); img = img.convert("RGB")
+        new_size = (int(img.width * SCALE_FACTOR), int(img.height * SCALE_FACTOR))
+        if new_size[0] > 16000 or new_size[1] > 16000:
+            raise ValueError("Karte zu gross für das neuronale Netz. Skalierung prüfen.")
+        img = img.resize(new_size, resample=Image.BICUBIC)
+        ort_session = ort.InferenceSession("best_model_300dpi.onnx")
+
+        img_w, img_h = img.size
+        output_img = np.zeros((img_h, img_w), dtype=np.float32)
+        TILE_SIZE = 2048
+        overlap = int(TILE_SIZE * 0.2)
+        step = TILE_SIZE - overlap
+        total_tiles = max(1, max(1, math.ceil(img_h / step)) * max(1, math.ceil(img_w / step)))
+        job.update({'current': 0, 'total': total_tiles})
+        print(f"[MASK] START file={filename} tiles={total_tiles}", flush=True)
+
+        processed = 0
+        for y0 in range(0, img_h, step):
+            for x0 in range(0, img_w, step):
+                y1 = min(y0 + TILE_SIZE, img_h)
+                x1 = min(x0 + TILE_SIZE, img_w)
+                tile = img.crop((x0, y0, x1, y1))
+                tile_np = np.transpose(np.array(tile) / 255.0, (2, 0, 1))[np.newaxis].astype(np.float32)
+
+                out = ort_session.run(None, {"input": tile_np})[0]
+                if out.ndim == 4: out = out[0]
+                if out.shape[0] > 1: out = out.argmax(axis=0)
+                tile_pred = out.astype(np.float32)
+
+                oy0 = y0 if y0 == 0 else y0 + overlap // 2; oy1 = y1 if y1 == img_h else y1 - overlap // 2
+                ox0 = x0 if x0 == 0 else x0 + overlap // 2; ox1 = x1 if x1 == img_w else x1 - overlap // 2
+                ty0, tx0 = oy0 - y0, ox0 - x0
+                ty1 = min(ty0 + (oy1 - oy0), tile_pred.shape[0])
+                tx1 = min(tx0 + (ox1 - ox0), tile_pred.shape[1])
+                output_img[oy0:oy0 + (ty1 - ty0), ox0:ox0 + (tx1 - tx0)] = tile_pred[ty0:ty1, tx0:tx1]
+
+                processed += 1
+                print(f"[MASK] tile {processed}/{total_tiles} ({time.time()-t0:.1f}s)", flush=True)
+                job.update({'current': processed, 'total': total_tiles})
+
+        # ── Build + save the mask PNG ──────────────────────────────────────
+        mo = SimpleNamespace(impassable=0, outline=135, very_slow=135, slow=231, cross=241, fast=243)
+        vis = 255 * np.ones((img_h, img_w, 1), dtype=np.uint8)
+        vis[output_img < 10] = mo.impassable
+        vis[(output_img >= 10) & (output_img < 22)] = mo.very_slow
+        vis[(output_img >= 22) & (output_img < 26)] = mo.slow
+        vis[(output_img >= 26) & (output_img < 28)] = mo.cross
+        vis[(output_img >= 28) & (output_img < 32)] = mo.fast
+        vis[output_img == 32] = mo.cross
+        vis[output_img == 33] = mo.fast
+        vis[output_img == 34] = mo.impassable
+        # 1-px 8-connected outline around every impassable region at grey=135
+        # (cost 255-135 = 120/px). Soft-blocks paths from hugging obstacles
+        # without sealing narrow passages.
+        from scipy import ndimage as _ndi
+        vis_2d = vis[:, :, 0]
+        impassable_mask = vis_2d == mo.impassable
+        dilated = _ndi.binary_dilation(
+            impassable_mask, structure=np.ones((3, 3), dtype=bool), iterations=1,
+        )
+        vis_2d[dilated & ~impassable_mask] = mo.outline
+        final = Image.fromarray(np.repeat(vis, 3, axis=2).astype(np.uint8))
+        buf = BytesIO(); final.save(buf, format="PNG"); buf.seek(0)
+        mask_path = os.path.join(settings.MEDIA_ROOT, 'masks', mask_filename)
+        os.makedirs(os.path.dirname(mask_path), exist_ok=True)
+        with open(mask_path, 'wb') as f:
+            f.write(buf.read())
+        del vis, vis_2d, dilated, impassable_mask, final, buf
+
+        if file_id is not None:
+            File.objects.filter(id=file_id, deleted=False, map_file=filename).update(has_mask=True)
+        else:
+            File.objects.filter(map_file=filename, deleted=False).update(has_mask=True)
+
+        print(f"[MASK] DONE {time.time()-t0:.1f}s", flush=True)
+        job.update({'done': True})
+
+    except Exception as e:
+        traceback.print_exc()
+        job.update({'error': str(e)})
+    finally:
+        # Drop the registry entry, release the lockfile, and free the heavy
+        # buffers + ONNX session — runs no matter how the job ended.
+        with _mask_generation_jobs_lock:
+            if _mask_generation_jobs.get(job_key) is job:
+                _mask_generation_jobs.pop(job_key, None)
+        try:
+            os.unlink(lock_path)
+        except OSError:
+            pass
+        img = None
+        output_img = None
+        ort_session = None
+        gc.collect()
+        connection.close()
+
+
+async def _await_mask_via_fs(event_base, mask_filename, since_ts,
+                             poll_interval=1.0, max_seconds=1800):
+    """SSE fallback for a client whose generation is owned by *another* gunicorn
+    worker. We can't see that worker's in-memory tile progress, so just watch
+    the shared volume and report 'done' once a freshly-written mask appears
+    (mtime newer than when this request arrived, so a pre-existing mask from a
+    previous run doesn't trigger a false 'done')."""
+    import asyncio
+    import json as _json
+    import time as _time
+    from asgiref.sync import sync_to_async
+
+    mask_path = os.path.join(settings.MEDIA_ROOT, 'masks', mask_filename)
+
+    def _fmt(payload):
+        return f"data: {_json.dumps({**event_base, **payload})}\n\n"
+
+    def _fresh():
+        try:
+            return os.path.getmtime(mask_path) >= since_ts
+        except OSError:
+            return False
+
+    yield _fmt({'in_progress': True})
+    start = _time.time()
+    while True:
+        if await sync_to_async(_fresh)():
+            yield _fmt({'done': True})
+            return
+        if _time.time() - start > max_seconds:
+            yield _fmt({'error': 'Zeitüberschreitung bei der Maskengenerierung'})
+            return
+        await asyncio.sleep(poll_interval)
+
+
 async def generate_mask(request):
     """Stream UNet mask generation progress via a true async generator.
     Auth is checked inline because user_passes_test is not async-compatible.
@@ -906,167 +1075,85 @@ async def generate_mask(request):
         'mask_file': mask_filename,
     }
     job_key = (active_team_id, file_id if file_id is not None else filename)
+    # In-process de-dup: if *this* worker is already generating this map, attach
+    # the new client to the running job (live progress, no extra compute).
     with _mask_generation_jobs_lock:
         existing_job = _mask_generation_jobs.get(job_key)
         if existing_job and existing_job.done:
             _mask_generation_jobs.pop(job_key, None)
             existing_job = None
         if existing_job:
-            job = existing_job
-            owns_job = False
-        else:
-            job = _MaskGenerationJob(job_key, event_base)
-            _mask_generation_jobs[job_key] = job
-            owns_job = True
+            print(f"[MASK] ATTACH file={filename}", flush=True)
+            resp = StreamingHttpResponse(existing_job.stream(), content_type="text/event-stream")
+            resp["Cache-Control"] = "no-cache"
+            resp["X-Accel-Buffering"] = "no"
+            return resp
 
-    if not owns_job:
-        print(f"[SSE] ATTACH file={filename}", flush=True)
-        resp = StreamingHttpResponse(job.stream(), content_type="text/event-stream")
+    # Fail fast if the model runtime is missing, before committing to a job.
+    try:
+        import onnxruntime  # noqa: F401
+    except ImportError:
+        return HttpResponse("onnxruntime not installed", status=500)
+
+    # Cross-worker de-dup: the media volume is shared by all gunicorn workers, so
+    # guard the actual compute with a lockfile on the volume. Whoever creates it
+    # owns the generation; everyone else just waits for the mask to appear, so we
+    # never burn a second ~GB of RAM regenerating the same map in parallel.
+    masks_dir = os.path.join(settings.MEDIA_ROOT, 'masks')
+    lock_path = os.path.join(masks_dir, f'.generating_{basename}.lock')
+    since_ts  = time.time()
+
+    def _acquire_lock():
+        os.makedirs(masks_dir, exist_ok=True)
+        try:
+            fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            # Reclaim a stale lock left by a crashed worker (older than 30 min).
+            try:
+                if time.time() - os.path.getmtime(lock_path) > 1800:
+                    os.unlink(lock_path)
+                    fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                else:
+                    return False
+            except OSError:
+                return False
+        os.write(fd, str(time.time()).encode())
+        os.close(fd)
+        return True
+
+    if not await sync_to_async(_acquire_lock)():
+        print(f"[MASK] WAIT (locked on another worker) file={filename}", flush=True)
+        resp = StreamingHttpResponse(
+            _await_mask_via_fs(event_base, mask_filename, since_ts),
+            content_type="text/event-stream",
+        )
         resp["Cache-Control"] = "no-cache"
         resp["X-Accel-Buffering"] = "no"
         return resp
 
-    def _drop_mask_generation_job():
-        with _mask_generation_jobs_lock:
-            if _mask_generation_jobs.get(job_key) is job:
-                _mask_generation_jobs.pop(job_key, None)
+    # We own the generation. Register the job and run it in a detached, non-daemon
+    # background thread so it finishes — and writes the mask to the volume —
+    # regardless of whether the client stays connected.
+    job = _MaskGenerationJob(job_key, event_base)
+    with _mask_generation_jobs_lock:
+        _mask_generation_jobs[job_key] = job
 
-    # ── Load image + model (sync I/O → run in executor) ───────────────────
-    try:
-        import onnxruntime as ort
-    except ImportError:
-        _drop_mask_generation_job()
-        return HttpResponse("onnxruntime not installed", status=500)
+    threading.Thread(
+        target=_run_mask_generation,
+        kwargs=dict(
+            job=job, job_key=job_key, map_path=map_path, scale=scale,
+            mask_filename=mask_filename, filename=filename,
+            file_id=file_id, lock_path=lock_path,
+        ),
+        daemon=False,
+    ).start()
 
-    def _load():
-        Image.MAX_IMAGE_PIXELS = None
-        SCALE_FACTOR = scale / 0.710 * 4000 / 4000
-        with open(map_path, 'rb') as f:
-            img = Image.open(f); img.load(); img = img.convert("RGB")
-        new_size = (int(img.width * SCALE_FACTOR), int(img.height * SCALE_FACTOR))
-        if new_size[0] > 16000 or new_size[1] > 16000:
-            raise ValueError("Map too large for neural network. Check scale.")
-        img = img.resize(new_size, resample=Image.BICUBIC)
-        session = ort.InferenceSession("best_model_300dpi.onnx")
-        return img, session
-
-    try:
-        img, ort_session = await sync_to_async(_load)()
-    except ValueError as e:
-        _drop_mask_generation_job()
-        return HttpResponse(str(e), status=400)
-    except Exception as e:
-        traceback.print_exc()
-        _drop_mask_generation_job()
-        return HttpResponse(str(e), status=500)
-
-    img_w, img_h   = img.size
-    output_img     = np.zeros((img_h, img_w), dtype=np.float32)
-    TILE_SIZE      = 2048
-    overlap        = int(TILE_SIZE * 0.2)
-    step           = TILE_SIZE - overlap
-    tiles_y        = max(1, math.ceil(img_h / step))
-    tiles_x        = max(1, math.ceil(img_w / step))
-    total_tiles    = max(1, tiles_y * tiles_x)
-
-    def _predict(tile_np):
-        out = ort_session.run(None, {"input": tile_np})[0]
-        if out.ndim == 4: out = out[0]
-        if out.shape[0] > 1: out = out.argmax(axis=0)
-        return out.astype(np.float32)
-
-    predict_async = sync_to_async(_predict)
-
-    # ── Async SSE generator — each yield is flushed immediately ────────────
-    async def sse_stream():
-        t0 = time.time()
-        processed = 0
-
-        async def _event(payload):
-            event = await job.publish(payload)
-            return job._format_event(event)
-
-        print(f"[SSE] START  file={filename}  tiles={total_tiles}", flush=True)
-        yield await _event({'current': 0, 'total': total_tiles})
-
-        try:
-            for y0 in range(0, img_h, step):
-                for x0 in range(0, img_w, step):
-                    y1 = min(y0 + TILE_SIZE, img_h)
-                    x1 = min(x0 + TILE_SIZE, img_w)
-                    tile    = img.crop((x0, y0, x1, y1))
-                    tile_np = np.transpose(np.array(tile) / 255.0, (2,0,1))[np.newaxis].astype(np.float32)
-
-                    # ONNX inference via sync_to_async so the event loop stays free
-                    tile_pred = await predict_async(tile_np)
-
-                    oy0 = y0 if y0==0 else y0+overlap//2; oy1 = y1 if y1==img_h else y1-overlap//2
-                    ox0 = x0 if x0==0 else x0+overlap//2; ox1 = x1 if x1==img_w else x1-overlap//2
-                    ty0, tx0 = oy0-y0, ox0-x0
-                    ty1 = min(ty0+(oy1-oy0), tile_pred.shape[0])
-                    tx1 = min(tx0+(ox1-ox0), tile_pred.shape[1])
-                    output_img[oy0:oy0+(ty1-ty0), ox0:ox0+(tx1-tx0)] = tile_pred[ty0:ty1, tx0:tx1]
-
-                    processed += 1
-                    print(f"[SSE] tile {processed}/{total_tiles}  ({time.time()-t0:.1f}s)", flush=True)
-                    yield await _event({'current': processed, 'total': total_tiles})
-
-        except Exception as e:
-            print(f"[SSE] ERROR: {e}", flush=True)
-            yield await _event({'error': str(e)})
-            _drop_mask_generation_job()
-            return
-
-        # ── Save mask ──────────────────────────────────────────────────────
-        def _save():
-            mo = SimpleNamespace(impassable=0, outline=135, very_slow=135, slow=231, cross=241, fast=243)
-            vis = 255 * np.ones((img_h, img_w, 1), dtype=np.uint8)
-            vis[output_img < 10] = mo.impassable
-            vis[(output_img >= 10) & (output_img < 22)] = mo.very_slow
-            vis[(output_img >= 22) & (output_img < 26)] = mo.slow
-            vis[(output_img >= 26) & (output_img < 28)] = mo.cross
-            vis[(output_img >= 28) & (output_img < 32)] = mo.fast
-            vis[output_img == 32] = mo.cross
-            vis[output_img == 33] = mo.fast
-            vis[output_img == 34] = mo.impassable
-            # 1-px 8-connected outline around every impassable region, painted
-            # at grey=135 (cost 255-135 = 120/px, ~10× a fast-terrain pixel).
-            # Soft-blocks paths from hugging obstacles without sealing narrow
-            # passages — the algorithm prefers detours but can still squeeze
-            # through a 1-px gap if no alternative exists.
-            from scipy import ndimage as _ndi
-            vis_2d = vis[:, :, 0]
-            impassable_mask = vis_2d == mo.impassable
-            dilated = _ndi.binary_dilation(
-                impassable_mask,
-                structure=np.ones((3, 3), dtype=bool),
-                iterations=1,
-            )
-            outline_mask = dilated & ~impassable_mask
-            vis_2d[outline_mask] = mo.outline
-            final = Image.fromarray(np.repeat(vis, 3, axis=2).astype(np.uint8))
-            buf = BytesIO(); final.save(buf, format="PNG"); buf.seek(0)
-            mask_path = os.path.join(settings.MEDIA_ROOT, 'masks', mask_filename)
-            with open(mask_path, 'wb') as f: f.write(buf.read())
-            if file_id is not None:
-                File.objects.filter(id=file_id, deleted=False, map_file=filename).update(has_mask=True)
-            else:
-                File.objects.filter(map_file=filename, deleted=False).update(has_mask=True)
-            gc.collect()
-
-        await sync_to_async(_save)()
-        print(f"[SSE] DONE  {time.time()-t0:.1f}s", flush=True)
-        yield await _event({'done': True})
-        _drop_mask_generation_job()
-
-        # (Phase 2 — visibility-graph navgraph build — was removed when the
-        # navgraph approach was retired. The client-side worker decodes the
-        # PNG on its own once the editor receives this `done` event.)
-
-    resp = StreamingHttpResponse(sse_stream(), content_type="text/event-stream")
+    print(f"[MASK] SPAWN file={filename}", flush=True)
+    resp = StreamingHttpResponse(job.stream(), content_type="text/event-stream")
     resp["Cache-Control"] = "no-cache"
     resp["X-Accel-Buffering"] = "no"
     return resp
+
 
 
 @role_required('Trainer')

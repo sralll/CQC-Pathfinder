@@ -7,6 +7,7 @@
 
 {% block content %}
 <div class="login-page">
+    <img src="{% static 'img/logo.svg' %}" class="login-logo" alt="CQC Pathfinder">
     <div class="login-overlay">
         {% if form.errors %}
         <div class="login-error">Falsche Benutzerdaten</div>

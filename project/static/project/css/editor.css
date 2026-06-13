@@ -1125,6 +1125,11 @@ x-icon.spin svg { animation: spin 1s linear infinite; }
     opacity: 0.4;
 }
 
+.ocad-import-checking {
+    font-size: 13px;
+    color: #888;
+}
+
 .ocad-upload-btn {
     margin-top: 4px;
     min-width: 140px;

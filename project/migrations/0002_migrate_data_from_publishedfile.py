@@ -69,11 +69,15 @@ def migrate_data(apps, schema_editor):
             for route_order, route_data in enumerate(cp_data.get('route', [])):
                 rP        = route_data.get('rP') or []
                 elevation = to_int(route_data.get('elevation'))
-                # Recompute length, noA, and run_time from the polyline using
-                # the project scale so legacy data lands on the same footing
-                # as routes created in the new editor.
-                new_length   = calc_route_length(rP, file_scale)
-                new_noA      = calc_route_noA(rP, file_scale)
+                # Recompute length, noA, and run_time from the polyline so legacy
+                # data lands on the same footing as routes created in the new
+                # editor. The editor's calcRouteLength/calcRouteNoA work on the
+                # raw rP pixel coordinates and do NOT apply the map scale, so we
+                # must not pass file_scale here — otherwise the migrated run_time
+                # disagrees with the live value and jumps the moment a route is
+                # edited.
+                new_length   = calc_route_length(rP)
+                new_noA      = calc_route_noA(rP)
                 new_run_time = calc_route_runtime(new_length, new_noA, elevation)
 
                 Route.objects.create(

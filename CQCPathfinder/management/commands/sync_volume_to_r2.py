@@ -13,11 +13,13 @@ Both directions are incremental: objects are compared by size + content MD5
 map files we keep on the volume). Files that exist on the destination but not
 the source are deleted, so the destination ends up as a true mirror.
 """
+import gc
 import hashlib
 import os
 from pathlib import Path
 
 import boto3
+from boto3.s3.transfer import TransferConfig
 from botocore.client import Config as BotoConfig
 from botocore.exceptions import ClientError
 from django.conf import settings
@@ -28,6 +30,19 @@ SUBDIRS = ("maps", "masks")
 PUSH = "push"
 PULL = "pull"
 _MD5_CHUNK = 1 << 20  # 1 MiB
+
+# This command runs inside the main web process (the only service with the
+# volume mounted). boto3's default managed transfer buffers up to
+# max_concurrency(10) x multipart_chunksize(8 MiB) ~= 80 MiB per file, which
+# spikes the web app's footprint. Our maps are 5-10 MB and masks are smaller,
+# so raise the multipart threshold past their size (single-PUT, streamed from
+# the file handle) and cap concurrency for the rare larger file.
+_TRANSFER_CONFIG = TransferConfig(
+    multipart_threshold=32 * 1024 * 1024,
+    multipart_chunksize=8 * 1024 * 1024,
+    max_concurrency=2,
+    use_threads=True,
+)
 
 
 def _same(local_entry, remote_entry):
@@ -171,7 +186,8 @@ class Command(BaseCommand):
                     if _same(local_entry, remote.get(rel)):
                         continue
                     client.upload_file(
-                        str(local_dir / rel), bucket, f"{sub}/{rel}"
+                        str(local_dir / rel), bucket, f"{sub}/{rel}",
+                        Config=_TRANSFER_CONFIG,
                     )
                     total_uploaded += 1
                 for rel in remote.keys() - local.keys():
@@ -201,7 +217,10 @@ class Command(BaseCommand):
                         continue
                     dst = local_dir / rel
                     dst.parent.mkdir(parents=True, exist_ok=True)
-                    client.download_file(bucket, f"{sub}/{rel}", str(dst))
+                    client.download_file(
+                        bucket, f"{sub}/{rel}", str(dst),
+                        Config=_TRANSFER_CONFIG,
+                    )
                     total_downloaded += 1
                 for rel in local.keys() - remote.keys():
                     (local_dir / rel).unlink(missing_ok=True)
@@ -210,8 +229,17 @@ class Command(BaseCommand):
             self.stdout.write(
                 f"[{direction}] {sub}: local={len(local)} remote={len(remote)}"
             )
+            # Drop the per-subdir indexes before the next subdir so we don't hold
+            # two full file listings at once.
+            local = remote = None
 
         self.stdout.write(
             f"[{direction}] done. uploaded={total_uploaded} "
             f"downloaded={total_downloaded} deleted={total_deleted}"
         )
+
+        # The sync runs in-process inside the long-lived web service; release the
+        # boto3 client (and its connection pool) and reclaim the transfer buffers
+        # promptly rather than leaving them for the next GC cycle.
+        client = None
+        gc.collect()

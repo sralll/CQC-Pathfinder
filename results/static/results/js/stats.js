@@ -454,8 +454,9 @@ function updateTableSortIndicators() {
     document.querySelectorAll('#stats-table thead th[data-sort]').forEach(th => {
         const ind = th.querySelector('.stats-th-sort');
         if (!ind) return;
-        if (th.dataset.sort !== key) { ind.textContent = ''; return; }
-        ind.textContent = dir === 1 ? ' ↑' : ' ↓';
+        if (th.dataset.sort !== key) { ind.innerHTML = ''; ind.classList.remove('active'); return; }
+        ind.innerHTML = dir === 1 ? '↑' : '↓';
+        ind.classList.add('active');
     });
 }
 

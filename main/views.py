@@ -373,9 +373,10 @@ def feedback_view(request):
     if request.method == "POST":
         form = FeedbackForm(request.POST)
         if form.is_valid():
-            form.save()
-            # Redirect to same page or a thank-you page
-            return redirect('feedback')  # name of your url pattern
+            feedback = form.save(commit=False)
+            feedback.user = request.user
+            feedback.save()
+            return redirect('feedback')
     else:
         form = FeedbackForm()
 
