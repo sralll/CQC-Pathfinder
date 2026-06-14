@@ -69,6 +69,8 @@ function hideTableLoading() {
 function renderAfterLoad() {
     renderTableHeader();
     table.setFiles(filteredFiles);
+    renderCards();
+    renderMobileControls();
     updateSortIndicators();
     updateFilterIcons();
     updateClearButton?.();
@@ -207,6 +209,8 @@ function applyFilters() {
     });
     filteredFiles = applySorting(filteredFiles);
     table.setFiles(filteredFiles);
+    renderCards();
+    renderMobileControls();
     updateFilterIcons();
     updateClearButton();
     updateSortIndicators();
@@ -375,6 +379,12 @@ function initSearch() {
     const input = document.getElementById("project-search");
     input.addEventListener("input", applyFilters);
     input.addEventListener("input", updateClearButton);
+    input.addEventListener("keydown", e => {
+        if (e.key === "Enter") {
+            e.preventDefault();
+            input.blur();
+        }
+    });
     updateClearButton();
 }
 
@@ -423,6 +433,165 @@ function initButtons() {
     document.getElementById("close-map-modal-btn")?.addEventListener("click", closeMapModal);
     document.getElementById("browse-map-btn")?.addEventListener("click", () => document.getElementById("map-file-input")?.click());
     document.getElementById("ocad-upload-btn")?.addEventListener("click", uploadSelectedMap);
+}
+
+/* =========================================================
+    MOBILE CARDS
+========================================================= */
+
+function renderCards() {
+    const wrap = document.getElementById('file-cards');
+    if (!wrap) return;
+    wrap.innerHTML = '';
+
+    if (filteredFiles.length === 0) {
+        const msg = document.createElement('div');
+        msg.className = 'file-card-empty';
+        msg.textContent = 'Keine Projekte gefunden.';
+        wrap.appendChild(msg);
+        return;
+    }
+
+    const { showTeamColumn } = getTableConfig(projectFiles);
+
+    filteredFiles.forEach(f => {
+        const card = document.createElement('div');
+        card.className = 'file-card' + (!f.can_edit ? ' file-card-foreign' : '');
+
+        if (f.published) {
+            card.style.background =
+                `linear-gradient(to right,
+                    rgba(255,140,0,0.35) 0%,
+                    rgba(255,140,0,0.15) 40%,
+                    rgba(255,140,0,0.04) 75%,
+                    rgba(255,140,0,0)    100%), #1a1a1a`;
+        }
+
+        const publishBtn = f.can_edit && !f.is_locked
+            ? `<button class="file-card-publish ${f.published ? 'file-card-publish-active' : ''}"
+                       title="${f.published ? 'Veröffentlichung aufheben' : 'Veröffentlichen'}"
+                       data-file-id="${f.id}">${icon("globe", "1em")}</button>`
+            : (f.published
+                ? `<span class="file-card-publish file-card-publish-active file-card-publish-disabled">${icon("globe", "1em")}</span>`
+                : '');
+
+        const labelHtml = f.label
+            ? `<span style="background:${f.label.color}22;color:${f.label.color};
+                border:1px solid ${f.label.color}55;border-radius:3px;
+                padding:1px 5px;font-size:10px;font-weight:500;white-space:nowrap;">
+                ${f.label.name}</span>
+               <span class="file-card-sep">|</span>`
+            : '';
+
+        const teamHtml = showTeamColumn && f.team_name
+            ? `<span>${f.team_name}</span>
+               <span class="file-card-sep">·</span>`
+            : '';
+
+        const lockHtml = f.is_locked
+            ? `<span class="file-card-lock" title="${f.locked_by_name || ''} bearbeitet gerade">${icon("lock", "0.9em")}</span>
+               <span class="file-card-sep">·</span>`
+            : '';
+
+        card.innerHTML = `
+            <div class="file-card-row1">
+                ${publishBtn}
+                <span class="file-card-name">${f.name}</span>
+                <span class="file-card-cp">${f.cp_count} Posten</span>
+            </div>
+            <div class="file-card-row2">
+                ${lockHtml}
+                ${labelHtml}
+                ${teamHtml}
+                <span>${f.author || '—'}</span>
+                <span class="file-card-date">${formatCardDate(f.last_edited)}</span>
+            </div>`;
+
+        const pubEl = card.querySelector('.file-card-publish[data-file-id]');
+        if (pubEl) {
+            pubEl.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                const res  = await fetch(`/editor/publish/${f.id}/`, {
+                    method: 'POST',
+                    headers: { 'X-CSRFToken': getCSRFToken() }
+                });
+                const data = await res.json();
+                if (!res.ok) {
+                    await showModal({ message: data.message || 'Fehler beim Veröffentlichen.' });
+                    return;
+                }
+                f.published = data.published;
+                if (f.id === project?.id) {
+                    if (data.published) window.setReadOnly?.(true, null, 'published');
+                    else                window.setReadOnly?.(false);
+                }
+                renderCards();
+                table.setFiles(filteredFiles);
+            });
+        }
+
+        card.addEventListener('click', () => table.openFile(f.id));
+        wrap.appendChild(card);
+    });
+}
+
+function formatCardDate(iso) {
+    if (!iso) return '—';
+    return new Date(iso).toLocaleDateString('de-CH', {
+        day: '2-digit', month: '2-digit', year: '2-digit'
+    });
+}
+
+/* =========================================================
+    MOBILE SORT / FILTER CONTROLS
+========================================================= */
+
+function renderMobileControls() {
+    const bar = document.getElementById('file-mobile-controls');
+    if (!bar) return;
+    bar.innerHTML = '';
+
+    const sortRow = document.createElement('div');
+    sortRow.className = 'file-ctrl-row';
+
+    const sortFields = [
+        { key: 'name',        label: 'Name'   },
+        { key: 'cp_count',    label: 'Posten' },
+        { key: 'last_edited', label: 'Datum'  },
+    ];
+    sortFields.forEach(({ key, label }) => {
+        const btn   = document.createElement('button');
+        const arrow = sortState.key === key ? (sortState.dir === -1 ? ' ↓' : ' ↑') : '';
+        btn.className   = 'file-ctrl-btn' + (sortState.key === key ? ' active' : '');
+        btn.textContent = label + arrow;
+        btn.addEventListener('click', () => setSort(key));
+        sortRow.appendChild(btn);
+    });
+    bar.appendChild(sortRow);
+
+    const filterRow = document.createElement('div');
+    filterRow.className = 'file-ctrl-row';
+
+    const { showTeamColumn } = getTableConfig(projectFiles);
+
+    const filterFields = [
+        { field: 'label',  label: 'Label',  toggle: toggleLabelFilter  },
+        { field: 'author', label: 'Autor',  toggle: toggleAuthorFilter },
+        ...(showTeamColumn
+            ? [{ field: 'team', label: 'Kader', toggle: toggleTeamFilter }]
+            : []),
+    ];
+    filterFields.forEach(({ field, label, toggle }) => {
+        const active = field === 'label'  ? activeLabelFilter !== null
+                     : field === 'author' ? activeAuthorFilters.length > 0
+                     :                      activeTeamFilters.length > 0;
+        const btn = document.createElement('button');
+        btn.className = 'file-ctrl-btn' + (active ? ' active' : '');
+        btn.innerHTML = `${icon('filter', '0.8em')} ${label}`;
+        btn.addEventListener('click', e => { e.stopPropagation(); toggle(e); });
+        filterRow.appendChild(btn);
+    });
+    bar.appendChild(filterRow);
 }
 
 /* =========================================================

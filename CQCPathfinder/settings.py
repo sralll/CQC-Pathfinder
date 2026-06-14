@@ -62,6 +62,11 @@ MIDDLEWARE = [
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    # Require login for every view by default; unauthenticated requests are
+    # redirected to LOGIN_URL with ?next=<path> so the user lands back on the
+    # page they wanted after logging in. Public views opt out with the
+    # @login_not_required decorator (see CQCPathfinder/urls.py + internal_views).
+    "django.contrib.auth.middleware.LoginRequiredMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     #"admin_reorder.middleware.ModelAdminReorder",

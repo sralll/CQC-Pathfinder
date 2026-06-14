@@ -14,7 +14,8 @@
 
 {% block nav_content %}
     <div id="menu-project" class="nav-menu-item">
-        Projekte...
+        <span class="nav-label-full">Projekte...</span>
+        <span class="nav-label-short">P...</span>
         <div class="nav-dropdown" id="project-dropdown" onclick="event.stopPropagation();">
             <div id="nav-open-projects">
                 <span>Liste</span>
@@ -41,41 +42,46 @@
         </div>
     </div>
 
-    <div id="menu-history" class="nav-menu-item">
-        <x-icon name="history" size="13px"></x-icon>
-        <div id="undo-dropdown" class="nav-dropdown" style="min-width:220px;max-height:320px;overflow-y:auto;"></div>
-    </div>
+    <button id="nav-ham-right" class="nav-ham-btn" title="Menü">
+        <x-icon name="bars" size="14px"></x-icon>
+    </button>
+    <div id="nav-panel-right" class="nav-ham-panel nav-ham-panel-right">
+        <div id="menu-history" class="nav-menu-item">
+            <x-icon name="history" size="13px"></x-icon>
+            <div id="undo-dropdown" class="nav-dropdown" style="min-width:220px;max-height:320px;overflow-y:auto;"></div>
+        </div>
 
-    <div id="menu-batch" class="nav-menu-item">
-        <x-icon name="industry" size="13px"></x-icon>
-        <div class="nav-dropdown" onclick="event.stopPropagation();" style="min-width:200px;">
-            <div id="batch-switch-lr" class="nav-dropdown-item">
-                <x-icon name="arrows-split" size="12px" style="transform:scaleY(-1)"></x-icon>
-                <span>Alle Posten</span>
-            </div>
-            <div id="batch-auto-pathfind" class="nav-dropdown-item">
-                <x-icon name="wand-magic-sparkles" size="12px"></x-icon>
-                <span>Alle Posten</span>
+        <div id="menu-batch" class="nav-menu-item">
+            <x-icon name="industry" size="13px"></x-icon>
+            <div class="nav-dropdown" onclick="event.stopPropagation();" style="min-width:200px;">
+                <div id="batch-switch-lr" class="nav-dropdown-item">
+                    <x-icon name="arrows-split" size="12px" style="transform:scaleY(-1)"></x-icon>
+                    <span>Alle Posten</span>
+                </div>
+                <div id="batch-auto-pathfind" class="nav-dropdown-item">
+                    <x-icon name="wand-magic-sparkles" size="12px"></x-icon>
+                    <span>Alle Posten</span>
+                </div>
             </div>
         </div>
-    </div>
 
-    <div id="menu-einstellungen" class="nav-menu-item">
-        Einstellungen
-        <div class="nav-dropdown" onclick="event.stopPropagation();">
-            <div class="settings-toggle-row">
-                <span>Auto-Pathfind</span>
-                <label class="toggle-switch">
-                    <input type="checkbox" id="toggle-auto-pathfind">
-                    <span class="toggle-slider"></span>
-                </label>
-            </div>
-            <div class="settings-toggle-row">
-                <span>Auto-Jump</span>
-                <label class="toggle-switch">
-                    <input type="checkbox" id="toggle-auto-jump">
-                    <span class="toggle-slider"></span>
-                </label>
+        <div id="menu-einstellungen" class="nav-menu-item">
+            Einstellungen
+            <div class="nav-dropdown" onclick="event.stopPropagation();">
+                <div class="settings-toggle-row">
+                    <span>Auto-Pathfind</span>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="toggle-auto-pathfind">
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+                <div class="settings-toggle-row">
+                    <span>Auto-Jump</span>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="toggle-auto-jump">
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
             </div>
         </div>
     </div>
@@ -274,6 +280,7 @@
                 </button>
             </div>
         </div>
+        <div id="file-mobile-controls"></div>
         <div class="modal-table-wrap">
             <div id="file-table-loading" class="file-table-loading">
                 <x-icon name="spinner" class="spin"></x-icon>
@@ -293,6 +300,7 @@
                 <thead id="file-thead"></thead>
                 <tbody id="file-tbody"></tbody>
             </table>
+            <div id="file-cards"></div>
             <div id="label-filter-dropdown" class="table-filter-dropdown"></div>
             <div id="author-filter-dropdown" class="table-filter-dropdown"></div>
             <div id="team-filter-dropdown" class="table-filter-dropdown"></div>

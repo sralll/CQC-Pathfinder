@@ -38,56 +38,68 @@ def _normalize_order_payload(control_pairs):
 
 
 class _MaskGenerationJob:
-    """Thread-safe progress holder for one background mask-generation run.
+    """Pub/sub progress relay for one background mask-generation run.
 
     The heavy work runs in a non-daemon worker thread (`_run_mask_generation`)
-    that pushes coarse progress through the thread-safe `update()`. The SSE view
-    consumes it via the async `stream()`, which simply polls the latest
-    snapshot. Because the producer (worker thread) and the consumer (SSE
-    connection) are decoupled, the worker keeps running — and still writes the
-    mask to the volume + flips File.has_mask — after the client closes the
-    stream (navigates away / loads another file)."""
+    which pushes events through the thread-safe `publish()`. Any number of SSE
+    clients consume them via the async `stream()`. Producer and consumers are
+    decoupled, so the worker keeps running — and still writes the mask to the
+    volume + flips File.has_mask — even after every client closes its stream
+    (navigates away / loads another file).
 
-    def __init__(self, key, event_base):
+    `publish()` is called from the worker thread, so it hops onto the event loop
+    (`call_soon_threadsafe`) to feed each subscriber's asyncio.Queue."""
+
+    def __init__(self, key, event_base, loop):
         self.key = key
         self.event_base = event_base
+        self.loop = loop                 # event loop that owns the subscriber queues
         self._lock = threading.Lock()
-        self._state = {}          # latest progress, e.g. {'current', 'total'}
+        self.history = []                # every event so far (late subscribers replay)
+        self.subscribers = set()         # one asyncio.Queue per live SSE client
         self.done = False
 
-    def update(self, payload):
-        """Called from the worker thread to record progress / completion."""
+    def _format(self, event):
+        import json as _json
+        return f"data: {_json.dumps(event)}\n\n"
+
+    def publish(self, payload):
+        """Thread-safe; called from the worker thread."""
+        event = {**self.event_base, **payload}
         with self._lock:
-            self._state.update(payload)
+            self.history.append(event)
             if payload.get('done') or payload.get('error'):
                 self.done = True
+            subscribers = list(self.subscribers)
+        for q in subscribers:
+            try:
+                self.loop.call_soon_threadsafe(q.put_nowait, event)
+            except RuntimeError:
+                pass  # loop already closed — ignore
+        return event
 
-    def _snapshot(self):
-        with self._lock:
-            return dict(self._state), self.done
-
-    def _format(self, payload):
-        import json as _json
-        return f"data: {_json.dumps({**self.event_base, **payload})}\n\n"
-
-    async def stream(self, poll_interval=0.4, max_seconds=1800):
-        """SSE generator: emit the latest snapshot whenever it changes. Ending
-        this generator (client disconnect) does NOT stop the worker thread."""
+    async def stream(self):
+        """SSE generator. Ending it (client disconnect) only drops this
+        subscriber; the worker thread keeps running."""
         import asyncio
-        import time as _time
-        start = _time.time()
-        last = None
-        while True:
-            state, done = self._snapshot()
-            if state and state != last:
-                yield self._format(state)
-                last = dict(state)
-            if done:
-                return
-            if _time.time() - start > max_seconds:
-                yield self._format({'error': 'Zeitüberschreitung bei der Maskengenerierung'})
-                return
-            await asyncio.sleep(poll_interval)
+        q = asyncio.Queue()
+        with self._lock:
+            history = list(self.history)
+            if not self.done:
+                self.subscribers.add(q)
+        try:
+            for event in history:
+                yield self._format(event)
+                if event.get('done') or event.get('error'):
+                    return
+            while True:
+                event = await q.get()
+                yield self._format(event)
+                if event.get('done') or event.get('error'):
+                    return
+        finally:
+            with self._lock:
+                self.subscribers.discard(q)
 
 
 def _create_db_snapshot(file, user, trigger):
@@ -843,7 +855,7 @@ def save_mask(request):
 
 
 def _run_mask_generation(*, job, job_key, map_path, scale, mask_filename,
-                         filename, file_id, lock_path):
+                         filename, file_id):
     """Heavy UNet mask generation, run in a non-daemon background thread.
 
     Fully decoupled from the request/SSE connection, so it always runs to
@@ -884,7 +896,7 @@ def _run_mask_generation(*, job, job_key, map_path, scale, mask_filename,
         overlap = int(TILE_SIZE * 0.2)
         step = TILE_SIZE - overlap
         total_tiles = max(1, max(1, math.ceil(img_h / step)) * max(1, math.ceil(img_w / step)))
-        job.update({'current': 0, 'total': total_tiles})
+        job.publish({'current': 0, 'total': total_tiles})
         print(f"[MASK] START file={filename} tiles={total_tiles}", flush=True)
 
         processed = 0
@@ -909,7 +921,7 @@ def _run_mask_generation(*, job, job_key, map_path, scale, mask_filename,
 
                 processed += 1
                 print(f"[MASK] tile {processed}/{total_tiles} ({time.time()-t0:.1f}s)", flush=True)
-                job.update({'current': processed, 'total': total_tiles})
+                job.publish({'current': processed, 'total': total_tiles})
 
         # ── Build + save the mask PNG ──────────────────────────────────────
         mo = SimpleNamespace(impassable=0, outline=135, very_slow=135, slow=231, cross=241, fast=243)
@@ -946,61 +958,22 @@ def _run_mask_generation(*, job, job_key, map_path, scale, mask_filename,
             File.objects.filter(map_file=filename, deleted=False).update(has_mask=True)
 
         print(f"[MASK] DONE {time.time()-t0:.1f}s", flush=True)
-        job.update({'done': True})
+        job.publish({'done': True})
 
     except Exception as e:
         traceback.print_exc()
-        job.update({'error': str(e)})
+        job.publish({'error': str(e)})
     finally:
-        # Drop the registry entry, release the lockfile, and free the heavy
-        # buffers + ONNX session — runs no matter how the job ended.
+        # Drop the registry entry and free the heavy buffers + ONNX session —
+        # runs no matter how the job ended.
         with _mask_generation_jobs_lock:
             if _mask_generation_jobs.get(job_key) is job:
                 _mask_generation_jobs.pop(job_key, None)
-        try:
-            os.unlink(lock_path)
-        except OSError:
-            pass
         img = None
         output_img = None
         ort_session = None
         gc.collect()
         connection.close()
-
-
-async def _await_mask_via_fs(event_base, mask_filename, since_ts,
-                             poll_interval=1.0, max_seconds=1800):
-    """SSE fallback for a client whose generation is owned by *another* gunicorn
-    worker. We can't see that worker's in-memory tile progress, so just watch
-    the shared volume and report 'done' once a freshly-written mask appears
-    (mtime newer than when this request arrived, so a pre-existing mask from a
-    previous run doesn't trigger a false 'done')."""
-    import asyncio
-    import json as _json
-    import time as _time
-    from asgiref.sync import sync_to_async
-
-    mask_path = os.path.join(settings.MEDIA_ROOT, 'masks', mask_filename)
-
-    def _fmt(payload):
-        return f"data: {_json.dumps({**event_base, **payload})}\n\n"
-
-    def _fresh():
-        try:
-            return os.path.getmtime(mask_path) >= since_ts
-        except OSError:
-            return False
-
-    yield _fmt({'in_progress': True})
-    start = _time.time()
-    while True:
-        if await sync_to_async(_fresh)():
-            yield _fmt({'done': True})
-            return
-        if _time.time() - start > max_seconds:
-            yield _fmt({'error': 'Zeitüberschreitung bei der Maskengenerierung'})
-            return
-        await asyncio.sleep(poll_interval)
 
 
 async def generate_mask(request):
@@ -1095,46 +1068,12 @@ async def generate_mask(request):
     except ImportError:
         return HttpResponse("onnxruntime not installed", status=500)
 
-    # Cross-worker de-dup: the media volume is shared by all gunicorn workers, so
-    # guard the actual compute with a lockfile on the volume. Whoever creates it
-    # owns the generation; everyone else just waits for the mask to appear, so we
-    # never burn a second ~GB of RAM regenerating the same map in parallel.
-    masks_dir = os.path.join(settings.MEDIA_ROOT, 'masks')
-    lock_path = os.path.join(masks_dir, f'.generating_{basename}.lock')
-    since_ts  = time.time()
-
-    def _acquire_lock():
-        os.makedirs(masks_dir, exist_ok=True)
-        try:
-            fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-        except FileExistsError:
-            # Reclaim a stale lock left by a crashed worker (older than 30 min).
-            try:
-                if time.time() - os.path.getmtime(lock_path) > 1800:
-                    os.unlink(lock_path)
-                    fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-                else:
-                    return False
-            except OSError:
-                return False
-        os.write(fd, str(time.time()).encode())
-        os.close(fd)
-        return True
-
-    if not await sync_to_async(_acquire_lock)():
-        print(f"[MASK] WAIT (locked on another worker) file={filename}", flush=True)
-        resp = StreamingHttpResponse(
-            _await_mask_via_fs(event_base, mask_filename, since_ts),
-            content_type="text/event-stream",
-        )
-        resp["Cache-Control"] = "no-cache"
-        resp["X-Accel-Buffering"] = "no"
-        return resp
-
-    # We own the generation. Register the job and run it in a detached, non-daemon
-    # background thread so it finishes — and writes the mask to the volume —
-    # regardless of whether the client stays connected.
-    job = _MaskGenerationJob(job_key, event_base)
+    # Run the heavy generation in a detached, non-daemon background thread so it
+    # finishes — and writes the mask to the volume — even if the client closes
+    # the SSE stream. The thread pushes progress to the job; every connected SSE
+    # client relays those events (push-based via loop.call_soon_threadsafe).
+    loop = asyncio.get_running_loop()
+    job = _MaskGenerationJob(job_key, event_base, loop)
     with _mask_generation_jobs_lock:
         _mask_generation_jobs[job_key] = job
 
@@ -1142,8 +1081,7 @@ async def generate_mask(request):
         target=_run_mask_generation,
         kwargs=dict(
             job=job, job_key=job_key, map_path=map_path, scale=scale,
-            mask_filename=mask_filename, filename=filename,
-            file_id=file_id, lock_path=lock_path,
+            mask_filename=mask_filename, filename=filename, file_id=file_id,
         ),
         daemon=False,
     ).start()

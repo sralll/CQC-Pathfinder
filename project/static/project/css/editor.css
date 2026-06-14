@@ -160,6 +160,27 @@ html, body {
 .nav-team { font-size: 12px; color: #888; }
 
 /* =========================================================
+   MOBILE NAVBAR — shorten "Projekte..." to "P", hide the
+   username, collapse history/batch/settings into a hamburger
+========================================================= */
+
+.nav-label-short { display: none; }
+body.mobile .nav-label-full  { display: none; }
+body.mobile .nav-label-short { display: inline; }
+
+body.mobile .nav-user-section .nav-username { display: none; }
+
+/* Push the hamburger button to the right edge, next to the user section */
+body.mobile #nav-ham-right { margin-left: auto; }
+
+body.mobile .nav-ham-panel .nav-menu-item {
+    width: 100%;
+    padding: 11px 16px;
+    min-height: var(--touch-target);
+    box-sizing: border-box;
+}
+
+/* =========================================================
    MENU  (editor-specific — shared nav rules in navbar.css)
 ========================================================= */
 
@@ -316,6 +337,22 @@ html, body {
 }
 
 .search-clear:hover { color: #e74c3c; }
+
+/* Mobile: clear button fills a square flush with the input's right edge */
+body.mobile #project-search { padding-right: 50px; }
+
+body.mobile .search-clear {
+    top: 0;
+    right: 0;
+    bottom: 0;
+    transform: none;
+    width: 42px;
+    background: #333;
+    border-left: 1px solid #444;
+    border-radius: 0 8px 8px 0;
+}
+
+body.mobile .search-clear:active { background: #3a3a3a; }
 
 /* =========================================================
    BUTTONS
@@ -1534,6 +1571,7 @@ x-icon.spin svg { animation: spin 1s linear infinite; }
 .cp-grip:active { cursor: grabbing; }
 .cp-row:hover .cp-grip { opacity: 1; }
 #cp-list.cp-dragging .cp-row:hover .cp-grip { opacity: 0.6; }
+body.mobile .cp-grip { display: none; }
 
 .cp-row-label {
     flex: 1;
@@ -1960,6 +1998,146 @@ body.auto-pathfind-busy .cp-route-theta-btn[aria-busy="true"] {
 }
 
 /* =========================================================
+   MOBILE FILE CARDS (base — hidden on desktop)
+========================================================= */
+
+#file-cards {
+    display: none;
+    flex-direction: column;
+    gap: 1px;
+    padding: 0;
+}
+
+#file-mobile-controls {
+    display: none;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 8px 12px;
+    border-bottom: 0.5px solid #2a2a2a;
+}
+
+.file-ctrl-row {
+    display: flex;
+    gap: 6px;
+    width: 100%;
+}
+
+.file-ctrl-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 6px 10px;
+    border-radius: 4px;
+    border: 0.5px solid #333;
+    background: #1a1a1a;
+    color: #777;
+    font-size: 12px;
+    cursor: pointer;
+    user-select: none;
+    transition: background 0.1s, color 0.1s;
+    white-space: nowrap;
+}
+.file-ctrl-btn:hover { background: #2a2a2a; color: #ddd; }
+.file-ctrl-btn.active { border-color: var(--brand); color: var(--brand); }
+
+.file-card {
+    background: #1a1a1a;
+    border-bottom: 0.5px solid #252525;
+    padding: 12px 14px;
+    cursor: pointer;
+    transition: background 0.1s;
+    min-height: 44px;
+    box-sizing: border-box;
+}
+.file-card:active { background: #252525; }
+
+.file-card-row1 {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 4px;
+}
+
+.file-card-name {
+    font-size: 14px;
+    font-weight: 700;
+    color: #eee;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    flex: 1;
+}
+
+.file-card-cp {
+    font-size: 12px;
+    color: #888;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.file-card-row2 {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+    color: #888;
+    flex-wrap: wrap;
+}
+
+.file-card-sep {
+    color: #444;
+}
+
+.file-card-date {
+    margin-left: auto;
+    white-space: nowrap;
+}
+
+.file-card-lock {
+    color: #c0392b;
+    display: inline-flex;
+    align-items: center;
+}
+
+.file-card-foreign {
+    filter: brightness(0.67) saturate(0.67);
+}
+.file-card-foreign:active {
+    filter: brightness(0.8) saturate(0.8);
+}
+
+.file-card-publish {
+    background: none;
+    border: none;
+    color: #555;
+    cursor: pointer;
+    padding: 2px;
+    margin-right: 4px;
+    display: inline-flex;
+    align-items: center;
+    flex-shrink: 0;
+    border-radius: 4px;
+    transition: color 0.15s;
+}
+.file-card-publish:hover { color: #aaa; }
+.file-card-publish-active { color: var(--brand); }
+.file-card-publish-active:hover { color: var(--brand-hover); }
+.file-card-publish-disabled {
+    cursor: default;
+    pointer-events: none;
+}
+
+.file-card-empty {
+    padding: 40px;
+    text-align: center;
+    color: #555;
+    font-size: 13px;
+}
+
+/* =========================================================
    MOBILE EDITOR LAYOUT
 ========================================================= */
 
@@ -2008,7 +2186,9 @@ body.auto-pathfind-busy .cp-route-theta-btn[aria-busy="true"] {
         grid-template-columns: 1fr auto;
     }
 
-    /* Mobile file modal header */
+    /* Mobile file modal header:
+       Row 1  label-btn | name-input + create-btn | close-btn
+       Row 2  search field (full width)                        */
     .modal-header {
         flex-wrap: wrap;
         gap: 8px;
@@ -2018,7 +2198,8 @@ body.auto-pathfind-busy .cp-route-theta-btn[aria-busy="true"] {
     .modal-header-left {
         position: static;
         transform: none;
-        width: 100%;
+        flex: 1;
+        min-width: 0;
         order: 1;
     }
 
@@ -2027,7 +2208,8 @@ body.auto-pathfind-busy .cp-route-theta-btn[aria-busy="true"] {
         transform: none;
         width: auto;
         order: 2;
-        margin-left: auto;
+        margin-left: 0;
+        flex-shrink: 0;
     }
 
     .modal-header-center {
@@ -2042,8 +2224,8 @@ body.auto-pathfind-busy .cp-route-theta-btn[aria-busy="true"] {
         max-width: 100%;
     }
 
-    .save-group { flex: 1; }
-    .save-group input { font-size: 14px; }
+    .save-group { flex: 1; min-width: 0; }
+    .save-group input { font-size: 14px; min-width: 0; }
 
     .modal-box {
         width: 95vw;
@@ -2052,4 +2234,21 @@ body.auto-pathfind-busy .cp-route-theta-btn[aria-busy="true"] {
     }
 
     #file-table { font-size: 12px; }
+
+    /* ── Mobile cards: hide table, show cards ─────────── */
+    .modal-table-wrap { overflow-y: auto; }
+    #file-table       { display: none; }
+    #file-cards       { display: flex; }
+    #file-mobile-controls { display: flex; }
 }
+
+/* ── Mobile typography for file cards ─────────────── */
+body.mobile .file-card            { padding: 14px 16px; }
+body.mobile .file-card-name       { font-size: 16px; font-weight: 600; }
+body.mobile .file-card-cp         { font-size: 14px; }
+body.mobile .file-card-row2       { font-size: 14px; }
+body.mobile .file-card-date       { font-size: 12px; }
+body.mobile .file-ctrl-btn        { font-size: 14px; padding: 11px 16px; min-height: 44px; box-sizing: border-box; }
+body.mobile .file-card-empty      { font-size: 16px; }
+body.mobile .table-filter-dropdown { font-size: 16px; }
+body.mobile .filter-option        { padding: 14px 16px; min-height: 44px; box-sizing: border-box; }

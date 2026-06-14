@@ -10,6 +10,7 @@ import os
 import threading
 from io import StringIO
 
+from django.contrib.auth.decorators import login_not_required
 from django.core.management import call_command
 from django.http import HttpResponse, HttpResponseBadRequest, HttpResponseForbidden
 from django.views.decorators.csrf import csrf_exempt
@@ -29,6 +30,7 @@ def _run_sync(direction: str) -> None:
         )
 
 
+@login_not_required
 @csrf_exempt
 @require_POST
 def trigger_volume_sync(request):

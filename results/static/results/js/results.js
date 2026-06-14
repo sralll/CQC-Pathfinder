@@ -118,6 +118,12 @@ function initSearch() {
     const input = document.getElementById('play-search');
     input.addEventListener('input', applyFilters);
     input.addEventListener('input', updateClearButton);
+    input.addEventListener('keydown', e => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            input.blur();
+        }
+    });
     updateClearButton();
 }
 

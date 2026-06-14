@@ -4653,13 +4653,32 @@ async function _showOcadImportOptions(file) {
 
 function initMenus() {
     const menuItems = document.querySelectorAll(".nav-menu-item");
-    menuItems.forEach(menu => {
-        menu.addEventListener("mouseenter", () => {
-            menuItems.forEach(other => { if (other !== menu) other.classList.remove("open"); });
-            menu.classList.add("open");
+    const isMobile = document.body.classList.contains("mobile");
+
+    if (isMobile) {
+        menuItems.forEach(menu => {
+            if (menu.id === "menu-project") return;
+            menu.addEventListener("click", (e) => {
+                if (e.target.closest(".nav-dropdown")) return;
+                const wasOpen = menu.classList.contains("open");
+                menuItems.forEach(other => other.classList.remove("open"));
+                menu.classList.toggle("open", !wasOpen);
+            });
         });
-        menu.addEventListener("mouseleave", () => menu.classList.remove("open"));
-    });
+        document.addEventListener("click", (e) => {
+            if (!e.target.closest(".nav-menu-item")) {
+                menuItems.forEach(m => m.classList.remove("open"));
+            }
+        });
+    } else {
+        menuItems.forEach(menu => {
+            menu.addEventListener("mouseenter", () => {
+                menuItems.forEach(other => { if (other !== menu) other.classList.remove("open"); });
+                menu.classList.add("open");
+            });
+            menu.addEventListener("mouseleave", () => menu.classList.remove("open"));
+        });
+    }
 
     document.getElementById("batch-switch-lr")?.addEventListener("click", () => {
         if (readOnly || !project?.control_pairs?.length) return;

@@ -8,13 +8,18 @@ Direction:
     push -- copy local MEDIA_ROOT/{maps,masks} into R2 (prod -> R2).
     pull -- copy R2 into local MEDIA_ROOT/{maps,masks} (R2 -> staging).
 
-Both directions are incremental: objects are compared by size + content MD5
-(== R2's ETag for single-part uploads, which covers PNGs and the 5-10 MB
-map files we keep on the volume). Files that exist on the destination but not
-the source are deleted, so the destination ends up as a true mirror.
+Both directions are incremental: files are compared by size + mtime, never by
+content. The previous version hashed (MD5'd) every file to compare against R2's
+ETag, which read the *entire volume* off disk on every run -- harmless to the
+Python heap, but it fills the OS page cache, and Railway's cgroup memory metric
+counts page cache, so a sync of a 1.5 GB volume showed ~1.5 GB "used" even when
+only a couple of files changed. size + mtime comes from os.stat() (inode
+metadata only, no data blocks read) and the R2 object listing's Size +
+LastModified (free, no extra API calls, no downloads), so an unchanged file is
+never read at all. Files that exist on the destination but not the source are
+deleted, so the destination ends up as a true mirror.
 """
 import gc
-import hashlib
 import os
 from pathlib import Path
 
@@ -29,7 +34,11 @@ from django.core.management.base import BaseCommand, CommandError
 SUBDIRS = ("maps", "masks")
 PUSH = "push"
 PULL = "pull"
-_MD5_CHUNK = 1 << 20  # 1 MiB
+# Slack (seconds) when comparing a source file's mtime to the destination's
+# timestamp, to absorb clock skew between the volume's filesystem and R2's
+# server clock. After any transfer the destination is written *after* the
+# source, so its timestamp is strictly newer -- the comparison can't oscillate.
+_MTIME_SLACK = 5
 
 # This command runs inside the main web process (the only service with the
 # volume mounted). boto3's default managed transfer buffers up to
@@ -45,24 +54,21 @@ _TRANSFER_CONFIG = TransferConfig(
 )
 
 
-def _same(local_entry, remote_entry):
-    """Decide whether a local file already matches a remote object.
+def _needs_transfer(src_entry, dst_entry):
+    """Decide whether to copy src -> dst, comparing only (size, mtime).
 
-    Single-part uploads: remote ETag == file MD5, so we verify both size and
-    hash. Multipart uploads (boto3 default >= 8 MB): ETag is
-    '<md5-of-part-md5s>-<numparts>', which can't be reconstructed without
-    knowing the original part boundaries -- fall back to size-only equality
-    in that case. This is what AWS CLI / rclone also do.
+    Transfer when the destination is missing, the sizes differ, or the source
+    is strictly newer than the destination (beyond _MTIME_SLACK). Both entries
+    are (size_bytes, mtime_epoch); for a remote object the "mtime" is its R2
+    LastModified. No file contents are ever read.
     """
-    if local_entry is None or remote_entry is None:
-        return False
-    lsize, lmd5 = local_entry
-    rsize, retag = remote_entry
-    if lsize != rsize:
-        return False
-    if "-" in retag:
+    if dst_entry is None:
         return True
-    return lmd5 == retag
+    ssize, smtime = src_entry
+    dsize, dmtime = dst_entry
+    if ssize != dsize:
+        return True
+    return smtime > dmtime + _MTIME_SLACK
 
 
 def _r2_client():
@@ -84,33 +90,32 @@ def _r2_client():
     )
 
 
-def _file_md5(path: Path) -> str:
-    h = hashlib.md5()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(_MD5_CHUNK), b""):
-            h.update(chunk)
-    return h.hexdigest()
-
-
 def _local_index(local_dir: Path):
-    """Return {rel_posix: (size, md5_hex)} for files under local_dir."""
+    """Return {rel_posix: (size, mtime_epoch)} for files under local_dir.
+
+    Uses a single os.stat() per entry (inode metadata only) -- file contents
+    are never read, so this does not touch the OS page cache.
+    """
     out = {}
     if not local_dir.is_dir():
         return out
     for path in local_dir.rglob("*"):
         if not path.is_file():
             continue
+        st = path.stat()
         rel = path.relative_to(local_dir).as_posix()
-        out[rel] = (path.stat().st_size, _file_md5(path))
+        out[rel] = (st.st_size, st.st_mtime)
     return out
 
 
 def _remote_index(client, bucket: str, prefix: str):
-    """Return {rel_under_prefix: (size, etag_hex)} for objects under prefix/.
+    """Return {rel_under_prefix: (size, last_modified_epoch)} for objects.
 
-    Cloudflare R2 quirk: ListObjectsV2 on a prefix with no objects raises
-    NoSuchKey, where AWS S3 would return an empty Contents list. Treat that as
-    an empty index so first-run pushes against a fresh bucket succeed.
+    Size and LastModified both come from the ListObjectsV2 page -- no HeadObject
+    calls, no downloads. Cloudflare R2 quirk: ListObjectsV2 on a prefix with no
+    objects raises NoSuchKey, where AWS S3 would return an empty Contents list.
+    Treat that as an empty index so first-run pushes against a fresh bucket
+    succeed.
     """
     out = {}
     full_prefix = f"{prefix}/"
@@ -122,8 +127,7 @@ def _remote_index(client, bucket: str, prefix: str):
                 if not key.startswith(full_prefix) or key == full_prefix:
                     continue
                 rel = key[len(full_prefix):]
-                etag = (obj.get("ETag") or "").strip('"')
-                out[rel] = (obj["Size"], etag)
+                out[rel] = (obj["Size"], obj["LastModified"].timestamp())
     except ClientError as e:
         code = e.response.get("Error", {}).get("Code")
         if code == "NoSuchKey":
@@ -183,7 +187,8 @@ class Command(BaseCommand):
 
             if direction == PUSH:
                 for rel, local_entry in local.items():
-                    if _same(local_entry, remote.get(rel)):
+                    # src=local, dst=remote: upload if missing/larger/newer.
+                    if not _needs_transfer(local_entry, remote.get(rel)):
                         continue
                     client.upload_file(
                         str(local_dir / rel), bucket, f"{sub}/{rel}",
@@ -213,7 +218,8 @@ class Command(BaseCommand):
                     )
 
                 for rel, remote_entry in remote.items():
-                    if _same(local.get(rel), remote_entry):
+                    # src=remote, dst=local: download if missing/larger/newer.
+                    if not _needs_transfer(remote_entry, local.get(rel)):
                         continue
                     dst = local_dir / rel
                     dst.parent.mkdir(parents=True, exist_ok=True)
