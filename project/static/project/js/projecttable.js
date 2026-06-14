@@ -11,6 +11,7 @@ window._fileTable = table;
 let activeLabelFilter = null;
 let activeAuthorFilters = [];
 let activeTeamFilters = [];
+let activePublishFilter = null;
 let sortState = { key: "last_edited", dir: -1 };
 
 /* =========================================================
@@ -40,7 +41,8 @@ window.showTableLoading = showTableLoading;
 window.hideTableLoading = hideTableLoading;
 async function openFileModal() {
     document.getElementById("modal-project").classList.add("open");
-    resetProjectTitleInput();
+    const titleInput = document.getElementById("project-title-input");
+    if (titleInput) titleInput.value = "";
     showTableLoading();
     try {
         await loadFiles();
@@ -90,7 +92,11 @@ function renderTableHeader() {
 
     thead.innerHTML = `
         <tr>
-            <th class="col-publish"></th>
+            <th class="col-publish">
+                <span class="filterable" id="publish-filter-btn">
+                    <span class="active-filter-icon">${icon("filter", "0.8em")}</span>
+                </span>
+            </th>
             <th class="col-name" data-sort="name">
                 <span class="sortable">Projekt <span id="sort-name" class="sort-indicator"></span></span>
             </th>
@@ -135,6 +141,7 @@ function attachHeaderEvents() {
     document.querySelectorAll("[data-sort]").forEach(el => {
         el.onclick = () => setSort(el.dataset.sort);
     });
+    document.getElementById("publish-filter-btn")?.addEventListener("click", togglePublishFilter);
     document.getElementById("label-filter-btn")?.addEventListener("click", toggleLabelFilter);
     document.getElementById("author-filter-btn")?.addEventListener("click", toggleAuthorFilter);
     document.getElementById("team-filter-btn")?.addEventListener("click", toggleTeamFilter);
@@ -205,7 +212,8 @@ function applyFilters() {
         const matchesLabel = !activeLabelFilter || f.label?.id === activeLabelFilter;
         const matchesAuthor = activeAuthorFilters.length === 0 || activeAuthorFilters.includes((f.author || "").trim());
         const matchesTeam = activeTeamFilters.length === 0 || activeTeamFilters.includes((f.team_name || "").trim());
-        return matchesSearch && matchesLabel && matchesAuthor && matchesTeam;
+        const matchesPublish = activePublishFilter === null || (activePublishFilter === true ? !!f.published : !f.published);
+        return matchesSearch && matchesLabel && matchesAuthor && matchesTeam && matchesPublish;
     });
     filteredFiles = applySorting(filteredFiles);
     table.setFiles(filteredFiles);
@@ -215,6 +223,45 @@ function applyFilters() {
     updateClearButton();
     updateSortIndicators();
 }
+
+/* =========================================================
+    PUBLISH FILTER
+========================================================= */
+
+function togglePublishFilter(event) {
+    const dropdown = document.getElementById("publish-filter-dropdown");
+    if (dropdown.classList.contains("open")) { dropdown.classList.remove("open"); return; }
+    closeAllFilters();
+    renderPublishFilterDropdown();
+    positionFilterDropdown(dropdown, event.currentTarget);
+    dropdown.classList.add("open");
+}
+
+function renderPublishFilterDropdown() {
+    const dropdown = document.getElementById("publish-filter-dropdown");
+    dropdown.innerHTML = `
+        <div class="filter-clear">
+            <div class="filter-clear-left" onclick="event.stopPropagation(); clearPublishFilter()"><b>Alle</b></div>
+            <button class="filter-close-btn" onclick="event.stopPropagation(); closeAllFilters()" type="button">✕</button>
+        </div>
+        <div class="filter-options-list">
+            <div class="filter-option" onclick="event.stopPropagation(); setPublishFilter(true)">
+                Veröffentlicht
+                ${activePublishFilter === true ? icon("square-check") : icon("square")}
+            </div>
+            <div class="filter-option" onclick="event.stopPropagation(); setPublishFilter(false)">
+                Nicht veröffentlicht
+                ${activePublishFilter === false ? icon("square-check") : icon("square")}
+            </div>
+        </div>
+    `;
+}
+
+window.setPublishFilter = function(val) {
+    activePublishFilter = activePublishFilter === val ? null : val;
+    applyFilters(); renderPublishFilterDropdown();
+};
+window.clearPublishFilter = function() { activePublishFilter = null; applyFilters(); closeAllFilters(); };
 
 /* =========================================================
     LABEL FILTER
@@ -355,6 +402,7 @@ function getAllAuthors() {
 }
 
 function updateFilterIcons() {
+    document.querySelector(".col-publish .active-filter-icon")?.classList.toggle("active", activePublishFilter !== null);
     document.querySelector(".col-author .active-filter-icon")?.classList.toggle("active", activeAuthorFilters.length > 0);
     document.querySelector(".col-label .active-filter-icon")?.classList.toggle("active", !!activeLabelFilter);
     document.querySelector(".col-team .active-filter-icon")?.classList.toggle("active", activeTeamFilters.length > 0);
@@ -393,6 +441,7 @@ function clearSearch() {
     activeLabelFilter = null;
     activeAuthorFilters = [];
     activeTeamFilters = [];
+    activePublishFilter = null;
     sortState = { key: "last_edited", dir: -1 };
     applyFilters();
 }
@@ -401,8 +450,8 @@ function updateClearButton() {
     const input = document.getElementById("project-search");
     const clearBtn = document.querySelector(".search-clear");
     const hasSearch = !!input.value.trim();
-    const hasFilters = activeLabelFilter !== null || activeAuthorFilters.length > 0 || activeTeamFilters.length > 0;
-    clearBtn.style.display = (hasSearch || hasFilters) ? "flex" : "none";
+    const hasFilters = activeLabelFilter !== null || activeAuthorFilters.length > 0 || activeTeamFilters.length > 0 || activePublishFilter !== null;
+    clearBtn.classList.toggle("visible", hasSearch || hasFilters);
 }
 
 /* =========================================================
@@ -573,6 +622,12 @@ function renderMobileControls() {
     filterRow.className = 'file-ctrl-row';
 
     const { showTeamColumn } = getTableConfig(projectFiles);
+
+    const publishBtn = document.createElement('button');
+    publishBtn.className = 'file-ctrl-btn' + (activePublishFilter !== null ? ' active' : '');
+    publishBtn.innerHTML = icon('globe', '1em');
+    publishBtn.addEventListener('click', e => { e.stopPropagation(); togglePublishFilter(e); });
+    filterRow.appendChild(publishBtn);
 
     const filterFields = [
         { field: 'label',  label: 'Label',  toggle: toggleLabelFilter  },

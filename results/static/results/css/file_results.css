@@ -256,16 +256,28 @@ body.desktop #fr-bottom {
     gap: 4px;
 }
 
-.fr-route-crown svg {
-    fill: currentColor;
-    opacity: 0.85;
-    vertical-align: middle;
-}
-
 .fr-route-stats {
     font-size: 10px;
     color: var(--text-dim);
     display: block;
+}
+
+/* Relative-loss colour coding — identical thresholds/colours to the stats
+   page and editor route list: <5% yellow, 5–10% orange, >10% red. Only the
+   "+X%" loss span is coloured (the rest of the stats line stays neutral so the
+   list isn't too busy next to the route colours); the fastest route shows a
+   green crown (tier-best) in this slot instead. */
+.fr-route-loss.tier-warn   { color: rgb(255, 193, 7); }   /* < 5%  (#FFC107) */
+.fr-route-loss.tier-alert  { color: rgb(255, 152, 0); }   /* 5–10% (#FF9800) */
+.fr-route-loss.tier-danger { color: rgb(244,  67, 54); }  /* > 10% (#F44336) */
+.fr-route-loss.tier-best {
+    color: #4caf50;
+    display: inline-flex;
+    align-items: center;
+}
+.fr-route-loss.tier-best svg {
+    fill: currentColor;
+    opacity: 0.85;
 }
 
 .fr-route-athletes {

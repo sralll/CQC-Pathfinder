@@ -288,13 +288,15 @@ function renderLabelFilterDropdown() {
             <div class="filter-clear-left" onclick="event.stopPropagation(); clearLabelFilter()"><b>Alle</b></div>
             <button class="filter-close-btn" onclick="event.stopPropagation(); closeAllFilters()" type="button">✕</button>
         </div>
+        <div class="filter-options-list">
         ${getAllLabels().map(label => `
             <div class="filter-option" onclick="event.stopPropagation(); setLabelFilter(${label.id})">
                 <span style="background:${label.color}22;color:${label.color};border:1px solid ${label.color}55;
                       border-radius:4px;padding:1px 7px;font-size:11px;font-weight:500;">${label.name}</span>
                 ${activeLabelFilter === label.id ? window.icon('square-check') : window.icon('square')}
             </div>
-        `).join('')}`;
+        `).join('')}
+        </div>`;
 }
 
 window.setLabelFilter = function(labelId) {
@@ -319,12 +321,14 @@ function renderAuthorFilterDropdown() {
             <div class="filter-clear-left" onclick="event.stopPropagation(); clearAuthorFilters()"><b>Alle</b></div>
             <button class="filter-close-btn" onclick="event.stopPropagation(); closeAllFilters()" type="button">✕</button>
         </div>
+        <div class="filter-options-list">
         ${getAllAuthors().map(author => `
             <div class="filter-option" onclick="event.stopPropagation(); toggleAuthorSelection('${author.replace(/'/g, "\\'")}')">
                 ${author}
                 ${activeAuthorFilters.includes(author) ? window.icon('square-check') : window.icon('square')}
             </div>
-        `).join('')}`;
+        `).join('')}
+        </div>`;
 }
 
 window.toggleAuthorSelection = function(author) {
@@ -354,12 +358,14 @@ function renderKaderFilterDropdown() {
             <div class="filter-clear-left" onclick="event.stopPropagation(); clearKaderFilters()"><b>Alle</b></div>
             <button class="filter-close-btn" onclick="event.stopPropagation(); closeAllFilters()" type="button">✕</button>
         </div>
+        <div class="filter-options-list">
         ${ordered.map(kader => `
             <div class="filter-option" onclick="event.stopPropagation(); toggleKaderSelection('${kader.replace(/'/g, "\\'")}')">
                 <span class="${kader === activeTeamName ? 'user-active-team' : ''}">${kader}</span>
                 ${activeKaderFilters.includes(kader) ? window.icon('square-check') : window.icon('square')}
             </div>
-        `).join('')}`;
+        `).join('')}
+        </div>`;
 }
 
 window.toggleKaderSelection = function(kader) {

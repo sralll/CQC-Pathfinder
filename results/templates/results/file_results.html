@@ -7,22 +7,29 @@
 {% endblock %}
 
 {% block nav_content %}
-<div class="nav-center">
-    <span id="fr-nav-title" class="fr-nav-title"></span>
-</div>
-<div class="fr-mode-toggle nav-mode-toggle">
-    <label class="mode-switch">
-        <input type="checkbox" id="fr-training-toggle" checked>
-        <span class="mode-slider"></span>
-    </label>
-    <div class="mode-icon-tip mode-active" data-mode="training">
-        <x-icon name="book-open" size="14px"></x-icon>
-        <div class="mode-tip-box">
-            <b>Trainingsresultate einbeziehen</b><br>
-            Schalter aus → nur Wettkampfläufe werden angezeigt.
+<div class="nav-left">
+    <a href="/results/" class="nav-home-btn fr-back-btn" title="Zurück zur Übersicht">
+        <x-icon name="back" size="14px"></x-icon>
+    </a>
+
+    <div class="fr-mode-toggle nav-mode-toggle">
+        <label class="mode-switch">
+            <input type="checkbox" id="fr-training-toggle" checked>
+            <span class="mode-slider"></span>
+        </label>
+        <div class="mode-icon-tip mode-active" data-mode="training">
+            <x-icon name="book-open" size="14px"></x-icon>
+            <div class="mode-tip-box">
+                <b>Trainingsresultate einbeziehen</b><br>
+                Schalter aus → nur Wettkampfläufe werden angezeigt.
+            </div>
         </div>
     </div>
 </div>
+<div class="nav-center">
+    <span id="fr-nav-title" class="fr-nav-title"></span>
+</div>
+
 {% endblock %}
 
 {% block scripts %}

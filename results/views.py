@@ -229,6 +229,7 @@ def submit_result(request):
         cp_id       = data['control_pair_id']
         route_id    = data.get('selected_route_id')
         choice_time = float(data['choice_time'])
+        penalty     = float(data.get('penalty', 0))
         competition = bool(data.get('competition', False))
 
         from .models import Choice
@@ -243,6 +244,7 @@ def submit_result(request):
                 'team':           getattr(request.user.profile, 'active_team', None),
                 'selected_route': route,
                 'choice_time':    choice_time,
+                'penalty':        penalty,
                 'competition':    competition,
             },
         )
@@ -469,12 +471,17 @@ def _stats_table_cache_key(team_id, mode):
     return f"stats:table:v1:{team_id}:{mode}"
 
 
+def _team_progress_cache_key(team_id):
+    return f"stats:progress:v1:{team_id}"
+
+
 def _clear_stats_cache_for_team(team):
     if not team:
         return
     cache.delete(_team_choice_cache_key(team.id, True))
     cache.delete(_team_choice_cache_key(team.id, False))
     cache.delete(_team_random_cache_key(team.id))
+    cache.delete(_team_progress_cache_key(team.id))
     for mode in ('competition', 'training', 'random'):
         cache.delete(_stats_table_cache_key(team.id, mode))
 
@@ -756,6 +763,52 @@ def get_user_stats(request):
     })
 
 
+def _cached_team_progress(active_team):
+    """File-completion progress for everyone on `active_team`, independent of the
+    selected stats mode.
+
+    Returns ``{'total': <available CP count>, 'per_user': {uid: {'training': n,
+    'competition': n}}}``. The Choice model has a unique (user, control_pair)
+    constraint, so a CP is completed in exactly one of training/competition —
+    the two counts never overlap. Cached because counting the team's total
+    available control pairs means scanning every accessible file."""
+    cache_key = _team_progress_cache_key(active_team.id)
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    from .models import Choice
+
+    # Files this team may play — mirrors the permission logic in get_files().
+    files = File.objects.filter(deleted=False, published=True)
+    if active_team.shared_pool:
+        files = files.filter(Q(team=active_team) | Q(team__shared_pool=True)).distinct()
+    else:
+        files = files.filter(team=active_team)
+    file_ids = list(files.values_list('id', flat=True))
+
+    total_cp = ControlPair.objects.filter(file_id__in=file_ids).count()
+
+    per_user = {}
+    rows = (
+        Choice.objects
+        .filter(control_pair__file_id__in=file_ids,
+                user__profile__active_team=active_team)
+        .values('user_id', 'competition')
+        .annotate(n=Count('id', distinct=True))
+    )
+    for r in rows:
+        d = per_user.setdefault(r['user_id'], {'training': 0, 'competition': 0})
+        if r['competition']:
+            d['competition'] = r['n']
+        else:
+            d['training'] = r['n']
+
+    result = {'total': total_cp, 'per_user': per_user}
+    cache.set(cache_key, result, STATS_TEAM_CACHE_TIMEOUT)
+    return result
+
+
 @login_required
 @require_GET
 def get_stats_table(request):
@@ -874,28 +927,67 @@ def get_stats_table(request):
         all_rows  = choices
         get_rows  = lambda uid: per_user.get(uid, [])
 
+    # ── File-completion progress (Fortschritt) — mode-independent ──────
+    progress = _cached_team_progress(active_team)
+    total_cp = progress['total']
+
+    def progress_payload(uid):
+        p = progress['per_user'].get(uid, {'training': 0, 'competition': 0})
+        t, c = p['training'], p['competition']
+        done = t + c
+        return {
+            'total':           total_cp,
+            'done':            done,
+            'training':        t,
+            'competition':     c,
+            'training_pct':    round(t / total_cp * 100, 1) if total_cp else 0,
+            'competition_pct': round(c / total_cp * 100, 1) if total_cp else 0,
+            'pct':             round(done / total_cp * 100, 1) if total_cp else 0,
+        }
+
     # ── Build rows ────────────────────────────────────────────────────
-    data = []
-
-    summary = aggregate_rows(all_rows, classify)
-    if summary:
-        data.append({
-            'athlete':      'Kaderdurchschnitt',
-            'sensitivity':  '-',
-            'roi_slope':    '- (-)',
-            **summary,
-        })
-
+    athlete_rows = []
     for u in team_users:
         s = aggregate_rows(get_rows(u.id), classify)
         if s is None:
             continue
-        data.append({
+        athlete_rows.append({
             'athlete':      u.get_full_name() or u.username,
+            'user_id':      u.id,
             'sensitivity':  '-',
             'roi_slope':    '- (-)',
+            'progress':     progress_payload(u.id),
             **s,
         })
+
+    data = []
+    summary = aggregate_rows(all_rows, classify)
+    if summary:
+        # Summary progress = average completion across the athletes shown.
+        shown = [r['progress'] for r in athlete_rows]
+        if shown:
+            avg = lambda k: round(sum(p[k] for p in shown) / len(shown), 1)
+            summary_progress = {
+                'total': total_cp, 'done': 0, 'training': 0, 'competition': 0,
+                'training_pct':    avg('training_pct'),
+                'competition_pct': avg('competition_pct'),
+                'pct':             avg('pct'),
+            }
+        else:
+            summary_progress = {
+                'total': total_cp, 'done': 0, 'training': 0, 'competition': 0,
+                'training_pct': 0, 'competition_pct': 0, 'pct': 0,
+            }
+        data.append({
+            'athlete':      'Kaderdurchschnitt',
+            'user_id':      None,
+            'sensitivity':  '-',
+            'roi_slope':    '- (-)',
+            'progress':     summary_progress,
+            **summary,
+        })
+
+    data.extend(athlete_rows)
 
     cache.set(table_cache_key, data, STATS_TEAM_CACHE_TIMEOUT)
     return JsonResponse(data, safe=False)

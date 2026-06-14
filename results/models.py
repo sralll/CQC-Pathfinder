@@ -8,6 +8,10 @@ class Choice(models.Model):
     selected_route = models.ForeignKey('project.Route', on_delete=models.SET_NULL, null=True, blank=True, related_name='selected_choices')
 
     choice_time = models.FloatField()
+    # Portion of choice_time that is reveal penalty (post-reveal time scaled up).
+    # Stored separately so the penalty weighting can be re-tuned retrospectively
+    # without losing the real decision time (choice_time - penalty).
+    penalty     = models.FloatField(default=0)
     competition = models.BooleanField(default=True)
     timestamp   = models.DateTimeField(auto_now_add=True)
 

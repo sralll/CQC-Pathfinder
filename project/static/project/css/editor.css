@@ -173,11 +173,65 @@ body.mobile .nav-user-section .nav-username { display: none; }
 /* Push the hamburger button to the right edge, next to the user section */
 body.mobile #nav-ham-right { margin-left: auto; }
 
+/* ── Mobile publish button (left of filename input) ───────
+   On mobile the small publish button was being cropped / tucked behind
+   the filename input. Lay the nav-center row out so the publish button
+   keeps its full size on the LEFT, with clear spacing before the input. */
+body.mobile .nav-center {
+    gap: 8px;
+    flex-wrap: nowrap;
+}
+body.mobile .nav-publish-btn {
+    flex-shrink: 0;
+    order: -1;                 /* force it to the far left of the row */
+    width: 34px;
+    height: 34px;
+    padding: 0;
+    justify-content: center;
+    border: 1px solid #303030;
+    border-radius: 6px;
+}
+body.mobile .nav-publish-btn x-icon { font-size: 15px; }
+body.mobile #navbar-filename-input {
+    width: auto;
+    flex: 1;
+    min-width: 0;
+}
+
+/* ── Mobile read-only banner alignment ────────────────────
+   The banner is injected from JS with an inline top:28px (the desktop
+   navbar height). On mobile the navbar is 56px tall, so the banner must
+   drop to sit flush below it. Override the inline style here. */
+body.mobile #read-only-banner { top: 56px !important; }
+
 body.mobile .nav-ham-panel .nav-menu-item {
     width: 100%;
     padding: 11px 16px;
     min-height: var(--touch-target);
     box-sizing: border-box;
+}
+
+/* ── Mobile hamburger sub-dropdowns ───────────────────────
+   The hamburger panel (the "main navbar-option dropdown") stays
+   right-aligned to the hamburger button. Its sub-dropdowns must NOT
+   stack inline inside the column — instead they fly out beside the
+   tapped option. Because the panel hugs the right screen edge there is
+   no room to its right, so the flyout opens into the available screen
+   space (left of the panel) and is vertically aligned to the tapped
+   option's row. */
+body.mobile #nav-panel-right { right: 0; left: auto; }
+
+body.mobile .nav-ham-panel .nav-menu-item { position: relative; }
+
+body.mobile .nav-ham-panel .nav-menu-item > .nav-dropdown {
+    position: absolute;
+    top: 0;
+    right: 100%;
+    left: auto;
+    margin-right: 6px;
+    min-width: 170px;
+    max-width: calc(100vw - 24px);
+    border-radius: var(--radius);
 }
 
 /* =========================================================
@@ -306,53 +360,67 @@ body.mobile .nav-ham-panel .nav-menu-item {
 #project-search {
     width: 100%;
     height: 42px;
-    padding: 0 14px;
-    padding-right: 34px;
+    padding: 9px 38px 9px 14px;
     background: #252525;
     border: 1px solid #444;
     border-radius: 8px;
     color: #eee;
     font-size: 0.95rem;
     outline: none;
+    transition: border-color 0.15s;
 }
 
 #project-search::placeholder { color: #888; }
-#project-search:focus { background: #2d2d2d; border-color: #777; }
+#project-search:focus { background: #2d2d2d; border-color: var(--brand); }
 
 .search-clear {
     position: absolute;
-    top: 50%;
-    right: 10px;
-    transform: translateY(-50%);
+    right: 0;
+    top: 0;
+    bottom: 0;
     display: none;
     align-items: center;
     justify-content: center;
-    padding: 0;
-    border: none;
-    color: #cc6666;
-    font-size: 1.4rem;
-    line-height: 1;
-    background: none;
+    box-sizing: border-box;
+    width: 34px;
+    background: #252525;
+    border-top: 1px solid #444;
+    border-right: 1px solid #444;
+    border-bottom: 1px solid #444;
+    border-left: 1px solid #444;
+    border-radius: 0 8px 8px 0;
+    color: #666;
     cursor: pointer;
+    font-size: 1.2rem;
+    line-height: 1;
+    padding: 0;
+    transition: border-color 0.15s, color 0.15s;
 }
 
-.search-clear:hover { color: #e74c3c; }
+.search-clear.visible { display: flex; color: var(--danger); }
+.search-clear.visible:hover { color: #fff; }
+
+.search-wrapper:focus-within .search-clear {
+    border-top-color: var(--brand);
+    border-right-color: var(--brand);
+    border-bottom-color: var(--brand);
+}
 
 /* Mobile: clear button fills a square flush with the input's right edge */
 body.mobile #project-search { padding-right: 50px; }
 
-body.mobile .search-clear {
-    top: 0;
-    right: 0;
-    bottom: 0;
-    transform: none;
+body.mobile .search-clear.visible {
     width: 42px;
-    background: #333;
-    border-left: 1px solid #444;
-    border-radius: 0 8px 8px 0;
+    font-size: 1.4rem;
 }
 
-body.mobile .search-clear:active { background: #3a3a3a; }
+body.mobile .search-clear.visible:active { background: #3a3a3a; }
+
+body.mobile .search-wrapper:focus-within .search-clear.visible {
+    border-top-color: var(--brand);
+    border-right-color: var(--brand);
+    border-bottom-color: var(--brand);
+}
 
 /* =========================================================
    BUTTONS
@@ -429,6 +497,11 @@ body.mobile .search-clear:active { background: #3a3a3a; }
     background: #252525;
     border: 1px solid #444;
     border-radius: 8px;
+    transition: border-color 0.15s;
+}
+
+.save-group:focus-within {
+    border-color: var(--brand);
 }
 
 #project-title-input {
@@ -453,6 +526,11 @@ body.mobile .search-clear:active { background: #3a3a3a; }
     border: none;
     border-left: 1px solid #444;
     border-radius: 0;
+    transition: border-left-color 0.15s;
+}
+
+.save-group:focus-within .save-btn {
+    border-left-color: var(--brand);
 }
 
 /* =========================================================
@@ -1405,6 +1483,22 @@ x-icon.spin svg { animation: spin 1s linear infinite; }
     box-sizing: border-box;
 }
 .scale-modal-label input:focus { border-color: #686868; }
+.scale-modal-or {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 11px;
+    color: #777;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+}
+.scale-modal-or::before,
+.scale-modal-or::after {
+    content: "";
+    flex: 1;
+    height: 1px;
+    background: #2e2e2e;
+}
 /* Ratio row: label text + inline editable number */
 .scale-ratio-row {
     display: flex;

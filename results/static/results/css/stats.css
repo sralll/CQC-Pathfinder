@@ -586,3 +586,34 @@ body.mobile .stats-tooltip          { font-size: var(--font-md); padding: 8px 12
     color: var(--success);
     vertical-align: middle;
 }
+
+/* ── Fortschritt (file-completion) column ─────────────────── */
+/* Fixed-width mini bar, sized to roughly match the header word.
+   Kept short enough to fit on the normal text line (no taller rows). */
+#stats-table td.stats-cell-prog { text-align: right; }
+
+.stats-prog-bar {
+    display: inline-flex;
+    width: 74px;
+    height: 13px;
+    border-radius: 3px;
+    overflow: hidden;
+    vertical-align: middle;
+    background: #3b82f6;            /* "to do" colour, shows through any rounding gap */
+}
+.stats-prog-seg      { height: 100%; flex: 0 0 auto; }
+.stats-prog-training { background: #6b6b6b; }              /* done in Training  — darker grey  */
+.stats-prog-comp     { background: #a0a0a0; }              /* done in Wettkampf — lighter grey */
+.stats-prog-todo     { background: #3b82f6; flex: 1 1 auto; } /* still to do — blue */
+
+/* ── Clickable athlete rows → graphical overview ──────────── */
+/* Name cell brightens to pure white and nudges right on hover —
+   matching the play file table (.play-name-cell). */
+#stats-table tbody tr.stats-row-clickable { cursor: pointer; }
+#stats-table tbody tr.stats-row-clickable td:first-child {
+    transition: color var(--t-med), transform var(--t-med);
+}
+#stats-table tbody tr.stats-row-clickable:hover td:first-child {
+    color: #fff;
+    transform: translateX(3px);
+}

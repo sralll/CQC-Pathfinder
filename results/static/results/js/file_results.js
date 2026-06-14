@@ -832,14 +832,23 @@ function renderRouteList(cp, colors) {
         if (route.length)         parts.push(`${Math.round(route.length)}m`);
         if (route.elevation != null) parts.push(`${Math.round(route.elevation)}Hm`);
         if (route.run_time)       parts.push(formatTime(route.run_time));
-        if (!isFastest && route.run_time && minRunTime > 0)
-            parts.push(`+${Math.round(((route.run_time / minRunTime) - 1) * 100)}%`);
-        const crownHtml = isFastest
-            ? `<span class="fr-route-crown">${icon('crown', '11px')}</span>`
-            : '';
+        // Relative time loss vs. the fastest route, colour-coded with the same
+        // thresholds the stats page / editor use:
+        //   < 5%  → yellow (tier-warn), 5–10% → orange (tier-alert),
+        //   > 10% → red (tier-danger).  Only the "+X%" itself is coloured (its
+        //   own span) so the rest of the stats line stays neutral; the fastest
+        //   route shows a green crown (tier-best) instead of a percentage.
+        let lossHtml = '';
+        if (isFastest) {
+            lossHtml = `, <span class="fr-route-loss tier-best">${icon('crown', '11px')}</span>`;
+        } else if (route.run_time && minRunTime > 0) {
+            const pct = Math.round(((route.run_time / minRunTime) - 1) * 100);
+            const tierCls = pct < 5 ? 'tier-warn' : pct < 10 ? 'tier-alert' : 'tier-danger';
+            lossHtml = `, <span class="fr-route-loss ${tierCls}">+${pct}%</span>`;
+        }
         header.innerHTML = `<span class="fr-route-name" style="color:${color}">
-            Route ${i + 1} ${crownHtml}</span>
-            <span class="fr-route-stats">${parts.join(', ')}</span>`;
+            Route ${i + 1}</span>
+            <span class="fr-route-stats">${parts.join(', ')}${lossHtml}</span>`;
         panel.appendChild(header);
 
         // Athletes who chose this route

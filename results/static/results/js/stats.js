@@ -54,6 +54,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (PAGE.isTrainer) {
         initTrainerControls();
         initTableSortHandlers();
+        initTableRowNav();
         loadAthletes();   // fire and forget — dropdown populates async
     }
     await loadStats();
@@ -148,27 +149,33 @@ function setCardsLoading(loading) {
    TRAINER CONTROLS — view toggle + athlete picker
 ========================================================= */
 
-function initTrainerControls() {
+function setTrainerViewThumb(view) {
+    const thumb = document.getElementById('stats-2way-thumb');
+    if (typeof window.icon === 'function' && thumb) {
+        thumb.innerHTML = window.icon(view === 'table' ? 'table-cells' : 'chart-pie', '16px');
+    }
+}
+
+function switchTrainerView(view) {
+    if (PAGE.view === view) return;
+    PAGE.view = view;
+    document.querySelectorAll('.trainer-view-btn')
+        .forEach(b => b.classList.toggle('active', b.dataset.view === view));
     const slider = document.querySelector('.stats-2way');
-    const thumb  = document.getElementById('stats-2way-thumb');
-    const setThumbIcon = view => {
-        if (typeof window.icon === 'function' && thumb) {
-            thumb.innerHTML = window.icon(view === 'table' ? 'table-cells' : 'chart-pie', '16px');
-        }
-    };
-    setThumbIcon(PAGE.view);
+    if (slider) slider.dataset.view = view;
+    setTrainerViewThumb(view);
+    applyView();
+    loadStats();
+}
+
+function initTrainerControls() {
+    setTrainerViewThumb(PAGE.view);
 
     document.querySelectorAll('.trainer-view-btn').forEach(btn => {
         btn.addEventListener('click', () => {
             if (btn.classList.contains('active')) return;
             if (btn.disabled) return;
-            PAGE.view = btn.dataset.view;
-            document.querySelectorAll('.trainer-view-btn')
-                .forEach(b => b.classList.toggle('active', b === btn));
-            if (slider) slider.dataset.view = PAGE.view;
-            setThumbIcon(PAGE.view);
-            applyView();
-            loadStats();
+            switchTrainerView(btn.dataset.view);
         });
     });
 
@@ -295,6 +302,33 @@ function selectAthlete(athlete) {
     }
 }
 
+// Clicking an athlete row in the table jumps to that athlete's graphical
+// overview (graph view) in the current mode.
+function goToAthleteGraph(userId, name) {
+    PAGE.selectedAthlete = { id: userId, name };
+    const search   = document.getElementById('trainer-athlete-search');
+    const clearBtn = document.getElementById('trainer-athlete-clear');
+    if (search)   search.value = name;
+    if (clearBtn) clearBtn.classList.add('visible');
+    if (PAGE.view === 'graph') {
+        loadStats();
+    } else {
+        switchTrainerView('graph');   // applyView() + loadStats()
+    }
+}
+
+function initTableRowNav() {
+    const tbody = document.querySelector('#stats-table tbody');
+    if (!tbody) return;
+    tbody.addEventListener('click', e => {
+        const tr = e.target.closest('tr[data-user-id]');
+        if (!tr) return;
+        const uid = parseInt(tr.dataset.userId, 10);
+        if (!uid) return;
+        goToAthleteGraph(uid, tr.dataset.athleteName || '');
+    });
+}
+
 function escapeHtml(s) {
     return String(s).replace(/[&<>"']/g, c =>
         ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -339,7 +373,7 @@ async function loadTrainerTable() {
         const res = await fetch(`/stats/get-table/?mode=${PAGE.mode}`);
         if (!res.ok) {
             if (tbody) {
-                tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;color:#666;padding:24px;">Fehler beim Laden der Daten</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="11" style="text-align:center;color:#666;padding:24px;">Fehler beim Laden der Daten</td></tr>';
             }
             return;
         }
@@ -362,6 +396,7 @@ function tableSortValue(row, key) {
         case 'lt5':             return row.lt5             == null ? NaN : Number(row.lt5);
         case 'lt10':            return row.lt10            == null ? NaN : Number(row.lt10);
         case 'gt10':            return row.gt10            == null ? NaN : Number(row.gt10);
+        case 'fortschritt':     return row.progress ? Number(row.progress.pct) : NaN;
         case 'sensitivity':     return row.sensitivity == null || row.sensitivity === '-' ? NaN : Number(row.sensitivity);
         case 'roi_slope': {
             const m = /^-?\d+(\.\d+)?/.exec(String(row.roi_slope || ''));
@@ -376,7 +411,7 @@ function renderTrainerTable(rows) {
     if (!tbody) return;
     tbody.innerHTML = '';
     if (!rows.length) {
-        tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;color:#666;padding:24px;">Keine Daten vorhanden</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="11" style="text-align:center;color:#666;padding:24px;">Keine Daten vorhanden</td></tr>';
         updateTableSortIndicators();
         return;
     }
@@ -415,7 +450,13 @@ function renderTrainerTable(rows) {
     for (const row of ordered) {
         const isSummary = String(row.athlete || '').includes('Kaderdurchschnitt');
         const tr = document.createElement('tr');
-        if (isSummary) tr.className = 'stats-table-summary';
+        if (isSummary) {
+            tr.className = 'stats-table-summary';
+        } else if (row.user_id) {
+            tr.classList.add('stats-row-clickable');
+            tr.dataset.userId      = row.user_id;
+            tr.dataset.athleteName = row.athlete || '';
+        }
         tr.innerHTML = `
             <td>${escapeHtml(row.athlete ?? '–')}</td>
             <td>${row.posten ?? '–'}</td>
@@ -425,11 +466,27 @@ function renderTrainerTable(rows) {
             <td style="color:#FFC107">${fmtPct(row.lt5)}</td>
             <td style="color:#FF9800">${fmtPct(row.lt10)}</td>
             <td style="color:#F44336">${fmtPct(row.gt10)}</td>
+            <td class="stats-cell-prog">${fmtProgressBar(row.progress)}</td>
             <td>${row.sensitivity ?? '–'}</td>
             <td>${row.roi_slope ?? '–'}</td>`;
         tbody.appendChild(tr);
     }
     updateTableSortIndicators();
+}
+
+// Mini progress bar: grey = completed (training darker, competition lighter),
+// blue = control pairs still to do. Width is fixed; resolution is approximate.
+function fmtProgressBar(p) {
+    if (!p) return '–';
+    const t   = Math.max(0, Math.min(100, Number(p.training_pct)    || 0));
+    const c   = Math.max(0, Math.min(100, Number(p.competition_pct) || 0));
+    const pct = Number(p.pct) || 0;
+    let tip = `${pct.toFixed(0)}% · W ${c.toFixed(0)}% · T ${t.toFixed(0)}%`;
+    return `<span class="stats-prog-bar" title="${escapeHtml(tip)}">`
+         + `<span class="stats-prog-seg stats-prog-comp" style="width:${c}%"></span>`
+         + `<span class="stats-prog-seg stats-prog-training" style="width:${t}%"></span>`
+         + `<span class="stats-prog-seg stats-prog-todo"></span>`
+         + `</span>`;
 }
 
 function initTableSortHandlers() {

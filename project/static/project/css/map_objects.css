@@ -108,6 +108,20 @@ body.mode-mask #mask-controls { display: flex; flex-direction: column; gap: 10px
     z-index: 2;
     overflow: visible;
 }
+/* ===== PERF-FIX #3 (separate preview SVG) — see editor.html for rationale.
+   Mirrors #overlay-svg geometry but paints on top (later sibling, same z-index)
+   and is transparent to input so previews never steal clicks from the course
+   layers below. TO REVERT: delete this rule and move #edit-layer / #drag-crosshair
+   back into #overlay-svg's #viewport. */
+#preview-svg {
+    position: absolute;
+    top: 0;
+    left: 0;
+    z-index: 2;
+    overflow: visible;
+    pointer-events: none;
+}
+/* ===== PERF-FIX #3 END ===== */
 /* Editor accent color — control pairs, blocked-terrain hatch, place-CP preview,
    and route polyline fallback all use this. Change here to recolor everything. */
 :root {

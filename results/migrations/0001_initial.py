@@ -30,6 +30,7 @@ class Migration(migrations.Migration):
                     ),
                 ),
                 ("choice_time", models.FloatField()),
+                ("penalty", models.FloatField(default=0)),
                 ("competition", models.BooleanField(default=True)),
                 ("timestamp", models.DateTimeField(default=django.utils.timezone.now)),
                 (

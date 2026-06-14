@@ -222,17 +222,34 @@
                 </defs>
                 <g id="viewport">
                     <g id="route-layer"></g>
-                    <g id="edit-layer"></g>
                     <g id="blocked-layer"></g>
                     <g id="line-layer"></g>
                     <g id="control-layer"></g>
-                    <g id="drag-crosshair">
-                        <line x1="-4" y1="-4" x2="4" y2="4"></line>
-                        <line x1="-4" y1="4" x2="4" y2="-4"></line>
-                    </g>
                     <g id="ui-layer"></g>
                 </g>
             </svg>
+            <!-- ===== PERF-FIX #3 (separate preview SVG) BEGIN =====================
+                 Live-preview layers (#edit-layer route/CP/block previews and the
+                 #drag-crosshair) live in their OWN svg so that mutating them on
+                 every mousemove no longer invalidates/repaints #overlay-svg (all
+                 routes + control pairs + blocked terrain). Both svgs are children
+                 of #camera, so they share the same pan/zoom transform; coordinates
+                 are identical to before. pointer-events:none keeps clicks falling
+                 through to #overlay-svg below.
+                 Side effect: previews now paint ABOVE control pairs (previously
+                 #edit-layer sat below #control-layer). This is intentional/benign.
+                 TO REVERT: delete this <svg id="preview-svg"> block and move
+                 #edit-layer (back between #route-layer and #blocked-layer) and
+                 #drag-crosshair (back after #control-layer) into #viewport above,
+                 then delete the #preview-svg rule in map_objects.css. -->
+            <svg id="preview-svg">
+                <g id="edit-layer"></g>
+                <g id="drag-crosshair">
+                    <line x1="-4" y1="-4" x2="4" y2="4"></line>
+                    <line x1="-4" y1="4" x2="4" y2="-4"></line>
+                </g>
+            </svg>
+            <!-- ===== PERF-FIX #3 END ============================================ -->
         </div>
     </div>
 </div>
@@ -301,6 +318,7 @@
                 <tbody id="file-tbody"></tbody>
             </table>
             <div id="file-cards"></div>
+            <div id="publish-filter-dropdown" class="table-filter-dropdown"></div>
             <div id="label-filter-dropdown" class="table-filter-dropdown"></div>
             <div id="author-filter-dropdown" class="table-filter-dropdown"></div>
             <div id="team-filter-dropdown" class="table-filter-dropdown"></div>
@@ -358,9 +376,20 @@
     <div class="modal-scale-box" style="pointer-events:auto;">
         <div class="scale-modal-body">
             <label class="scale-modal-label">
-                Distanz oder Koordinaten
+                Distanz
                 <input type="text" id="scale-distance-m" inputmode="decimal" autocomplete="off"
-                       placeholder='1234 m oder Punkt 1: "46.907604, 7.165145", Punkt 2: "46.914287, 7.138275"'>
+                       placeholder='z.B. 1234 m'>
+            </label>
+            <div class="scale-modal-or">oder Koordinaten</div>
+            <label class="scale-modal-label">
+                Punkt 1
+                <input type="text" id="scale-coord-1" autocomplete="off"
+                       placeholder='46.907604, 7.165145'>
+            </label>
+            <label class="scale-modal-label">
+                Punkt 2
+                <input type="text" id="scale-coord-2" autocomplete="off"
+                       placeholder='46.914287, 7.138275'>
             </label>
             <div class="scale-ratio-row">
                 <span class="scale-ratio-text">Massstab&nbsp;&nbsp;1 :</span>

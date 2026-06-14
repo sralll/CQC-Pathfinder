@@ -6,7 +6,7 @@ from account.models import Profile
 
 @admin.register(Choice)
 class ChoiceAdmin(admin.ModelAdmin):
-    list_display = ('user', 'team', 'get_file', 'control_pair', 'choice_time', 'competition', 'timestamp')
+    list_display = ('user', 'team', 'get_file', 'control_pair', 'choice_time', 'penalty', 'competition', 'timestamp')
     list_filter = ('competition', 'team', 'timestamp')
     search_fields = ('user__username', 'control_pair__file__name')
     readonly_fields = ('timestamp',)

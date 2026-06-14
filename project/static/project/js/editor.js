@@ -1003,7 +1003,7 @@ const ControlPairTool = (() => {
         if (snap) { newX = snap.x; newY = snap.y; }
         drag.controlPair[drag.pointType].x = newX;
         drag.controlPair[drag.pointType].y = newY;
-        updateControlPairGroup(drag.controlPair);
+        updateControlPairDragVisual(drag.controlPair);   // PERF: in-place, no node churn
         updateCrosshair(newX, newY);
 
         const moved   = Math.hypot(newX - drag.originX, newY - drag.originY);
@@ -1130,39 +1130,39 @@ const RouteEditTool = (() => {
         previewPt    = null;
     }
 
-    function drawPreview() {
-        clearEditLayer();
-        drawOriginal();
-        if (!route || !previewPt) return;
-        const prev = route.rP[route.rP.length - 1];
-        if (!prev) return;
-        const layer = document.getElementById("edit-layer");
-        const line  = document.createElementNS("http://www.w3.org/2000/svg", "line");
-        line.setAttribute("x1", prev.x);      line.setAttribute("y1", prev.y);
-        line.setAttribute("x2", previewPt.x); line.setAttribute("y2", previewPt.y);
-        line.setAttribute("stroke", "#E53935");
-        line.setAttribute("stroke-width", "1");
-        line.setAttribute("stroke-linecap", "round");
-        line.setAttribute("vector-effect", "non-scaling-stroke");
-        layer.appendChild(line);
+    // PERF: persistent preview nodes — original-route polyline + line to cursor.
+    const _ev = {};
+    function evEnsure() {
+        if (!_ev.orig) {
+            _ev.orig = svgNode("polyline", { fill: "none", stroke: "rgba(229, 57, 53, 0.67)",
+                "stroke-width": "1.5", "stroke-linecap": "round", "stroke-linejoin": "round",
+                "vector-effect": "non-scaling-stroke", "pointer-events": "none" });
+            _ev.orig.classList.add("route-edit-original-preview");
+            _ev.line = svgNode("line", { stroke: "#E53935", "stroke-width": "1",
+                "stroke-linecap": "round", "vector-effect": "non-scaling-stroke" });
+        }
+        ensureInLayer(_ev.orig, "edit-layer");
+        ensureInLayer(_ev.line, "edit-layer");
     }
 
+    function drawPreview() {
+        evEnsure();
+        drawOriginal();
+        if (!route || !previewPt) { hideNode(_ev.line); return; }
+        const prev = route.rP[route.rP.length - 1];
+        if (!prev) { hideNode(_ev.line); return; }
+        _ev.line.setAttribute("x1", prev.x);      _ev.line.setAttribute("y1", prev.y);
+        _ev.line.setAttribute("x2", previewPt.x); _ev.line.setAttribute("y2", previewPt.y);
+        showNode(_ev.line);
+    }
+
+    const scheduleDraw = makeRafScheduler(drawPreview);   // PERF-FIX #2
+
     function drawOriginal() {
-        document.querySelectorAll(".route-edit-original-preview").forEach(el => el.remove());
-        if (!originalPts || originalPts.length < 2) return;
-        const layer  = document.getElementById("edit-layer");
-        const points = originalPts.map(p => `${p.x},${p.y}`).join(" ");
-        const poly   = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
-        poly.setAttribute("points", points);
-        poly.setAttribute("fill", "none");
-        poly.setAttribute("stroke", "rgba(229, 57, 53, 0.67)");
-        poly.setAttribute("stroke-width", "1.5");
-        poly.setAttribute("stroke-linecap", "round");
-        poly.setAttribute("stroke-linejoin", "round");
-        poly.setAttribute("vector-effect", "non-scaling-stroke");
-        poly.setAttribute("pointer-events", "none");
-        poly.classList.add("route-edit-original-preview");
-        layer.appendChild(poly);
+        evEnsure();
+        if (!originalPts || originalPts.length < 2) { hideNode(_ev.orig); return; }
+        _ev.orig.setAttribute("points", originalPts.map(p => `${p.x},${p.y}`).join(" "));
+        showNode(_ev.orig);
     }
 
     function snapToZiel(pt) {
@@ -1246,6 +1246,7 @@ const RouteEditTool = (() => {
 
         onExit() {
             mapContainer.classList.remove("editing-route");
+            scheduleDraw.cancel();   // PERF-FIX #2
             gesture.cancel();
             clearEditLayer();
             hideCrosshair();
@@ -1267,7 +1268,7 @@ const RouteEditTool = (() => {
             if (gesture.move(pt)) return;
             previewPt = snapToZiel(pt);
             updateCrosshair(previewPt.x, previewPt.y);
-            drawPreview();
+            scheduleDraw();   // PERF-FIX #2 (was drawPreview())
         },
 
         onMouseUp(e, pt) {
@@ -1307,40 +1308,48 @@ const NewRouteTool = (() => {
         return pt;
     }
 
+    // PERF: persistent preview nodes — partial polyline (white bg + red fg) and
+    // the line to the cursor — updated in place instead of clear+recreate.
+    const _rv = {};
+    function rvEnsure() {
+        if (!_rv.bg) {
+            _rv.bg   = svgNode("polyline", { fill: "none", stroke: "white",   "stroke-width": "3",
+                "stroke-linecap": "round", "stroke-linejoin": "round", "vector-effect": "non-scaling-stroke" });
+            _rv.fg   = svgNode("polyline", { fill: "none", stroke: "#E53935", "stroke-width": "1.5",
+                "stroke-linecap": "round", "stroke-linejoin": "round", "vector-effect": "non-scaling-stroke" });
+            _rv.line = svgNode("line", { stroke: "#E53935", "stroke-width": "1",
+                "stroke-linecap": "round", "vector-effect": "non-scaling-stroke" });
+        }
+        ensureInLayer(_rv.bg,   "edit-layer");
+        ensureInLayer(_rv.fg,   "edit-layer");
+        ensureInLayer(_rv.line, "edit-layer");
+    }
+
     function drawPreview() {
-        clearEditLayer();
-        if (!route?.rP?.length) return;
-        const layer = document.getElementById("edit-layer");
+        rvEnsure();
+        if (!route?.rP?.length) { hideNode(_rv.bg); hideNode(_rv.fg); hideNode(_rv.line); return; }
 
         // Partial polyline so far (white bg + red fg)
         if (route.rP.length >= 2) {
             const pts = route.rP.map(p => `${p.x},${p.y}`).join(" ");
-            for (const [stroke, width] of [["white", "3"], ["#E53935", "1.5"]]) {
-                const poly = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
-                poly.setAttribute("points", pts);
-                poly.setAttribute("fill", "none");
-                poly.setAttribute("stroke", stroke);
-                poly.setAttribute("stroke-width", width);
-                poly.setAttribute("stroke-linecap", "round");
-                poly.setAttribute("stroke-linejoin", "round");
-                poly.setAttribute("vector-effect", "non-scaling-stroke");
-                layer.appendChild(poly);
-            }
+            _rv.bg.setAttribute("points", pts); showNode(_rv.bg);
+            _rv.fg.setAttribute("points", pts); showNode(_rv.fg);
+        } else {
+            hideNode(_rv.bg); hideNode(_rv.fg);
         }
 
         // Preview line to cursor
         if (previewPt) {
             const prev = route.rP[route.rP.length - 1];
-            const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
-            line.setAttribute("x1", prev.x); line.setAttribute("y1", prev.y);
-            line.setAttribute("x2", previewPt.x); line.setAttribute("y2", previewPt.y);
-            line.setAttribute("stroke", "#E53935");
-            line.setAttribute("stroke-width", "1");
-            line.setAttribute("stroke-linecap", "round");
-            line.setAttribute("vector-effect", "non-scaling-stroke");
-            layer.appendChild(line);
+            _rv.line.setAttribute("x1", prev.x);      _rv.line.setAttribute("y1", prev.y);
+            _rv.line.setAttribute("x2", previewPt.x); _rv.line.setAttribute("y2", previewPt.y);
+            showNode(_rv.line);
+        } else {
+            hideNode(_rv.line);
         }
     }
+
+    const scheduleDraw = makeRafScheduler(drawPreview);   // PERF-FIX #2
 
     function completeRoute() {
         pushUndoState("Route erstellt");
@@ -1419,6 +1428,7 @@ const NewRouteTool = (() => {
         },
 
         onExit() {
+            scheduleDraw.cancel();   // PERF-FIX #2
             gesture.cancel();
             mapContainer.classList.remove("drawing-route");
             clearEditLayer();
@@ -1439,7 +1449,7 @@ const NewRouteTool = (() => {
             }
             previewPt = route?.rP?.length ? snapToZielPt(pt) : snapToStartPt(pt);
             updateCrosshair(previewPt.x, previewPt.y);
-            drawPreview();
+            scheduleDraw();   // PERF-FIX #2 (was drawPreview())
         },
 
         onKeyDown(e) {
@@ -1554,7 +1564,11 @@ const MaskLayer = (() => {
     let loaded        = false;
     let lastMapFile   = null;
     let lastPx        = null;
-    let _strokeBefore = null;  // R-channel snapshot before current stroke (for diff)
+    // PERF-FIX #4: record only the pixels touched during the current stroke
+    // (pixelIndex -> value-before-stroke) instead of snapshotting the whole R
+    // channel on mousedown and re-scanning the whole image on mouseup. The map
+    // size is bounded by the painted area, not by the full WxH mask.
+    let _strokePixels = null;
     let _saveTimer    = null;
     let _saveInFlight = false;
     let _saveQueued   = false;
@@ -1586,7 +1600,7 @@ const MaskLayer = (() => {
         ensureCanvas();
         if (!ctx || mapFile === lastMapFile) return;
         lastMapFile   = mapFile;
-        _strokeBefore = null;
+        _strokePixels = null;
         // Clear stale diffs — they were computed for a different canvas
         if (typeof clearMaskUndoStacks === "function") clearMaskUndoStacks();
         loaded = false;
@@ -1627,6 +1641,7 @@ const MaskLayer = (() => {
     function darkenPixel(idx, value) {
         const d = maskData.data;
         if (d[idx] <= value) return false;
+        if (_strokePixels) { const j = idx >> 2; if (!_strokePixels.has(j)) _strokePixels.set(j, d[idx]); }   // PERF-FIX #4
         d[idx] = d[idx+1] = d[idx+2] = value;
         d[idx+3] = 255;
         return true;
@@ -1650,10 +1665,12 @@ const MaskLayer = (() => {
         for (let y = y0; y <= y1; y++) {
             for (let x = x0; x <= x1; x++) {
                 if ((x-cx)*(x-cx) + (y-cy)*(y-cy) <= r2) {
-                    const i = (y * W + x) * 4;
+                    const j = y * W + x;
+                    const i = j * 4;
+                    if (_strokePixels && !_strokePixels.has(j)) _strokePixels.set(j, d[i]);   // PERF-FIX #4
                     d[i] = d[i+1] = d[i+2] = maskValue;
                     d[i+3] = 255;
-                    if (maskValue === MASK_IMPASSABLE) touchedBlack.push(y * W + x);
+                    if (maskValue === MASK_IMPASSABLE) touchedBlack.push(j);
                 }
             }
         }
@@ -1779,7 +1796,7 @@ const MaskLayer = (() => {
             maskData      = null;
             loaded        = false;
             lastMapFile   = null;
-            _strokeBefore = null;
+            _strokePixels = null;
         },
         loadMask,
         applyMapDimensions,
@@ -1804,20 +1821,20 @@ const MaskLayer = (() => {
         // ── Diff-based undo support ────────────────────────────
         startStroke() {
             if (!maskData) return;
-            // Snapshot just the R channel (G=B=R, A=255 always)
-            const src = maskData.data, len = src.length / 4;
-            _strokeBefore = new Uint8Array(len);
-            for (let i = 0, j = 0; i < src.length; i += 4, j++) _strokeBefore[j] = src[i];
+            // PERF-FIX #4: begin with an empty change-record; pixels are captured
+            // lazily as the brush touches them (see editCircle / darkenPixel).
+            _strokePixels = new Map();
         },
         finishStroke() {
-            if (!_strokeBefore || !maskData) { _strokeBefore = null; return null; }
+            if (!_strokePixels || !maskData) { _strokePixels = null; return null; }
             const src = maskData.data;
             const idxBuf = [], oldBuf = [], newBuf = [];
-            for (let i = 0, j = 0; i < src.length; i += 4, j++) {
-                const o = _strokeBefore[j], n = src[i];
+            // PERF-FIX #4: iterate only the touched pixels, not the whole image.
+            for (const [j, o] of _strokePixels) {
+                const n = src[j * 4];
                 if (o !== n) { idxBuf.push(j); oldBuf.push(o); newBuf.push(n); }
             }
-            _strokeBefore = null;
+            _strokePixels = null;
             if (!idxBuf.length) return null;
             return {
                 indices: new Uint32Array(idxBuf),
@@ -2219,60 +2236,61 @@ const BlockTool = (() => {
         return best ?? pt;
     }
 
-    function drawPreview() {
-        clearEditLayer();
-        if (!previewPt) return;
-        const layer = document.getElementById("edit-layer");
-        const S = sub();
+    // PERF: persistent preview nodes — line-mode line, polygon fill, polygon
+    // single-segment line, and the start-point "close here" circle.
+    const _bv = {};
+    function bvEnsure() {
+        if (!_bv.line) {
+            _bv.line     = svgNode("line", { stroke: BLOCK_COLOR, "stroke-width": "5",
+                "stroke-linecap": "butt", "vector-effect": "non-scaling-stroke" });
+            _bv.poly     = svgNode("polygon", { fill: "url(#block-hatch)", "fill-opacity": "1",
+                stroke: BLOCK_COLOR, "stroke-width": "1", "stroke-linejoin": "miter", "vector-effect": "non-scaling-stroke" });
+            _bv.polyLine = svgNode("line", { stroke: BLOCK_COLOR, "stroke-width": "1", "vector-effect": "non-scaling-stroke" });
+            _bv.startC   = svgNode("circle", { r: BLOCK_SNAP, fill: "none", stroke: BLOCK_COLOR,
+                "stroke-width": "1", "stroke-dasharray": "3 2", "vector-effect": "non-scaling-stroke" });
+        }
+        ensureInLayer(_bv.poly,     "edit-layer");
+        ensureInLayer(_bv.line,     "edit-layer");
+        ensureInLayer(_bv.polyLine, "edit-layer");
+        ensureInLayer(_bv.startC,   "edit-layer");   // on top
+    }
 
+    function drawPreview() {
+        bvEnsure();
+        const S = sub();
+        if (!previewPt) { hideNode(_bv.line); hideNode(_bv.poly); hideNode(_bv.polyLine); hideNode(_bv.startC); return; }
+
+        // Line mode
         if (S === "line" && lineStart) {
-            const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
-            line.setAttribute("x1", lineStart.x);  line.setAttribute("y1", lineStart.y);
-            line.setAttribute("x2", previewPt.x);  line.setAttribute("y2", previewPt.y);
-            line.setAttribute("stroke", BLOCK_COLOR);
-            line.setAttribute("stroke-width", "5");
-            line.setAttribute("stroke-linecap", "butt");
-            line.setAttribute("vector-effect", "non-scaling-stroke");
-            layer.appendChild(line);
+            _bv.line.setAttribute("x1", lineStart.x); _bv.line.setAttribute("y1", lineStart.y);
+            _bv.line.setAttribute("x2", previewPt.x); _bv.line.setAttribute("y2", previewPt.y);
+            showNode(_bv.line);
+        } else {
+            hideNode(_bv.line);
         }
 
+        // Polygon mode
         if (S === "polygon" && polyPoints.length > 0) {
-            const allPts = [...polyPoints, previewPt];
-            const pts    = allPts.map(p => `${p.x},${p.y}`).join(" ");
-
+            const pts = [...polyPoints, previewPt].map(p => `${p.x},${p.y}`).join(" ");
             if (polyPoints.length >= 2) {
-                const fill = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
-                fill.setAttribute("points", pts);
-                fill.setAttribute("fill", "url(#block-hatch)");
-                fill.setAttribute("fill-opacity", "1");
-                fill.setAttribute("stroke", BLOCK_COLOR);
-                fill.setAttribute("stroke-width", "1");
-                fill.setAttribute("stroke-linejoin", "miter");
-                fill.setAttribute("vector-effect", "non-scaling-stroke");
-                layer.appendChild(fill);
+                _bv.poly.setAttribute("points", pts); showNode(_bv.poly);
+                hideNode(_bv.polyLine);
             } else {
-                const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
-                line.setAttribute("x1", polyPoints[0].x); line.setAttribute("y1", polyPoints[0].y);
-                line.setAttribute("x2", previewPt.x);     line.setAttribute("y2", previewPt.y);
-                line.setAttribute("stroke", BLOCK_COLOR);
-                line.setAttribute("stroke-width", "1");
-                line.setAttribute("vector-effect", "non-scaling-stroke");
-                layer.appendChild(line);
+                _bv.polyLine.setAttribute("x1", polyPoints[0].x); _bv.polyLine.setAttribute("y1", polyPoints[0].y);
+                _bv.polyLine.setAttribute("x2", previewPt.x);     _bv.polyLine.setAttribute("y2", previewPt.y);
+                showNode(_bv.polyLine);
+                hideNode(_bv.poly);
             }
-
             // Circle around start point — indicates where to click to close
-            const c = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-            c.setAttribute("cx", polyPoints[0].x);
-            c.setAttribute("cy", polyPoints[0].y);
-            c.setAttribute("r",  BLOCK_SNAP);
-            c.setAttribute("fill", "none");
-            c.setAttribute("stroke", BLOCK_COLOR);
-            c.setAttribute("stroke-width", "1");
-            c.setAttribute("stroke-dasharray", "3 2");
-            c.setAttribute("vector-effect", "non-scaling-stroke");
-            layer.appendChild(c);
+            _bv.startC.setAttribute("cx", polyPoints[0].x);
+            _bv.startC.setAttribute("cy", polyPoints[0].y);
+            showNode(_bv.startC);
+        } else {
+            hideNode(_bv.poly); hideNode(_bv.polyLine); hideNode(_bv.startC);
         }
     }
+
+    const scheduleDraw = makeRafScheduler(drawPreview);   // PERF-FIX #2
 
     function handleClick(pt, evtTarget) {
         const S = sub();
@@ -2343,6 +2361,7 @@ const BlockTool = (() => {
         onExit() {
             mapContainer.classList.remove("mode-block");
             document.body.classList.remove("mode-block");
+            scheduleDraw.cancel();   // PERF-FIX #2
             gesture.cancel();
             clearEditLayer();
             hideCrosshair();
@@ -2371,7 +2390,7 @@ const BlockTool = (() => {
                 previewPt = snapToBlockSnap(pt);
                 updateCrosshair(previewPt.x, previewPt.y);
                 if ((S === "line" && lineStart) || (S === "polygon" && polyPoints.length > 0)) {
-                    drawPreview();
+                    scheduleDraw();   // PERF-FIX #2 (was drawPreview())
                 }
             }
         },
@@ -2459,16 +2478,35 @@ const PlaceControlTool = (() => {
         layer.appendChild(circle);
     }
 
+    // PERF: persistent preview nodes (cursor circle, placed-start circle,
+    // connection line) — updated in place instead of clear+recreate per frame.
+    const _pv = {};
+    function pvEnsure() {
+        if (!_pv.cursor) {
+            const mkCircle = () => svgNode("circle", { r: R_CONTROL, fill: "transparent",
+                stroke: STROKE, "stroke-width": SW, "vector-effect": "non-scaling-stroke" });
+            _pv.cursor = mkCircle();
+            _pv.start  = mkCircle();
+            _pv.line   = svgNode("line", { stroke: STROKE, "stroke-width": SW, "vector-effect": "non-scaling-stroke" });
+        }
+        ensureInLayer(_pv.cursor, "edit-layer");
+        ensureInLayer(_pv.start,  "edit-layer");
+        ensureInLayer(_pv.line,   "edit-layer");
+    }
+
     function drawPreview(pt) {
-        clearEditLayer();
-        const layer = document.getElementById("edit-layer");
+        pvEnsure();
 
         // Cursor circle
-        drawCircleAt(layer, pt);
+        _pv.cursor.setAttribute("cx", pt.x);
+        _pv.cursor.setAttribute("cy", pt.y);
+        showNode(_pv.cursor);
 
         // Placed start circle + connection line (ziel phase)
         if (placing === "ziel" && tempStart) {
-            drawCircleAt(layer, tempStart);
+            _pv.start.setAttribute("cx", tempStart.x);
+            _pv.start.setAttribute("cy", tempStart.y);
+            showNode(_pv.start);
 
             const dx   = pt.x - tempStart.x;
             const dy   = pt.y - tempStart.y;
@@ -2476,18 +2514,23 @@ const PlaceControlTool = (() => {
             if (dist > 2 * (R_CONTROL + GAP)) {
                 const angle  = Math.atan2(dy, dx);
                 const offset = R_CONTROL + GAP;
-                const line = svgEl("line");
-                line.setAttribute("x1", tempStart.x + Math.cos(angle) * offset);
-                line.setAttribute("y1", tempStart.y + Math.sin(angle) * offset);
-                line.setAttribute("x2", pt.x - Math.cos(angle) * offset);
-                line.setAttribute("y2", pt.y - Math.sin(angle) * offset);
-                line.setAttribute("stroke", STROKE);
-                line.setAttribute("stroke-width", SW);
-                line.setAttribute("vector-effect", "non-scaling-stroke");
-                layer.appendChild(line);
+                _pv.line.setAttribute("x1", tempStart.x + Math.cos(angle) * offset);
+                _pv.line.setAttribute("y1", tempStart.y + Math.sin(angle) * offset);
+                _pv.line.setAttribute("x2", pt.x - Math.cos(angle) * offset);
+                _pv.line.setAttribute("y2", pt.y - Math.sin(angle) * offset);
+                showNode(_pv.line);
+            } else {
+                hideNode(_pv.line);
             }
+        } else {
+            hideNode(_pv.start);
+            hideNode(_pv.line);
         }
     }
+
+    // PERF-FIX #2: coalesce preview redraws; latest snapped point is read here.
+    let _previewSnapped = null;
+    const scheduleDraw = makeRafScheduler(() => { if (_previewSnapped) drawPreview(_previewSnapped); });
 
     function reset() {
         cp          = null;
@@ -2594,6 +2637,7 @@ const PlaceControlTool = (() => {
         },
 
         onExit() {
+            scheduleDraw.cancel();   // PERF-FIX #2
             gesture.cancel();
             mapContainer.classList.remove("placing-control");
             if (cp) cancelCurrent();
@@ -2606,16 +2650,24 @@ const PlaceControlTool = (() => {
         onMouseMove(e, pt) {
             if (gesture.move(pt)) return;
             if (!mapContainer.contains(e.target)) {
+                scheduleDraw.cancel();   // PERF-FIX #2: no late preview redraw
                 hideCrosshair();
-                clearEditLayer();
+                pvEnsure();
+                hideNode(_pv.cursor);
+                hideNode(_pv.line);
                 if (placing === "ziel" && tempStart) {
-                    drawCircleAt(document.getElementById("edit-layer"), tempStart);
+                    _pv.start.setAttribute("cx", tempStart.x);
+                    _pv.start.setAttribute("cy", tempStart.y);
+                    showNode(_pv.start);
+                } else {
+                    hideNode(_pv.start);
                 }
                 return;
             }
             const snapped = snapToControlPoints(pt);
             updateCrosshair(snapped.x, snapped.y);
-            drawPreview(snapped);
+            _previewSnapped = snapped;
+            scheduleDraw();   // PERF-FIX #2 (was drawPreview(snapped))
         },
 
         onKeyDown(e) {
@@ -3054,6 +3106,13 @@ function initInput() {
     window.addEventListener("keydown",   onKeyDown);
     window.addEventListener("wheel",     onWheel, { passive: false });
     window.addEventListener("contextmenu", e => e.preventDefault());
+    // PERF-FIX #1: keep the cached map rect fresh. Resize/scroll cover window
+    // layout changes; ResizeObserver catches sidebar/panel toggles that resize
+    // the container without firing a window resize.
+    window.addEventListener("resize", invalidateMapRect);
+    window.addEventListener("scroll", invalidateMapRect, true);
+    const _mc = document.getElementById("map-container");
+    if (window.ResizeObserver && _mc) new ResizeObserver(invalidateMapRect).observe(_mc);
     initTouchInput();
 }
 
@@ -3116,6 +3175,7 @@ let _scalePanStarted = false;  // true once pan.start() has been called in this 
 const SCALE_PAN_THRESHOLD = 5;
 
 function onMouseDown(e) {
+    invalidateMapRect();   // PERF-FIX #1: refresh cached rect at the start of every gesture
     if (e.button === 2) { if (mapContainer.contains(e.target)) RCM.onDown(e); return; }
     if (e.button !== 0) return;
     if (!mapContainer.contains(e.target)) return;
@@ -3291,6 +3351,59 @@ function drawConnectionArrow(start, ziel, angle, parent) {
         midX - Math.cos(angle + arrowAngle) * arrowSize,
         midY - Math.sin(angle + arrowAngle) * arrowSize
     ));
+}
+
+// PERF: in-place update of a control-pair group during drag. Moves the existing
+// circle/line/arrow nodes (attribute updates) instead of remove()+recreate, which
+// churns the DOM every frame and wakes password-manager MutationObservers into a
+// full-document re-walk. Falls back to a full rebuild only when the connection's
+// visibility must flip (endpoints crossing the minimum gap) — a rare 1-2 frames.
+function updateControlPairDragVisual(cp) {
+    if (!cp?.start || !cp?.ziel) { updateControlPairGroup(cp); return; }
+    const group = document.getElementById("control-layer")
+        ?.querySelector(`.control-pair-group[data-ncp="${cp.order}"]`);
+    if (!group) { updateControlPairGroup(cp); return; }
+
+    const circles = group.querySelectorAll(".control-circle");
+    if (circles.length !== 2) { updateControlPairGroup(cp); return; }
+
+    const { start, ziel } = cp;
+    const dx = ziel.x - start.x, dy = ziel.y - start.y;
+    const dist = Math.hypot(dx, dy);
+    const showConn = dist > 2 * (R_CONTROL + GAP);
+
+    const line   = group.querySelector("line:not(.hit):not(.arrow)");
+    const hit    = group.querySelector("line.hit");
+    const arrows = group.querySelectorAll("line.arrow");
+    const haveConn = !!line && !!hit && arrows.length === 2;
+
+    // Connection appearing/disappearing changes the node set — rebuild once.
+    if (showConn !== haveConn) { updateControlPairGroup(cp); return; }
+
+    circles.forEach(c => {
+        const p = cp[c.dataset.type];
+        if (p) { c.setAttribute("cx", p.x); c.setAttribute("cy", p.y); }
+    });
+
+    if (showConn) {
+        const angle = Math.atan2(dy, dx), offset = R_CONTROL + GAP;
+        const x1 = start.x + Math.cos(angle) * offset, y1 = start.y + Math.sin(angle) * offset;
+        const x2 = ziel.x  - Math.cos(angle) * offset, y2 = ziel.y  - Math.sin(angle) * offset;
+        for (const l of [line, hit]) {
+            l.setAttribute("x1", x1); l.setAttribute("y1", y1);
+            l.setAttribute("x2", x2); l.setAttribute("y2", y2);
+        }
+        const arrowSize = 15, arrowAngle = Math.PI / 6;
+        const midX = (start.x + ziel.x + Math.cos(angle) * arrowSize / 2) / 2;
+        const midY = (start.y + ziel.y + Math.sin(angle) * arrowSize / 2) / 2;
+        const setArrow = (l, sign) => {
+            l.setAttribute("x1", midX); l.setAttribute("y1", midY);
+            l.setAttribute("x2", midX - Math.cos(angle + sign * arrowAngle) * arrowSize);
+            l.setAttribute("y2", midY - Math.sin(angle + sign * arrowAngle) * arrowSize);
+        };
+        setArrow(arrows[0], -1);   // matches drawConnectionArrow's two lines
+        setArrow(arrows[1], +1);
+    }
 }
 
 function clickControlPairGroup(target) {
@@ -3724,8 +3837,52 @@ function getCSRFToken() {
     return document.querySelector('meta[name="csrf-token"]').getAttribute('content');
 }
 
+// PERF-FIX #1: cache #map-container's bounding rect. It only changes on layout
+// (resize / page scroll / sidebar toggle), never on pan or zoom (those transform
+// #camera, not the container). Reading getBoundingClientRect() on every mousemove
+// forced a synchronous reflow each frame while drawing, because the previous
+// frame had just mutated the overlay SVG. Cached + invalidated, that cost is gone.
+let _mapRectCache = null;
+function getMapRect() {
+    if (!_mapRectCache)
+        _mapRectCache = document.getElementById("map-container").getBoundingClientRect();
+    return _mapRectCache;
+}
+function invalidateMapRect() { _mapRectCache = null; }
+
+// PERF-FIX #2: coalesce expensive live-preview redraws to at most one per
+// animation frame. High-Hz pointers fire mousemove 120-240x/s; without this each
+// event rebuilt the edit-layer. The scheduled fn always reads the latest preview
+// state (module vars), so skipping intermediate events is visually lossless.
+function makeRafScheduler(fn) {
+    let id = 0;
+    const run = () => { id = 0; fn(); };
+    const sched = () => { if (!id) id = requestAnimationFrame(run); };
+    sched.cancel = () => { if (id) { cancelAnimationFrame(id); id = 0; } };
+    return sched;
+}
+
+// PERF (password-manager mitigation): the live-preview tools used to wipe their
+// layer (innerHTML="") and recreate SVG nodes every frame. Those childList
+// mutations wake page-wide MutationObservers from autofill extensions (Bitwarden
+// et al.), which then re-walk the WHOLE document looking for form fields — that
+// DOM walk, not our drawing, was the real per-move CPU cost. These helpers let a
+// tool keep long-lived preview nodes and only UPDATE attributes / toggle the SVG
+// `display` attribute, so no nodes are added/removed during hover/draw/drag.
+function svgNode(tag, attrs) {
+    const el = document.createElementNS("http://www.w3.org/2000/svg", tag);
+    if (attrs) for (const k in attrs) el.setAttribute(k, attrs[k]);
+    return el;
+}
+function showNode(el) { if (el) el.removeAttribute("display"); }
+function hideNode(el) { if (el) el.setAttribute("display", "none"); }
+// Re-attach a persistent node if a clearEditLayer()/innerHTML reset detached it.
+function ensureInLayer(el, layerId) {
+    if (el && !el.isConnected) document.getElementById(layerId)?.appendChild(el);
+}
+
 function screenToWorld(clientX, clientY) {
-    const rect = document.getElementById("map-container").getBoundingClientRect();
+    const rect = getMapRect();   // PERF-FIX #1 (cached; see getMapRect)
     return {
         x: (clientX - rect.left - camera.x) / camera.zoom,
         y: (clientY - rect.top  - camera.y) / camera.zoom,
@@ -4404,26 +4561,36 @@ function _openScaleModal() {
     modal.style.display = "flex";
     hideCrosshair();
 
-    const distInp  = document.getElementById("scale-distance-m");
-    const ratioInp = document.getElementById("scale-ratio-input");
+    const distInp   = document.getElementById("scale-distance-m");
+    const c1Inp     = document.getElementById("scale-coord-1");
+    const c2Inp     = document.getElementById("scale-coord-2");
+    const ratioInp  = document.getElementById("scale-ratio-input");
     const submitBtn = document.getElementById("scale-submit-btn");
 
     distInp.value  = "";
+    c1Inp.value    = "";
+    c2Inp.value    = "";
     ratioInp.value = "4000";
     submitBtn.disabled = true;
 
-    const check = () => { submitBtn.disabled = !(resolveScaleDistanceMeters(distInp.value) > 0); };
+    const check = () => {
+        submitBtn.disabled = !(resolveScaleMeters(distInp.value, c1Inp.value, c2Inp.value) > 0);
+    };
     distInp.oninput  = check;
+    c1Inp.oninput    = check;
+    c2Inp.oninput    = check;
     ratioInp.oninput = check;
 
     const onEnter = e => { if (e.key === "Enter" && !submitBtn.disabled) submitBtn.click(); };
     distInp.onkeydown  = onEnter;
+    c1Inp.onkeydown    = onEnter;
+    c2Inp.onkeydown    = onEnter;
     ratioInp.onkeydown = onEnter;
 
     setTimeout(() => distInp.focus(), 50);
 
     submitBtn.onclick = () => {
-        const meters   = resolveScaleDistanceMeters(distInp.value);
+        const meters   = resolveScaleMeters(distInp.value, c1Inp.value, c2Inp.value);
         const mapScale = parseFloat(ratioInp.value) || 4000;
         if (!(meters > 0) || !(_scalePixelDist > 0)) return;
 
@@ -4461,25 +4628,37 @@ function _openScaleModal() {
 
 // ── Mouse interception for ruler drawing ───────────────────
 
-function resolveScaleDistanceMeters(value) {
-    const coords = parseScaleCoordinatePairs(value);
-    if (coords) return haversineMeters(coords[0], coords[1]);
-    const text = String(value || "").trim();
-    if (!/^\d+(?:[.,]\d+)?(?:\s*m)?$/i.test(text)) return NaN;
-    const direct = parseFloat(text.replace(",", "."));
-    return direct > 0 ? direct : NaN;
+// Resolve scaling distance in metres from EITHER a typed distance OR two
+// coordinate points. A distance value wins when present; otherwise both
+// coordinate points must parse and we compute their great-circle distance.
+function resolveScaleMeters(distValue, coord1Value, coord2Value) {
+    const direct = parseScaleDistance(distValue);
+    if (direct > 0) return direct;
+    const p1 = parseScaleCoordinate(coord1Value);
+    const p2 = parseScaleCoordinate(coord2Value);
+    if (p1 && p2) return haversineMeters(p1, p2);
+    return NaN;
 }
 
-function parseScaleCoordinatePairs(value) {
-    const text = String(value || "");
-    const matches = [...text.matchAll(/(-?\d+(?:[.,]\d+)?)\s*,\s*(-?\d+(?:[.,]\d+)?)/g)]
-        .map(m => ({
-            lat: Number(m[1].replace(",", ".")),
-            lon: Number(m[2].replace(",", ".")),
-        }))
-        .filter(p => Number.isFinite(p.lat) && Number.isFinite(p.lon)
-            && Math.abs(p.lat) <= 90 && Math.abs(p.lon) <= 180);
-    return matches.length >= 2 ? [matches[0], matches[1]] : null;
+// Parse a plain distance like "1234", "1234.5", "1234,5" or "1234 m".
+function parseScaleDistance(value) {
+    const text = String(value || "").trim();
+    if (!text) return NaN;
+    if (!/^\d+(?:[.,]\d+)?(?:\s*m)?$/i.test(text)) return NaN;
+    const num = parseFloat(text.replace(",", "."));
+    return num > 0 ? num : NaN;
+}
+
+// Parse a single "lat, lon" coordinate point. Returns {lat, lon} or null.
+function parseScaleCoordinate(value) {
+    const m = String(value || "")
+        .match(/(-?\d+(?:[.,]\d+)?)\s*,\s*(-?\d+(?:[.,]\d+)?)/);
+    if (!m) return null;
+    const lat = Number(m[1].replace(",", "."));
+    const lon = Number(m[2].replace(",", "."));
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+    if (Math.abs(lat) > 90 || Math.abs(lon) > 180) return null;
+    return { lat, lon };
 }
 
 function haversineMeters(a, b) {
@@ -4659,7 +4838,14 @@ function initMenus() {
         menuItems.forEach(menu => {
             if (menu.id === "menu-project") return;
             menu.addEventListener("click", (e) => {
-                if (e.target.closest(".nav-dropdown")) return;
+                // Clicks on the sub-dropdown content are handled by their own
+                // listeners — don't toggle the menu, but still keep the
+                // surrounding hamburger panel open.
+                if (e.target.closest(".nav-dropdown")) { e.stopPropagation(); return; }
+                // Toggling a main menu option must NOT collapse the hamburger
+                // panel: stop the click from bubbling to the document-level
+                // closeAllHam handler in base.html.
+                e.stopPropagation();
                 const wasOpen = menu.classList.contains("open");
                 menuItems.forEach(other => other.classList.remove("open"));
                 menu.classList.toggle("open", !wasOpen);

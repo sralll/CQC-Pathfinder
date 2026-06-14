@@ -454,7 +454,10 @@ function drawRoutes(cp) {
     const layer = document.getElementById('route-layer');
     layer.innerHTML = '';
     if (!cp?.routes?.length) return;
-    if (!cp.complex) return;   // non-complex: routes not revealed on the map
+    // Non-complex CPs hide routes until the athlete taps the map (the reveal
+    // fallback). revealTime is set the moment that happens; before then, keep
+    // the route layer empty so only the Links/Rechts buttons drive the choice.
+    if (!cp.complex && revealTime === null) return;
 
     // Draw order: routeColor index ascending (FFFF00 bottom → 00FF00 top)
     // so less-visible colours are never buried under brighter ones
@@ -616,7 +619,12 @@ function showControlPair(index) {
                 action:   () => revealRoutes(cp),
             }]);
         } else {
+            // Non-complex CP: show the Links/Rechts buttons right away so a direct
+            // tap registers the choice. But also arm the same reveal fallback as
+            // complex CPs — a tap on the map shows the routes and starts the
+            // penalty countdown, so the athlete never has to consult the buttons.
             choiceStartTime = performance.now();
+            pendingReveal   = cp;
             renderAllButtons(cp);
         }
     });
@@ -667,6 +675,7 @@ function selectRoute(cp, i) {
     selectedRouteIdx = selecting ? i : null;
     if (selecting) {
         buttonsDisabled = true;
+        pendingReveal   = null;   // a choice was made — disarm the reveal fallback
         stopCountdown();
         renderAllButtons(cp);
         submitResult(cp, cp.routes[i]);
@@ -1253,6 +1262,7 @@ function submitResult(cp, route) {
             control_pair_id:   cp.id,
             selected_route_id: route?.id ?? null,
             choice_time:       choiceTime,
+            penalty:           penalty,
             competition:       competitionMode,
         }),
     }).catch(err => console.error('submit-result failed:', err));

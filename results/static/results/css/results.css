@@ -140,30 +140,50 @@ html, body {
     border-radius: var(--radius);
     color: var(--text);
     font-size: var(--font-sm);
-    padding: 9px 30px 9px 12px;
+    padding: 9px 38px 9px 12px;
     outline: none;
     transition: border-color var(--t-med);
 }
 #play-search:focus { border-color: var(--brand); }
 #play-search::placeholder { color: var(--text-faint); }
 
+/* Clear button — sits flush against the input's right edge, reading as a
+   continuation of the input. Its border mirrors the input's border state:
+   grey by default, orange (--brand) on the 3 outside edges when the search
+   field is focused. The shared inner edge (border-left) stays grey as a
+   divider between the input text and the button. */
 #play-search-clear {
     position: absolute;
-    right: 6px;
-    top: 50%;
-    transform: translateY(-50%);
-    background: none;
-    border: none;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    width: 34px;
+    background: var(--bg-1);
+    border-top: 1px solid var(--border);
+    border-right: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    border-left: 1px solid var(--border);
+    border-radius: 0 var(--radius) var(--radius) 0;
     color: var(--text-dim);
     cursor: pointer;
     font-size: var(--font-md);
     line-height: 1;
-    padding: 4px 6px;
-    border-radius: var(--radius-sm);
-    display: none;
+    padding: 0;
+    transition: border-color var(--t-med), color var(--t-med);
 }
-#play-search-clear.visible { display: block; color: var(--danger); }
+#play-search-clear.visible { display: flex; color: var(--danger); }
 #play-search-clear.visible:hover { color: var(--text-strong); }
+
+/* Orange border on the 3 outside edges while the search field is active */
+#play-search-wrap:focus-within #play-search-clear {
+    border-top-color: var(--brand);
+    border-right-color: var(--brand);
+    border-bottom-color: var(--brand);
+}
 
 /* Mobile-only sort/filter controls */
 #play-mobile-controls {
@@ -317,6 +337,11 @@ html, body {
     transition: background var(--t-fast);
     min-height: var(--touch-target);
     box-sizing: border-box;
+    /* #play-cards is the flex (column) scroll container; without this the
+       cards are flex items that shrink past their content down to the
+       min-height floor, cropping row 2. Keep their natural height and let
+       the container scroll instead. */
+    flex-shrink: 0;
 }
 .play-card:active { background: var(--bg-3); }
 
@@ -385,10 +410,21 @@ html, body {
     border-radius: var(--radius);
     z-index: 5000;
     min-width: 160px;
+    /* Cap height so long lists overflow inside the dropdown instead of
+       running off-screen. Mirrors the project app's filter dropdown. */
+    max-height: 320px;
     padding: 4px 0;
     box-shadow: var(--shadow-pop);
+    flex-direction: column;
 }
-.play-filter-dropdown.open { display: block; }
+/* Flex column so the header stays fixed and only the list scrolls. */
+.play-filter-dropdown.open { display: flex; }
+
+/* Scrollable list region — header (.filter-clear) sits above it, fixed. */
+.filter-options-list {
+    overflow-y: auto;
+    min-height: 0;
+}
 
 .filter-clear {
     display: flex;
@@ -400,6 +436,7 @@ html, body {
     border-bottom: 0.5px solid var(--border);
     margin-bottom: 2px;
     gap: 8px;
+    flex-shrink: 0;
 }
 .filter-clear-left { cursor: pointer; }
 .filter-clear-left:hover { color: var(--text-soft); }
@@ -542,11 +579,21 @@ body.mobile #play-search-clear.visible {
     padding: 0;
     font-size: 22px;
     background: var(--bg-3);
+    border-top: 1px solid var(--border);
+    border-right: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
     border-left: 1px solid var(--border);
     border-radius: 0 var(--radius) var(--radius) 0;
     color: var(--danger);
 }
 body.mobile #play-search-clear.visible:active { background: var(--bg-2); }
+
+/* Orange border on the 3 outside edges while the search field is active */
+body.mobile #play-search-wrap:focus-within #play-search-clear.visible {
+    border-top-color: var(--brand);
+    border-right-color: var(--brand);
+    border-bottom-color: var(--brand);
+}
 body.mobile .play-card-name       { font-size: var(--font-lg); font-weight: 600; }
 body.mobile .play-card-cp         { font-size: var(--font-md); }
 body.mobile .play-card-row2       { font-size: var(--font-md); }
@@ -561,5 +608,5 @@ body.mobile .play-empty-card      { font-size: var(--font-lg); }
 body.mobile #play-loading         { font-size: var(--font-lg); }
 body.mobile .play-filter-dropdown { font-size: var(--font-lg); }
 body.mobile .filter-option        { padding: 14px 16px; min-height: var(--touch-target); box-sizing: border-box; }
-body.mobile .play-card            { padding: 14px 16px; }
+body.mobile .play-card            { padding: 8px 16px; }
 body.mobile .mode-tip-box         { font-size: var(--font-sm); padding: 10px 12px; }
