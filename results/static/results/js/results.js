@@ -288,9 +288,8 @@ function attachHeaderEvents() {
 
 function getSortIcon(k) {
     if (sortState.key !== k) return '';
-    const down = `<span class="sort-icon-box">${window.icon('chevron-down', '0.7em')}</span>`;
-    const up   = `<span class="sort-icon-box">${window.icon('chevron-up',   '0.7em')}</span>`;
-    return sortState.dir === -1 ? down : up;
+    const arrow = sortState.dir === -1 ? '↓' : '↑';
+    return `<span class="sort-icon-box active">${arrow}</span>`;
 }
 
 function updateSortIndicators() {

@@ -11,6 +11,24 @@ const fileId          = urlParts[urlParts.length - 2];   // /play/<id>/<mode>/
 const competitionMode = urlParts[urlParts.length - 1] === 'competition';
 document.body.classList.toggle('training-mode', !competitionMode);
 
+/* =========================================================
+   TUTORIAL CONFIG + LIFECYCLE EVENTS
+   PLAY_CONFIG is injected by the template. In tutorial mode the static
+   tutorial JSON/map is loaded instead of get_file, and tutorial.js drives
+   the overlay modals by listening to the `play:*` events emitted below.
+   All tutorial wiring is guarded by TUTORIAL so the normal play flow is
+   untouched (no extra work fires when not in the tutorial).
+========================================================= */
+const PLAY_CONFIG = window.PLAY_CONFIG || {};
+const TUTORIAL    = !!PLAY_CONFIG.tutorial;
+
+// Tiny event bus on `document`. Only fires at coarse lifecycle points
+// (never per-frame), so it adds no cost to the render loop.
+function emitPlay(name, detail) {
+    if (!TUTORIAL) return;   // no listeners outside tutorial mode
+    document.dispatchEvent(new CustomEvent(`play:${name}`, { detail }));
+}
+
 let cam = { x: 0, y: 0, scale: 1, rot: 0 };   // rot in degrees (CSS convention)
 let project = {
     id:            null,
@@ -34,7 +52,7 @@ const routeColor = ['#DD0011', '#CC6000', '#008888', '#0055FF', '#5500BB', '#880
 // anzeigen" or the map. choice_time runs at 1× before reveal and at 10× after
 // reveal (minus a short grace buffer so quick post-reveal clicks aren't punished).
 const COMPLEX_REVEAL_MULTIPLIER = 5;
-const COMPLEX_REVEAL_BUFFER     = 0.5;   // seconds at 1× after reveal
+const COMPLEX_REVEAL_BUFFER     = 0.67;   // seconds at 1× after reveal
 const ROUTE_HIT_WIDTH           = 25;    // transparent on-map click target width
 
 let currentCpIndex    = -1;
@@ -54,6 +72,21 @@ let lastChoiceTimes    = null;  // { total, real, penalty } — set on selection
 ========================================================= */
 
 document.addEventListener('DOMContentLoaded', () => {
+    // First-play redirect: if this is a normal play screen and the athlete
+    // hasn't done the tutorial yet on *this* device type, send them to the
+    // dedicated tutorial route before loading the real file. Device type is a
+    // client-side concept (mobile/desktop body class), so the matching flag is
+    // chosen here from the two the server handed us.
+    if (!TUTORIAL) {
+        const isDesktop = document.body.classList.contains('desktop');
+        const firstPlay = isDesktop ? PLAY_CONFIG.firstPlayDesktop
+                                    : PLAY_CONFIG.firstPlayMobile;
+        if (firstPlay) {
+            window.location.replace('/play/tutorial/');
+            return;
+        }
+    }
+
     initCamera();
     loadFile();
     initKeyNav();
@@ -191,7 +224,11 @@ function initKeyNav() {
 async function loadFile() {
     showMapSpinner();
     try {
-        const res = await fetch(`/play/get-file/${fileId}/`);
+        // Tutorial mode loads its own static map+JSON (structure identical to
+        // get_file's payload) instead of hitting the DB-backed endpoint.
+        const url = TUTORIAL ? PLAY_CONFIG.tutorialJsonUrl
+                             : `/play/get-file/${fileId}/`;
+        const res = await fetch(url);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
         project.id            = data.id;
@@ -242,7 +279,8 @@ function loadMap(filename) {
             resolve();
         };
         img.onerror = reject;
-        img.src = `/play/get-map/${filename}/`;
+        img.src = TUTORIAL ? `${PLAY_CONFIG.tutorialMapBase}${filename}`
+                           : `/play/get-map/${filename}/`;
     });
 }
 
@@ -627,6 +665,10 @@ function showControlPair(index) {
             pendingReveal   = cp;
             renderAllButtons(cp);
         }
+
+        // Lifecycle: camera has finished transforming and the CP is ready for
+        // the first tap. Drives tutorial steps 1 (complex CP) and 5 (L/R CP).
+        emitPlay('cp-ready', { index, complex: !!cp.complex });
     });
 
     renderNavButtons();  // show nav state immediately while animating
@@ -640,6 +682,9 @@ function revealRoutes(cp) {
     drawRoutes(cp);
     renderAllButtons(cp);
     startCountdown();
+    // Lifecycle: routes revealed by the first map/screen tap. Drives tutorial
+    // step 2 (the 0.67s countdown explanation).
+    emitPlay('routes-revealed', { index: currentCpIndex });
 }
 
 let _countdownTimer = null;
@@ -680,6 +725,9 @@ function selectRoute(cp, i) {
         renderAllButtons(cp);
         submitResult(cp, cp.routes[i]);
         animateRoutes(cp, i);
+        // Lifecycle: a route was chosen. Drives tutorial step 3 (tap buttons
+        // for detailed evaluation).
+        emitPlay('selection-made', { index: currentCpIndex });
     } else {
         drawRoutes(cp);
         renderAllButtons(cp);

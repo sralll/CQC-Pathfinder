@@ -477,7 +477,28 @@ document.addEventListener("DOMContentLoaded", () => {
             return;
         }
     });
+
+    // ── Mobile: pin layout to the VISIBLE viewport ────────────
+    // On mobile the browser's URL bar collapses/expands, changing the visible
+    // height. CSS dvh/svh handle most browsers, but where supported we sync the
+    // real visualViewport height into a CSS custom property so the side panel +
+    // tool wheel always clear the browser chrome. --editor-vh is 1% of the
+    // visible viewport; CSS multiplies it (e.g. *33 for the side panel).
+    initMobileViewportHeight();
 });
+
+function initMobileViewportHeight() {
+    if (!document.body.classList.contains("mobile")) return;
+    const wrap = document.getElementById("editor-wrap");
+    if (!wrap || !window.visualViewport) return;
+    const apply = () => {
+        const h = window.visualViewport.height;
+        if (h > 0) wrap.style.setProperty("--editor-vh", `${h / 100}px`);
+    };
+    apply();
+    window.visualViewport.addEventListener("resize", apply);
+    window.addEventListener("orientationchange", () => setTimeout(apply, 200));
+}
 
 let _saveQueue    = Promise.resolve();
 let _pendingSaves = 0;
@@ -532,6 +553,64 @@ function _projectBody() {
         n_routes:        cps.reduce((s, cp) => s + (cp.routes?.length ?? 0), 0),
     };
 }
+
+/* =========================================================
+    OFFLINE JSON EXPORT (escape hatch)
+    --------------------------------------------------------
+    If autosave / connectivity fails, the user can rescue the
+    UNSAVED, in-memory project structure by appending "#download"
+    to the current editor URL (e.g. /editor/open/5/#download).
+    This is handled fully client-side — no reload, no network —
+    so the exact in-memory state is preserved rather than lost
+    to a navigation. There is intentionally no on-screen button.
+========================================================= */
+
+function downloadProjectJson() {
+    // Serialize the same in-memory structure autosave sends to the server.
+    if (!project || (!project.id && !(project.control_pairs || []).length)) {
+        console.warn("downloadProjectJson: no project loaded — nothing to export.");
+        return;
+    }
+
+    const body = _projectBody();
+
+    // Build a meaningful, filesystem-safe filename: project-<id-or-name>-<timestamp>.json
+    const pad   = n => String(n).padStart(2, "0");
+    const now   = new Date();
+    const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}`
+                + `-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+    const ident = (project.id != null && project.id !== "")
+        ? `id${project.id}`
+        : (project.name || "unnamed").trim().replace(/[^\w\-]+/g, "_").slice(0, 60) || "unnamed";
+    const filename = `project-${ident}-${stamp}.json`;
+
+    const url = URL.createObjectURL(
+        new Blob([JSON.stringify(body, null, 2)], { type: "application/json" })
+    );
+    const a = document.createElement("a");
+    a.href     = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+
+    console.info(`downloadProjectJson: exported "${filename}".`);
+}
+window.downloadProjectJson = downloadProjectJson;
+
+function _handleDownloadHash() {
+    if ((location.hash || "").toLowerCase() !== "#download") return;
+    // Clear the hash first (no navigation) so the export can be re-triggered.
+    try {
+        history.replaceState(null, "", location.pathname + location.search);
+    } catch (_) { /* replaceState unavailable — proceed with export anyway */ }
+    downloadProjectJson();
+}
+
+window.addEventListener("hashchange", _handleDownloadHash);
+// Run once on load in case the page opened directly with #download in the URL.
+_handleDownloadHash();
 
 function markProjectPersistenceIds(targetProject = project) {
     const fileId = targetProject?.id ?? null;
@@ -866,7 +945,7 @@ window.addEventListener("keydown", e => {
     CAMERA STATE
 ========================================================= */
 
-const zoomMin = 0.2;
+const zoomMin = 0.1;
 const zoomMax = 8;
 const SNAP_DISTANCE_CONTROL_PAIR = 15;
 const SNAP_DISTANCE_ROUTE_EDIT   = 5;
@@ -4856,6 +4935,32 @@ function initMenus() {
                 menuItems.forEach(m => m.classList.remove("open"));
             }
         });
+
+        // ── Mobile project-menu hamburger ─────────────────────
+        // "P..." still opens the file modal (wired in projecttable.js); the
+        // hamburger reveals the remaining project options (Duplizieren /
+        // Speichern). Toggle a dedicated class so it doesn't collide with the
+        // desktop hover-driven .open state.
+        const projectMenu = document.getElementById("menu-project");
+        const projectHam  = document.getElementById("nav-project-ham");
+        if (projectMenu && projectHam) {
+            projectHam.addEventListener("click", (e) => {
+                e.stopPropagation();           // don't trigger openFileModal / document close
+                projectMenu.classList.toggle("project-menu-open");
+            });
+            // Tapping an option (Duplizieren / Speichern) closes the menu after
+            // its own handler runs; clicks inside the dropdown shouldn't bubble
+            // up to #menu-project's openFileModal handler.
+            const projectDropdown = document.getElementById("project-dropdown");
+            projectDropdown?.addEventListener("click", () => {
+                projectMenu.classList.remove("project-menu-open");
+            });
+            document.addEventListener("click", (e) => {
+                if (!e.target.closest("#menu-project")) {
+                    projectMenu.classList.remove("project-menu-open");
+                }
+            });
+        }
     } else {
         menuItems.forEach(menu => {
             menu.addEventListener("mouseenter", () => {
@@ -6104,12 +6209,12 @@ function calcRouteSide(cp, route) {
 // comparable corner counts across maps at different zoom levels.
 const NOA_CLUSTER_WINDOW_M       = 20;
 const NOA_COUNTER_TURN_WINDOW_M  = 10;
-const NOA_ARTIFACT_WINDOW_M      = 3;
+const NOA_ARTIFACT_WINDOW_M      = 5;
 const NOA_MIN_SEGMENT_M          = 1.5;
-const NOA_CORNER_DEG             = 60;
+const NOA_CORNER_DEG             = 90;
 const NOA_EPSILON_DEG            = 2;
-const NOA_MIN_EFFECT_DEG         = 30;
-const NOA_COUNTER_MIN_DEG        = 30;
+const NOA_MIN_EFFECT_DEG         = 45;
+const NOA_COUNTER_MIN_DEG        = 45;
 
 function noaMetresToRouteUnits(metres) {
     return metres / PX_TO_M;

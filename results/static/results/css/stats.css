@@ -609,8 +609,8 @@ body.mobile .stats-tooltip          { font-size: var(--font-md); padding: 8px 12
 /* ── Clickable athlete rows → graphical overview ──────────── */
 /* Name cell brightens to pure white and nudges right on hover —
    matching the play file table (.play-name-cell). */
-#stats-table tbody tr.stats-row-clickable { cursor: pointer; }
 #stats-table tbody tr.stats-row-clickable td:first-child {
+    cursor: pointer;
     transition: color var(--t-med), transform var(--t-med);
 }
 #stats-table tbody tr.stats-row-clickable:hover td:first-child {

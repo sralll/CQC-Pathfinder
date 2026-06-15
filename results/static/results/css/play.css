@@ -498,3 +498,110 @@ body.mobile .stats-choice-sub   { font-size: var(--font-sm); }
     padding: 12px 18px;
 }
 .play-end-btn.play-end-btn-icon svg { display: block; }
+
+/* =========================================================
+   FIRST-PLAY TUTORIAL OVERLAY
+   Translucent backdrop (~0.1 opacity) with a small message box closed via
+   the ✕ in its top-right corner. Hidden until tutorial.js opens it.
+========================================================= */
+
+#tutorial-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 6000;
+    display: none;
+    align-items: flex-end;          /* sit the card low, near the controls */
+    justify-content: center;
+    /* Backdrop barely darkens the screen so the map stays visible */
+    background: rgba(0, 0, 0, 0.1);
+    padding: 0 16px calc(var(--btn-bar-h) + 24px);
+    box-sizing: border-box;
+    pointer-events: none;           /* let the spotlight pulse show through */
+}
+#tutorial-overlay.open { display: flex; }
+
+#tutorial-box {
+    position: relative;
+    pointer-events: auto;           /* the card itself is interactive */
+    background: var(--bg-2);
+    border: 0.5px solid var(--border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-modal);
+    padding: 18px 44px 18px 18px;   /* room for the ✕ on the right */
+    max-width: 420px;
+    width: 100%;
+    animation: tutorial-pop 0.18s ease-out;
+}
+
+@keyframes tutorial-pop {
+    from { opacity: 0; transform: translateY(8px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+#tutorial-text {
+    font-size: var(--font-sm);
+    line-height: 1.5;
+    color: var(--text);
+}
+
+.tutorial-warn {
+    display: inline-flex;
+    align-items: center;
+    vertical-align: -0.18em;
+    margin: 0 2px;
+    color: var(--brand, #e07020);
+}
+
+#tutorial-close {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    width: 30px;
+    height: 30px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg-4);
+    color: var(--text);
+    border: none;
+    border-radius: 50%;
+    cursor: pointer;
+    transition: background var(--t-fast), color var(--t-fast);
+    -webkit-tap-highlight-color: transparent;
+}
+#tutorial-close:hover  { background: var(--bg-3); color: var(--text-strong); }
+#tutorial-close:active { background: var(--brand); color: var(--text-strong); }
+
+body.mobile #tutorial-text { font-size: var(--font-lg); }
+body.mobile #tutorial-box  { max-width: 92vw; }
+
+/* ── Spotlight / glow on the highlighted element (time bar / button bar) ──
+   The time bar (#play-countdown) is only 3px tall, so it gets an outline +
+   glow and is force-shown; the button bar gets an inset glow + outline.
+   Works for both layouts because both elements span the play column width
+   in desktop (min(100%,100vh)) and full width on mobile. */
+
+.tutorial-highlight {
+    position: relative;
+    z-index: 6001;                  /* lift above the dim backdrop */
+    animation: tutorial-glow 1.1s ease-in-out infinite;
+}
+
+#play-countdown.tutorial-highlight {
+    display: block;                 /* force-show even if not yet active */
+    height: 8px;                    /* fatten the 3px bar so it's visible */
+    outline: 2px solid var(--brand, #e07020);
+    outline-offset: 1px;
+}
+
+#play-btn-bar.tutorial-highlight {
+    outline: 2px solid var(--brand, #e07020);
+    outline-offset: -2px;
+}
+
+@keyframes tutorial-glow {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(224, 112, 32, 0.0),
+                           0 0 10px 2px rgba(224, 112, 32, 0.55); }
+    50%      { box-shadow: 0 0 0 0 rgba(224, 112, 32, 0.0),
+                           0 0 22px 6px rgba(224, 112, 32, 0.95); }
+}

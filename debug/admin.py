@@ -1,10 +1,11 @@
 from django.contrib import admin
 
 from .models import NavGraphBuildTime, PathfindingTime
+from account.admin_access import StaffHiddenAdmin
 
 
 @admin.register(NavGraphBuildTime)
-class NavGraphBuildTimeAdmin(admin.ModelAdmin):
+class NavGraphBuildTimeAdmin(StaffHiddenAdmin, admin.ModelAdmin):
     list_display = ("created_at", "mask_basename", "build_seconds", "n_nodes",
                     "n_edges", "main_component_pct", "trigger", "sidecar_version")
     list_filter = ("trigger", "sidecar_version")
@@ -14,7 +15,7 @@ class NavGraphBuildTimeAdmin(admin.ModelAdmin):
 
 
 @admin.register(PathfindingTime)
-class PathfindingTimeAdmin(admin.ModelAdmin):
+class PathfindingTimeAdmin(StaffHiddenAdmin, admin.ModelAdmin):
     list_display = ("created_at", "mask_basename", "query_seconds_ms",
                     "n_routes_returned", "n_routes_requested",
                     "n_existing_routes", "n_blocked_features",

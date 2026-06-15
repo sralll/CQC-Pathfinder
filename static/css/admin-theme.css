@@ -1,0 +1,161 @@
+/* =========================================================
+   ADMIN THEME — make the Django admin match the front-end.
+
+   Strategy: the Django 5.2 admin is entirely driven by CSS
+   custom properties (defined in admin/css/base.css for light
+   and admin/css/dark_mode.css for dark). Rather than fight it,
+   we re-point those variables at the shared design tokens from
+   theme.css (loaded just before this file in admin/base_site.html).
+
+   This file therefore has almost no hard-coded colors — change
+   a token in theme.css and the admin follows. We override every
+   data-theme state (unset / light / dark / auto) and load last,
+   so the brand dark theme is forced regardless of the toggle.
+========================================================= */
+
+:root,
+html[data-theme="light"],
+html[data-theme="dark"],
+html[data-theme="auto"] {
+    /* ── Accents ───────────────────────────────────────── */
+    --primary:      var(--brand);
+    --secondary:    var(--bg-0);
+    --accent:       var(--brand);
+    --primary-fg:   var(--text-strong);
+
+    /* ── Body / surfaces ──────────────────────────────── */
+    --body-fg:           var(--text);
+    --body-bg:           var(--bg-1);
+    --body-quiet-color:  var(--text-muted);
+    --body-medium-color: var(--text-soft);
+    --body-loud-color:   var(--text-strong);
+
+    /* ── Header (mirrors the front-end navbar #111) ────── */
+    --header-color:          var(--text-soft);
+    --header-branding-color: var(--brand);
+    --header-bg:             var(--bg-0);
+    --header-link-color:     var(--text);
+
+    /* ── Breadcrumbs ──────────────────────────────────── */
+    --breadcrumbs-fg:      var(--text-muted);
+    --breadcrumbs-link-fg: var(--text);
+    --breadcrumbs-bg:      var(--bg-2);
+
+    /* ── Links (brand orange, like the front-end accent) ─ */
+    --link-fg:          var(--brand);
+    --link-hover-color: var(--brand-hover);
+    --link-selected-fg: var(--brand);
+
+    /* ── Lines / borders ──────────────────────────────── */
+    --hairline-color: var(--border-soft);
+    --border-color:   var(--border);
+
+    /* ── Status colors ────────────────────────────────── */
+    --error-fg: var(--danger);
+    /* Dark tints of the status hues so light message text reads. */
+    --message-success-bg: #14361b;
+    --message-warning-bg: #3a2f0a;
+    --message-error-bg:   #3a1414;
+
+    /* ── Alternating / selected surfaces ──────────────── */
+    --darkened-bg: var(--bg-2);   /* table heads, filter rail, stripes */
+    --selected-bg: var(--bg-3);   /* hovered/selected cell             */
+    --selected-row: var(--brand-soft); /* checked row — subtle orange  */
+
+    /* ── Buttons ──────────────────────────────────────── */
+    --button-fg:               var(--text-strong);
+    --button-bg:               var(--bg-3);
+    --button-hover-bg:         var(--bg-4);
+    --default-button-bg:       var(--brand);        /* Save = orange CTA */
+    --default-button-hover-bg: var(--brand-hover);
+    --close-button-bg:         var(--bg-4);
+    --close-button-hover-bg:   var(--border-strong);
+    --delete-button-bg:        var(--danger);
+    --delete-button-hover-bg:  #d32f2f;
+
+    /* ── Object tools (Add / History pills, top-right) ── */
+    --object-tools-fg:       var(--text-strong);
+    --object-tools-bg:       var(--bg-3);
+    --object-tools-hover-bg: var(--bg-4);
+
+    /* ── Typography ───────────────────────────────────── */
+    --font-family-primary: var(--font-stack);
+
+    /* Native widgets (scrollbars, date pickers, selects) go dark. */
+    color-scheme: dark;
+}
+
+/* =========================================================
+   POLISH — a few things the variable map can't reach.
+========================================================= */
+
+/* The light/dark toggle is a no-op here (we force the brand
+   theme), so hide it to avoid a dead control. */
+.theme-toggle {
+    display: none !important;
+}
+
+/* Rounded panels + buttons to match the front-end card/btn radius. */
+.module,
+.dashboard .module,
+fieldset.module {
+    border-radius: var(--radius-lg);
+}
+.module caption,
+.module > h2,
+.inline-group > h2 {
+    border-top-left-radius: var(--radius-lg);
+    border-top-right-radius: var(--radius-lg);
+}
+
+.button,
+input[type="submit"],
+input[type="button"],
+.submit-row input,
+a.button {
+    border-radius: var(--radius);
+}
+
+/* The login submit has no .default class, so it falls through to the
+   neutral button color. Promote it to the brand CTA to match the
+   front-end login button. */
+.login .submit-row input[type="submit"] {
+    background: var(--brand);
+    border-color: transparent;
+    color: var(--text-strong);
+    font-weight: 600;
+}
+.login .submit-row input[type="submit"]:hover {
+    background: var(--brand-hover);
+}
+
+/* Form fields: dark surface + brand focus, mirroring .ui-input. */
+input[type="text"],
+input[type="password"],
+input[type="email"],
+input[type="url"],
+input[type="number"],
+input[type="tel"],
+input[type="search"],
+textarea,
+select,
+.vTextField {
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+}
+input[type="text"]:focus,
+input[type="password"]:focus,
+input[type="email"]:focus,
+input[type="url"]:focus,
+input[type="number"]:focus,
+input[type="tel"]:focus,
+input[type="search"]:focus,
+textarea:focus,
+select:focus,
+.vTextField:focus {
+    border-color: var(--brand);
+    background: var(--bg-3);
+    outline: none;
+}

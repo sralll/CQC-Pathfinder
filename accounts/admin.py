@@ -4,6 +4,7 @@ from django.contrib.auth.models import User, Group
 from django.contrib.auth.forms import UserCreationForm
 from .models import UserProfile, Kader, DeviceCounter
 from main.models import Feedback
+from account.admin_access import StaffHiddenAdmin
 
 # --- UserProfile inline ---
 class UserProfileInline(admin.StackedInline):
@@ -117,19 +118,14 @@ class CustomUserAdmin(UserAdmin):
 
 # --- Kader admin ---
 @admin.register(Kader)
-class KaderAdmin(admin.ModelAdmin):
+class KaderAdmin(StaffHiddenAdmin, admin.ModelAdmin):
     list_display = ("name", "shared_pool")
     list_filter = ("shared_pool",)
 
-    def has_module_permission(self, request):
-        return request.user.is_superuser
-
 # --- DeviceCounter admin ---
 @admin.register(DeviceCounter)
-class DeviceCounterAdmin(admin.ModelAdmin):
+class DeviceCounterAdmin(StaffHiddenAdmin, admin.ModelAdmin):
     list_display = ('mobile_count', 'desktop_count')
-    def has_view_permission(self, request, obj = ...):
-        return True
     def has_add_permission(self, request):
         return request.user.is_superuser
     def has_change_permission(self, request, obj=None):

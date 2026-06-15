@@ -132,6 +132,20 @@ html, body {
     flex-shrink: 0;
 }
 
+/* Leading search icon — sits inside the input on the left, mirroring how the
+   xmark clear button is anchored on the right. */
+.play-search-icon {
+    position: absolute;
+    left: 11px;
+    top: 50%;
+    transform: translateY(-50%);
+    display: flex;
+    align-items: center;
+    color: var(--text-faint);
+    pointer-events: none;
+    z-index: 1;
+}
+
 #play-search {
     width: 100%;
     box-sizing: border-box;
@@ -140,11 +154,12 @@ html, body {
     border-radius: var(--radius);
     color: var(--text);
     font-size: var(--font-sm);
-    padding: 9px 38px 9px 12px;
+    padding: 9px 38px 9px 36px;
     outline: none;
     transition: border-color var(--t-med);
 }
 #play-search:focus { border-color: var(--brand); }
+#play-search-wrap:focus-within .play-search-icon { color: var(--brand); }
 #play-search::placeholder { color: var(--text-faint); }
 
 /* Clear button — sits flush against the input's right edge, reading as a
@@ -273,7 +288,22 @@ html, body {
 #play-table th .filter-indicator { opacity: 0.4; }
 #play-table th .filter-indicator.active { opacity: 1; color: var(--brand); }
 
-#play-table th .sort-icon-box { display: inline-flex; align-items: center; }
+/* Desktop sort indicator — copied from editor.css .sort-icon-box so the
+   results tables match the project file table's orange ↑/↓ arrow. Scoped to
+   the desktop table header (#play-table th) so the mobile sort buttons
+   (.play-ctrl-btn, plain-text arrows) are untouched. */
+#play-table th .sort-icon-box {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 12px;
+    height: 12px;
+    margin-left: 2px;
+    color: #666;
+    font-size: 11px;
+    line-height: 1;
+}
+#play-table th .sort-icon-box.active { color: var(--brand); }
 
 #play-table td {
     padding: 9px 12px;
@@ -565,7 +595,8 @@ html, body {
    MOBILE TYPOGRAPHY — text + tap targets sized for phones
 ========================================================= */
 
-body.mobile #play-search          { font-size: var(--font-lg); padding: 14px 50px 14px 14px; min-height: var(--touch-target); }
+body.mobile #play-search          { font-size: var(--font-lg); padding: 14px 50px 14px 44px; min-height: var(--touch-target); }
+body.mobile .play-search-icon     { left: 14px; }
 
 body.mobile #play-search-clear.visible {
     display: flex;
@@ -608,5 +639,8 @@ body.mobile .play-empty-card      { font-size: var(--font-lg); }
 body.mobile #play-loading         { font-size: var(--font-lg); }
 body.mobile .play-filter-dropdown { font-size: var(--font-lg); }
 body.mobile .filter-option        { padding: 14px 16px; min-height: var(--touch-target); box-sizing: border-box; }
+/* "Alle" header row — match the option entries' height/padding on mobile so it
+   isn't shorter than the rest of the dropdown. Desktop is left untouched. */
+body.mobile .filter-clear         { padding: 14px 16px; min-height: var(--touch-target); box-sizing: border-box; }
 body.mobile .play-card            { padding: 8px 16px; }
 body.mobile .mode-tip-box         { font-size: var(--font-sm); padding: 10px 12px; }

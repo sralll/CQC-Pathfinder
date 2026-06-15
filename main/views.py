@@ -365,22 +365,13 @@ def user_game_stats(request, user_id=None):
 
     return JsonResponse(stats)
 
-from .forms import FeedbackForm
 from django.shortcuts import redirect
 
 @login_required
 def feedback_view(request):
-    if request.method == "POST":
-        form = FeedbackForm(request.POST)
-        if form.is_valid():
-            feedback = form.save(commit=False)
-            feedback.user = request.user
-            feedback.save()
-            return redirect('feedback')
-    else:
-        form = FeedbackForm()
-
-    return render(request, "feedback.html", {"form": form})
+    # The old "message the admin" feedback page has been replaced by the forum.
+    # Keep this route alive so existing links/bookmarks forward there.
+    return redirect('forum')
 
 
 from django.http import JsonResponse

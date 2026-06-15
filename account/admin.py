@@ -2,10 +2,22 @@ from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin, GroupAdmin
 from django.contrib.auth.models import User, Group
 from django.contrib.auth.forms import UserCreationForm
-from .models import Role, Team, Profile, Device, Feedback
+from .models import Role, Team, Profile, Device, Feedback, ForumThread, ForumComment
+from .admin_access import StaffHiddenAdmin
 
 admin.site.site_header = 'CQC Pathfinder Admin'
 admin.site.index_title = 'Administration'
+
+# ---------------------------------------------------------------------------
+# Staff (non-superuser) admin access matrix. Superusers see/do everything.
+# Non-superuser staff are limited to, and scoped to their own active_team:
+#   account.Device  — view only
+#   auth.User       — add / change / delete
+#   project.File    — full        (see project/admin.py)
+#   project.Label   — full        (see project/admin.py)
+#   results.Choice  — view + delete (see results/admin.py)
+# Every other model is hidden via StaffHiddenAdmin (see account/admin_access.py).
+# ---------------------------------------------------------------------------
 
 # --- Profile inline ---
 class ProfileInline(admin.StackedInline):
@@ -20,17 +32,8 @@ class ProfileInline(admin.StackedInline):
 admin.site.unregister(Group)
 
 @admin.register(Role)
-class RoleAdmin(GroupAdmin):
-    def has_module_permission(self, request):
-        return request.user.is_superuser
-    def has_view_permission(self, request, obj=None):
-        return request.user.is_superuser
-    def has_add_permission(self, request):
-        return request.user.is_superuser
-    def has_change_permission(self, request, obj=None):
-        return request.user.is_superuser
-    def has_delete_permission(self, request, obj=None):
-        return request.user.is_superuser
+class RoleAdmin(StaffHiddenAdmin, GroupAdmin):
+    pass
 
 
 # --- User admin ---
@@ -40,6 +43,20 @@ admin.site.unregister(User)
 class CustomUserAdmin(UserAdmin):
     inlines = [ProfileInline]
     add_form = UserCreationForm
+
+    # Staff: full CRUD on Users, scoped to their active_team (get_queryset
+    # below). Visibility is forced on so it does not depend on which Django
+    # auth permissions a staff group happens to hold.
+    def has_module_permission(self, request):
+        return True
+    def has_view_permission(self, request, obj=None):
+        return True
+    def has_add_permission(self, request):
+        return True
+    def has_change_permission(self, request, obj=None):
+        return True
+    def has_delete_permission(self, request, obj=None):
+        return True
 
     restricted_add_fieldsets = (
         (None, {
@@ -116,12 +133,9 @@ class CustomUserAdmin(UserAdmin):
 
 # --- Team admin ---
 @admin.register(Team)
-class TeamAdmin(admin.ModelAdmin):
+class TeamAdmin(StaffHiddenAdmin, admin.ModelAdmin):
     list_display = ("name", "shared_pool")
     list_filter = ("shared_pool",)
-
-    def has_module_permission(self, request):
-        return request.user.is_superuser
 
 
 # --- Device admin ---
@@ -139,6 +153,9 @@ class DeviceAdmin(admin.ModelAdmin):
         except Profile.DoesNotExist:
             return qs.none()
 
+    # Staff: view-only, scoped to their active_team. Superuser: full access.
+    def has_module_permission(self, request):
+        return True
     def has_view_permission(self, request, obj=None):
         return True
     def has_add_permission(self, request):
@@ -146,7 +163,7 @@ class DeviceAdmin(admin.ModelAdmin):
     def has_change_permission(self, request, obj=None):
         return request.user.is_superuser
     def has_delete_permission(self, request, obj=None):
-        return False
+        return request.user.is_superuser
 
 # --- Feedback admin ---
 @admin.register(Feedback)
@@ -179,3 +196,34 @@ class FeedbackAdmin(admin.ModelAdmin):
         return False
     def has_delete_permission(self, request, obj=None):
         return request.user.is_superuser
+
+
+# --- Forum admin (superuser-only, for moderation) ---
+class ForumCommentInline(admin.TabularInline):
+    model = ForumComment
+    extra = 0
+    fields = ('author', 'body', 'created_at')
+    readonly_fields = ('author', 'created_at')
+
+
+@admin.register(ForumThread)
+class ForumThreadAdmin(StaffHiddenAdmin, admin.ModelAdmin):
+    list_display = ('title', 'author', 'created_at', 'upvote_count', 'comment_count')
+    search_fields = ('title', 'body', 'author__first_name', 'author__last_name', 'author__username')
+    readonly_fields = ('created_at', 'updated_at')
+    inlines = [ForumCommentInline]
+
+    def comment_count(self, obj):
+        return obj.comments.count()
+    comment_count.short_description = "Replies"
+
+
+@admin.register(ForumComment)
+class ForumCommentAdmin(StaffHiddenAdmin, admin.ModelAdmin):
+    list_display = ('thread', 'author', 'created_at', 'upvote_count', 'short_body')
+    search_fields = ('body', 'author__first_name', 'author__last_name', 'author__username')
+    readonly_fields = ('created_at',)
+
+    def short_body(self, obj):
+        return obj.body[:100] + ('…' if len(obj.body) > 100 else '')
+    short_body.short_description = "Comment"

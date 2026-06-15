@@ -250,7 +250,7 @@ function renderPublishFilterDropdown() {
                 ${activePublishFilter === true ? icon("square-check") : icon("square")}
             </div>
             <div class="filter-option" onclick="event.stopPropagation(); setPublishFilter(false)">
-                Nicht veröffentlicht
+                Verborgen
                 ${activePublishFilter === false ? icon("square-check") : icon("square")}
             </div>
         </div>

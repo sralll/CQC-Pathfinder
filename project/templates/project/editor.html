@@ -16,6 +16,9 @@
     <div id="menu-project" class="nav-menu-item">
         <span class="nav-label-full">Projekte...</span>
         <span class="nav-label-short">P...</span>
+        <button id="nav-project-ham" class="nav-project-ham" type="button" title="Projekt-Menü">
+            <x-icon name="bars" size="13px"></x-icon>
+        </button>
         <div class="nav-dropdown" id="project-dropdown" onclick="event.stopPropagation();">
             <div id="nav-open-projects">
                 <span>Liste</span>
@@ -273,6 +276,7 @@
             </div>
             <div class="modal-header-center">
                 <div class="search-wrapper">
+                    <x-icon name="search" size="1.1rem" class="project-search-icon"></x-icon>
                     <input type="text" id="project-search" placeholder="Suchen...">
                     <button id="clear-search-btn" class="search-clear" type="button">
                         <x-icon name="xmark" size="1.2rem"></x-icon>

@@ -1,0 +1,114 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block styles %}
+<link rel="stylesheet" href="{% static 'css/forum.css' %}">
+{% endblock %}
+
+{% block content %}
+<div class="forum-page">
+    <div class="forum-shell">
+
+        <a class="forum-back" href="{% url 'forum' %}">
+            <svg viewBox="0 0 448 512" xmlns="http://www.w3.org/2000/svg" fill="currentColor">
+                <path d="M9.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.2 288 416 288c17.7 0 32-14.3 32-32s-14.3-32-32-32l-306.7 0L214.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/>
+            </svg>
+            Zurück zum Forum
+        </a>
+
+        <article class="thread-detail">
+            <button type="button"
+                    class="vote{% if thread_voted %} voted{% endif %}"
+                    data-vote-url="{% url 'forum_thread_vote' thread.pk %}"
+                    title="Upvote" aria-label="Upvote">
+                <x-icon name="chevron-up"></x-icon>
+                <span class="vote-count">{{ n_upvotes }}</span>
+            </button>
+
+            <div class="thread-main fe-editable">
+                <div class="fe-view">
+                    <h1 class="thread-detail-title">{{ thread.title }}</h1>
+                    <div class="thread-meta">
+                        <span class="author">{% if thread.author %}{{ thread.author.get_full_name|default:thread.author.username }}{% else %}Unbekannt{% endif %}</span>
+                        <span class="dot">•</span>
+                        <span>{{ thread.created_at|date:"d.m.Y H:i" }}</span>
+                        {% if thread.edited_at %}<span class="dot">•</span><span class="edited">bearbeitet</span>{% endif %}
+                        {% if thread.author_id == user.id %}<button type="button" class="fe-edit">Bearbeiten</button>{% endif %}
+                    </div>
+                    <p class="thread-detail-body">{{ thread.body }}</p>
+                </div>
+                {% if thread.author_id == user.id %}
+                <form class="fe-form" method="post" action="{% url 'forum_thread_edit' thread.pk %}" hidden>
+                    {% csrf_token %}
+                    <div class="forum-field">
+                        <input type="text" name="title" maxlength="160" value="{{ thread.title }}" required>
+                    </div>
+                    <div class="forum-field">
+                        <textarea name="body" maxlength="4000" required>{{ thread.body }}</textarea>
+                    </div>
+                    <div class="forum-compose-actions">
+                        <button type="submit" class="forum-submit">Speichern</button>
+                        <button type="button" class="forum-cancel fe-cancel">Abbrechen</button>
+                    </div>
+                </form>
+                {% endif %}
+            </div>
+        </article>
+
+        <h2 class="comments-head">{{ n_comments }} Antwort{{ n_comments|pluralize:",en" }}</h2>
+
+        <div class="comment-list">
+            {% for comment in comments %}
+            <div class="comment-card">
+                <button type="button"
+                        class="vote{% if comment.id in voted_comment_ids %} voted{% endif %}"
+                        data-vote-url="{% url 'forum_comment_vote' comment.pk %}"
+                        title="Upvote" aria-label="Upvote">
+                    <x-icon name="chevron-up"></x-icon>
+                    <span class="vote-count">{{ comment.n_upvotes }}</span>
+                </button>
+                <div class="thread-main fe-editable">
+                    <div class="fe-view">
+                        <p class="comment-body">{{ comment.body }}</p>
+                        <div class="comment-meta">
+                            <span class="author">{% if comment.author %}{{ comment.author.get_full_name|default:comment.author.username }}{% else %}Unbekannt{% endif %}</span>
+                            <span class="dot">•</span>
+                            <span>{{ comment.created_at|date:"d.m.Y H:i" }}</span>
+                            {% if comment.edited_at %}<span class="dot">•</span><span class="edited">bearbeitet</span>{% endif %}
+                            {% if comment.author_id == user.id %}<button type="button" class="fe-edit">Bearbeiten</button>{% endif %}
+                        </div>
+                    </div>
+                    {% if comment.author_id == user.id %}
+                    <form class="fe-form" method="post" action="{% url 'forum_comment_edit' comment.pk %}" hidden>
+                        {% csrf_token %}
+                        <div class="forum-field">
+                            <textarea name="body" maxlength="4000" required>{{ comment.body }}</textarea>
+                        </div>
+                        <div class="forum-compose-actions">
+                            <button type="submit" class="forum-submit">Speichern</button>
+                            <button type="button" class="forum-cancel fe-cancel">Abbrechen</button>
+                        </div>
+                    </form>
+                    {% endif %}
+                </div>
+            </div>
+            {% empty %}
+            <div class="forum-empty">Noch keine Antworten. Schreib die erste!</div>
+            {% endfor %}
+        </div>
+
+        <form class="reply-form" method="post">
+            {% csrf_token %}
+            <textarea name="body" maxlength="4000" placeholder="Antwort schreiben…" required></textarea>
+            <div class="reply-actions">
+                <button type="submit" class="forum-submit">Antworten</button>
+            </div>
+        </form>
+
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{% static 'js/forum.js' %}"></script>
+{% endblock %}

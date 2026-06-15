@@ -18,6 +18,11 @@
     border-radius: 0;
     height:        100%;
     box-shadow:    none;
+    /* Main page scroll element: if the route panel grows taller than the
+       viewport (athletes-per-control list is no longer height-capped), the
+       whole page scrolls instead of clipping/scrolling internally. */
+    overflow-y:    auto;
+    overflow-x:    hidden;
 }
 
 /* ── Desktop: side-by-side split ──────────────────────── */
@@ -236,7 +241,11 @@ body.desktop #fr-bottom {
 #fr-route-panel {
     width: 220px;
     flex-shrink: 0;
-    overflow-y: auto;
+    /* No internal scrollbar: the athletes-per-control lists are shown in
+       full and the panel grows with its content. If it grows taller than
+       #fr-bottom, it overflows visibly so #play-container (the main scroll
+       element) scrolls the whole page instead. */
+    overflow-y: visible;
     background: var(--bg-1);
     padding: 8px 0;
 }
@@ -280,13 +289,9 @@ body.desktop #fr-bottom {
     opacity: 0.85;
 }
 
+/* Always show the full athletes-per-control list (no inner scroll/clip);
+   #play-container scrolls the page if the panel grows too tall. */
 .fr-route-athletes {
-    max-height: 96px;
-    overflow-y: auto;
-}
-
-body.mobile .fr-route-athletes {
-    max-height: none;
     overflow-y: visible;
 }
 
@@ -321,7 +326,7 @@ body.mobile .fr-route-athletes {
     #fr-map-section   { flex-direction: column; min-height: auto; border-right: none;
                         border-top: 0.5px solid var(--border); }
     #fr-map-container { height: 360px; min-height: 0; flex: none; }
-    #fr-route-panel   { width: 100%; max-height: 240px; border-top: 0.5px solid var(--border-soft); }
+    #fr-route-panel   { width: 100%; max-height: 240px; overflow-y: auto; border-top: 0.5px solid var(--border-soft); }
 }
 
 /* ── Table ─────────────────────────────────────────────── */

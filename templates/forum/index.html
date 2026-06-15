@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block styles %}
+<link rel="stylesheet" href="{% static 'css/forum.css' %}">
+{% endblock %}
+
+{% block content %}
+<div class="forum-page">
+    <div class="forum-shell">
+
+        <div class="forum-head">
+            <h1 class="forum-title">Forum</h1>
+            <span class="forum-count" id="forum-count">{{ threads|length }} Them{{ threads|length|pluralize:"a,en" }}</span>
+        </div>
+
+        <div class="forum-toolbar">
+            <div class="forum-search" role="search">
+                <x-icon name="search" class="forum-search-icon"></x-icon>
+                <input type="text" id="forum-search-input" placeholder="Themen durchsuchen…"
+                       autocomplete="off" aria-label="Suche">
+                <button type="button" id="forum-search-clear" aria-label="Suche löschen">
+                    <x-icon name="xmark" size="1.1rem"></x-icon>
+                </button>
+            </div>
+
+            <div class="forum-sort" role="tablist" aria-label="Sortierung">
+                <a href="?sort=new" class="{% if sort == 'new' %}active{% endif %}">Neu</a>
+                <a href="?sort=top" class="{% if sort == 'top' %}active{% endif %}">Top</a>
+            </div>
+
+            <button type="button" class="forum-new-btn" id="forum-new-btn">
+                <x-icon name="plus" size="13px"></x-icon> Neues Thema
+            </button>
+        </div>
+
+        <form class="forum-compose" id="forum-compose" method="post" {% if not open_form %}hidden{% endif %}>
+            {% csrf_token %}
+            <h2 class="forum-compose-title">Neues Thema erstellen</h2>
+            {% if form_error %}<p class="forum-error">{{ form_error }}</p>{% endif %}
+            <div class="forum-field">
+                <input type="text" name="title" maxlength="160" placeholder="Titel" required
+                       value="{{ request.POST.title }}">
+            </div>
+            <div class="forum-field">
+                <textarea name="body" maxlength="4000" placeholder="Beschreibe dein Anliegen…" required>{{ request.POST.body }}</textarea>
+            </div>
+            <div class="forum-compose-actions">
+                <button type="submit" class="forum-submit">Veröffentlichen</button>
+                <button type="button" class="forum-cancel">Abbrechen</button>
+            </div>
+        </form>
+
+        <div class="forum-list">
+            {% for thread in threads %}
+            <article class="thread-card">
+                <button type="button"
+                        class="vote{% if thread.id in voted_thread_ids %} voted{% endif %}"
+                        data-vote-url="{% url 'forum_thread_vote' thread.pk %}"
+                        title="Upvote" aria-label="Upvote">
+                    <x-icon name="chevron-up"></x-icon>
+                    <span class="vote-count">{{ thread.n_upvotes }}</span>
+                </button>
+
+                <div class="thread-main">
+                    <a class="thread-link" href="{% url 'forum_thread' thread.pk %}">
+                        <h3 class="thread-card-title">{{ thread.title }}</h3>
+                        <p class="thread-snippet">{{ thread.body }}</p>
+                    </a>
+                    <div class="thread-meta">
+                        <span class="author">{% if thread.author %}{{ thread.author.get_full_name|default:thread.author.username }}{% else %}Unbekannt{% endif %}</span>
+                        <span class="dot">•</span>
+                        <span>{{ thread.created_at|date:"d.m.Y H:i" }}</span>
+                        {% if thread.edited_at %}<span class="dot">•</span><span class="edited">bearbeitet</span>{% endif %}
+                        <span class="dot">•</span>
+                        <span class="replies">
+                            <svg viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg" fill="currentColor">
+                                <path d="M512 240c0 114.9-114.6 208-256 208c-37.1 0-72.3-6.4-104.1-17.9c-11.9 8.7-31.3 20.6-54.3 30.6C73.6 471.1 44.7 480 16 480c-6.5 0-12.3-3.9-14.8-9.9c-2.5-6-1.1-12.8 3.4-17.4l.4-.4c.4-.4 1.1-1.1 2-2.1c1.7-1.9 4.2-4.8 7.3-8.7c6.1-7.5 14.3-18.3 22.6-30.8c10.8-16.4 11.5-31.3 11.4-39.3C16.7 350.7 0 297.9 0 240C0 125.1 114.6 32 256 32s256 93.1 256 208z"/>
+                            </svg>
+                            {{ thread.n_comments }}
+                        </span>
+                    </div>
+                </div>
+            </article>
+            {% empty %}
+            <div class="forum-empty">Noch keine Themen. Erstelle das erste!</div>
+            {% endfor %}
+        </div>
+
+        <div class="forum-empty" id="forum-no-results" hidden></div>
+
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{% static 'js/forum.js' %}"></script>
+{% endblock %}

@@ -20,6 +20,12 @@ class Profile(models.Model):
     teams = models.ManyToManyField(Team, blank=True)
     active_team = models.ForeignKey(Team, null=True, blank=True, on_delete=models.SET_NULL, related_name='active_users')
 
+    # First-play tutorial flags — true until the athlete completes the tutorial
+    # on the respective device type. Device (desktop vs mobile) is decided
+    # client-side in play.js, so we keep one flag per layout.
+    first_play_desktop = models.BooleanField(default=True)
+    first_play_mobile = models.BooleanField(default=True)
+
     def __str__(self):
         return self.user.username
 
@@ -39,3 +45,46 @@ class Feedback(models.Model):
 
     def __str__(self):
         return f"{self.user} - {self.created_at}"
+
+
+class ForumThread(models.Model):
+    """A discussion topic on the feedback forum."""
+    author = models.ForeignKey('auth.User', on_delete=models.SET_NULL, null=True, blank=True,
+                               related_name='forum_threads')
+    title = models.CharField(max_length=160)
+    body = models.TextField(max_length=4000)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    edited_at = models.DateTimeField(null=True, blank=True)  # set only on a user edit
+    upvotes = models.ManyToManyField('auth.User', blank=True, related_name='upvoted_threads')
+
+    class Meta:
+        ordering = ['-created_at']
+
+    @property
+    def upvote_count(self):
+        return self.upvotes.count()
+
+    def __str__(self):
+        return self.title
+
+
+class ForumComment(models.Model):
+    """A reply on a forum thread."""
+    thread = models.ForeignKey(ForumThread, on_delete=models.CASCADE, related_name='comments')
+    author = models.ForeignKey('auth.User', on_delete=models.SET_NULL, null=True, blank=True,
+                               related_name='forum_comments')
+    body = models.TextField(max_length=4000)
+    created_at = models.DateTimeField(auto_now_add=True)
+    edited_at = models.DateTimeField(null=True, blank=True)  # set only on a user edit
+    upvotes = models.ManyToManyField('auth.User', blank=True, related_name='upvoted_comments')
+
+    class Meta:
+        ordering = ['created_at']
+
+    @property
+    def upvote_count(self):
+        return self.upvotes.count()
+
+    def __str__(self):
+        return f"Re: {self.thread.title} ({self.created_at:%Y-%m-%d})"

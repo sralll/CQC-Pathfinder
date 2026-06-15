@@ -11,6 +11,7 @@ from django.views.generic import RedirectView
 
 from main import views
 from results import views as results_views
+from account import views as account_views
 from CQCPathfinder import internal_views
 
 urlpatterns = [
@@ -27,6 +28,8 @@ urlpatterns = [
     path('play/',                            results_views.index,              name='results_home'),
     path('play/infinity/',                   results_views.random_play,        name='infinity_play'),
     path('play/infinity/submit-choice/',     results_views.submit_random_choice, name='submit_infinity_choice'),
+    path('play/tutorial/',                   results_views.play_tutorial,      name='play_tutorial'),
+    path('play/tutorial-complete/',          results_views.tutorial_complete,  name='play_tutorial_complete'),
     path('play/<int:file_id>/<str:mode>/',   results_views.play,               name='play'),
     path('play/get-files/',                  results_views.get_files,          name='play_get_files'),
     path('play/get-file/<int:file_id>/',     results_views.get_file,           name='play_get_file'),
@@ -44,6 +47,14 @@ urlpatterns = [
     path('stats/get-stats/',                 results_views.get_user_stats,     name='stats_get_stats'),
     path('stats/get-athletes/',              results_views.get_team_athletes,  name='stats_get_athletes'),
     path('stats/get-table/',                 results_views.get_stats_table,    name='stats_get_table'),
+
+    # Forum
+    path('forum/',                           account_views.forum_index,        name='forum'),
+    path('forum/thread/<int:pk>/',           account_views.forum_thread,       name='forum_thread'),
+    path('forum/thread/<int:pk>/vote/',      account_views.forum_thread_vote,  name='forum_thread_vote'),
+    path('forum/thread/<int:pk>/edit/',      account_views.forum_thread_edit,  name='forum_thread_edit'),
+    path('forum/comment/<int:pk>/vote/',     account_views.forum_comment_vote, name='forum_comment_vote'),
+    path('forum/comment/<int:pk>/edit/',     account_views.forum_comment_edit, name='forum_comment_edit'),
 
     path('play-old/', include('play.urls')),
 

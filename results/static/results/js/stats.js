@@ -321,7 +321,10 @@ function initTableRowNav() {
     const tbody = document.querySelector('#stats-table tbody');
     if (!tbody) return;
     tbody.addEventListener('click', e => {
-        const tr = e.target.closest('tr[data-user-id]');
+        // Only the athlete name (first column) navigates — not the data columns.
+        const td = e.target.closest('td');
+        if (!td || td.cellIndex !== 0) return;
+        const tr = td.closest('tr[data-user-id]');
         if (!tr) return;
         const uid = parseInt(tr.dataset.userId, 10);
         if (!uid) return;
@@ -947,7 +950,21 @@ function ensureTooltip() {
     tooltipEl = document.createElement('div');
     tooltipEl.className = 'stats-tooltip';
     document.body.appendChild(tooltipEl);
+
+    // Mobile: a tap shows the tooltip (see bindTooltipHtml's touchstart
+    // handler) and ghost mouse events can keep it pinned open afterwards
+    // since there's no real mouseleave on touch devices. Hide it as soon
+    // as the user starts scrolling, on any scrollable ancestor (capture
+    // catches scrolls on #play-wrap too) and on the first touchmove.
+    const hideOnScroll = () => hideTooltip();
+    document.addEventListener('scroll', hideOnScroll, { capture: true, passive: true });
+    document.addEventListener('touchmove', hideOnScroll, { passive: true });
+
     return tooltipEl;
+}
+
+function hideTooltip() {
+    if (tooltipEl) tooltipEl.style.opacity = '0';
 }
 
 function bindTooltipHtml(el, html) {
@@ -958,14 +975,13 @@ function bindTooltipHtml(el, html) {
         t.style.top  = (e.clientY + 12) + 'px';
         t.style.opacity = '1';
     };
-    const hide = () => { if (tooltipEl) tooltipEl.style.opacity = '0'; };
     el.addEventListener('mouseenter', show);
     el.addEventListener('mousemove',  show);
-    el.addEventListener('mouseleave', hide);
+    el.addEventListener('mouseleave', hideTooltip);
     el.addEventListener('touchstart', e => {
         if (e.touches.length) show({ clientX: e.touches[0].clientX, clientY: e.touches[0].clientY });
     }, { passive: true });
-    el.addEventListener('touchend', hide);
+    el.addEventListener('touchend', hideTooltip);
 }
 
 function bindTooltip(el, text) { bindTooltipHtml(el, escapeHtml(text)); }

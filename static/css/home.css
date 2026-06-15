@@ -121,9 +121,8 @@ html, body {
     background: var(--bg-2);
     border: 0.5px solid var(--border);
     border-radius: var(--radius);
-    color: var(--text-soft);
+    color: var(--text);
     text-decoration: none;
-    font-size: var(--font-md);
     transition: background var(--t-med), color var(--t-med), border-color var(--t-med);
     /* .home-card's gap already adds clamp(12px, 2.4vh, 22px) above this
        element — pull it back down to the .home-grid tile gap (12px) so

@@ -17,12 +17,12 @@ PX_TO_M                       = 0.48       # pixel → metre
 RUN_SPEED                     = 4.75       # m/s on flat ground
 NOA_CLUSTER_WINDOW_M          = 20         # route-direction cluster window
 NOA_COUNTER_TURN_WINDOW_M     = 10         # rapid left-right/right-left window
-NOA_ARTIFACT_WINDOW_M         = 3          # suppress tiny local zigzags
+NOA_ARTIFACT_WINDOW_M         = 5          # suppress tiny local zigzags
 NOA_MIN_SEGMENT_M             = 1.5        # filter short route-point artefacts
-NOA_CORNER_DEG                = 60         # 60 degrees ~= 1 noA / 1 second
+NOA_CORNER_DEG                = 90         # 90 degrees ~= 1 noA / 1 second
 NOA_EPSILON_DEG               = 2          # ignore micro-changes smaller than this
-NOA_MIN_EFFECT_DEG            = 30
-NOA_COUNTER_MIN_DEG           = 30
+NOA_MIN_EFFECT_DEG            = 45
+NOA_COUNTER_MIN_DEG           = 45
 NOA_PENALTY_SECONDS_PER       = 1.0        # 1 s added per corner to the runtime estimate
 
 

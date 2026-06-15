@@ -2,6 +2,7 @@ from django.contrib import admin
 from django.db.models import Q
 from .models import Choice, RandomChoice
 from account.models import Profile
+from account.admin_access import StaffHiddenAdmin
 
 
 @admin.register(Choice)
@@ -29,16 +30,23 @@ class ChoiceAdmin(admin.ModelAdmin):
         except Profile.DoesNotExist:
             return qs.none()
 
+    # Staff: view + delete, scoped to their active_team (get_queryset above).
+    # Add/change stay off for everyone — Choice rows are gameplay data and
+    # must not be hand-authored.
+    def has_module_permission(self, request):
+        return True
+    def has_view_permission(self, request, obj=None):
+        return True
     def has_add_permission(self, request):
         return False
     def has_change_permission(self, request, obj=None):
         return False
     def has_delete_permission(self, request, obj=None):
-        return request.user.is_superuser
+        return True
 
 
 @admin.register(RandomChoice)
-class RandomChoiceAdmin(admin.ModelAdmin):
+class RandomChoiceAdmin(StaffHiddenAdmin, admin.ModelAdmin):
     list_display = ('user', 'correct', 'choice_time', 'shorter_time', 'longer_time', 'timestamp')
     list_filter = ('correct', 'timestamp')
     search_fields = ('user__username',)

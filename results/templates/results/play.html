@@ -6,7 +6,20 @@
 {% endblock %}
 
 {% block scripts %}
+<script>
+    // Server-provided play config. Device type (desktop/mobile) is decided
+    // client-side in play.js; both first-play flags are sent so the JS can
+    // pick the one matching the detected layout.
+    window.PLAY_CONFIG = {
+        tutorial:          {% if tutorial %}true{% else %}false{% endif %},
+        firstPlayDesktop:  {% if first_play_desktop %}true{% else %}false{% endif %},
+        firstPlayMobile:   {% if first_play_mobile %}true{% else %}false{% endif %},
+        tutorialJsonUrl:   "{% static 'results/tutorial/tutorial.json' %}",
+        tutorialMapBase:   "{% static 'results/tutorial/' %}",
+    };
+</script>
 <script defer src="{% static 'results/js/play.js' %}"></script>
+<script defer src="{% static 'results/js/tutorial.js' %}"></script>
 {% endblock %}
 
 {% block content %}
@@ -46,6 +59,16 @@
 
     <div id="play-progress">
         <div id="play-progress-fill"></div>
+    </div>
+
+    <!-- First-play tutorial overlay (populated by tutorial.js, only in tutorial mode) -->
+    <div id="tutorial-overlay" aria-hidden="true">
+        <div id="tutorial-box" role="dialog" aria-modal="true">
+            <button id="tutorial-close" type="button" aria-label="Weiter">
+                <x-icon name="xmark" size="1.1em"></x-icon>
+            </button>
+            <div id="tutorial-text"></div>
+        </div>
     </div>
 
 </div>

@@ -16,11 +16,77 @@ def index(request):
     return render(request, 'results/results.html')
 
 
+def _first_play_flags(request):
+    """Both first-play tutorial flags for the current user. Device type
+    (desktop vs mobile) is decided client-side in play.js, so we hand both
+    flags to the template and let the JS pick the matching one."""
+    try:
+        profile = request.user.profile
+        return bool(profile.first_play_desktop), bool(profile.first_play_mobile)
+    except Exception:
+        return False, False
+
+
 @login_required
 def play(request, file_id, mode):
     if mode not in ('competition', 'training'):
         mode = 'competition'
-    return render(request, 'results/play.html', {'file_id': file_id, 'mode': mode})
+    fp_desktop, fp_mobile = _first_play_flags(request)
+    return render(request, 'results/play.html', {
+        'file_id':            file_id,
+        'mode':               mode,
+        'tutorial':           False,
+        'first_play_desktop': fp_desktop,
+        'first_play_mobile':  fp_mobile,
+    })
+
+
+@login_required
+def play_tutorial(request):
+    """Render the play screen in tutorial mode. play.js detects the
+    `tutorial` flag, loads the static tutorial map/JSON instead of fetching
+    get_file, and drives the step-by-step overlay modals."""
+    fp_desktop, fp_mobile = _first_play_flags(request)
+    return render(request, 'results/play.html', {
+        'file_id':            0,
+        'mode':               'training',
+        'tutorial':           True,
+        'first_play_desktop': fp_desktop,
+        'first_play_mobile':  fp_mobile,
+    })
+
+
+@login_required
+@require_POST
+def tutorial_complete(request):
+    """Mark the first-play tutorial as done for the requesting device type.
+    Body: {"device": "desktop"|"mobile"}.
+
+    NOTE: the actual flag write is intentionally disabled for now so the
+    owner can re-run the tutorial repeatedly during testing without resetting
+    the profile. Uncomment the block below to enable the real behaviour
+    before launch (see results/static/results/js/play.js for the matching
+    client-side call that must also be uncommented)."""
+    import json
+    try:
+        data   = json.loads(request.body or '{}')
+        device = data.get('device')
+        if device not in ('desktop', 'mobile'):
+            return JsonResponse({'error': 'bad device'}, status=400)
+
+        # ── ENABLE-BEFORE-LAUNCH: uncomment to actually consume the flag ──
+        # profile = request.user.profile
+        # if device == 'desktop':
+        #     profile.first_play_desktop = False
+        # else:
+        #     profile.first_play_mobile = False
+        # profile.save(update_fields=['first_play_desktop', 'first_play_mobile'])
+        # ─────────────────────────────────────────────────────────────────
+
+        return JsonResponse({'status': 'ok'})
+    except Exception as e:
+        traceback.print_exc()
+        return JsonResponse({'error': str(e)}, status=500)
 
 
 @login_required

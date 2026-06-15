@@ -37,7 +37,7 @@
             </a>
         </div>
 
-        <a class="home-feedback" href="/feedback/">Bugs, Feedback, Vorschläge, ... </a>
+        <a class="home-feedback" href="{% url 'forum' %}"><span class="home-tile-label"></span>Forum</span></a>
 
         <div class="home-links">
             <a href="/logout/">Abmelden</a>
@@ -49,7 +49,7 @@
         </div>
 
         {% if is_trainer %}
-        <div class="home-update-info">Update April 2026: Routen editieren, Batch Pathfinding</div>
+        <div class="home-update-info">Juni 2026: Version 2.0</div>
         {% endif %}
 
     </div>

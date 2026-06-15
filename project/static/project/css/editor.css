@@ -168,6 +168,44 @@ html, body {
 body.mobile .nav-label-full  { display: none; }
 body.mobile .nav-label-short { display: inline; }
 
+/* ── Mobile project-menu hamburger ────────────────────────
+   Desktop is untouched: the hamburger button is hidden and the project
+   dropdown still opens on hover (via .nav-menu-item.open in navbar.css).
+   On mobile the "P..." label opens the project overview (file modal) on tap,
+   and the remaining options (Duplizieren / Speichern) are revealed by the
+   hamburger button, which toggles #menu-project.project-menu-open. */
+.nav-project-ham {
+    display: none;
+    align-items: center;
+    justify-content: center;
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 0 4px;
+    margin-left: 2px;
+    flex-shrink: 0;
+}
+.nav-project-ham:hover { color: var(--text-strong); }
+
+body.mobile .nav-project-ham { display: flex; }
+body.mobile #nav-project-ham x-icon { font-size: 18px; }
+
+/* On mobile, neutralise the hover/.open rule so tapping "P..." does NOT drop
+   the menu down — only the hamburger toggle (.project-menu-open) shows it. */
+body.mobile #menu-project.open > #project-dropdown { display: none; }
+body.mobile #menu-project.project-menu-open > #project-dropdown { display: block; }
+
+/* The list/overview row inside the dropdown duplicates the "P..." tap action,
+   so hide it on mobile to leave just the extra options. */
+body.mobile #project-dropdown #nav-open-projects { display: none; }
+
+body.mobile #project-dropdown > div {
+    padding: 11px 16px;
+    min-height: var(--touch-target);
+    box-sizing: border-box;
+}
+
 body.mobile .nav-user-section .nav-username { display: none; }
 
 /* Push the hamburger button to the right edge, next to the user section */
@@ -357,10 +395,25 @@ body.mobile .nav-ham-panel .nav-menu-item > .nav-dropdown {
     max-width: 400px;
 }
 
+/* Leading search icon — sits inside the input on the left, mirroring the
+   results-app search field (.play-search-icon) and the xmark clear button on
+   the right. */
+.project-search-icon {
+    position: absolute;
+    left: 12px;
+    top: 50%;
+    transform: translateY(-50%);
+    display: flex;
+    align-items: center;
+    color: #888;
+    pointer-events: none;
+    z-index: 1;
+}
+
 #project-search {
     width: 100%;
     height: 42px;
-    padding: 9px 38px 9px 14px;
+    padding: 9px 38px 9px 38px;
     background: #252525;
     border: 1px solid #444;
     border-radius: 8px;
@@ -372,6 +425,7 @@ body.mobile .nav-ham-panel .nav-menu-item > .nav-dropdown {
 
 #project-search::placeholder { color: #888; }
 #project-search:focus { background: #2d2d2d; border-color: var(--brand); }
+.search-wrapper:focus-within .project-search-icon { color: var(--brand); }
 
 .search-clear {
     position: absolute;
@@ -406,8 +460,10 @@ body.mobile .nav-ham-panel .nav-menu-item > .nav-dropdown {
     border-bottom-color: var(--brand);
 }
 
-/* Mobile: clear button fills a square flush with the input's right edge */
-body.mobile #project-search { padding-right: 50px; }
+/* Mobile: clear button fills a square flush with the input's right edge;
+   keep room on the left for the leading search icon too. */
+body.mobile #project-search { padding-right: 50px; padding-left: 42px; }
+body.mobile .project-search-icon { left: 14px; }
 
 body.mobile .search-clear.visible {
     width: 42px;
@@ -2239,6 +2295,20 @@ body.auto-pathfind-busy .cp-route-theta-btn[aria-busy="true"] {
     #editor-wrap {
         display: flex;
         flex-direction: column;
+        /* The mobile navbar is 56px tall (see navbar.css), not the 28px desktop
+           navbar the base rule assumes. Drop below it and size the wrap to the
+           VISIBLE viewport instead of anchoring bottom:0 (which sits behind the
+           browser's collapsing URL bar and pushed the tool wheel off-screen). */
+        top: 56px;
+        bottom: auto;
+        height: calc(100vh - 56px);
+        height: calc(100svh - 56px);
+        height: calc(100dvh - 56px);
+    }
+
+    /* JS-measured visible viewport (visualViewport) wins over the unit fallbacks. */
+    #editor-wrap[style*="--editor-vh"] {
+        height: calc(var(--editor-vh) * 100 - 56px);
     }
 
     #map-container {
@@ -2250,11 +2320,27 @@ body.auto-pathfind-busy .cp-route-theta-btn[aria-busy="true"] {
     #overview-sidebar {
         position: relative;
         width: 100%;
+        /* Use dynamic-viewport units so the panel hugs the VISIBLE viewport and
+           is not cut off by the mobile browser's collapsing URL bar. vh is the
+           large-viewport fallback for browsers without dvh/svh support; the JS
+           in editor.js further pins this via --editor-vh (visualViewport) when
+           available so the tool wheel always clears the browser chrome. */
         height: 33vh;
+        height: 33svh;
+        height: 33dvh;
         max-height: 33vh;
+        max-height: 33svh;
+        max-height: 33dvh;
         flex-shrink: 0;
         order: 2;
         border-top: 1px solid #333;
+    }
+
+    /* When JS has measured the real visible viewport (visualViewport), it sets
+       --editor-vh on #editor-wrap. Prefer it over the CSS unit fallbacks. */
+    #editor-wrap[style*="--editor-vh"] #overview-sidebar {
+        height: calc(var(--editor-vh) * 33);
+        max-height: calc(var(--editor-vh) * 33);
     }
 
     #sidebar-top {

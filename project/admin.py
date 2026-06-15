@@ -2,6 +2,7 @@ from django.contrib import admin
 from .models import File, ControlPair, Route, Label, FileSnapshot, EditorSettings
 from django.db.models import Count
 from account.models import Profile
+from account.admin_access import StaffHiddenAdmin
 
 
 class ControlPairInline(admin.TabularInline):
@@ -48,16 +49,21 @@ class FileAdmin(admin.ModelAdmin):
     get_ncP.short_description = 'Control Pairs'
     get_ncP.admin_order_field = 'ncP_count'
 
+    # Staff: full CRUD, scoped to their active_team (get_queryset above).
+    def has_module_permission(self, request):
+        return True
+    def has_view_permission(self, request, obj=None):
+        return True
     def has_add_permission(self, request):
-        return request.user.is_superuser
+        return True
     def has_change_permission(self, request, obj=None):
-        return request.user.is_superuser
+        return True
     def has_delete_permission(self, request, obj=None):
-        return request.user.is_superuser
+        return True
 
 
 @admin.register(ControlPair)
-class ControlPairAdmin(admin.ModelAdmin):
+class ControlPairAdmin(StaffHiddenAdmin, admin.ModelAdmin):
     list_display = ('file', 'order', 'complex', 'get_route_count')
     list_filter = ('complex', 'file__team')
     search_fields = ('file__name',)
@@ -82,7 +88,7 @@ class ControlPairAdmin(admin.ModelAdmin):
 
 
 @admin.register(Route)
-class RouteAdmin(admin.ModelAdmin):
+class RouteAdmin(StaffHiddenAdmin, admin.ModelAdmin):
     list_display = ('control_pair', 'order', 'length', 'run_time', 'elevation')
     list_filter = ('control_pair__file__team',)
     search_fields = ('control_pair__file__name',)
@@ -99,7 +105,7 @@ class RouteAdmin(admin.ModelAdmin):
 
 
 @admin.register(FileSnapshot)
-class FileSnapshotAdmin(admin.ModelAdmin):
+class FileSnapshotAdmin(StaffHiddenAdmin, admin.ModelAdmin):
     list_display  = ("file", "trigger", "n_control_pairs", "n_routes", "created_at", "created_by")
     list_filter   = ("trigger",)
     search_fields = ("file__name", "trigger", "created_by__username")
@@ -127,9 +133,31 @@ class LabelAdmin(admin.ModelAdmin):
     list_filter = ('team',)
     ordering = ('team', 'name')
 
+    def get_queryset(self, request):
+        qs = super().get_queryset(request)
+        if request.user.is_superuser:
+            return qs
+        try:
+            active_team = request.user.profile.active_team
+            return qs.filter(team=active_team)
+        except Profile.DoesNotExist:
+            return qs.none()
+
+    # Staff: full CRUD, scoped to their active_team (get_queryset above).
+    def has_module_permission(self, request):
+        return True
+    def has_view_permission(self, request, obj=None):
+        return True
+    def has_add_permission(self, request):
+        return True
+    def has_change_permission(self, request, obj=None):
+        return True
+    def has_delete_permission(self, request, obj=None):
+        return True
+
 
 @admin.register(EditorSettings)
-class EditorSettingsAdmin(admin.ModelAdmin):
+class EditorSettingsAdmin(StaffHiddenAdmin, admin.ModelAdmin):
     list_display = ('profile', 'auto_pathfind', 'auto_jump', 'autosave')
     search_fields = ('profile__user__username',)
     list_filter = ('auto_pathfind', 'auto_jump', 'autosave')
