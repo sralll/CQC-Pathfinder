@@ -73,10 +73,15 @@
             <div class="nav-dropdown" onclick="event.stopPropagation();">
                 <div class="settings-toggle-row">
                     <span>Auto-Pathfind</span>
-                    <label class="toggle-switch">
-                        <input type="checkbox" id="toggle-auto-pathfind">
-                        <span class="toggle-slider"></span>
-                    </label>
+                    <div class="toggle-switch-multi">
+                        <span class="toggle-multi-pill" id="auto-pathfind-pill" data-value="0" style="--i:0;">
+                            <input type="range" id="slider-auto-pathfind" min="0" max="4" step="1"
+                                   value="0" aria-label="Auto-Pathfind Routen">
+                            <span class="toggle-track"></span>
+                            <span class="toggle-knob"></span>
+                        </span>
+                        <span id="auto-pathfind-value" class="toggle-multi-value">0</span>
+                    </div>
                 </div>
                 <div class="settings-toggle-row">
                     <span>Auto-Jump</span>

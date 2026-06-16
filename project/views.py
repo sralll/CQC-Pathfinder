@@ -1291,7 +1291,11 @@ def toggle_editor_setting(request):
         setting = data.get('setting')
         s = request.user.profile.editor_settings
         if setting == 'auto_pathfind':
-            s.auto_pathfind = not s.auto_pathfind
+            try:
+                value = int(data.get('value'))
+            except (TypeError, ValueError):
+                return JsonResponse({'error': 'invalid value'}, status=400)
+            s.auto_pathfind = max(0, min(4, value))
             s.save(update_fields=['auto_pathfind'])
             return JsonResponse({'auto_pathfind': s.auto_pathfind})
         elif setting == 'auto_jump':

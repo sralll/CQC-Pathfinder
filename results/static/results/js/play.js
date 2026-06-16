@@ -54,6 +54,8 @@ const routeColor = ['#DD0011', '#CC6000', '#008888', '#0055FF', '#5500BB', '#880
 const COMPLEX_REVEAL_MULTIPLIER = 5;
 const COMPLEX_REVEAL_BUFFER     = 0.67;   // seconds at 1× after reveal
 const ROUTE_HIT_WIDTH           = 25;    // transparent on-map click target width
+const MAX_CHOICE_TIME           = 30;    // s — cap stored choice_time so one slow
+                                         //     control (5× penalty) can't ruin stats
 
 let currentCpIndex    = -1;
 let camBounds         = null;   // { minRX, maxRX, minRY, maxRY, minScale } in rotated space; null during animation
@@ -117,14 +119,20 @@ function showEndOfFileModal() {
     if (!modal) {
         const homeIcon = (typeof window.icon === 'function') ? window.icon('home', '1.1em')
                        : '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512" width="1.1em" height="1.1em" fill="currentColor"><path d="M575.8 255.5c0 18-15 32.1-32 32.1l-32 0 .7 160.2c0 2.7-.2 5.4-.5 8.1l0 16.2c0 22.1-17.9 40-40 40l-16 0c-1.1 0-2.2 0-3.3-.1-1.4 .1-2.8 .1-4.2 .1l-72 0c-22.1 0-40-17.9-40-40l0-88c0-17.7-14.3-32-32-32l-64 0c-17.7 0-32 14.3-32 32l0 88c0 22.1-17.9 40-40 40l-72 0c-1.5 0-3 0-4.5-.1-1.2 .1-2.4 .1-3.6 .1l-16 0c-22.1 0-40-17.9-40-40l0-112 0-1.4c0-5.1 .3-10.3 .9-15.3l0-58.7L32 287.6c-18 0-32-14-32-32.1 0-9 3-17 10-24L266.4 8c7-7 15-8 22-8s15 2 21 7l255.4 224.5c8 7 12 15 11 24z"/></svg>';
+        // A tutorial has no results page, so omit "Resultate" and let "Play"
+        // be the primary action — only Play / Home are offered.
+        const resultsBtn = TUTORIAL
+            ? ''
+            : `<a class="play-end-btn" href="/results/${fileId}/">Resultate</a>`;
+        const playClass = TUTORIAL ? 'play-end-btn' : 'play-end-btn secondary';
         modal = document.createElement('div');
         modal.id = 'play-end-modal';
         modal.innerHTML = `
             <div class="play-end-card">
                 <h3 class="play-end-title">Fertig</h3>
                 <div class="play-end-actions">
-                    <a class="play-end-btn"           href="/results/${fileId}/">Resultate</a>
-                    <a class="play-end-btn secondary" href="/play/">Play</a>
+                    ${resultsBtn}
+                    <a class="${playClass}" href="/play/">Play</a>
                     <a class="play-end-btn secondary play-end-btn-icon" href="/" aria-label="Startseite">${homeIcon}</a>
                 </div>
             </div>`;
@@ -178,7 +186,11 @@ function initKeyNav() {
         if (!tapMouseDown || !pendingReveal) { tapMouseDown = null; return; }
         const dx = Math.abs(e.clientX - tapMouseDown.x);
         const dy = Math.abs(e.clientY - tapMouseDown.y);
+        const onRoute = routesAtPoint(e.clientX, e.clientY).size > 0;
         tapMouseDown = null;
+        // A tap on a route is handled by the route arbiter (select-or-reveal);
+        // only an empty-map tap uses the reveal fallback here.
+        if (onRoute) return;
         if (dx <= TAP_MAX_MOVE && dy <= TAP_MAX_MOVE) revealRoutes(pendingReveal);
     });
 
@@ -192,9 +204,14 @@ function initKeyNav() {
         if (!tapTouchStart || !pendingReveal || !e.changedTouches.length) {
             tapTouchStart = null; return;
         }
-        const dx = Math.abs(e.changedTouches[0].clientX - tapTouchStart.x);
-        const dy = Math.abs(e.changedTouches[0].clientY - tapTouchStart.y);
+        const t  = e.changedTouches[0];
+        const dx = Math.abs(t.clientX - tapTouchStart.x);
+        const dy = Math.abs(t.clientY - tapTouchStart.y);
+        const onRoute = routesAtPoint(t.clientX, t.clientY).size > 0;
         tapTouchStart = null;
+        // A tap on a route is handled by the route arbiter (select-or-reveal);
+        // only an empty-map tap uses the reveal fallback here.
+        if (onRoute) return;
         if (dx <= TAP_MAX_MOVE && dy <= TAP_MAX_MOVE) revealRoutes(pendingReveal);
     }, { passive: true });
 
@@ -492,39 +509,42 @@ function drawRoutes(cp) {
     const layer = document.getElementById('route-layer');
     layer.innerHTML = '';
     if (!cp?.routes?.length) return;
-    // Non-complex CPs hide routes until the athlete taps the map (the reveal
-    // fallback). revealTime is set the moment that happens; before then, keep
-    // the route layer empty so only the Links/Rechts buttons drive the choice.
-    if (!cp.complex && revealTime === null) return;
 
-    // Draw order: routeColor index ascending (FFFF00 bottom → 00FF00 top)
-    // so less-visible colours are never buried under brighter ones
-    const drawOrder = cp.routes
-        .map((route, i) => ({ route, i }))
-        .sort((a, b) =>
-            routeColor.indexOf(currentRouteColors[a.i]) -
-            routeColor.indexOf(currentRouteColors[b.i])
-        );
+    // Routes stay hidden until revealed — for both modes. Before reveal we still
+    // lay down the transparent hit-areas below (so a direct tap can pick a route
+    // without ever showing them), but no visible line is drawn.
+    const revealed = revealTime !== null;
 
-    // White background pass
-    drawOrder.forEach(({ route }) => {
-        const el = createRoutePolyline(route, { stroke: 'white', strokeWidth: 3 });
-        if (el) layer.appendChild(el);
-    });
+    if (revealed) {
+        // Draw order: routeColor index ascending (FFFF00 bottom → 00FF00 top)
+        // so less-visible colours are never buried under brighter ones
+        const drawOrder = cp.routes
+            .map((route, i) => ({ route, i }))
+            .sort((a, b) =>
+                routeColor.indexOf(currentRouteColors[a.i]) -
+                routeColor.indexOf(currentRouteColors[b.i])
+            );
 
-    // Colored foreground pass — dim unselected routes when one is selected
-    drawOrder.forEach(({ route, i }) => {
-        const color  = currentRouteColors[i] || '#000';
-        const dimmed = selectedRouteIdx !== null && selectedRouteIdx !== i;
-        const el = createRoutePolyline(route, {
-            stroke: color, strokeWidth: 1.5, opacity: dimmed ? 0.2 : 1,
+        // White background pass
+        drawOrder.forEach(({ route }) => {
+            const el = createRoutePolyline(route, { stroke: 'white', strokeWidth: 3 });
+            if (el) layer.appendChild(el);
         });
-        if (el) layer.appendChild(el);
-    });
+
+        // Colored foreground pass — dim unselected routes when one is selected
+        drawOrder.forEach(({ route, i }) => {
+            const color  = currentRouteColors[i] || '#000';
+            const dimmed = selectedRouteIdx !== null && selectedRouteIdx !== i;
+            const el = createRoutePolyline(route, {
+                stroke: color, strokeWidth: 1.5, opacity: dimmed ? 0.2 : 1,
+            });
+            if (el) layer.appendChild(el);
+        });
+    }
 
     // Transparent fat hit-areas on top — let athletes pick a route directly on
-    // the map (finger is usually already hovering where they want to go).
-    // Only while the choice is still open.
+    // the map (finger is usually already hovering where they want to go), even
+    // while the routes are still invisible. Only while the choice is still open.
     if (!buttonsDisabled) {
         cp.routes.forEach((route, i) => {
             const hit = createRoutePolyline(route, {
@@ -533,12 +553,52 @@ function drawRoutes(cp) {
                 interactive: true,
             });
             if (!hit) return;
+            hit.dataset.routeIdx = i;
+            // No pointer cursor before reveal — the route stays hidden so the
+            // athlete still has to find it rather than have it given away.
+            if (!revealed) hit.style.cursor = 'default';
             hit.addEventListener('click', e => {
                 e.stopPropagation();
-                selectRoute(cp, i);
+                handleRouteHit(cp, i, e);
             });
             layer.appendChild(hit);
         });
+    }
+}
+
+// How many distinct routes lie under a screen point. Used to tell an
+// unambiguous direct tap (exactly one route) from one landing on overlapping
+// routes (two or more), which must be disambiguated by revealing first.
+function routesAtPoint(clientX, clientY) {
+    const idxs = new Set();
+    document.elementsFromPoint(clientX, clientY).forEach(el => {
+        const idx = el.dataset?.routeIdx;
+        if (idx !== undefined) idxs.add(idx);
+    });
+    return idxs;
+}
+
+// Arbiter for a tap on a route hit-area. While the routes are still hidden a tap
+// is only committed when it lands on a single route; if it lands where routes
+// overlap we reveal them instead and let the athlete decide on the next tap.
+// Once revealed (the athlete can see what they're choosing) any tap commits.
+function handleRouteHit(cp, i, e) {
+    if (buttonsDisabled) return;
+    if (revealTime !== null) {
+        selectRoute(cp, i);
+        return;
+    }
+    // Tutorial, complex control: never commit a direct pick before the reveal —
+    // always reveal first, so the athlete always sees tip 2 and the countdown
+    // bar running out.
+    if (TUTORIAL && cp.complex) {
+        revealRoutes(cp);
+        return;
+    }
+    if (routesAtPoint(e.clientX, e.clientY).size <= 1) {
+        selectRoute(cp, i);
+    } else {
+        revealRoutes(cp);
     }
 }
 
@@ -665,6 +725,10 @@ function showControlPair(index) {
             pendingReveal   = cp;
             renderAllButtons(cp);
         }
+
+        // Lay down the invisible hit-areas so a direct tap can pick a route
+        // before it is revealed (both modes). No visible line is drawn yet.
+        drawRoutes(cp);
 
         // Lifecycle: camera has finished transforming and the CP is ready for
         // the first tap. Drives tutorial steps 1 (complex CP) and 5 (L/R CP).
@@ -796,7 +860,10 @@ function initStatsPanel() {
         // react to direct taps on the bar background between / around the buttons.
         if (e.target.closest('.play-btn')) return;
         if (statsVisible) hideStatsPanel();
-        else renderStatsPanel(project.control_pairs[currentCpIndex]);
+        else {
+            renderStatsPanel(project.control_pairs[currentCpIndex]);
+            emitPlay('stats-viewed', { index: currentCpIndex });
+        }
     });
 }
 
@@ -1293,6 +1360,13 @@ function submitResult(cp, route) {
         } else {
             choiceTime = totalReal;
         }
+    }
+    // Cap the choice time so one slow control — amplified 5× by the reveal
+    // penalty — can't ruin an athlete's stats (the server enforces the same cap).
+    if (choiceTime > MAX_CHOICE_TIME) {
+        choiceTime = MAX_CHOICE_TIME;
+        totalReal  = Math.min(totalReal, MAX_CHOICE_TIME);
+        penalty    = Math.max(0, choiceTime - totalReal);
     }
     lastChoiceTimes = { total: choiceTime, real: totalReal, penalty };
 

@@ -62,11 +62,9 @@ def tutorial_complete(request):
     """Mark the first-play tutorial as done for the requesting device type.
     Body: {"device": "desktop"|"mobile"}.
 
-    NOTE: the actual flag write is intentionally disabled for now so the
-    owner can re-run the tutorial repeatedly during testing without resetting
-    the profile. Uncomment the block below to enable the real behaviour
-    before launch (see results/static/results/js/play.js for the matching
-    client-side call that must also be uncommented)."""
+    Sets first_play_<device> = False so the tutorial only auto-triggers once
+    per device type. The matching client-side call lives in
+    results/static/results/js/tutorial.js → finishTutorial → markComplete."""
     import json
     try:
         data   = json.loads(request.body or '{}')
@@ -74,14 +72,12 @@ def tutorial_complete(request):
         if device not in ('desktop', 'mobile'):
             return JsonResponse({'error': 'bad device'}, status=400)
 
-        # ── ENABLE-BEFORE-LAUNCH: uncomment to actually consume the flag ──
-        # profile = request.user.profile
-        # if device == 'desktop':
-        #     profile.first_play_desktop = False
-        # else:
-        #     profile.first_play_mobile = False
-        # profile.save(update_fields=['first_play_desktop', 'first_play_mobile'])
-        # ─────────────────────────────────────────────────────────────────
+        profile = request.user.profile
+        if device == 'desktop':
+            profile.first_play_desktop = False
+        else:
+            profile.first_play_mobile = False
+        profile.save(update_fields=['first_play_desktop', 'first_play_mobile'])
 
         return JsonResponse({'status': 'ok'})
     except Exception as e:
@@ -297,6 +293,15 @@ def submit_result(request):
         choice_time = float(data['choice_time'])
         penalty     = float(data.get('penalty', 0))
         competition = bool(data.get('competition', False))
+
+        # Cap stored choice_time so one slow control — amplified 5× by the reveal
+        # penalty — can't ruin an athlete's stats. The client caps too; this is
+        # the authoritative ceiling on the DB write.
+        MAX_CHOICE_TIME = 30.0
+        if choice_time > MAX_CHOICE_TIME:
+            real        = max(0.0, choice_time - penalty)
+            choice_time = MAX_CHOICE_TIME
+            penalty     = max(0.0, choice_time - real)
 
         from .models import Choice
         cp    = get_object_or_404(ControlPair, id=cp_id)

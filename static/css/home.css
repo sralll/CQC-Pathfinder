@@ -170,10 +170,10 @@ html, body {
 
 /* ── Mobile scaling ───────────────────────────────────── */
 
-body.mobile .home-page         { padding: 14px; align-items: flex-start; }
+body.mobile .home-page         { padding: 14px 10px; align-items: flex-start; }
 body.mobile .home-logo-wrap    { margin-top: 66px;}
 
-body.mobile .home-card         { max-width: 340px; margin: 0 auto; gap: 10px; }
+body.mobile .home-card         { max-width: none; margin: 0 auto; gap: 10px; }
 body.mobile .home-grid         { grid-template-columns: 1fr; gap: 10px; }
 body.mobile .home-grid:not(.home-grid-trainer) .home-tile-primary { grid-column: auto; min-height: 64px; }
 body.mobile .home-tile         { min-height: 64px; font-size: var(--font-lg); padding: 12px 14px; gap: 10px; }
@@ -186,8 +186,8 @@ body.mobile .home-update-info  { min-height: 32px; font-size: var(--font-sm); pa
 
 /* On narrow phones (also catches small windowed desktops) */
 @media (max-width: 700px) {
-    .home-page    { padding: 14px; align-items: flex-start; }
-    .home-card    { max-width: 340px; gap: 10px; }
+    .home-page    { padding: 14px 10px; align-items: flex-start; }
+    .home-card    { max-width: none; gap: 10px; }
     .home-grid    { grid-template-columns: 1fr; gap: 10px; }
     .home-tile    { min-height: 64px; padding: 12px 14px; gap: 10px; }
     .home-grid:not(.home-grid-trainer) .home-tile-primary { grid-column: auto; }

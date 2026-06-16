@@ -24,7 +24,7 @@ let currentProjectName = "Neues Projekt";
     EDITOR SETTINGS
 ========================================================= */
 
-let editorSettings = { auto_pathfind: false, auto_jump: true };
+let editorSettings = { auto_pathfind: 0, auto_jump: true };  // auto_pathfind: 0–4 routes (0 = off)
 
 /* =========================================================
     READ-ONLY STATE
@@ -273,24 +273,41 @@ async function loadEditorSettings() {
     } catch (e) { console.warn('Failed to load editor settings', e); }
 }
 
+// Reflect an auto-pathfind value (0–4) onto the multi-stop switch: knob stop
+// (--i), on/off track color (data-value) and the numeric label.
+function _renderAutoPathfindUI(v) {
+    const n = Math.max(0, Math.min(4, parseInt(v, 10) || 0));
+    const apPill = document.getElementById('auto-pathfind-pill');
+    const apVal  = document.getElementById('auto-pathfind-value');
+    if (apPill) {
+        apPill.style.setProperty('--i', n);
+        apPill.dataset.value = n;
+    }
+    if (apVal) apVal.textContent = n;
+}
+
 function _applySettingsUI() {
-    const apEl = document.getElementById('toggle-auto-pathfind');
+    const apEl = document.getElementById('slider-auto-pathfind');
     const ajEl = document.getElementById('toggle-auto-jump');
-    if (apEl) apEl.checked = editorSettings.auto_pathfind;
+    if (apEl) apEl.value = editorSettings.auto_pathfind;
+    _renderAutoPathfindUI(editorSettings.auto_pathfind);
     if (ajEl) ajEl.checked = editorSettings.auto_jump;
 }
 
-async function toggleEditorSetting(setting) {
+// Persist a setting. For auto_pathfind, `value` (0–4) is sent; for boolean
+// settings (auto_jump) the server toggles and `value` is ignored.
+async function saveEditorSetting(setting, value) {
     const csrf = document.cookie.match(/csrftoken=([^;]+)/)?.[1] ?? "";
     try {
         const res  = await fetch('/editor/settings/toggle/', {
             method:  'POST',
             headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf },
-            body:    JSON.stringify({ setting }),
+            body:    JSON.stringify({ setting, value }),
         });
         const data = await res.json();
         if (data.auto_pathfind !== undefined) editorSettings.auto_pathfind = data.auto_pathfind;
         if (data.auto_jump     !== undefined) editorSettings.auto_jump     = data.auto_jump;
+        _applySettingsUI();
         if (editorSettings.auto_pathfind) drainPendingAutoPathfindQueue();
         if (setting === 'auto_pathfind') {
             if (editorSettings.auto_pathfind) {
@@ -299,7 +316,17 @@ async function toggleEditorSetting(setting) {
                 hideMaskGenBar();
             }
         }
-    } catch (e) { console.warn('Failed to toggle setting', e); }
+    } catch (e) { console.warn('Failed to save setting', e); }
+}
+
+function toggleEditorSetting(setting) { return saveEditorSetting(setting); }
+
+function setAutoPathfindRoutes(n) {
+    const value = Math.max(0, Math.min(4, parseInt(n, 10) || 0));
+    // Reflect immediately so the value label tracks the drag before the server replies.
+    editorSettings.auto_pathfind = value;
+    _renderAutoPathfindUI(value);
+    return saveEditorSetting('auto_pathfind', value);
 }
 
 /* =========================================================
@@ -449,8 +476,13 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // ── Settings toggles ──────────────────────────────────
     loadEditorSettings();
-    document.getElementById('toggle-auto-pathfind')?.addEventListener('change', () => {
-        toggleEditorSetting('auto_pathfind');
+    const apSlider = document.getElementById('slider-auto-pathfind');
+    // Live-update the label while dragging; only persist on release.
+    apSlider?.addEventListener('input', () => {
+        _renderAutoPathfindUI(apSlider.value);
+    });
+    apSlider?.addEventListener('change', () => {
+        setAutoPathfindRoutes(apSlider.value);
     });
     document.getElementById('toggle-auto-jump')?.addEventListener('change', () => {
         toggleEditorSetting('auto_jump');
@@ -5138,7 +5170,7 @@ function _isPathfindBusyForCp(cp) {
 
 function _canExpectAnotherPathfindRoute(cp) {
     if (!cp) return false;
-    return (cp.routes?.length || 0) < AUTO_PATHFIND_MAX_ROUTES;
+    return (cp.routes?.length || 0) < autoPathfindMaxRoutes();
 }
 
 function _routeFromPolyline(cp, polyline) {
@@ -5335,7 +5367,11 @@ const _pathingPending = new Map(); // msgId -> {resolve}
 let _pathingMsgSeq = 0;
 const _pendingAutoPathfindCps = new Set();
 const _autoPathfindRunningCps = new Set();
-const AUTO_PATHFIND_MAX_ROUTES = 4;
+// Number of routes auto-pathfinding generates per control pair — driven by the
+// nav-bar slider (0 = off, max 4). Replaces the former hard-coded limit of 4.
+function autoPathfindMaxRoutes() {
+    return Math.max(0, Math.min(4, editorSettings.auto_pathfind | 0));
+}
 let _pathfindGeneration = 0;
 
 function _resolveAllPathingPending(error) {
@@ -5359,7 +5395,7 @@ function _canAutoPathfindCP(cp) {
     if (readOnly || !editorSettings.auto_pathfind) return false;
     if (!cp || !cp.start || !cp.ziel) return false;
     if (!project.control_pairs.includes(cp)) return false;
-    if (!cp.complex && (cp.routes?.length || 0) >= AUTO_PATHFIND_MAX_ROUTES) return false;
+    if (!cp.complex && (cp.routes?.length || 0) >= autoPathfindMaxRoutes()) return false;
     return true;
 }
 
@@ -5374,7 +5410,7 @@ function _fireAutoPathfindForCP(cp, source = "editor_auto") {
     _autoPathfindRunningCps.add(cp);
     (async () => {
         try {
-            const targetRoutes = AUTO_PATHFIND_MAX_ROUTES;
+            const targetRoutes = autoPathfindMaxRoutes();
             let rejectedBlockers = [];
             let rejectedAttemptsForSlot = 0;
             while (_canAutoPathfindCP(cp) && _maskReadyForAutoPathfind() && (cp.routes?.length || 0) < targetRoutes) {
@@ -5409,7 +5445,7 @@ function _fireAutoPathfindForCP(cp, source = "editor_auto") {
 function requestAutoPathfindForControlPair(cp) {
     if (!_canAutoPathfindCP(cp)) {
         _pendingAutoPathfindCps.delete(cp);
-        if ((cp?.routes?.length || 0) >= AUTO_PATHFIND_MAX_ROUTES) _clearPathfindBusyForCp(cp);
+        if ((cp?.routes?.length || 0) >= autoPathfindMaxRoutes()) _clearPathfindBusyForCp(cp);
         return;
     }
     if (_fireAutoPathfindForCP(cp)) return;
@@ -5498,7 +5534,7 @@ async function thetaCPClient(cp, source = "editor_auto", options = {}) {
     if (readOnly) return { error: "read only" };
     const gen = _pathfindGeneration;
     const isAuto = source === "editor_auto";
-    if (isAuto && !cp.complex && cp.routes.length >= AUTO_PATHFIND_MAX_ROUTES) return { error: "max auto routes" };
+    if (isAuto && !cp.complex && cp.routes.length >= autoPathfindMaxRoutes()) return { error: "max auto routes" };
     const w = _ensurePathingWorker();
     if (!w) return { error: "worker unavailable" };
     if (_pathingMaskKey !== project.map_file) return { error: "mask not yet loaded into worker" };

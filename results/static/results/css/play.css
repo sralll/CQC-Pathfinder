@@ -510,15 +510,22 @@ body.mobile .stats-choice-sub   { font-size: var(--font-sm); }
     inset: 0;
     z-index: 6000;
     display: none;
-    align-items: flex-end;          /* sit the card low, near the controls */
+    align-items: center;            /* centre the card on screen */
     justify-content: center;
-    /* Backdrop barely darkens the screen so the map stays visible */
-    background: rgba(0, 0, 0, 0.1);
-    padding: 0 16px calc(var(--btn-bar-h) + 24px);
+    /* Dim enough to read clearly as an overlay; map stays faintly visible */
+    background: rgba(0, 0, 0, 0.45);
+    padding: 16px;
     box-sizing: border-box;
-    pointer-events: none;           /* let the spotlight pulse show through */
+    pointer-events: auto;           /* absorb clicks — nothing below is clickable */
 }
 #tutorial-overlay.open { display: flex; }
+
+/* Step 3 exception: make ONLY the highlighted button bar tappable (it is lifted
+   above the backdrop), so the athlete can open the stats panel — which also
+   dismisses the tip. The overlay itself keeps absorbing clicks, so taps/swipes
+   on the map are ignored and the athlete can NOT advance to the next control.
+   The card (#tutorial-box) stays interactive, so the ✕ still works. */
+body.tutorial-clickthrough .tutorial-highlight { pointer-events: auto; }
 
 #tutorial-box {
     position: relative;
@@ -544,12 +551,60 @@ body.mobile .stats-choice-sub   { font-size: var(--font-sm); }
     color: var(--text);
 }
 
+.tutorial-main { margin: 0; }
+
+/* The ⚠ line sits on its own line, icon in front of its text */
+.tutorial-warn-line {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    margin: 12px 0 0;
+}
 .tutorial-warn {
     display: inline-flex;
     align-items: center;
-    vertical-align: -0.18em;
-    margin: 0 2px;
+    flex-shrink: 0;
     color: var(--brand, #e07020);
+}
+
+/* Mobile step 4: the two continue-gesture icons, side by side, filling the line */
+.tutorial-gestures {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 22px;
+    margin-top: 14px;
+}
+.tutorial-gestures svg {
+    height: clamp(64px, 18vw, 100px);
+    width: auto;
+    color: var(--text);
+}
+
+/* Step 4: legend explaining the route-evaluation graph (stats panel) */
+.tutorial-legend {
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
+}
+.tutorial-legend-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 9px;
+}
+.tutorial-legend-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 1.4em;
+    height: 1.5em;          /* match #tutorial-text line-height → align icon with line 1 */
+    color: var(--text);
+}
+.tutorial-legend-val {
+    flex-shrink: 0;
+    font-weight: 600;
+    color: var(--text-strong, var(--text));
 }
 
 #tutorial-close {
@@ -584,19 +639,30 @@ body.mobile #tutorial-box  { max-width: 92vw; }
 .tutorial-highlight {
     position: relative;
     z-index: 6001;                  /* lift above the dim backdrop */
+    pointer-events: none;           /* visible above the overlay, but not clickable */
     animation: tutorial-glow 1.1s ease-in-out infinite;
 }
 
 #play-countdown.tutorial-highlight {
     display: block;                 /* force-show even if not yet active */
     height: 8px;                    /* fatten the 3px bar so it's visible */
-    outline: 2px solid var(--brand, #e07020);
-    outline-offset: 1px;
+    top: 1px;                       /* was sitting ~1px too high */
+    outline: 2px solid #c43030;     /* match the red time bar */
+    outline-offset: 0;
+    /* flash in the bar's red instead of the generic orange glow */
+    animation: tutorial-flash-red 0.7s ease-in-out infinite;
 }
 
 #play-btn-bar.tutorial-highlight {
     outline: 2px solid var(--brand, #e07020);
     outline-offset: -2px;
+    border-radius: 12px;            /* rounded corners on the button-bar highlight */
+}
+
+#play-stats-panel.tutorial-highlight {
+    outline: 2px solid var(--brand, #e07020);
+    outline-offset: -2px;
+    border-radius: 10px;
 }
 
 @keyframes tutorial-glow {
@@ -604,4 +670,9 @@ body.mobile #tutorial-box  { max-width: 92vw; }
                            0 0 10px 2px rgba(224, 112, 32, 0.55); }
     50%      { box-shadow: 0 0 0 0 rgba(224, 112, 32, 0.0),
                            0 0 22px 6px rgba(224, 112, 32, 0.95); }
+}
+
+@keyframes tutorial-flash-red {
+    0%, 100% { box-shadow: 0 0 4px 1px rgba(196, 48, 48, 0.55); opacity: 1;   }
+    50%      { box-shadow: 0 0 18px 6px rgba(196, 48, 48, 1);   opacity: 0.5; }
 }

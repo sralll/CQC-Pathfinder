@@ -1,4 +1,5 @@
 from django.db import models
+from django.core.validators import MinValueValidator, MaxValueValidator
 from django.utils import timezone
 
 class Label(models.Model):
@@ -94,7 +95,11 @@ class Route(models.Model):
 
 class EditorSettings(models.Model):
     profile = models.OneToOneField('account.Profile', on_delete=models.CASCADE, related_name='editor_settings')
-    auto_pathfind = models.BooleanField(default=True)
+    # Number of routes auto-pathfinding generates per control pair (0 = disabled, max 4).
+    auto_pathfind = models.PositiveSmallIntegerField(
+        default=2,
+        validators=[MinValueValidator(0), MaxValueValidator(4)],
+    )
     auto_jump = models.BooleanField(default=True)
     autosave = models.BooleanField(default=False)
 

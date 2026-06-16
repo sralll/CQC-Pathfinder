@@ -316,6 +316,75 @@ body.mobile .nav-ham-panel .nav-menu-item > .nav-dropdown {
 .toggle-switch input:checked + .toggle-slider { background: var(--brand); }
 .toggle-switch input:checked + .toggle-slider::before { transform: translateX(14px); }
 
+/* Auto-Pathfind multi-stop switch (0–4 routes): the boolean toggle look,
+   but the knob snaps across 5 discrete stops. */
+.toggle-switch-multi {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    flex-shrink: 0;
+}
+.toggle-multi-pill {
+    position: relative;
+    display: inline-block;
+    width: 74px;            /* 5 stops, 14px apart: knob left = 3px + i*14px */
+    height: 18px;
+    cursor: pointer;
+}
+/* Native range sits on top, transparent, to drive value + keyboard a11y. */
+.toggle-multi-pill input[type="range"] {
+    -webkit-appearance: none;
+    appearance: none;
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    opacity: 0;
+    cursor: pointer;
+    z-index: 2;
+}
+.toggle-track {
+    position: absolute;
+    inset: 0;
+    background: #444;
+    border-radius: 18px;
+    transition: background 0.2s;
+}
+/* On (value ≥ 1) → brand fill, mirroring the boolean switch's checked state. */
+.toggle-multi-pill:not([data-value="0"]) .toggle-track { background: var(--brand); }
+/* Stop markers under the knob. */
+.toggle-track::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background-image:
+        radial-gradient(circle at  9px 50%, rgba(255,255,255,0.4) 0 1px, transparent 1.5px),
+        radial-gradient(circle at 23px 50%, rgba(255,255,255,0.4) 0 1px, transparent 1.5px),
+        radial-gradient(circle at 37px 50%, rgba(255,255,255,0.4) 0 1px, transparent 1.5px),
+        radial-gradient(circle at 51px 50%, rgba(255,255,255,0.4) 0 1px, transparent 1.5px),
+        radial-gradient(circle at 65px 50%, rgba(255,255,255,0.4) 0 1px, transparent 1.5px);
+}
+.toggle-knob {
+    position: absolute;
+    top: 3px;
+    left: calc(3px + var(--i, 0) * 14px);
+    width: 12px;
+    height: 12px;
+    background: #fff;
+    border-radius: 50%;
+    pointer-events: none;
+    z-index: 1;
+    transition: left 0.15s ease;
+}
+.toggle-multi-value {
+    min-width: 0.9em;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+    color: var(--brand);
+}
+
 /* =========================================================
    MODAL
 ========================================================= */
