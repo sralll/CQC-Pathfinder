@@ -1,9 +1,7 @@
 #!/bin/bash
-set -e
 
-if [ ! -d "node_modules/ocad2geojson" ]; then
-  npm ci --omit=dev
-fi
+# Runtime should only start the app. Node dependencies for OCAD import are
+# installed during the build phase in build.sh.
 
 gunicorn CQCPathfinder.asgi:application \
   -k uvicorn.workers.UvicornWorker \
