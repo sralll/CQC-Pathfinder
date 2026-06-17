@@ -1,6 +1,6 @@
 [build]
 builder = "RAILPACK"
-buildCommand = "python manage.py collectstatic --noinput"
+buildCommand = "npm install --omit=dev && python manage.py collectstatic --noinput"
 
 [deploy]
 preDeployCommand = ["python manage.py migrate"]
