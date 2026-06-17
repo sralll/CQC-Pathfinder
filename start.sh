@@ -1,4 +1,9 @@
 #!/bin/bash
+set -e
+
+if [ ! -d "node_modules/ocad2geojson" ]; then
+  npm ci --omit=dev
+fi
 
 gunicorn CQCPathfinder.asgi:application \
   -k uvicorn.workers.UvicornWorker \
