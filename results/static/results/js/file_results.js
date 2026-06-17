@@ -23,6 +23,9 @@ const MAP_R_CONTROL = 25;
 const MAP_GAP       = 8;
 const MAP_MAX_ZOOM  = 8;
 const ROUTE_COLORS  = ['#DD0011', '#CC6000', '#008888', '#0055FF', '#5500BB', '#8800CC'];
+const ROUTE_STROKE_MULTIPLIER       = 2.5;
+const ROUTE_STROKE_SCALE_EXPONENT   = 0.33;
+const ROUTE_STROKE_MIN_CAMERA_SCALE = 0.05;
 
 let mapCam = { x: 0, y: 0, scale: 1, rot: 0 };
 let mapApplyTransform = () => {};
@@ -30,9 +33,29 @@ let _mapCamAnim   = null;
 let _mapRouteAnim = null;
 
 const USER_COLORS = [
-    '#e03030', '#e07020', '#22aa44', '#2266ee',
-    '#9922cc', '#00aaaa', '#cc6600', '#6644cc',
+    '#0B2E59', '#1F5AA6', '#7A1E1E',
+    '#2B2D80', '#4E342E', '#111827',
 ];
+
+function routeStrokeWidthForZoom(baseWidth, scale = mapCam.scale) {
+    const safeScale = Math.max(scale || 1, ROUTE_STROKE_MIN_CAMERA_SCALE);
+    const visualWidth = baseWidth
+        * ROUTE_STROKE_MULTIPLIER
+        * Math.pow(safeScale, ROUTE_STROKE_SCALE_EXPONENT);
+    return visualWidth / safeScale;
+}
+
+function setAdaptiveRouteStroke(el, baseWidth) {
+    el.dataset.routeBaseStroke = String(baseWidth);
+    el.setAttribute('stroke-width', routeStrokeWidthForZoom(baseWidth));
+}
+
+function updateRouteStrokeWidths() {
+    document.querySelectorAll('#fr-route-layer [data-route-base-stroke]').forEach(el => {
+        const baseWidth = parseFloat(el.dataset.routeBaseStroke);
+        if (isFinite(baseWidth)) el.setAttribute('stroke-width', routeStrokeWidthForZoom(baseWidth));
+    });
+}
 
 /* =========================================================
    INIT
@@ -441,6 +464,7 @@ function initMapCamera() {
         if (!isFinite(mapCam.x) || !isFinite(mapCam.y) || !isFinite(mapCam.scale)) return;
         camera.style.transform =
             `translate(${mapCam.x}px,${mapCam.y}px) rotate(${mapCam.rot}deg) scale(${mapCam.scale})`;
+        updateRouteStrokeWidths();
     };
 
     const MAP_MIN_ZOOM = 0.05;
@@ -734,13 +758,21 @@ function animateCpRoutes(cp, colors) {
         const duration = 1 + excess * amp;
         const color    = colors[i];
 
-        const bg = mkRoute(route, 'white', 3, 0.2);
-        if (bg) layer.appendChild(bg);
+        const bgTrail = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+        bgTrail.setAttribute('fill', 'none');
+        bgTrail.setAttribute('stroke', 'white');
+        setAdaptiveRouteStroke(bgTrail, 3);
+        bgTrail.setAttribute('stroke-linecap',  'round');
+        bgTrail.setAttribute('stroke-linejoin', 'round');
+        bgTrail.setAttribute('vector-effect', 'non-scaling-stroke');
+        bgTrail.setAttribute('points', `${rP[0].x},${rP[0].y}`);
+        bgTrail.setAttribute('pointer-events', 'none');
+        layer.appendChild(bgTrail);
 
         const trail = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
         trail.setAttribute('fill', 'none');
         trail.setAttribute('stroke', color);
-        trail.setAttribute('stroke-width', '2.5');
+        setAdaptiveRouteStroke(trail, 1.5);
         trail.setAttribute('stroke-linecap',  'round');
         trail.setAttribute('stroke-linejoin', 'round');
         trail.setAttribute('vector-effect', 'non-scaling-stroke');
@@ -753,7 +785,7 @@ function animateCpRoutes(cp, colors) {
         dot.setAttribute('vector-effect', 'non-scaling-stroke');
         layer.appendChild(dot);
 
-        return { rP, dists, totalDist, duration, color, trail, dot, done: false };
+        return { rP, dists, totalDist, duration, color, bgTrail, trail, dot, done: false };
     }).filter(Boolean);
 
     const t0 = performance.now();
@@ -763,7 +795,7 @@ function animateCpRoutes(cp, colors) {
 
         anims.forEach(anim => {
             if (anim.done) return;
-            const { rP, dists, totalDist, duration, trail, dot } = anim;
+            const { rP, dists, totalDist, duration, bgTrail, trail, dot } = anim;
             const dist = Math.min((elapsed / duration) * totalDist, totalDist);
 
             let seg = dists.length - 2;
@@ -779,7 +811,9 @@ function animateCpRoutes(cp, colors) {
             dot.setAttribute('cx', cx); dot.setAttribute('cy', cy);
             const pts = rP.slice(0, seg+1).map(p => `${p.x},${p.y}`);
             if (segT > 0) pts.push(`${cx},${cy}`);
-            trail.setAttribute('points', pts.join(' '));
+            const trailPoints = pts.join(' ');
+            bgTrail.setAttribute('points', trailPoints);
+            trail.setAttribute('points', trailPoints);
 
             if (dist >= totalDist) { anim.done = true; dot.remove(); emitWave(rP[rP.length - 1], anim.color); }
             else allDone = false;
@@ -796,7 +830,7 @@ function mkRoute(route, stroke, strokeWidth, opacity) {
     el.setAttribute('points',          route.rP.map(p => `${p.x},${p.y}`).join(' '));
     el.setAttribute('fill',            'none');
     el.setAttribute('stroke',          stroke);
-    el.setAttribute('stroke-width',    strokeWidth);
+    setAdaptiveRouteStroke(el, strokeWidth);
     el.setAttribute('stroke-linecap',  'round');
     el.setAttribute('stroke-linejoin', 'round');
     el.setAttribute('vector-effect',   'non-scaling-stroke');

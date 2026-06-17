@@ -47,6 +47,29 @@ const MIN_ZOOM   = 0.2;
 const MAX_ZOOM   = 8;
 const RUN_SPEED  = 4.75;   // m/s — flat-terrain reference speed
 const routeColor = ['#DD0011', '#CC6000', '#008888', '#0055FF', '#5500BB', '#8800CC'];
+const ROUTE_STROKE_MULTIPLIER       = 2.5;
+const ROUTE_STROKE_SCALE_EXPONENT   = 0.33;
+const ROUTE_STROKE_MIN_CAMERA_SCALE = 0.05;
+
+function routeStrokeWidthForZoom(baseWidth, scale = cam.scale) {
+    const safeScale = Math.max(scale || 1, ROUTE_STROKE_MIN_CAMERA_SCALE);
+    const visualWidth = baseWidth
+        * ROUTE_STROKE_MULTIPLIER
+        * Math.pow(safeScale, ROUTE_STROKE_SCALE_EXPONENT);
+    return visualWidth / safeScale;
+}
+
+function setAdaptiveRouteStroke(el, baseWidth) {
+    el.dataset.routeBaseStroke = String(baseWidth);
+    el.setAttribute('stroke-width', routeStrokeWidthForZoom(baseWidth));
+}
+
+function updateRouteStrokeWidths() {
+    document.querySelectorAll('#route-layer [data-route-base-stroke]').forEach(el => {
+        const baseWidth = parseFloat(el.dataset.routeBaseStroke);
+        if (isFinite(baseWidth)) el.setAttribute('stroke-width', routeStrokeWidthForZoom(baseWidth));
+    });
+}
 
 // Complex-CP reveal mechanic: routes are hidden until the athlete taps "Routen
 // anzeigen" or the map. choice_time runs at 1× before reveal and at 10× after
@@ -359,6 +382,7 @@ function initCamera() {
         if (!isFinite(cam.x) || !isFinite(cam.y) || !isFinite(cam.scale) || !isFinite(cam.rot)) return;
         camera.style.transform =
             `translate(${cam.x}px, ${cam.y}px) rotate(${cam.rot}deg) scale(${cam.scale})`;
+        updateRouteStrokeWidths();
     };
 
     // ── Mouse ────────────────────────────────────────────
@@ -485,13 +509,14 @@ function drawBlockedTerrain() {
    ROUTES — DRAW
 ========================================================= */
 
-function createRoutePolyline(route, { stroke = 'black', strokeWidth = 1.5, opacity = 1, interactive = false } = {}) {
+function createRoutePolyline(route, { stroke = 'black', strokeWidth = 1.5, opacity = 1, interactive = false, adaptiveStroke = false } = {}) {
     if (!route?.rP || route.rP.length < 2) return null;
     const el = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
     el.setAttribute('points',           route.rP.map(p => `${p.x},${p.y}`).join(' '));
     el.setAttribute('fill',             'none');
     el.setAttribute('stroke',           stroke);
-    el.setAttribute('stroke-width',     strokeWidth);
+    if (adaptiveStroke) setAdaptiveRouteStroke(el, strokeWidth);
+    else el.setAttribute('stroke-width', strokeWidth);
     el.setAttribute('stroke-linecap',   'round');
     el.setAttribute('stroke-linejoin',  'round');
     el.setAttribute('vector-effect',    'non-scaling-stroke');
@@ -527,7 +552,7 @@ function drawRoutes(cp) {
 
         // White background pass
         drawOrder.forEach(({ route }) => {
-            const el = createRoutePolyline(route, { stroke: 'white', strokeWidth: 3 });
+            const el = createRoutePolyline(route, { stroke: 'white', strokeWidth: 3, adaptiveStroke: true });
             if (el) layer.appendChild(el);
         });
 
@@ -536,7 +561,7 @@ function drawRoutes(cp) {
             const color  = currentRouteColors[i] || '#000';
             const dimmed = selectedRouteIdx !== null && selectedRouteIdx !== i;
             const el = createRoutePolyline(route, {
-                stroke: color, strokeWidth: 1.5, opacity: dimmed ? 0.2 : 1,
+                stroke: color, strokeWidth: 1.5, opacity: dimmed ? 0.2 : 1, adaptiveStroke: true,
             });
             if (el) layer.appendChild(el);
         });
@@ -588,10 +613,10 @@ function handleRouteHit(cp, i, e) {
         selectRoute(cp, i);
         return;
     }
-    // Tutorial, complex control: never commit a direct pick before the reveal —
-    // always reveal first, so the athlete always sees tip 2 and the countdown
-    // bar running out.
-    if (TUTORIAL && cp.complex) {
+    // Tutorial, FIRST control only: never commit a direct pick before the
+    // reveal — always reveal first, so the athlete always sees tip 2 and the
+    // countdown bar running out. Later controls allow direct picks (tip 6).
+    if (TUTORIAL && cp.complex && currentCpIndex === 0) {
         revealRoutes(cp);
         return;
     }
@@ -1229,15 +1254,22 @@ function animateRoutes(cp, selectedIdx) {
 
         const color = currentRouteColors[i];
 
-        // Dimmed white background (static)
-        const bg = createRoutePolyline(route, { stroke: 'white', strokeWidth: 3, opacity: 0.2 });
-        if (bg) layer.appendChild(bg);
+        const bgTrail = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+        bgTrail.setAttribute('fill', 'none');
+        bgTrail.setAttribute('stroke', 'white');
+        setAdaptiveRouteStroke(bgTrail, 3);
+        bgTrail.setAttribute('stroke-linecap',  'round');
+        bgTrail.setAttribute('stroke-linejoin', 'round');
+        bgTrail.setAttribute('vector-effect', 'non-scaling-stroke');
+        bgTrail.setAttribute('points', `${rP[0].x},${rP[0].y}`);
+        bgTrail.setAttribute('pointer-events', 'none');
+        layer.appendChild(bgTrail);
 
         // Trail (grows with the dot)
         const trail = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
         trail.setAttribute('fill', 'none');
         trail.setAttribute('stroke', color);
-        trail.setAttribute('stroke-width', '2.5');
+        setAdaptiveRouteStroke(trail, 1.5);
         trail.setAttribute('stroke-linecap',  'round');
         trail.setAttribute('stroke-linejoin', 'round');
         trail.setAttribute('vector-effect', 'non-scaling-stroke');
@@ -1253,7 +1285,7 @@ function animateRoutes(cp, selectedIdx) {
         dot.setAttribute('vector-effect', 'non-scaling-stroke');
         layer.appendChild(dot);
 
-        return { rP, dists, totalDist, duration, color, trail, dot, i, done: false };
+        return { rP, dists, totalDist, duration, color, bgTrail, trail, dot, i, done: false };
     }).filter(Boolean);
 
     const t0 = performance.now();
@@ -1265,7 +1297,7 @@ function animateRoutes(cp, selectedIdx) {
 
         anims.forEach(anim => {
             if (anim.done) return;
-            const { rP, dists, totalDist, duration, trail, dot, i } = anim;
+            const { rP, dists, totalDist, duration, bgTrail, trail, dot, i } = anim;
 
             // Linear progress within this route's normalised duration
             const dist = Math.min((elapsed / duration) * totalDist, totalDist);
@@ -1286,7 +1318,9 @@ function animateRoutes(cp, selectedIdx) {
 
             const pts = rP.slice(0, seg + 1).map(p => `${p.x},${p.y}`);
             if (segT > 0) pts.push(`${cx},${cy}`);
-            trail.setAttribute('points', pts.join(' '));
+            const trailPoints = pts.join(' ');
+            bgTrail.setAttribute('points', trailPoints);
+            trail.setAttribute('points', trailPoints);
 
             if (dist >= totalDist) {
                 anim.done = true;
@@ -1363,17 +1397,20 @@ function submitResult(cp, route) {
     }
     // Cap the choice time so one slow control — amplified 5× by the reveal
     // penalty — can't ruin an athlete's stats (the server enforces the same cap).
-    if (choiceTime > MAX_CHOICE_TIME) {
+    // Skipped in the tutorial: it demonstrates the penalty, so the real
+    // (uncapped) value must show — capping could drive the displayed penalty to 0.
+    if (!TUTORIAL && choiceTime > MAX_CHOICE_TIME) {
         choiceTime = MAX_CHOICE_TIME;
         totalReal  = Math.min(totalReal, MAX_CHOICE_TIME);
         penalty    = Math.max(0, choiceTime - totalReal);
     }
     lastChoiceTimes = { total: choiceTime, real: totalReal, penalty };
 
-    // Replay mode: file is already fully played; do not write anything to the DB.
-    // The server also enforces this (Choice.objects.get_or_create), but skipping
-    // the request avoids unnecessary traffic.
-    if (replayMode) return;
+    // Replay mode (file already fully played) AND the tutorial never write to
+    // the DB. The tutorial loads a real file's data statically, so without this
+    // guard it would record Choices against that file's real CPs and pollute
+    // the athlete's stats. The server also enforces replay via get_or_create.
+    if (replayMode || TUTORIAL) return;
 
     const csrf = document.cookie.match(/csrftoken=([^;]+)/)?.[1] ?? '';
 

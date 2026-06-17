@@ -42,17 +42,17 @@
         1: {
             main: isDesktop
                 ? 'Finde die schnellste Route auf der leeren Karte. Klicke entweder direkt an die Stelle, wo deine Route durchgeht, um sie direkt auszuwählen.'
-                + ' Falls deine Auswhl nicht eindeutig eine Route wählt (keine Route, wo du geklickt hast, oder mehrere Routen an derselben Stelle), werden die Routen aufgedeckt.'
+                + ' Falls deine Auswahl nicht eindeutig auf eine Route schliessen kann (keine Route, wo du geklickt hast, oder mehrere Routen an derselben Stelle), werden die Routen aufgedeckt.'
                 + ' Oder du kannst auch direkt auf den Knopf unten klicken, um die Routen anzuzeigen. '
                 : 'Finde die schnellste Route auf der leeren Karte. Tippe entweder direkt an die Stelle, wo deine Route durchgeht, um sie direkt auszuwählen.'
-                + ' Falls deine Auswhl nicht eindeutig eine Route wählt (keine Route, wo du getippt hast, oder mehrere Routen an derselben Stelle), werden die Routen aufgedeckt.'
+                + ' Falls deine Auswahl nicht eindeutig auf eine Route schliessen kann (keine Route, wo du getippt hast, oder mehrere Routen an derselben Stelle), werden die Routen aufgedeckt.'
                 + ' Oder du kannst auch direkt auf den Knopf unten tippen, um die Routen anzuzeigen.',
             warn: 'Sobald die Routen angezeigt sind, hast du nur wenig Zeit zum entscheiden!',
         },
         2: {
             highlight: 'play-countdown',
             main: isDesktop
-                ? `Klicke auf die aufgedeckt eRoute direkt auf der Karte oder auf die Knöpfe, `
+                ? `Klicke auf die aufgedeckte Route direkt auf der Karte oder auf die Knöpfe, `
                 + `um deine Entscheidung zu bestätigen.`
                 : `Tippe auf die aufgedeckte Route direkt auf der Karte oder auf die Knöpfe, `
                 + `um deine Entscheidung zu bestätigen.`,
@@ -74,9 +74,9 @@
             legend: [
                 { icon: 'clock',        text: `Entscheidungszeit` },
                 { icon: 'hourglass',    text: `inklusive 5-fach Strafe wegen zu später Routenwahl` },
-                { mark: '1:50',         text: `Gesamtzeit der Route` },
-                { mark: '540m: +1:54',  text: `Distanz-basierte Zeit` },
-                { icon: 'elevation',    text: `zusätzliche Zeit wegen zusätzlicher Höhe (deine Trainer tragen meistens nur den Höhenunterschied zwischen Routen ein.)` },
+                { mark: '40s',          text: `Gesamtzeit der Route` },
+                { mark: '186m: +39s',   text: `Distanz-basierte Zeit` },
+                { icon: 'elevation',    text: `zusätzliche Zeit wegen zusätzlicher Höhe (deine Trainer tragen meistens nur den Höhenunterschied zwischen Routen ein)` },
                 { icon: 'angle',        text: `zusätzliche Zeit wegen scharfen Ecken` },
             ],
         },
@@ -210,9 +210,12 @@
     // ── Play lifecycle wiring ─────────────────────────────────────
     document.addEventListener('play:cp-ready', e => {
         if (finished) return;
-        const { complex } = e.detail || {};
-        if (complex) showStep(1);   // first control (complex)
-        else         showStep(6);   // second control (L/R)
+        // Wire by control INDEX, not by `complex`: a real tutorial file may have
+        // several complex controls, and tip 1 must not re-fire on each one.
+        const { index } = e.detail || {};
+        if      (index === 0) showStep(1);   // first control → full walkthrough
+        else if (index === 1) showStep(6);   // second control → brief reminder
+        // index >= 2 → no modal; the athlete just plays the rest of the file.
     });
 
     document.addEventListener('play:routes-revealed', () => {

@@ -18,6 +18,7 @@ urlpatterns = [
     path('snapshots/<int:file_id>/',          views.get_snapshots,      name='get_snapshots'),
     path('snapshots/<int:snapshot_id>/load/', views.load_snapshot,      name='load_snapshot'),
     path('upload-map/',                       views.upload_map,          name='upload_map'),
+    path('import-courses/',                   views.import_courses,      name='import_courses'),
     path('files/<int:file_id>/label/',        views.assign_label,        name='assign_label'),
     path('labels/create/',                    views.create_label,        name='create_label'),
     path('labels/<int:label_id>/delete/',     views.delete_label,        name='delete_label'),

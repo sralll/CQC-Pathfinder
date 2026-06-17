@@ -34,12 +34,18 @@ def convert_ocad_map_to_editor_assets(source_path, map_filename):
     )
 
 
+def extract_ocad_courses(source_path):
+    """Extract course/control-pair JSON without rendering map assets."""
+    return _run_ocad_converter(source_path, course_only=True, skip_mask=True)
+
+
 def _run_ocad_converter(
     source_path,
     map_filename=None,
     mask_filename=None,
     skip_mask=False,
     mask_only=False,
+    course_only=False,
 ):
     script_path = os.path.join(settings.BASE_DIR, "project", "ocad_tools", "convert_ocad.js")
     png_path = os.path.join(settings.MEDIA_ROOT, "maps", map_filename) if map_filename else None
@@ -73,6 +79,8 @@ def _run_ocad_converter(
         cmd.extend(["--skip-mask", "true"])
     if mask_only:
         cmd.extend(["--mask-only", "true"])
+    if course_only:
+        cmd.extend(["--course-only", "true"])
 
     try:
         completed = subprocess.run(

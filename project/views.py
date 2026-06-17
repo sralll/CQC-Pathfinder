@@ -1273,6 +1273,72 @@ def upload_map(request):
 
 
 @role_required('Trainer')
+@require_POST
+def import_courses(request):
+    uploaded = request.FILES.get('file')
+    if not uploaded:
+        return JsonResponse({'error': 'No file'}, status=400)
+
+    ext = os.path.splitext(uploaded.name)[1].lower()
+    if ext != '.ocd':
+        return JsonResponse({'error': 'Nur OCD erlaubt'}, status=400)
+    if uploaded.size > 50 * 1024 * 1024:
+        return JsonResponse({'error': 'Datei zu gross (max. 50 MB)'}, status=400)
+
+    def _positive_float(raw):
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            return None
+        return value if value > 0 else None
+
+    target_width = _positive_float(request.POST.get('target_width'))
+    target_height = _positive_float(request.POST.get('target_height'))
+
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=ext or '.ocd')
+    source_path = tmp.name
+    try:
+        with tmp as f:
+            for chunk in uploaded.chunks():
+                f.write(chunk)
+
+        from .course_import import scale_ocad_import_to_target
+        from .ocad import OcadConversionError, extract_ocad_courses
+        try:
+            conversion = extract_ocad_courses(source_path)
+        except OcadConversionError as exc:
+            return JsonResponse({'error': f'OCAD-Bahn-Import fehlgeschlagen: {exc}'}, status=400)
+        control_pairs = scale_ocad_import_to_target(conversion, target_width, target_height)
+        meta = {
+            'format': 'ocad',
+            'courses': conversion.get('courses', 0),
+            'controls': conversion.get('controls', 0),
+            'routes': sum(len(cp.get('routes', [])) for cp in control_pairs),
+            'width': conversion.get('width'),
+            'height': conversion.get('height'),
+            'scale': conversion.get('scale'),
+            'map_scale': conversion.get('ocad_map_scale'),
+        }
+
+        control_pairs = _normalize_order_payload(control_pairs)
+        return JsonResponse({
+            'status': 'ok',
+            'control_pairs': control_pairs,
+            'n_control_pairs': len(control_pairs),
+            'n_routes': sum(len(cp.get('routes', [])) for cp in control_pairs),
+            'meta': meta,
+        })
+    except Exception as e:
+        traceback.print_exc()
+        return JsonResponse({'error': str(e)}, status=500)
+    finally:
+        try:
+            os.unlink(source_path)
+        except OSError:
+            pass
+
+
+@role_required('Trainer')
 @require_GET
 def get_editor_settings(request):
     s = request.user.profile.editor_settings

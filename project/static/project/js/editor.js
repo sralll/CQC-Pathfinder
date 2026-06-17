@@ -24,7 +24,7 @@ let currentProjectName = "Neues Projekt";
     EDITOR SETTINGS
 ========================================================= */
 
-let editorSettings = { auto_pathfind: 0, auto_jump: true };  // auto_pathfind: 0–4 routes (0 = off)
+let editorSettings = { auto_pathfind: 0, auto_jump: true };  // auto_pathfind: 0â€“4 routes (0 = off)
 
 /* =========================================================
     READ-ONLY STATE
@@ -42,7 +42,7 @@ function setReadOnly(isReadOnly, lockedByName, reason) {
     updateNavLabel();
 
     // Fade and disable write-only menu items in Projekte dropdown
-    const disabledIds = ["nav-save-project"];
+    const disabledIds = ["nav-save-project", "nav-import-courses"];
     disabledIds.forEach(id => {
         const el = document.getElementById(id);
         if (!el) return;
@@ -63,7 +63,7 @@ function setReadOnly(isReadOnly, lockedByName, reason) {
         const msg = reason === 'published'
             ? 'Diese Datei ist veröffentlicht'
             : `${lockedByName || 'jemand anderes'} bearbeitet diese Datei`;
-        bar.innerHTML = `<span>🔒 Schreibgeschützt — ${msg}</span>`;
+        bar.innerHTML = `<span>ðŸ”’ SchreibgeschÃ¼tzt â€” ${msg}</span>`;
         document.body.appendChild(bar);
     }
 }
@@ -87,7 +87,7 @@ function initFilenameInput() {
         if (e.key === "Enter") { e.preventDefault(); input.blur(); }
     });
 
-    // Save on blur — validate uniqueness first. For a fresh (unsaved) file we
+    // Save on blur â€” validate uniqueness first. For a fresh (unsaved) file we
     // just keep the typed name in JS state; it gets persisted whenever the
     // first save fires (map upload, etc.).
     input.addEventListener("blur", () => {
@@ -98,7 +98,7 @@ function initFilenameInput() {
             return;
         }
         if (!newName) {
-            // Empty — revert
+            // Empty â€” revert
             input.value = project.name;
             return;
         }
@@ -126,7 +126,7 @@ function initFilenameInput() {
 function updateFilenameInput() {
     const input = document.getElementById("navbar-filename-input");
     if (!input) return;
-    // Always reflect the in-memory project name — even for new files that
+    // Always reflect the in-memory project name â€” even for new files that
     // haven't been saved to the DB yet. The JS state already carries a
     // default name ('Neues Projekt') that is meaningful to the user.
     input.value    = project.name || "";
@@ -138,14 +138,14 @@ window.updateFilenameInput = updateFilenameInput;
 function updateNavPublishBtn() {
     const btn = document.getElementById("nav-publish-btn");
     if (!btn) return;
-    // Always enabled — for a fresh file we'll save first inside the click handler
+    // Always enabled â€” for a fresh file we'll save first inside the click handler
     btn.disabled = false;
     btn.classList.toggle("publish-btn-active", !!(project.id && project.published));
 }
 window.updateNavPublishBtn = updateNavPublishBtn;
 
 async function toggleNavPublish() {
-    // For a fresh file the project hasn't been persisted yet — save first so
+    // For a fresh file the project hasn't been persisted yet â€” save first so
     // we have an id to publish against.
     if (!project.id) {
         await saveFile("publish-init");
@@ -156,7 +156,7 @@ async function toggleNavPublish() {
         method: 'POST', headers: { 'X-CSRFToken': csrf },
     });
     const data = await res.json();
-    if (!res.ok) { await window.showModal({ message: data.message || 'Fehler beim Veröffentlichen.' }); return; }
+    if (!res.ok) { await window.showModal({ message: data.message || 'Fehler beim VerÃ¶ffentlichen.' }); return; }
     project.published = data.published;
     updateNavPublishBtn();
     if (data.published) {
@@ -180,7 +180,7 @@ function updateNavLabel() {
     if (label) {
         chip.innerHTML = `<span class="table-label-chip" style="background:${label.color}22;color:${label.color};border-color:${label.color}55;">${label.name}</span>`;
     } else {
-        chip.innerHTML = `<span class="nav-label-empty">Label…</span>`;
+        chip.innerHTML = `<span class="nav-label-empty">Labelâ€¦</span>`;
     }
 }
 window.updateNavLabel = updateNavLabel;
@@ -273,7 +273,7 @@ async function loadEditorSettings() {
     } catch (e) { console.warn('Failed to load editor settings', e); }
 }
 
-// Reflect an auto-pathfind value (0–4) onto the multi-stop switch: knob stop
+// Reflect an auto-pathfind value (0â€“4) onto the multi-stop switch: knob stop
 // (--i), on/off track color (data-value) and the numeric label.
 function _renderAutoPathfindUI(v) {
     const n = Math.max(0, Math.min(4, parseInt(v, 10) || 0));
@@ -294,7 +294,7 @@ function _applySettingsUI() {
     if (ajEl) ajEl.checked = editorSettings.auto_jump;
 }
 
-// Persist a setting. For auto_pathfind, `value` (0–4) is sent; for boolean
+// Persist a setting. For auto_pathfind, `value` (0â€“4) is sent; for boolean
 // settings (auto_jump) the server toggles and `value` is ignored.
 async function saveEditorSetting(setting, value) {
     const csrf = document.cookie.match(/csrftoken=([^;]+)/)?.[1] ?? "";
@@ -389,7 +389,7 @@ function undo() {
         updateUndoMenu();
         return;
     }
-    redoStack.push(captureState("Rückgängig"));
+    redoStack.push(captureState("RÃ¼ckgÃ¤ngig"));
     restoreState(undoStack.pop());
     saveFile("undo");
     updateUndoMenu();
@@ -423,7 +423,7 @@ function updateUndoMenu() {
     el.innerHTML = [...undoStack].reverse().map((state, i) => `
         <div class="undo-entry" data-undo-index="${i}"
              style="padding:5px 14px;color:${i === 0 ? '#ddd' : '#888'};font-size:12px;cursor:pointer;white-space:nowrap;">
-            ${state.label || '—'}
+            ${state.label || 'â€”'}
         </div>`).join('');
 }
 
@@ -442,7 +442,7 @@ function jumpToUndoState(reversedIndex) {
 
 // Delegate clicks on undo entries + scroll to top when menu opens
 document.addEventListener("DOMContentLoaded", () => {
-    // ── Undo dropdown ─────────────────────────────────────
+    // â”€â”€ Undo dropdown â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     const dropdown = document.getElementById("undo-dropdown");
     if (dropdown) {
         const menuItem = document.getElementById("menu-history");
@@ -466,15 +466,16 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     }
 
-    // ── Filename rename input ─────────────────────────────
+    // â”€â”€ Filename rename input â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     initFilenameInput();
 
-    // ── Navbar label slot ─────────────────────────────────
+    // â”€â”€ Navbar label slot â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     document.getElementById('nav-label-slot')?.addEventListener('click', function() {
         openNavLabelPicker(this);
     });
+    initCourseImport();
 
-    // ── Settings toggles ──────────────────────────────────
+    // â”€â”€ Settings toggles â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     loadEditorSettings();
     const apSlider = document.getElementById('slider-auto-pathfind');
     // Live-update the label while dragging; only persist on release.
@@ -488,7 +489,7 @@ document.addEventListener("DOMContentLoaded", () => {
         toggleEditorSetting('auto_jump');
     });
 
-    // ── P key → open file modal ───────────────────────────
+    // â”€â”€ P key â†’ open file modal â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     window.addEventListener("keydown", e => {
         if (e.ctrlKey || e.metaKey || e.altKey) return;
         if (e.target.matches('input, textarea, select')) return;
@@ -498,7 +499,7 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     }, true);
 
-    // ── Enter → confirm OCD import when options are visible ─
+    // â”€â”€ Enter â†’ confirm OCD import when options are visible â”€
     window.addEventListener("keydown", e => {
         if (e.key !== "Enter") return;
         if (!document.getElementById("modal-map")?.classList.contains("open")) return;
@@ -510,7 +511,7 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     });
 
-    // ── Mobile: pin layout to the VISIBLE viewport ────────────
+    // â”€â”€ Mobile: pin layout to the VISIBLE viewport â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     // On mobile the browser's URL bar collapses/expands, changing the visible
     // height. CSS dvh/svh handle most browsers, but where supported we sync the
     // real visualViewport height into a CSS custom property so the side panel +
@@ -591,29 +592,28 @@ function _projectBody() {
     --------------------------------------------------------
     If autosave / connectivity fails, the user can rescue the
     UNSAVED, in-memory project structure by appending "#download"
-    to the current editor URL (e.g. /editor/open/5/#download).
-    This is handled fully client-side — no reload, no network —
+    to the current editor URL (e.g. /editor/#download).
+    This is handled fully client-side â€” no reload, no network â€”
     so the exact in-memory state is preserved rather than lost
     to a navigation. There is intentionally no on-screen button.
 ========================================================= */
 
 function downloadProjectJson() {
-    // Serialize the same in-memory structure autosave sends to the server.
-    if (!project || (!project.id && !(project.control_pairs || []).length)) {
-        console.warn("downloadProjectJson: no project loaded — nothing to export.");
+    // Export the exact in-memory `project` object as-is â€” whatever state it is
+    // currently in â€” rather than the curated autosave payload.
+    if (!project) {
+        console.warn("downloadProjectJson: no project in memory â€” nothing to export.");
         return;
     }
 
-    const body = _projectBody();
+    const body = project;
 
     // Build a meaningful, filesystem-safe filename: project-<id-or-name>-<timestamp>.json
     const pad   = n => String(n).padStart(2, "0");
     const now   = new Date();
     const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}`
                 + `-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
-    const ident = (project.id != null && project.id !== "")
-        ? `id${project.id}`
-        : (project.name || "unnamed").trim().replace(/[^\w\-]+/g, "_").slice(0, 60) || "unnamed";
+    const ident = (project.name || "unnamed").trim().replace(/[^\w\-]+/g, "_").slice(0, 60) || "unnamed";
     const filename = `project-${ident}-${stamp}.json`;
 
     const url = URL.createObjectURL(
@@ -636,7 +636,7 @@ function _handleDownloadHash() {
     // Clear the hash first (no navigation) so the export can be re-triggered.
     try {
         history.replaceState(null, "", location.pathname + location.search);
-    } catch (_) { /* replaceState unavailable — proceed with export anyway */ }
+    } catch (_) { /* replaceState unavailable â€” proceed with export anyway */ }
     downloadProjectJson();
 }
 
@@ -693,7 +693,7 @@ function saveFile(trigger = "save") {
             });
             const data = await res.json();
             if (res.status === 409) {
-                // Another user modified the file — warn and pause further saves
+                // Another user modified the file â€” warn and pause further saves
                 if (!document.getElementById("conflict-warning")) {
                     const bar = document.createElement("div");
                     bar.id = "conflict-warning";
@@ -709,7 +709,7 @@ function saveFile(trigger = "save") {
                             Neu laden
                         </button>
                         <button onclick="this.closest('#conflict-warning').remove();"
-                            style="background:transparent;color:#ccc;border:none;cursor:pointer;font-size:14px;">✕</button>`;
+                            style="background:transparent;color:#ccc;border:none;cursor:pointer;font-size:14px;">âœ•</button>`;
                     document.body.appendChild(bar);
                 }
                 return; // stop this save; future saves will retry with new last_edited after reload
@@ -762,7 +762,7 @@ function _showSaveFailedWarning() {
         background:#5a4000;color:#ffd;padding:8px 16px;border-radius:0 0 6px 6px;
         font-size:12px;z-index:9999;display:flex;align-items:center;gap:10px;
     `;
-    bar.innerHTML = `<span>⚠ Verbindung unterbrochen — Änderungen werden nicht gespeichert</span>`;
+    bar.innerHTML = `<span>âš  Verbindung unterbrochen â€” Ã„nderungen werden nicht gespeichert</span>`;
     document.body.appendChild(bar);
 }
 
@@ -825,7 +825,7 @@ function _saveElement(payloadOrFn, fileId = project.id) {
 }
 
 // Held off the cp object so structuredClone(project) (undo snapshots) doesn't
-// choke on the Promise — DOMException: Promise could not be cloned.
+// choke on the Promise â€” DOMException: Promise could not be cloned.
 const _cpInFlightSave = new WeakMap();
 
 function saveControlPair(cp, fileId = project.id) {
@@ -927,7 +927,7 @@ async function duplicateFile() {
     while (existing.has(dupName)) { dupName = `Kopie von ${originalName} ${counter++}`; }
 
     // Mutate project in-place: clear all IDs so saveFile creates new records.
-    // Locked/published files must also be duplicatable — clear those states here.
+    // Locked/published files must also be duplicatable â€” clear those states here.
     project.id   = null;
     project.name = dupName;
     project.control_pairs.forEach(cp => {
@@ -935,13 +935,13 @@ async function duplicateFile() {
         (cp.routes || []).forEach(r => { r.id = null; });
     });
 
-    // Clear read-only (lock/publish) — the duplicate is a fresh file owned by us
+    // Clear read-only (lock/publish) â€” the duplicate is a fresh file owned by us
     setReadOnly(false);
 
-    // Show "Duplizieren…" placeholder while the DB write is in progress
+    // Show "Duplizierenâ€¦" placeholder while the DB write is in progress
     const filenameInput = document.getElementById("navbar-filename-input");
     if (filenameInput) {
-        filenameInput.value       = "duplizieren…";
+        filenameInput.value       = "duplizierenâ€¦";
         filenameInput.style.fontStyle = "italic";
         filenameInput.disabled    = true;
     }
@@ -1241,7 +1241,7 @@ const RouteEditTool = (() => {
         previewPt    = null;
     }
 
-    // PERF: persistent preview nodes — original-route polyline + line to cursor.
+    // PERF: persistent preview nodes â€” original-route polyline + line to cursor.
     const _ev = {};
     function evEnsure() {
         if (!_ev.orig) {
@@ -1419,8 +1419,8 @@ const NewRouteTool = (() => {
         return pt;
     }
 
-    // PERF: persistent preview nodes — partial polyline (white bg + red fg) and
-    // the line to the cursor — updated in place instead of clear+recreate.
+    // PERF: persistent preview nodes â€” partial polyline (white bg + red fg) and
+    // the line to the cursor â€” updated in place instead of clear+recreate.
     const _rv = {};
     function rvEnsure() {
         if (!_rv.bg) {
@@ -1657,8 +1657,8 @@ const RouteTool = (() => {
 
 /* =========================================================
     MASK LAYER
-    Isolated module — no other tool touches this.
-    Loads mask PNG, renders black→red, supports draw/erase.
+    Isolated module â€” no other tool touches this.
+    Loads mask PNG, renders blackâ†’red, supports draw/erase.
 ========================================================= */
 
 const MaskLayer = (() => {
@@ -1692,7 +1692,7 @@ const MaskLayer = (() => {
         }
     }
 
-    // Re-render display canvas from maskData (black→red, rest→transparent)
+    // Re-render display canvas from maskData (blackâ†’red, restâ†’transparent)
     function renderDisplay() {
         if (!ctx || !maskData) return;
         const disp = ctx.createImageData(maskData.width, maskData.height);
@@ -1712,7 +1712,7 @@ const MaskLayer = (() => {
         if (!ctx || mapFile === lastMapFile) return;
         lastMapFile   = mapFile;
         _strokePixels = null;
-        // Clear stale diffs — they were computed for a different canvas
+        // Clear stale diffs â€” they were computed for a different canvas
         if (typeof clearMaskUndoStacks === "function") clearMaskUndoStacks();
         loaded = false;
         const stem = mapFile.replace(/\.[^.]+$/, "");
@@ -1929,7 +1929,7 @@ const MaskLayer = (() => {
         draw(clientX, clientY)  { strokeLine(clientX, clientY, MASK_IMPASSABLE); },
         erase(clientX, clientY) { strokeLine(clientX, clientY, MASK_FAST); },
 
-        // ── Diff-based undo support ────────────────────────────
+        // â”€â”€ Diff-based undo support â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         startStroke() {
             if (!maskData) return;
             // PERF-FIX #4: begin with an empty change-record; pixels are captured
@@ -2175,7 +2175,7 @@ const MaskTool = (() => {
     TOOL: BLOCK
 ========================================================= */
 
-// Editor accent color — also drives blocked terrain, place-CP preview, and route
+// Editor accent color â€” also drives blocked terrain, place-CP preview, and route
 // polyline fallback. Kept in sync with --cp-color in map_objects.css.
 const CP_COLOR     = "#a033f0";
 const BLOCK_COLOR  = CP_COLOR;
@@ -2226,7 +2226,7 @@ function updateBlockList() {
         row.style.cssText = "cursor:pointer;";
         row.innerHTML = `
             <span class="cp-row-label" style="color:#a050e8;font-style:italic;">${label}</span>
-            <button class="cp-delete-btn" title="Löschen">${icon("trash", "11px")}</button>
+            <button class="cp-delete-btn" title="LÃ¶schen">${icon("trash", "11px")}</button>
         `;
         row.addEventListener("click", e => {
             if (e.target.closest(".cp-delete-btn")) return;
@@ -2246,7 +2246,7 @@ function updateBlockList() {
     });
 
     bt.areas.forEach((area, idx) => {
-        makeRow("Fläche", area.points, () => bt.areas.splice(idx, 1));
+        makeRow("FlÃ¤che", area.points, () => bt.areas.splice(idx, 1));
     });
 }
 
@@ -2305,8 +2305,8 @@ const _blockEraserCursor = (() => {
 })();
 
 const BlockTool = (() => {
-    let lineStart  = null;   // {x,y} world — line mode first point
-    let polyPoints = [];     // [{x,y}] world — polygon points so far
+    let lineStart  = null;   // {x,y} world â€” line mode first point
+    let polyPoints = [];     // [{x,y}] world â€” polygon points so far
     let previewPt  = null;   // current cursor in world coords
 
     function sub() { return getSubtool(ToolMode.BLOCK); }
@@ -2347,7 +2347,7 @@ const BlockTool = (() => {
         return best ?? pt;
     }
 
-    // PERF: persistent preview nodes — line-mode line, polygon fill, polygon
+    // PERF: persistent preview nodes â€” line-mode line, polygon fill, polygon
     // single-segment line, and the start-point "close here" circle.
     const _bv = {};
     function bvEnsure() {
@@ -2392,7 +2392,7 @@ const BlockTool = (() => {
                 showNode(_bv.polyLine);
                 hideNode(_bv.poly);
             }
-            // Circle around start point — indicates where to click to close
+            // Circle around start point â€” indicates where to click to close
             _bv.startC.setAttribute("cx", polyPoints[0].x);
             _bv.startC.setAttribute("cy", polyPoints[0].y);
             showNode(_bv.startC);
@@ -2412,7 +2412,7 @@ const BlockTool = (() => {
             if (!lineStart) {
                 lineStart = { x: pt.x, y: pt.y };
             } else {
-                pushUndoState("Sperrlinie hinzugefügt");
+                pushUndoState("Sperrlinie hinzugefÃ¼gt");
                 project.blocked_terrain.lines.push({ start: lineStart, end: { x: pt.x, y: pt.y } });
                 lineStart = null;
                 clearEditLayer();
@@ -2423,7 +2423,7 @@ const BlockTool = (() => {
 
         if (S === "polygon") {
             if (polyPoints.length >= 3 && pt === polyPoints[0]) {
-                pushUndoState("Sperrgebiet hinzugefügt");
+                pushUndoState("Sperrgebiet hinzugefÃ¼gt");
                 project.blocked_terrain.areas.push({ points: [...polyPoints] });
                 polyPoints = [];
                 clearEditLayer();
@@ -2439,7 +2439,7 @@ const BlockTool = (() => {
             if (hit) {
                 const idx  = Number(hit.dataset.blockIdx);
                 const type = hit.dataset.blockType;
-                pushUndoState("Sperrelement gelöscht");
+                pushUndoState("Sperrelement gelÃ¶scht");
                 if (type === "line")  project.blocked_terrain.lines.splice(idx, 1);
                 if (type === "area")  project.blocked_terrain.areas.splice(idx, 1);
                 drawBlockedTerrain();
@@ -2516,7 +2516,7 @@ const BlockTool = (() => {
 })();
 
 /* =========================================================
-    TOOL: VIEW (no active tool — pan/zoom only)
+    TOOL: VIEW (no active tool â€” pan/zoom only)
 ========================================================= */
 
 const ViewTool = (() => {
@@ -2590,7 +2590,7 @@ const PlaceControlTool = (() => {
     }
 
     // PERF: persistent preview nodes (cursor circle, placed-start circle,
-    // connection line) — updated in place instead of clear+recreate per frame.
+    // connection line) â€” updated in place instead of clear+recreate per frame.
     const _pv = {};
     function pvEnsure() {
         if (!_pv.cursor) {
@@ -2700,9 +2700,9 @@ const PlaceControlTool = (() => {
                 const confirmedCp    = cp;
                 reset();
 
-                // auto-fire client θ* only. The worker generates the
-                // simplified A* polyline (route 1) and the θ* polyline
-                // (route 2) so the user can visually diff what θ* added on
+                // auto-fire client Î¸* only. The worker generates the
+                // simplified A* polyline (route 1) and the Î¸* polyline
+                // (route 2) so the user can visually diff what Î¸* added on
                 // top of A*.
                 requestAutoPathfindForControlPair(confirmedCp);
 
@@ -2837,8 +2837,8 @@ function activateTool(toolObj) {
 
 /* =========================================================
     RADIAL CONTEXT MENU
-    Right-click (quick) → no_tool
-    Right-click hold/drag → floating circular tool+subtool picker
+    Right-click (quick) â†’ no_tool
+    Right-click hold/drag â†’ floating circular tool+subtool picker
 ========================================================= */
 
 const RCM = (() => {
@@ -2856,8 +2856,8 @@ const RCM = (() => {
         [ToolMode.BLOCK]:        "block",
     };
     const N = 4, SECTOR = 90;
-    // Segments start at -135° so each midpoint is exactly N/E/S/W
-    // N mid=-90°, E mid=0°, S mid=90°, W mid=180°
+    // Segments start at -135Â° so each midpoint is exactly N/E/S/W
+    // N mid=-90Â°, E mid=0Â°, S mid=90Â°, W mid=180Â°
 
     let menuEl = null, overlayEl = null;
     let downAt = 0, downPos = null;
@@ -2868,7 +2868,7 @@ const RCM = (() => {
     const DBLCLICK_MS = 400;
 
     const rad    = d => d * Math.PI / 180;
-    // Segments start at -135° → midpoints at -90(N), 0(E), 90(S), 180(W)
+    // Segments start at -135Â° â†’ midpoints at -90(N), 0(E), 90(S), 180(W)
     const segA1  = i => -135 + i * SECTOR;
     const segMid = i => segA1(i) + SECTOR / 2;
 
@@ -2922,7 +2922,7 @@ const RCM = (() => {
          .forEach(e => e.style.fill = color);
     }
 
-    // No stroke — segments bound directly edge-to-edge
+    // No stroke â€” segments bound directly edge-to-edge
     function makeSegment(r1, r2, a1, a2, mid, iconName, transform, key, val, fill) {
         const g = svgEl("g"); g.dataset[key] = val;
         const path = svgEl("path", { d: slicePath(r1, r2, a1, a2), fill, stroke:"none" });
@@ -2940,7 +2940,7 @@ const RCM = (() => {
             + `width:${size}px;height:${size}px;pointer-events:none;z-index:99999;`;
         svg.setAttribute("viewBox", `${-size/2} ${-size/2} ${size} ${size}`);
 
-        // Inner ring — 4 segments, N/E/S/W
+        // Inner ring â€” 4 segments, N/E/S/W
         const innerG = svgEl("g"); innerG.id = "rcm-inner";
         MENU_TOOLS.forEach((mode, i) => {
             const fill = mode === currentToolMode ? COL_ORANGE : COL_DARK;
@@ -2953,7 +2953,7 @@ const RCM = (() => {
         const outerG = svgEl("g"); outerG.id = "rcm-outer";
         svg.appendChild(outerG);
 
-        // Centre circle — clicking here → no_tool
+        // Centre circle â€” clicking here â†’ no_tool
         const cFill = currentToolMode === ToolMode.NONE ? COL_ORANGE : COL_DARK;
         const cg = svgEl("g"); cg.id = "rcm-center";
         cg.appendChild(svgEl("circle", { cx:0, cy:0, r:IR1, fill:cFill, stroke:"none" }));
@@ -2999,7 +2999,7 @@ const RCM = (() => {
         const dist = Math.hypot(dx, dy);
         const norm = ((Math.atan2(dy,dx)*180/Math.PI)+135+360)%360; // offset so 0 = start of N segment
 
-        // Centre circle → no_tool
+        // Centre circle â†’ no_tool
         if (dist < IR1) return { ring:"center", mode: ToolMode.NONE, sub: null };
 
         const toolIdx = Math.floor(norm/SECTOR) % N;
@@ -3044,7 +3044,7 @@ const RCM = (() => {
         const newTool = hit?.mode ?? null;
         const newSub  = (hit && hit.ring !== "inner" && hit.ring !== "center") ? hit.sub : null;
 
-        // Always keep the centre circle in sync (unconditional — it's cheap)
+        // Always keep the centre circle in sync (unconditional â€” it's cheap)
         const centerEl = menuEl.querySelector("#rcm-center circle");
         const centerFO = menuEl.querySelector("#rcm-center foreignObject");
         if (centerEl) {
@@ -3293,12 +3293,13 @@ function onMouseDown(e) {
     // Prevent the browser from selecting text in the navbar or elsewhere when
     // the user drags out of the map container during a pan or placement gesture.
     e.preventDefault();
-    // Scaling mode owns the mouse entirely — no tool sees these events
+    // Scaling mode owns the mouse entirely â€” no tool sees these events
     if (_scalingActive) {
         _scaleDownPos    = { x: e.clientX, y: e.clientY };
         _scalePanStarted = false;
         return;
     }
+    if (CourseAlignMode.isActive() && CourseAlignMode.onMouseDown(e, screenToWorld(e.clientX, e.clientY))) return;
     activeTool.onMouseDown(e, screenToWorld(e.clientX, e.clientY));
 }
 
@@ -3319,6 +3320,7 @@ function onMouseMove(e) {
     }
 
     if (pan.update(e)) return;
+    if (CourseAlignMode.isActive() && CourseAlignMode.onMouseMove(e, screenToWorld(e.clientX, e.clientY))) return;
     activeTool.onMouseMove(e, screenToWorld(e.clientX, e.clientY));
 }
 
@@ -3329,7 +3331,7 @@ function onMouseUp(e) {
     if (_scalingActive) {
         if (_scalePanStarted) {
             pan.stop();
-            // pan.stop sets cursor to activeTool.defaultCursor — restore default
+            // pan.stop sets cursor to activeTool.defaultCursor â€” restore default
             mapContainer.style.cursor = "default";
         } else if (_scaleDownPos && mapContainer.contains(e.target)) {
             _scaleHandleUp(e);
@@ -3340,6 +3342,7 @@ function onMouseUp(e) {
     }
 
     if (pan.stop()) return;
+    if (CourseAlignMode.isActive() && CourseAlignMode.onMouseUp(e, screenToWorld(e.clientX, e.clientY))) return;
     activeTool.onMouseUp(e, screenToWorld(e.clientX, e.clientY));
 }
 
@@ -3351,7 +3354,7 @@ initInput();
 updateCameraTransform();
 
 /* =========================================================
-    CONTROL PAIR — DRAW & INTERACT
+    CONTROL PAIR â€” DRAW & INTERACT
 ========================================================= */
 
 function drawControlPairGroup(controlPair) {
@@ -3468,7 +3471,7 @@ function drawConnectionArrow(start, ziel, angle, parent) {
 // circle/line/arrow nodes (attribute updates) instead of remove()+recreate, which
 // churns the DOM every frame and wakes password-manager MutationObservers into a
 // full-document re-walk. Falls back to a full rebuild only when the connection's
-// visibility must flip (endpoints crossing the minimum gap) — a rare 1-2 frames.
+// visibility must flip (endpoints crossing the minimum gap) â€” a rare 1-2 frames.
 function updateControlPairDragVisual(cp) {
     if (!cp?.start || !cp?.ziel) { updateControlPairGroup(cp); return; }
     const group = document.getElementById("control-layer")
@@ -3488,7 +3491,7 @@ function updateControlPairDragVisual(cp) {
     const arrows = group.querySelectorAll("line.arrow");
     const haveConn = !!line && !!hit && arrows.length === 2;
 
-    // Connection appearing/disappearing changes the node set — rebuild once.
+    // Connection appearing/disappearing changes the node set â€” rebuild once.
     if (showConn !== haveConn) { updateControlPairGroup(cp); return; }
 
     circles.forEach(c => {
@@ -3557,7 +3560,7 @@ function getControlPairCircle(target) {
 }
 
 /* =========================================================
-    ROUTE — DRAW & INTERACT
+    ROUTE â€” DRAW & INTERACT
 ========================================================= */
 
 const GENERATED_ROUTE_ANIM_COLOR = "#E53935";
@@ -3846,7 +3849,7 @@ function updateRoutes() {
         if (fg) (activeLayer || routeLayer).appendChild(fg);
     }
 
-    // transparent hit strips — only needed in route modes
+    // transparent hit strips â€” only needed in route modes
     // active route appended last so its hit area is on top
     if (activeTool === RouteTool || activeTool === RouteEditTool) {
         const hitLayer = document.getElementById("ui-layer");
@@ -3976,7 +3979,7 @@ function makeRafScheduler(fn) {
 // PERF (password-manager mitigation): the live-preview tools used to wipe their
 // layer (innerHTML="") and recreate SVG nodes every frame. Those childList
 // mutations wake page-wide MutationObservers from autofill extensions (Bitwarden
-// et al.), which then re-walk the WHOLE document looking for form fields — that
+// et al.), which then re-walk the WHOLE document looking for form fields â€” that
 // DOM walk, not our drawing, was the real per-move CPU cost. These helpers let a
 // tool keep long-lived preview nodes and only UPDATE attributes / toggle the SVG
 // `display` attribute, so no nodes are added/removed during hover/draw/drag.
@@ -4072,7 +4075,7 @@ async function startMaskGeneration(mapFile, scale, fileId = null) {
     const prog = document.getElementById("mask-gen-progress");
     maskGenInProgress = true;
     if (currentToolMode === ToolMode.MASK || editorSettings.auto_pathfind) bar.style.display = "flex";
-    text.textContent  = "Maske wird generiert…";
+    text.textContent  = "Maske wird generiertâ€¦";
     if (prog) prog.value = 0;
 
     if (!fileId) {
@@ -4138,7 +4141,7 @@ async function startMaskGeneration(mapFile, scale, fileId = null) {
                             }
                             if (d.current !== undefined) {
                                 const pct = Math.round((d.current / d.total) * 100);
-                                text.textContent = `Generiere Maske… ${pct}%`;
+                                text.textContent = `Generiere Maskeâ€¦ ${pct}%`;
                                 if (prog) prog.value = pct;
                             } else if (d.done) {
                                 // Mask PNG is written. Load preview & mark
@@ -4210,7 +4213,7 @@ function showRasterizingBar() {
     const prog   = document.getElementById("mask-gen-progress");
     const cancel = document.getElementById("mask-gen-cancel");
     if (!bar) return;
-    if (text) text.textContent = "Karte wird rasterisiert…";
+    if (text) text.textContent = "Karte wird rasterisiertâ€¦";
     if (prog) prog.style.display = "none";
     if (cancel) cancel.style.display = "none";
     bar.style.display = "flex";
@@ -4227,6 +4230,651 @@ function hideRasterizingBar() {
 
 function loadMap(filename) {
     document.getElementById('map-img').src = `/editor/map/${filename}`;
+}
+
+function initCourseImport() {
+    const menuItem = document.getElementById("nav-import-courses");
+    const input = document.getElementById("course-import-input");
+    if (!menuItem || !input) return;
+    menuItem.addEventListener("click", e => {
+        e.stopImmediatePropagation();
+        e.stopPropagation();
+        if (readOnly) return;
+        input.value = "";
+        input.click();
+    });
+    input.addEventListener("click", e => e.stopPropagation());
+    input.addEventListener("change", () => {
+        const file = input.files?.[0];
+        if (file) importCourseFile(file);
+    });
+}
+
+function getCourseImportTargetSize() {
+    const scale = project.scale || 1;
+    const svgPreview = document.getElementById("map-svg-preview");
+    if (svgPreview) {
+        const w = Number(svgPreview.getAttribute("width")) || svgPreview.getBoundingClientRect().width / scale;
+        const h = Number(svgPreview.getAttribute("height")) || svgPreview.getBoundingClientRect().height / scale;
+        if (w > 0 && h > 0) return { width: w * scale, height: h * scale };
+    }
+    const img = document.getElementById("map-img");
+    if (img?.naturalWidth && img?.naturalHeight) {
+        return { width: img.naturalWidth * scale, height: img.naturalHeight * scale };
+    }
+    return null;
+}
+
+function importedCoursePoint(point) {
+    if (!point || !Number.isFinite(Number(point.x)) || !Number.isFinite(Number(point.y))) return null;
+    return { x: Number(point.x), y: Number(point.y) };
+}
+
+function importedCourseRoute(route, cp, order) {
+    const rP = (route?.rP || []).map(importedCoursePoint).filter(Boolean);
+    const next = {
+        id: null,
+        order,
+        rP,
+        noA: route?.noA ?? null,
+        pos: route?.pos ?? null,
+        length: route?.length ?? null,
+        run_time: route?.run_time ?? null,
+        elevation: route?.elevation ?? 0,
+    };
+    calcRouteLength(next);
+    calcRouteNoA(next);
+    calcRouteRunTime(next);
+    calcRouteSide(cp, next);
+    return next;
+}
+
+function applyImportedCourses(controlPairs, mode = "append") {
+    const incoming = Array.isArray(controlPairs) ? controlPairs : [];
+    if (!incoming.length) {
+        alert("Keine OCAD-Bahn in dieser Datei gefunden.");
+        return false;
+    }
+
+    cancelAllPathfinding();
+    pushUndoState("OCAD-Bahn importiert");
+    if (mode === "replace") {
+        project.control_pairs = [];
+        selection.ncp = 0;
+        selection.nr = null;
+    }
+
+    const offset = project.control_pairs.length;
+    const imported = incoming.map((cp, i) => {
+        const next = {
+            id: null,
+            order: offset + i,
+            start: importedCoursePoint(cp.start),
+            ziel: importedCoursePoint(cp.ziel),
+            complex: true,
+            routes: [],
+            _ocadBahnImported: true,
+        };
+        next.routes = (cp.routes || [])
+            .map((route, routeIndex) => importedCourseRoute(route, next, routeIndex))
+            .filter(route => route.rP.length >= 2);
+        next.complex = true;
+        return next;
+    }).filter(cp => cp.start && cp.ziel);
+
+    if (!imported.length) {
+        alert("Keine passenden OCAD-Posten in dieser Datei gefunden.");
+        return false;
+    }
+
+    project.control_pairs.push(...imported);
+    normalizeProjectOrders();
+    selection.ncp = imported[0].order;
+    selection.nr = imported[0].routes.length ? 0 : null;
+    activeSubtool[ToolMode.CONTROL_PAIR] = "drag";
+    setTool(ToolMode.CONTROL_PAIR);
+    drawCourse();
+    updateCPList();
+    startCourseAlignment(imported);
+    return true;
+}
+
+function startCourseAlignment(controlPairs) {
+    CourseAlignMode.start(controlPairs);
+}
+
+function chooseOcadBahnImportMode() {
+    if (!project.control_pairs.length) return Promise.resolve("replace");
+    const opts = {
+        message: "Bestehende Posten ersetzen oder OCAD-Bahn zusätzlich importieren?",
+        confirmText: "Ersetzen",
+        cancelText: "ZusÃ¤tzlich",
+    };
+    if (typeof window.showModal === "function") {
+        return window.showModal(opts).then(replace => replace ? "replace" : "append");
+    }
+    return new Promise(resolve => {
+        const overlay = document.createElement("div");
+        overlay.className = "dialog-overlay";
+        overlay.innerHTML = `
+            <div class="dialog-box">
+                <p class="dialog-message">${opts.message}</p>
+                <div class="dialog-buttons">
+                    <button type="button" class="dialog-btn dialog-btn-cancel">ZusÃ¤tzlich</button>
+                    <button type="button" class="dialog-btn dialog-btn-confirm">Ersetzen</button>
+                </div>
+            </div>
+        `;
+        const close = mode => {
+            overlay.remove();
+            resolve(mode);
+        };
+        overlay.querySelector(".dialog-btn-confirm")?.addEventListener("click", () => close("replace"));
+        overlay.querySelector(".dialog-btn-cancel")?.addEventListener("click", () => close("append"));
+        overlay.addEventListener("click", e => {
+            if (e.target === overlay) close("append");
+        });
+        document.body.appendChild(overlay);
+        overlay.querySelector(".dialog-btn-confirm")?.focus();
+    });
+}
+
+const CourseAlignMode = (() => {
+    let state = null;
+    let drag = null;
+
+    function panel() {
+        return document.getElementById("course-align-panel");
+    }
+
+    function pointRefs(cps) {
+        const refs = [];
+        const seen = new WeakSet();
+        const add = point => {
+            if (!point || seen.has(point)) return;
+            seen.add(point);
+            refs.push(point);
+        };
+        cps.forEach(cp => {
+            add(cp.start);
+            add(cp.ziel);
+            (cp.routes || []).forEach(route => (route.rP || []).forEach(add));
+        });
+        return refs;
+    }
+
+    function snapshot(refs = state?.refs || []) {
+        return refs.map(ref => ({ ref, x: ref.x, y: ref.y }));
+    }
+
+    function restoreGeometry(points) {
+        for (const item of points || []) {
+            item.ref.x = item.x;
+            item.ref.y = item.y;
+        }
+    }
+
+    function restore(points) {
+        restoreGeometry(points);
+        recalc();
+        redraw();
+    }
+
+    function recalc() {
+        for (const cp of state?.cps || []) {
+            for (const route of cp.routes || []) {
+                calcRouteLength(route);
+                calcRouteNoA(route);
+                calcRouteRunTime(route);
+                calcRouteSide(cp, route);
+            }
+        }
+    }
+
+    function redraw() {
+        drawCourse();
+        refreshHighlights();
+    }
+
+    function applyTranslation(base, dx, dy) {
+        for (const item of base) {
+            item.ref.x = item.x + dx;
+            item.ref.y = item.y + dy;
+        }
+    }
+
+    function syncAnchorAliases() {
+        state.anchor1 = state.anchors[0] || null;
+        state.anchor2 = state.anchors[1] || null;
+        state.anchor3 = state.anchors[2] || null;
+    }
+
+    function queueAnchor(target) {
+        const existing = state.anchors.findIndex(anchor => anchor.point === target.point);
+        if (existing >= 0) state.anchors.splice(existing, 1);
+        state.anchors.push(target);
+        while (state.anchors.length > 3) state.anchors.shift();
+        syncAnchorAliases();
+    }
+
+    function applyAnchorDests(anchorDests) {
+        restoreGeometry(state.initial);
+        if (anchorDests.length === 1) {
+            const sourceA = sourcePoint(anchorDests[0].anchor.point);
+            if (sourceA) {
+                applyTranslation(state.initial, anchorDests[0].dest.x - sourceA.x, anchorDests[0].dest.y - sourceA.y);
+            }
+        } else if (anchorDests.length === 2) {
+            const sourceA = sourcePoint(anchorDests[0].anchor.point);
+            const sourceB = sourcePoint(anchorDests[1].anchor.point);
+            if (sourceA && sourceB) {
+                applySimilarityFromAnchors(state.initial, sourceA, sourceB, anchorDests[0].dest, anchorDests[1].dest);
+            }
+        } else if (anchorDests.length >= 3) {
+            const sourceA = sourcePoint(anchorDests[0].anchor.point);
+            const sourceB = sourcePoint(anchorDests[1].anchor.point);
+            const sourceC = sourcePoint(anchorDests[2].anchor.point);
+            if (sourceA && sourceB && sourceC) {
+                applyAffineFromAnchors(state.initial, sourceA, sourceB, sourceC, anchorDests[0].dest, anchorDests[1].dest, anchorDests[2].dest);
+            }
+        }
+        recalc();
+        redraw();
+    }
+
+    function removeLastAnchor() {
+        if (!state?.anchors?.length) return;
+        const kept = state.anchors.slice(0, -1);
+        const anchorDests = kept.map(anchor => ({
+            anchor,
+            dest: { x: anchor.point.x, y: anchor.point.y },
+        }));
+        state.anchors = kept;
+        syncAnchorAliases();
+        applyAnchorDests(anchorDests);
+        state.stageBaseline = snapshot();
+        renderPanel();
+        refreshHighlights();
+    }
+
+    function sourcePoint(ref) {
+        return state?.initial?.find(item => item.ref === ref) || null;
+    }
+
+    function applySimilarityFromAnchors(base, sourceA, sourceB, destA, destB) {
+        const sourceVector = { x: sourceB.x - sourceA.x, y: sourceB.y - sourceA.y };
+        const destVector = { x: destB.x - destA.x, y: destB.y - destA.y };
+        const sourceLen = Math.hypot(sourceVector.x, sourceVector.y);
+        const destLen = Math.hypot(destVector.x, destVector.y);
+        if (sourceLen < 1 || destLen < 1) return false;
+        const scale = destLen / sourceLen;
+        const angle = Math.atan2(destVector.y, destVector.x) - Math.atan2(sourceVector.y, sourceVector.x);
+        const c = Math.cos(angle);
+        const s = Math.sin(angle);
+        for (const item of base) {
+            const x = item.x - sourceA.x;
+            const y = item.y - sourceA.y;
+            item.ref.x = destA.x + scale * (x * c - y * s);
+            item.ref.y = destA.y + scale * (x * s + y * c);
+        }
+        return true;
+    }
+
+    function applyAffineFromAnchors(base, sourceA, sourceB, sourceC, destA, destB, destC) {
+        const ux = sourceB.x - sourceA.x;
+        const uy = sourceB.y - sourceA.y;
+        const vx = sourceC.x - sourceA.x;
+        const vy = sourceC.y - sourceA.y;
+        const det = ux * vy - uy * vx;
+        if (Math.abs(det) < 1) return false;
+        const U = { x: destB.x - destA.x, y: destB.y - destA.y };
+        const V = { x: destC.x - destA.x, y: destC.y - destA.y };
+        for (const item of base) {
+            const dx = item.x - sourceA.x;
+            const dy = item.y - sourceA.y;
+            const a = (dx * vy - dy * vx) / det;
+            const b = (ux * dy - uy * dx) / det;
+            item.ref.x = destA.x + a * U.x + b * V.x;
+            item.ref.y = destA.y + a * U.y + b * V.y;
+        }
+        return true;
+    }
+
+    function cpForTarget(target) {
+        const hit = getControlPairCircle(target);
+        if (!hit || !state?.cpOrders.has(hit.ncp)) return null;
+        const cp = project.control_pairs.find(item => item.order === hit.ncp);
+        const point = cp?.[hit.pointType];
+        if (!cp || !point) return null;
+        return { cp, point, pointType: hit.pointType };
+    }
+
+    function setSelectionForTarget(target) {
+        selection.ncp = target.cp.order;
+        selection.nr = target.cp.routes?.length ? 0 : null;
+        updateControlPairs(target.cp.order);
+        updateRoutes();
+    }
+
+    function stepLabel() {
+        if (!state) return "";
+        return "Bahn ausrichten";
+    }
+
+    function stageText() {
+        if (!state) return "";
+        if (!state.anchor1) return "1. Punkt waehlen und ziehen";
+        if (!state.anchor2) return "2. Punkt waehlen und ziehen";
+        if (!state.anchor3) return "3. Punkt waehlen und ziehen";
+        return "Naechster Punkt ersetzt Anker 1";
+    }
+
+    function setRouteImport(enabled) {
+        if (!state) return;
+        state.includeRoutes = !!enabled;
+        for (const entry of state.routeBackups || []) {
+            entry.cp.routes = state.includeRoutes ? entry.routes : [];
+            entry.cp.complex = true;
+        }
+        if (!state.includeRoutes && state.cpOrders.has(selection.ncp)) {
+            selection.nr = null;
+        } else if (state.includeRoutes && state.cpOrders.has(selection.ncp)) {
+            const selected = project.control_pairs.find(cp => cp.order === selection.ncp);
+            if (selected?.routes?.length && selection.nr == null) selection.nr = 0;
+        }
+        recalc();
+        drawCourse();
+        updateCPList();
+        updateRoutes();
+    }
+
+    function renderPanel() {
+        const el = panel();
+        if (!el) return;
+        if (!state) {
+            el.style.display = "none";
+            el.innerHTML = "";
+            return;
+        }
+        el.style.display = "flex";
+        el.innerHTML = `
+            <div class="course-align-head">
+                <span>${stepLabel()}</span>
+            </div>
+            <div class="course-align-status">${stageText()}</div>
+            <label class="course-align-option">
+                <input type="checkbox" id="course-align-routes" ${state.includeRoutes ? "checked" : ""}>
+                <span>Routen importieren</span>
+            </label>
+            <div class="course-align-actions">
+                <button type="button" id="course-align-reset">Reset</button>
+                <button type="button" id="course-align-remove-anchor" ${state.anchors.length ? "" : "disabled"}>Anker zurück</button>
+                <button type="button" id="course-align-confirm">Uebernehmen</button>
+            </div>
+        `;
+        el.querySelector("#course-align-routes")?.addEventListener("change", e => setRouteImport(e.target.checked));
+        el.querySelector("#course-align-confirm")?.addEventListener("click", confirmStep);
+        el.querySelector("#course-align-reset")?.addEventListener("click", reset);
+        el.querySelector("#course-align-remove-anchor")?.addEventListener("click", removeLastAnchor);
+    }
+
+    function refreshHighlights() {
+        if (!state) return;
+        const layer = document.getElementById("control-layer");
+        for (const order of state.cpOrders) {
+            const group = layer?.querySelector(`.control-pair-group[data-ncp="${order}"]`);
+            group?.classList.add("course-align-member");
+            group?.querySelectorAll(".course-align-anchor")
+                .forEach(el => el.classList.remove("course-align-anchor"));
+        }
+        for (const order of state.cpOrders) {
+            layer?.querySelector(`.control-pair-group[data-ncp="${order}"]`)
+                ?.classList.add("course-align-member");
+        }
+        for (const anchor of state.anchors || []) {
+            layer?.querySelector(`.control-circle[data-ncp="${anchor.cp.order}"][data-type="${anchor.pointType}"]`)
+                ?.classList.add("course-align-anchor");
+        }
+    }
+
+    function saveAndExit(trigger = "ocad_bahn_align") {
+        if (!state) return;
+        recalc();
+        setRouteImport(state.includeRoutes);
+        for (const cp of state.cps || []) delete cp._ocadBahnImported;
+        saveFile(trigger);
+        saveSnapshot("OCAD-Bahn ausgerichtet");
+        state = null;
+        drag = null;
+        document.body.classList.remove("course-align-active");
+        mapContainer.style.cursor = activeTool?.defaultCursor ?? "default";
+        renderPanel();
+        drawCourse();
+    }
+
+    function confirmStep() {
+        if (!state) return;
+        finish();
+    }
+
+    function finish() {
+        saveAndExit("ocad_bahn_align");
+    }
+
+    function focusImported() {
+        if (!state?.refs?.length) return;
+        const xs = state.refs.map(p => p.x).filter(Number.isFinite);
+        const ys = state.refs.map(p => p.y).filter(Number.isFinite);
+        if (!xs.length || !ys.length) return;
+        const minX = Math.min(...xs);
+        const maxX = Math.max(...xs);
+        const minY = Math.min(...ys);
+        const maxY = Math.max(...ys);
+        const rect = mapContainer.getBoundingClientRect();
+        const width = Math.max(1, maxX - minX);
+        const height = Math.max(1, maxY - minY);
+        const zoom = Math.min(
+            Math.max(Math.min(rect.width / width, rect.height / height) * 0.82, zoomMin),
+            zoomMax,
+        );
+        updateCameraTransform({
+            x: rect.width / 2 - ((minX + maxX) / 2) * zoom,
+            y: rect.height / 2 - ((minY + maxY) / 2) * zoom,
+            zoom,
+        });
+    }
+
+    function reset() {
+        if (!state) return;
+        restore(state.initial);
+        state.anchors = [];
+        syncAnchorAliases();
+        state.stageBaseline = snapshot();
+        renderPanel();
+        refreshHighlights();
+    }
+
+    function onMouseDown(e, pt) {
+        if (!state) return false;
+        const target = cpForTarget(e.target);
+        if (!target) {
+            pan.start(e.clientX, e.clientY);
+            return true;
+        }
+
+        setSelectionForTarget(target);
+        const base = snapshot();
+        queueAnchor(target);
+        if (state.anchors.length === 1) {
+            drag = {
+                kind: "translate",
+                base,
+                anchor: { x: target.point.x, y: target.point.y },
+            };
+        } else if (state.anchors.length === 2) {
+            const sourceA = sourcePoint(state.anchor1?.point);
+            const sourceB = sourcePoint(target.point);
+            if (!sourceA || !sourceB || target.point === state.anchor1.point) return true;
+            drag = {
+                kind: "similarity",
+                base: state.initial,
+                sourceA,
+                sourceB,
+            };
+        } else {
+            const sourceA = sourcePoint(state.anchor1?.point);
+            const sourceB = sourcePoint(state.anchor2?.point);
+            const sourceC = sourcePoint(target.point);
+            if (!sourceA || !sourceB || !sourceC || target.point === state.anchor1.point || target.point === state.anchor2.point) return true;
+            drag = {
+                kind: "affine",
+                base: state.initial,
+                sourceA,
+                sourceB,
+                sourceC,
+            };
+        }
+        mapContainer.style.cursor = "grabbing";
+        renderPanel();
+        refreshHighlights();
+        return true;
+    }
+
+    function onMouseMove(e, pt) {
+        if (!state) return false;
+        if (drag?.kind === "translate") {
+            applyTranslation(drag.base, pt.x - drag.anchor.x, pt.y - drag.anchor.y);
+            recalc();
+            redraw();
+            return true;
+        }
+        if (drag?.kind === "similarity") {
+            if (applySimilarityFromAnchors(drag.base, drag.sourceA, drag.sourceB, state.anchor1.point, pt)) {
+                recalc();
+                redraw();
+            }
+            return true;
+        }
+        if (drag?.kind === "affine") {
+            if (applyAffineFromAnchors(drag.base, drag.sourceA, drag.sourceB, drag.sourceC, state.anchor1.point, state.anchor2.point, pt)) {
+                recalc();
+                redraw();
+            }
+            return true;
+        }
+        const target = cpForTarget(e.target);
+        mapContainer.style.cursor = target ? "grab" : "default";
+        return true;
+    }
+
+    function onMouseUp() {
+        if (!state) return false;
+        if (drag) {
+            drag = null;
+            mapContainer.style.cursor = "grab";
+            state.stageBaseline = snapshot();
+            renderPanel();
+            refreshHighlights();
+            return true;
+        }
+        return true;
+    }
+
+    return {
+        start(cps) {
+            const valid = (cps || []).filter(cp => cp?.start && cp?.ziel);
+            if (!valid.length) {
+                saveFile("ocad_bahn_import");
+                saveSnapshot("OCAD-Bahn importiert");
+                return;
+            }
+            state = {
+                cps: valid,
+                cpOrders: new Set(valid.map(cp => cp.order)),
+                refs: pointRefs(valid),
+                initial: null,
+                stageBaseline: null,
+                anchors: [],
+                anchor1: null,
+                anchor2: null,
+                anchor3: null,
+                includeRoutes: true,
+                routeBackups: valid.map(cp => ({
+                    cp,
+                    routes: cp.routes || [],
+                    complex: true,
+                })),
+            };
+            state.initial = snapshot();
+            state.stageBaseline = snapshot();
+            document.body.classList.add("course-align-active");
+            activeSubtool[ToolMode.CONTROL_PAIR] = "drag";
+            setTool(ToolMode.CONTROL_PAIR);
+            selection.ncp = valid[0].order;
+            selection.nr = valid[0].routes?.length ? 0 : null;
+            renderPanel();
+            redraw();
+            focusImported();
+        },
+        isActive() { return !!state; },
+        onMouseDown,
+        onMouseMove,
+        onMouseUp,
+        refreshHighlights,
+        isImportedOrder(order) {
+            return !!state?.cpOrders?.has(order);
+        },
+    };
+})();
+
+async function importCourseFile(file) {
+    if (readOnly) return;
+    if (!/\.ocd$/i.test(file.name)) {
+        alert("Bitte eine OCD-Datei auswaehlen.");
+        return;
+    }
+    if (file.size > 50 * 1024 * 1024) {
+        alert("Datei zu gross (max. 50 MB)");
+        return;
+    }
+    const targetSize = getCourseImportTargetSize();
+    if (!targetSize) {
+        alert("Bitte zuerst eine Karte oeffnen oder hochladen.");
+        return;
+    }
+
+    const mode = await chooseOcadBahnImportMode();
+    const menuItem = document.getElementById("nav-import-courses");
+    if (menuItem) {
+        menuItem.style.opacity = "0.45";
+        menuItem.style.pointerEvents = "none";
+    }
+    try {
+        const csrf = document.cookie.match(/csrftoken=([^;]+)/)?.[1] ?? "";
+        const fd = new FormData();
+        fd.append("file", file);
+        fd.append("target_width", String(targetSize.width));
+        fd.append("target_height", String(targetSize.height));
+        const res = await fetch("/editor/import-courses/", {
+            method: "POST",
+            headers: { "X-CSRFToken": csrf },
+            body: fd,
+        });
+        const data = await res.json();
+        if (!res.ok) {
+            alert(data.error || "OCAD-Bahn-Import fehlgeschlagen.");
+            return;
+        }
+        applyImportedCourses(data.control_pairs, mode);
+    } catch (e) {
+        console.warn("importCourseFile:", e);
+        alert("OCAD-Bahn-Import fehlgeschlagen.");
+    } finally {
+        if (menuItem) {
+            menuItem.style.opacity = "";
+            menuItem.style.pointerEvents = "";
+        }
+    }
 }
 
 let ocadPreviewGeneration = 0;
@@ -4354,7 +5002,7 @@ async function uploadSelectedMap() {
             setReadOnly(false);
             checkinCurrentFile();
             updateFilenameInput();
-        // New map replaces any previous editor state — wipe all undo history
+        // New map replaces any previous editor state â€” wipe all undo history
             undoStack = []; redoStack = []; actionCount = 0;
             clearMaskUndoStacks();
             _pendingAutoPathfindCps.clear();
@@ -4404,7 +5052,7 @@ async function uploadSelectedMap() {
                 }
             }, { preserveLayers: true, silentLoad: true });
         }
-        // For PNG/JPEG the blob URL is already on screen — no second download needed.
+        // For PNG/JPEG the blob URL is already on screen â€” no second download needed.
 
     } catch (e) {
         console.error("uploadSelectedMap:", e);
@@ -4580,7 +5228,7 @@ function _updateScalePanel() {
     if (hasVisibleMap && !project.scaled) {
         panel.style.display    = "flex";
         toolWrap.style.display = "none";
-        // Auto-activate — no button click needed
+        // Auto-activate â€” no button click needed
         if (!_scalingActive && !_scaleP1) _startScaleDrawing();
     } else {
         panel.style.display    = "none";
@@ -4594,7 +5242,7 @@ function _startScaleDrawing() {
     _scaleP1       = null;
     _clearRuler();
     mapContainer.style.cursor = "default";
-    _setScaleStatus("Klicke ersten Punkt auf der Karte…");
+    _setScaleStatus("Klicke ersten Punkt auf der Karteâ€¦");
 }
 
 function _cancelScaleDrawing() {
@@ -4610,7 +5258,7 @@ function _setScaleStatus(msg) {
     if (el) el.textContent = msg;
 }
 
-// ── Ctrl+Z undo for scaling points ────────────────────────
+// â”€â”€ Ctrl+Z undo for scaling points â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function _undoScalePoint() {
     const modal = document.getElementById("modal-scale");
@@ -4621,18 +5269,18 @@ function _undoScalePoint() {
         mapContainer.style.cursor = "default";
         if (_scaleP1) {
             _drawRuler(_scaleP1, _scaleP1);
-            _setScaleStatus("Klicke zweiten Punkt…");
+            _setScaleStatus("Klicke zweiten Punktâ€¦");
         }
     } else if (_scaleP1) {
         // Undo first point
         _scaleP1 = null;
         _clearRuler();
         _scalingActive = true;
-        _setScaleStatus("Klicke ersten Punkt auf der Karte…");
+        _setScaleStatus("Klicke ersten Punkt auf der Karteâ€¦");
     }
 }
 
-// ── Ruler SVG ─────────────────────────────────────────────
+// â”€â”€ Ruler SVG â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function _clearRuler() {
     document.getElementById("scale-ruler")?.remove();
@@ -4657,14 +5305,14 @@ function _drawRuler(p1, p2) {
     // Minor ticks (every 6px cycle: 2px dash, 4px gap)
     g.appendChild(line(p1.x,p1.y,p2.x,p2.y,{
         stroke:"#111", "stroke-width":"8", "stroke-dasharray":"2 4" }));
-    // Major ticks (every 30px cycle — every 5th minor)
+    // Major ticks (every 30px cycle â€” every 5th minor)
     g.appendChild(line(p1.x,p1.y,p2.x,p2.y,{
         stroke:"#000", "stroke-width":"15", "stroke-dasharray":"3 27" }));
 
     uiL.appendChild(g);
 }
 
-// ── Scale modal ────────────────────────────────────────────
+// â”€â”€ Scale modal â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function _openScaleModal() {
     const modal = document.getElementById("modal-scale");
@@ -4718,7 +5366,7 @@ function _openScaleModal() {
         const scaleSave = saveFile("scale");
         saveSnapshot("autosave");
         _updateScalePanel();
-        // Scaling is a point of no return — clear all undo history
+        // Scaling is a point of no return â€” clear all undo history
         undoStack = []; redoStack = []; actionCount = 0;
         clearMaskUndoStacks();
         updateUndoMenu();
@@ -4737,7 +5385,7 @@ function _openScaleModal() {
     };
 }
 
-// ── Mouse interception for ruler drawing ───────────────────
+// â”€â”€ Mouse interception for ruler drawing â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 // Resolve scaling distance in metres from EITHER a typed distance OR two
 // coordinate points. A distance value wins when present; otherwise both
@@ -4791,7 +5439,7 @@ function _scaleHandleUp(e) {
         // First point
         _scaleP1 = pt;
         _drawRuler(pt, pt);
-        _setScaleStatus("Klicke zweiten Punkt…");
+        _setScaleStatus("Klicke zweiten Punktâ€¦");
     } else {
         // Second point
         _scalePixelDist = Math.hypot(pt.x - _scaleP1.x, pt.y - _scaleP1.y);
@@ -4950,7 +5598,7 @@ function initMenus() {
             if (menu.id === "menu-project") return;
             menu.addEventListener("click", (e) => {
                 // Clicks on the sub-dropdown content are handled by their own
-                // listeners — don't toggle the menu, but still keep the
+                // listeners â€” don't toggle the menu, but still keep the
                 // surrounding hamburger panel open.
                 if (e.target.closest(".nav-dropdown")) { e.stopPropagation(); return; }
                 // Toggling a main menu option must NOT collapse the hamburger
@@ -4968,7 +5616,7 @@ function initMenus() {
             }
         });
 
-        // ── Mobile project-menu hamburger ─────────────────────
+        // â”€â”€ Mobile project-menu hamburger â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         // "P..." still opens the file modal (wired in projecttable.js); the
         // hamburger reveals the remaining project options (Duplizieren /
         // Speichern). Toggle a dedicated class so it doesn't collide with the
@@ -5126,7 +5774,7 @@ function startNewRoute() {
 
 // (visibility-graph pathfinding removed)
 
-const _activePathfindByCp = new Map();   // legacy — kept so undefined references don't throw if other code paths still mention it
+const _activePathfindByCp = new Map();   // legacy â€” kept so undefined references don't throw if other code paths still mention it
 let _autoPathfindInFlight = 0;           // for UI badge
 let _pathfindUiUpdateFrame = null;
 
@@ -5354,7 +6002,7 @@ function assertPathingMessageCloneable(message) {
 }
 
 /* =========================================================
-    CLIENT-SIDE θ*  (Web Worker, pure JS port of pathing/theta.py)
+    CLIENT-SIDE Î¸*  (Web Worker, pure JS port of pathing/theta.py)
     Worker lives once per editor session, owns the active mask + connectivity
     labels. CP auto-fire posts {start, ziel, blockedTerrain}; the worker
     replies with {path, timings}. Timings prefixed [theta-client] in console
@@ -5367,7 +6015,7 @@ const _pathingPending = new Map(); // msgId -> {resolve}
 let _pathingMsgSeq = 0;
 const _pendingAutoPathfindCps = new Set();
 const _autoPathfindRunningCps = new Set();
-// Number of routes auto-pathfinding generates per control pair — driven by the
+// Number of routes auto-pathfinding generates per control pair â€” driven by the
 // nav-bar slider (0 = off, max 4). Replaces the former hard-coded limit of 4.
 function autoPathfindMaxRoutes() {
     return Math.max(0, Math.min(4, editorSettings.auto_pathfind | 0));
@@ -5573,7 +6221,7 @@ async function thetaCPClient(cp, source = "editor_auto", options = {}) {
     const wallMs = Math.round(performance.now() - wallStart);
 
     if (reply.error) {
-        console.warn(`[theta-client] ${wallMs}ms wall — ${reply.error}`);
+        console.warn(`[theta-client] ${wallMs}ms wall â€” ${reply.error}`);
         if (!reply.path) return { error: reply.error };
     }
     const path = reply.path;
@@ -5586,7 +6234,7 @@ async function thetaCPClient(cp, source = "editor_auto", options = {}) {
         console.log(`[theta-client] ${wallMs}ms wall (worker total ${ms.total}ms)`, ms);
     }
 
-    //   2) θ* with the standard simplify_theta_path post-processing.
+    //   2) Î¸* with the standard simplify_theta_path post-processing.
     // Append only the final theta* polyline; raw A* stays in the debug PNG.
     const existingRouteCount = cp.routes?.length || 0;
     if (isAuto && existingRouteCount > 0 && reply.distinct === false) {
@@ -5655,10 +6303,10 @@ async function thetaCPClient(cp, source = "editor_auto", options = {}) {
     return { path, timings: reply.timings, distinct: true, error: reply.error || null };
 }
 
-// Latest corridor-constrained debug grid per CP — object URLs are revoked
+// Latest corridor-constrained debug grid per CP â€” object URLs are revoked
 // when replaced or when the editor closes the map. updateCPList renders a
-// small "Korridor ⬇" link on the CP that owns the freshest blob.
-const _debugCorridors = new Map();   // cp.order → {url, filename, meta}
+// small "Korridor â¬‡" link on the CP that owns the freshest blob.
+const _debugCorridors = new Map();   // cp.order â†’ {url, filename, meta}
 
 function renderPathDebugBlobFromGrid(buffer, width, height, path = null, color = [255, 64, 64]) {
     if (!buffer || !(width > 0) || !(height > 0)) return Promise.resolve(null);
@@ -5768,6 +6416,7 @@ function drawCourse() {
     const selectedCp = project.control_pairs.find(c => c.order === selection.ncp);
     if (selectedCp) updateControlPairGroup(selectedCp);
     updateRoutes();
+    CourseAlignMode.refreshHighlights();
     updateCPList();
 }
 
@@ -5783,7 +6432,9 @@ function updateCPList() {
 
     project.control_pairs.forEach(cp => {
         const row = document.createElement("div");
-        row.className = "cp-row" + (cp.order === selection.ncp ? " selected" : "");
+        row.className = "cp-row"
+            + (cp.order === selection.ncp ? " selected" : "")
+            + (CourseAlignMode.isImportedOrder(cp.order) ? " ocad-bahn-new" : "");
         row.dataset.ncp = cp.order;
         textRouten = cp.routes.length === 1 ? "Route" : "Routen";
         const cpBusy = _isPathfindBusyForCp(cp);
@@ -5828,7 +6479,7 @@ function updateCPList() {
 
         row.querySelector(".cp-delete-btn")?.addEventListener("click", e => {
             e.stopPropagation();
-            pushUndoState("Posten gelöscht");
+            pushUndoState("Posten gelÃ¶scht");
             deleteControlPair(cp);
             project.control_pairs = project.control_pairs.filter(c => c !== cp);
             project.control_pairs.forEach((c, i) => { c.order = i; });
@@ -5852,7 +6503,7 @@ function updateCPList() {
                     }
                     return;
                 }
-                pushUndoState("Postentyp geändert");
+                pushUndoState("Postentyp geÃ¤ndert");
                 cp.complex = complex;
                 saveControlPair(cp);
                 updateCPList();
@@ -5881,7 +6532,7 @@ function updateCPList() {
 
                 let runtimeHtml;
                 if (route.run_time == null) {
-                    runtimeHtml = `<span class="route-stat">—</span>`;
+                    runtimeHtml = `<span class="route-stat">â€”</span>`;
                 } else if (route.run_time === minRuntime) {
                     runtimeHtml = `<span class="route-stat route-runtime-fastest">${route.run_time.toFixed(1)}s</span>`;
                 } else {
@@ -5908,7 +6559,7 @@ function updateCPList() {
 
                 rRow.querySelector(".cp-delete-btn")?.addEventListener("click", e => {
                     e.stopPropagation();
-                    pushUndoState("Route gelöscht");
+                    pushUndoState("Route gelÃ¶scht");
                     deleteRoute(cp, route);
                     cp.routes = cp.routes.filter(r => r !== route);
                     cp.routes.forEach((r, i) => { r.order = i; });
@@ -5936,7 +6587,7 @@ function updateCPList() {
                     const parsed = Number(val);
                     route.elevation = (val === "" || isNaN(parsed)) ? 0 : parsed;
                     calcRouteRunTime(route);
-                    pushUndoState("Höhe geändert");
+                    pushUndoState("HÃ¶he geÃ¤ndert");
                     saveRoute(cp, route);
                     updateCPList();
                 });
@@ -5990,7 +6641,7 @@ function updateCPList() {
     if (activeTool === PlaceControlTool && PlaceControlTool.isPlacingZiel()) {
         const placeholder = document.createElement("div");
         placeholder.className = "cp-row cp-row-pending";
-        placeholder.innerHTML = `<span class="cp-row-label">Neuer Posten…</span>`;
+        placeholder.innerHTML = `<span class="cp-row-label">Neuer Postenâ€¦</span>`;
         list.appendChild(placeholder);
         requestAnimationFrame(() => placeholder.scrollIntoView({ block: "nearest" }));
     }
@@ -6039,7 +6690,7 @@ function startCPDrag(e, cp) {
     });
     document.body.appendChild(cpGhost);
 
-    // Spacer reserves the drop slot — insert where the row is, then hide the row
+    // Spacer reserves the drop slot â€” insert where the row is, then hide the row
     cpSpacer = document.createElement("div");
     cpSpacer.className = "cp-drag-spacer";
     cpSpacer.style.height = rowH + "px";
@@ -6105,7 +6756,7 @@ function onCPDragEnd() {
     arr.splice(insertIndex, 0, cp);
     arr.forEach((c, i) => { c.order = i; });
 
-    if (fromIndex !== insertIndex) pushUndoState("Postenreihenfolge geändert");
+    if (fromIndex !== insertIndex) pushUndoState("Postenreihenfolge geÃ¤ndert");
 
     // Bulk-reorder atomically (sequential saves would clash on the unique constraint)
     const orderPairs = arr.filter(c => c.id).map(c => ({ db_id: c.id, order: c.order }));
@@ -6240,7 +6891,7 @@ function calcRouteSide(cp, route) {
     route.pos = sum / rP.length;
 }
 
-// ── NoA constants — kept in sync with project/runtime.py ───────────────────
+// â”€â”€ NoA constants â€” kept in sync with project/runtime.py â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Window length is coupled to the map's scale so the algorithm produces
 // comparable corner counts across maps at different zoom levels.
 const NOA_CLUSTER_WINDOW_M       = 20;
@@ -6287,12 +6938,12 @@ function simplifiedNoAPoints(points) {
 }
 
 /* Count corners along route.rP using a windowed cumulative-turn rule:
- *  • A single junction turn ≥ NOA_CORNER_DEG counts as one corner immediately,
+ *  â€¢ A single junction turn â‰¥ NOA_CORNER_DEG counts as one corner immediately,
  *    even if another sharp turn is right next to it (no skip-ahead).
- *  • Smaller turns accumulate into a sliding window of `noaDistanceWindow(scale)`
+ *  â€¢ Smaller turns accumulate into a sliding window of `noaDistanceWindow(scale)`
  *    pixels. When the sum reaches the corner threshold, one corner is counted
  *    and the window is cleared.
- *  • Turns more than `window` pixels behind drop off, so isolated small bends
+ *  â€¢ Turns more than `window` pixels behind drop off, so isolated small bends
  *    along long straight stretches never sum to a corner.
  */
 function calcRouteNoA_oldWindowed(route) {
@@ -6327,7 +6978,7 @@ function calcRouteNoA_oldWindowed(route) {
         let t = Math.abs(h2 - h1);
         if (t > Math.PI) t = 2 * Math.PI - t;
         if (t < epsRad) continue;
-        // cum[i] is the cumulative distance to the start of segment i — i.e.
+        // cum[i] is the cumulative distance to the start of segment i â€” i.e.
         // the junction point between segment i-1 and segment i.
         turns.push({ pos: cum[i], t, legBefore: segLen[i - 1], legAfter: segLen[i] });
     }
@@ -6339,7 +6990,7 @@ function calcRouteNoA_oldWindowed(route) {
         while (win.length && pos - win[0].pos > window) win.shift();
 
         // A "sharp" turn only counts on its own when BOTH adjacent legs are
-        // long enough to be visible in the editor — pixel-level zigzag
+        // long enough to be visible in the editor â€” pixel-level zigzag
         // artefacts have legs of 1-2 px and end up folded into the window.
         if (t >= cornerRad && Math.min(legBefore, legAfter) >= minLeg) {
             noA++;
@@ -6352,7 +7003,7 @@ function calcRouteNoA_oldWindowed(route) {
         for (const w of win) sum += w.t;
         const span = win.length > 0 ? pos - win[0].pos : 0;
         // Cumulative corner only fires once the accumulating turns also span
-        // a visible stretch of polyline — prevents 3-4 sharp 1-px zigzag
+        // a visible stretch of polyline â€” prevents 3-4 sharp 1-px zigzag
         // jitters from being read as a sweeping turn.
         if (sum >= cornerRad && span >= minSpan) {
             noA++;
@@ -6438,7 +7089,7 @@ function calcRouteRunTime(route) {
     }
     const noAPenalty = route.noA || 0;
     // elevation = 0 is the calibration point: no grade penalty, pure flat speed.
-    // Also avoids the formula artefact where gapUp/gapDown ≈ 0.994 at grade 0
+    // Also avoids the formula artefact where gapUp/gapDown â‰ˆ 0.994 at grade 0
     // would make flat terrain slightly faster than RUN_SPEED.
     if (!elevation) {
         route.run_time = length / RUN_SPEED + noAPenalty;
@@ -6491,15 +7142,6 @@ function showMapSpinner() {
     const rect = document.getElementById("map-container").getBoundingClientRect();
     const cx   = (rect.width  / 2 - camera.x) / camera.zoom;
     const cy   = (rect.height / 2 - camera.y) / camera.zoom;
-
-    const bg = document.createElementNS("http://www.w3.org/2000/svg", "rect");
-    bg.setAttribute("x",      -radii[2] - 12);
-    bg.setAttribute("y",      -radii[2] - 12);
-    bg.setAttribute("width",   2 * radii[2] + 24);
-    bg.setAttribute("height",  2 * radii[2] + 24);
-    bg.setAttribute("rx",      radii[2] + 10);
-    bg.setAttribute("fill",   "#2a2a2a");
-    spinner.appendChild(bg);
 
     radii.forEach((r, i) => {
         const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");

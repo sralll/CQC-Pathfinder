@@ -1498,6 +1498,85 @@ x-icon.spin svg { animation: spin 1s linear infinite; }
     padding: 4px 0 0;
 }
 
+.course-align-panel {
+    flex-direction: column;
+    gap: 10px;
+    padding: 12px;
+    background: #171717;
+    border: 1px solid #3a3127;
+    border-radius: 6px;
+    margin: 0 8px 8px;
+}
+
+.course-align-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    font-size: 12px;
+    font-weight: 600;
+    color: #f0c48a;
+}
+
+.course-align-status {
+    font-size: 11px;
+    color: #999;
+}
+
+.course-align-option {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: #ddd;
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.course-align-option input {
+    width: 16px;
+    height: 16px;
+    accent-color: #e53935;
+}
+
+.course-align-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1.25fr;
+    gap: 8px;
+}
+
+.course-align-actions button {
+    min-height: 30px;
+    min-width: 0;
+    border: 1px solid #484848;
+    border-radius: 6px;
+    background: #252525;
+    color: #ddd;
+    font-size: 11px;
+    cursor: pointer;
+}
+
+.course-align-actions button:disabled {
+    opacity: 0.45;
+    cursor: default;
+}
+
+.course-align-actions button:not(:disabled):hover {
+    background: #333;
+    border-color: #666;
+}
+
+.course-align-actions #course-align-confirm {
+    background: var(--brand-gradient);
+    border-color: var(--brand);
+    color: var(--text-strong, #fff);
+    font-weight: 600;
+}
+
+.course-align-actions #course-align-confirm:not(:disabled):hover {
+    background: var(--brand-gradient-h);
+    border-color: var(--brand-hover);
+}
+
 /* =========================================================
    CONFIRM / ALERT DIALOG  (z: 20 000 — above everything)
 ========================================================= */
@@ -1695,6 +1774,20 @@ x-icon.spin svg { animation: spin 1s linear infinite; }
 .cp-row:hover { background: #2a2a2a; color: #ddd; }
 #cp-list.cp-dragging .cp-row:hover { background: unset; color: unset; }
 .cp-row.selected { background: #2c2c2c; color: #fff; box-shadow: inset 3px 0 0 var(--brand); }
+.cp-row.ocad-bahn-new {
+    background: rgba(224, 112, 32, 0.22);
+    color: #ffe0bd;
+    box-shadow: inset 4px 0 0 var(--brand), inset 0 0 0 1px var(--brand-outline);
+}
+.cp-row.ocad-bahn-new.selected {
+    background: rgba(224, 112, 32, 0.34);
+    color: #fff;
+    box-shadow: inset 5px 0 0 var(--brand), inset 0 0 0 1px rgba(224, 112, 32, 0.5);
+}
+.cp-row.ocad-bahn-new .cp-posten-text {
+    color: #ffd08a;
+    font-weight: 700;
+}
 
 .cp-delete-btn {
     flex-shrink: 0;

@@ -14618,7 +14618,119 @@ function routeGeometryKey(rP) {
   return rP.map(routePointKey).join("|");
 }
 
-function buildControlPairs(courses, points, routeIndex, editorScale) {
+function attachActualRoutesToControlPair(cp, from, to, points, routeIndex, editorScale) {
+  const entries = routeIndex.segments.get(`${from}->${to}`) || [];
+  const sortedEntries = [...entries].sort((a, b) => (a.routeOrder || 0) - (b.routeOrder || 0));
+  if (!cp._routeKeys) cp._routeKeys = new Set();
+  for (const entry of sortedEntries) {
+    const rP = [];
+    appendRoutePoints(rP, [points[from].pixel]);
+    appendRoutePoints(rP, entry.points || []);
+    appendRoutePoints(rP, [points[to].pixel]);
+    if (rP.length < 2) continue;
+    const routeKey = routeGeometryKey(rP);
+    if (cp._routeKeys.has(routeKey)) continue;
+    cp._routeKeys.add(routeKey);
+    cp.routes.push(makeRoute(rP, cp, cp.routes.length, editorScale, {
+      from,
+      to,
+      fallback: "actual_route_segments",
+      label: entry.label || "",
+    }));
+  }
+  cp.complex = cp.routes.length > 1;
+}
+
+function nearestControlPoint(pixel, points, maxDistance) {
+  let bestId = null;
+  let bestDistance = maxDistance;
+  for (const [id, point] of Object.entries(points)) {
+    const dist = Math.hypot(pixel.x - point.pixel.x, pixel.y - point.pixel.y);
+    if (dist <= bestDistance) {
+      bestDistance = dist;
+      bestId = id;
+    }
+  }
+  return bestId;
+}
+
+function buildControlPairsFromDisplayLines(ocadFile, bounds, rasterScale, editorScale, points, routeIndex) {
+  const controlPairs = [];
+  const seen = new Set();
+  const pointLookup = { ...points };
+  const editorDiag = Math.hypot((bounds[2] - bounds[0]) * rasterScale * editorScale, (bounds[3] - bounds[1]) * rasterScale * editorScale);
+  const snapDistance = Math.max(20, editorDiag * 0.012);
+
+  for (const [index, object] of (ocadFile.objects || []).entries()) {
+    if (Number(object.sym) !== 705000 || !object.coordinates?.length) continue;
+    const startPixel = coordinateToEditorPixel(object.coordinates[0], bounds, rasterScale, editorScale);
+    const endPixel = coordinateToEditorPixel(object.coordinates[object.coordinates.length - 1], bounds, rasterScale, editorScale);
+    let from = nearestControlPoint(startPixel, pointLookup, snapDistance);
+    let to = nearestControlPoint(endPixel, pointLookup, snapDistance);
+    if (!from) {
+      from = `__display_${index}_from`;
+      pointLookup[from] = { id: from, pixel: startPixel };
+    }
+    if (!to) {
+      to = `__display_${index}_to`;
+      pointLookup[to] = { id: to, pixel: endPixel };
+    }
+    if (from === to) {
+      from = `__display_${index}_from`;
+      pointLookup[from] = { id: from, pixel: startPixel };
+    }
+    if (!from || !to || from === to) continue;
+    const key = `${from}->${to}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const cp = {
+      order: controlPairs.length,
+      start: pointLookup[from].pixel,
+      ziel: pointLookup[to].pixel,
+      complex: false,
+      routes: [],
+      source: {
+        from,
+        to,
+        fallback: "course_display_lines",
+      },
+      _routeKeys: new Set(),
+    };
+    attachActualRoutesToControlPair(cp, from, to, pointLookup, routeIndex, editorScale);
+    cp.complex = cp.routes.length > 1;
+    delete cp._routeKeys;
+    controlPairs.push(cp);
+  }
+
+  return controlPairs;
+}
+
+function buildControlPairsFromRouteIndex(points, routeIndex, editorScale) {
+  const controlPairs = [];
+  for (const [key] of routeIndex.segments.entries()) {
+    const [from, to] = key.split("->");
+    if (!points[from] || !points[to]) continue;
+    const cp = {
+      order: controlPairs.length,
+      start: points[from].pixel,
+      ziel: points[to].pixel,
+      complex: false,
+      routes: [],
+      source: {
+        from,
+        to,
+        fallback: "actual_route_segments",
+      },
+      _routeKeys: new Set(),
+    };
+    attachActualRoutesToControlPair(cp, from, to, points, routeIndex, editorScale);
+    delete cp._routeKeys;
+    controlPairs.push(cp);
+  }
+  return controlPairs;
+}
+
+function buildControlPairs(courses, points, routeIndex, editorScale, ocadFile = null, bounds = null, rasterScale = 1) {
   const seen = new Set();
   const byLeg = new Map();
   const controlPairs = [];
@@ -14665,7 +14777,11 @@ function buildControlPairs(courses, points, routeIndex, editorScale) {
   }
 
   for (const cp of controlPairs) delete cp._routeKeys;
-  return controlPairs;
+  if (controlPairs.length) return controlPairs;
+  const displayPairs = ocadFile && bounds
+    ? buildControlPairsFromDisplayLines(ocadFile, bounds, rasterScale, editorScale, points, routeIndex)
+    : [];
+  return displayPairs.length ? displayPairs : buildControlPairsFromRouteIndex(points, routeIndex, editorScale);
 }
 
 async function getControlsInfo(file) {
@@ -14675,7 +14791,7 @@ async function getControlsInfo(file) {
   const controlPoints = extractControlPoints(ocadFile, bounds, 1, 1);
   const courses = extractCourses(ocadFile);
   const routeIndex = buildActualRouteIndex(ocadFile, bounds, 1, 1);
-  const controlPairs = buildControlPairs(courses, controlPoints, routeIndex, 1);
+  const controlPairs = buildControlPairs(courses, controlPoints, routeIndex, 1, ocadFile, bounds, 1);
 
   return {
     hasControls: controlPairs.length > 0,
@@ -14727,7 +14843,7 @@ async function renderSvgPreview(file, options = {}) {
   const controlPoints = extractControlPoints(ocadFile, bounds, rasterScale, editorScale);
   const courses = extractCourses(ocadFile);
   const routeIndex = buildActualRouteIndex(ocadFile, bounds, rasterScale, editorScale);
-  const controlPairs = buildControlPairs(courses, controlPoints, routeIndex, editorScale);
+  const controlPairs = buildControlPairs(courses, controlPoints, routeIndex, editorScale, ocadFile, bounds, rasterScale);
   const actualRouteSegments = Array.from(routeIndex.segments.values())
     .reduce((sum, entries) => sum + entries.length, 0);
 

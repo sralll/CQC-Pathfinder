@@ -1,4 +1,4 @@
-from django.db import models
+from django.db import models, transaction
 from django.core.validators import MinValueValidator, MaxValueValidator
 from django.utils import timezone
 
@@ -65,8 +65,21 @@ class ControlPair(models.Model):
     def delete(self, *args, **kwargs):
         file = self.file
         order = self.order
-        super().delete(*args, **kwargs)
-        ControlPair.objects.filter(file=file, order__gt=order).update(order=models.F('order') - 1)
+        with transaction.atomic():
+            list(ControlPair.objects.select_for_update().filter(file=file))
+            shifted = list(
+                ControlPair.objects
+                .filter(file=file, order__gt=order)
+                .order_by('order')
+                .values_list('id', 'order')
+            )
+            super().delete(*args, **kwargs)
+            if shifted:
+                offset = ControlPair.objects.filter(file=file).count() + len(shifted) + 1000
+                for cp_id, old_order in shifted:
+                    ControlPair.objects.filter(id=cp_id).update(order=old_order + offset)
+                for cp_id, old_order in shifted:
+                    ControlPair.objects.filter(id=cp_id).update(order=old_order - 1)
 
 
 class Route(models.Model):
@@ -89,8 +102,21 @@ class Route(models.Model):
     def delete(self, *args, **kwargs):
         control_pair = self.control_pair
         order = self.order
-        super().delete(*args, **kwargs)
-        Route.objects.filter(control_pair=control_pair, order__gt=order).update(order=models.F('order') - 1)
+        with transaction.atomic():
+            list(Route.objects.select_for_update().filter(control_pair=control_pair))
+            shifted = list(
+                Route.objects
+                .filter(control_pair=control_pair, order__gt=order)
+                .order_by('order')
+                .values_list('id', 'order')
+            )
+            super().delete(*args, **kwargs)
+            if shifted:
+                offset = Route.objects.filter(control_pair=control_pair).count() + len(shifted) + 1000
+                for route_id, old_order in shifted:
+                    Route.objects.filter(id=route_id).update(order=old_order + offset)
+                for route_id, old_order in shifted:
+                    Route.objects.filter(id=route_id).update(order=old_order - 1)
 
 
 class EditorSettings(models.Model):

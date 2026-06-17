@@ -471,8 +471,14 @@ function initModal() {
 ========================================================= */
 
 function initButtons() {
-    document.getElementById("menu-project")?.addEventListener("click", openFileModal);
-    document.getElementById("nav-open-projects")?.addEventListener("click", openFileModal);
+    document.getElementById("menu-project")?.addEventListener("click", e => {
+        if (e.target.closest("#project-dropdown")) return;
+        openFileModal();
+    });
+    document.getElementById("nav-open-projects")?.addEventListener("click", e => {
+        e.stopPropagation();
+        openFileModal();
+    });
     document.getElementById("nav-copy-project")?.addEventListener("click", duplicateFile);
     document.getElementById("nav-save-project")?.addEventListener("click", saveFile);
     document.getElementById("new-project-btn")?.addEventListener("click", createFileWithTitle);

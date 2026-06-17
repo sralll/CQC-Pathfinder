@@ -166,6 +166,24 @@ body.mode-mask #mask-controls { display: flex; flex-direction: column; gap: 10px
     stroke: var(--cp-color);
 }
 
+.control-pair-group.course-align-member {
+    opacity: 0.88;
+}
+
+.control-pair-group.course-align-member .control-circle,
+.control-pair-group.course-align-member line:not(.hit):not(.arrow) {
+    stroke-width: 3px;
+}
+
+.control-pair-group.course-align-member .control-circle {
+    cursor: grab;
+}
+
+.control-pair-group.course-align-member .control-circle.course-align-anchor {
+    stroke: #e53935;
+    stroke-width: 4px;
+}
+
 /* Tool modes where hovering a non-selected pair should NOT visually highlight it */
 #map-container.editing-route .control-pair-group:not(.selected):hover,
 #map-container.placing-control .control-pair-group:not(.selected):hover,
