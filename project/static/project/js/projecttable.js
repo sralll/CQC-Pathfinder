@@ -1016,8 +1016,10 @@ async function createFileWithTitle() {
     project.blocked_terrain = null;
     project.control_pairs = [];
     window.detachMaskGenerationUi?.();
-
-    // Leftover state from previously opened files is cleared on map upload
+    window.clearMapDisplayForUpload?.({ clearLayers: true });
+    window.clearMaskUndoStacks?.();
+    window.updateCPList?.();
+    window._updateScalePanel?.();
 
     // ── Proceed to map upload ────────────────────────────────
     createFile();

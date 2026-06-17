@@ -2,7 +2,7 @@ import math
 import re
 import xml.etree.ElementTree as ET
 
-from .runtime import calc_route_length, calc_route_noA, calc_route_runtime
+from ..runtime import calc_route_length, calc_route_noA, calc_route_runtime
 
 
 SVG_NS = "{http://www.w3.org/2000/svg}"

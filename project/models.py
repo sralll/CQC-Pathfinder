@@ -21,6 +21,7 @@ class File(models.Model):
     published = models.BooleanField(default=False)
     author = models.CharField(max_length=255, blank=True)
     scale = models.FloatField(null=True, blank=True)
+    map_scale = models.PositiveIntegerField(default=4000)
     scaled = models.BooleanField(default=False)
     map_file = models.CharField(max_length=255, blank=True)
     has_mask = models.BooleanField(default=False)
@@ -145,6 +146,7 @@ class FileSnapshot(models.Model):
 
     # Snapshot of the full state at this point
     scale = models.FloatField(null=True, blank=True)
+    map_scale = models.PositiveIntegerField(default=4000)
     map_file = models.CharField(max_length=255, blank=True)
     has_mask = models.BooleanField(default=False)
     blocked_terrain = models.JSONField(null=True, blank=True)

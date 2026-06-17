@@ -48,7 +48,6 @@ INSTALLED_APPS = [
     "play",
     "main",
     "accounts",
-    "debug",
     "account",
     "project",
     "results",

@@ -14,6 +14,7 @@ import math
 
 # Constants shared with the editor
 PX_TO_M                       = 0.48       # pixel → metre
+REFERENCE_MAP_SCALE           = 4000
 RUN_SPEED                     = 4.75       # m/s on flat ground
 NOA_CLUSTER_WINDOW_M          = 20         # route-direction cluster window
 NOA_COUNTER_TURN_WINDOW_M     = 10         # rapid left-right/right-left window
@@ -46,12 +47,20 @@ def _scale_factor(scale):
     return scale if scale > 0 else 1.0
 
 
+def _map_scale_factor(map_scale=None):
+    try:
+        map_scale = float(map_scale)
+    except (TypeError, ValueError):
+        return 1.0
+    return map_scale / REFERENCE_MAP_SCALE if map_scale > 0 else 1.0
+
+
 def noa_distance_window(scale=None):
     return NOA_CLUSTER_WINDOW_M / (PX_TO_M * _scale_factor(scale))
 
 
-def _scaled_noA_points(points, scale=None):
-    factor = _scale_factor(scale)
+def _scaled_noA_points(points, scale=None, map_scale=None):
+    factor = _scale_factor(scale) * _map_scale_factor(map_scale)
     out = []
     for point in points or []:
         x = point.get("x")
@@ -83,7 +92,7 @@ def _simplified_noA_points(points):
     return out
 
 
-def calc_route_noA_old_windowed(rP, scale=None):
+def calc_route_noA_old_windowed(rP, scale=None, map_scale=None):
     """Count corners along a polyline using a windowed cumulative-turn rule.
 
     Walks the polyline segment-by-segment. At each junction the absolute
@@ -105,7 +114,7 @@ def calc_route_noA_old_windowed(rP, scale=None):
     if not rP or len(rP) < 3:
         return 0
 
-    window     = noa_distance_window(scale)
+    window     = noa_distance_window(scale) / _map_scale_factor(map_scale)
     corner_rad = math.radians(NOA_CORNER_DEG)
     eps_rad    = math.radians(NOA_EPSILON_DEG)
 
@@ -156,9 +165,9 @@ def calc_route_noA_old_windowed(rP, scale=None):
     return noA
 
 
-def calc_route_noA(rP, scale=None):
+def calc_route_noA(rP, scale=None, map_scale=None):
     """Return the fractional turn penalty for a route polyline."""
-    rP = _simplified_noA_points(_scaled_noA_points(rP, scale))
+    rP = _simplified_noA_points(_scaled_noA_points(rP, scale, map_scale))
     if not rP or len(rP) < 3:
         return 0
 
@@ -251,11 +260,11 @@ def calc_route_runtime(length_m, noA, elevation_m):
     return length_m / adj_speed + noA_penalty
 
 
-def calc_route_length(rP, scale=None):
+def calc_route_length(rP, scale=None, map_scale=None):
     """Polyline length in METRES (matches the editor's `calcRouteLength`)."""
     if not rP or len(rP) < 2:
         return 0
-    factor = _scale_factor(scale)
+    factor = _scale_factor(scale) * _map_scale_factor(map_scale)
     total = 0.0
     for i in range(1, len(rP)):
         dx = (rP[i]['x'] - rP[i - 1]['x']) * factor

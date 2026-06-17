@@ -1,5 +1,5 @@
 from django.shortcuts import get_object_or_404, render
-from django.http import JsonResponse, FileResponse, HttpResponseNotFound, HttpResponse, StreamingHttpResponse
+from django.http import JsonResponse, FileResponse, HttpResponseNotFound
 from django.views.decorators.http import require_GET, require_POST
 from django.db.models import Count, Q
 from .models import File, Label, ControlPair, Route
@@ -10,11 +10,6 @@ from django.conf import settings
 import os
 import mimetypes
 import tempfile
-import threading
-
-
-_mask_generation_jobs = {}
-_mask_generation_jobs_lock = threading.Lock()
 
 
 def _normalize_order_payload(control_pairs):
@@ -35,71 +30,6 @@ def _normalize_order_payload(control_pairs):
             if isinstance(route, dict):
                 route['order'] = route_order
     return control_pairs
-
-
-class _MaskGenerationJob:
-    """Pub/sub progress relay for one background mask-generation run.
-
-    The heavy work runs in a non-daemon worker thread (`_run_mask_generation`)
-    which pushes events through the thread-safe `publish()`. Any number of SSE
-    clients consume them via the async `stream()`. Producer and consumers are
-    decoupled, so the worker keeps running — and still writes the mask to the
-    volume + flips File.has_mask — even after every client closes its stream
-    (navigates away / loads another file).
-
-    `publish()` is called from the worker thread, so it hops onto the event loop
-    (`call_soon_threadsafe`) to feed each subscriber's asyncio.Queue."""
-
-    def __init__(self, key, event_base, loop):
-        self.key = key
-        self.event_base = event_base
-        self.loop = loop                 # event loop that owns the subscriber queues
-        self._lock = threading.Lock()
-        self.history = []                # every event so far (late subscribers replay)
-        self.subscribers = set()         # one asyncio.Queue per live SSE client
-        self.done = False
-
-    def _format(self, event):
-        import json as _json
-        return f"data: {_json.dumps(event)}\n\n"
-
-    def publish(self, payload):
-        """Thread-safe; called from the worker thread."""
-        event = {**self.event_base, **payload}
-        with self._lock:
-            self.history.append(event)
-            if payload.get('done') or payload.get('error'):
-                self.done = True
-            subscribers = list(self.subscribers)
-        for q in subscribers:
-            try:
-                self.loop.call_soon_threadsafe(q.put_nowait, event)
-            except RuntimeError:
-                pass  # loop already closed — ignore
-        return event
-
-    async def stream(self):
-        """SSE generator. Ending it (client disconnect) only drops this
-        subscriber; the worker thread keeps running."""
-        import asyncio
-        q = asyncio.Queue()
-        with self._lock:
-            history = list(self.history)
-            if not self.done:
-                self.subscribers.add(q)
-        try:
-            for event in history:
-                yield self._format(event)
-                if event.get('done') or event.get('error'):
-                    return
-            while True:
-                event = await q.get()
-                yield self._format(event)
-                if event.get('done') or event.get('error'):
-                    return
-        finally:
-            with self._lock:
-                self.subscribers.discard(q)
 
 
 def _create_db_snapshot(file, user, trigger):
@@ -123,11 +53,13 @@ def _create_db_snapshot(file, user, trigger):
         file=file, created_by=user, trigger=trigger,
         name=file.name, label=file.label, author=file.author or '',
         scale=file.scale, map_file=file.map_file, has_mask=file.has_mask,
+        map_scale=file.map_scale,
         blocked_terrain=file.blocked_terrain, control_pairs=cp_data,
         n_control_pairs=len(cp_data), n_routes=n_routes,
     )
 
 # open editor
+@role_required('Trainer')
 def editor(request):
     return render(request, 'project/editor.html')
 
@@ -285,6 +217,7 @@ def open_file(request, file_id):
                 'published': file.published,
                 'label': {'id': file.label.id, 'name': file.label.name, 'color': file.label.color} if file.label else None,
                 'scale': file.scale,
+                'map_scale': file.map_scale,
                 'scaled': file.scaled,
                 'map_file': file.map_file,
                 'has_mask': file.has_mask,
@@ -392,6 +325,7 @@ def toggle_publish(request, file_id):
         }, status=500)
 
 
+@role_required('Trainer')
 @require_GET
 def sync_has_mask(request):
     """Debug view: checks media/masks/ for each File and corrects has_mask."""
@@ -446,7 +380,7 @@ def get_snapshots(request, file_id):
         snaps = qs.values(
             'id', 'trigger', 'n_control_pairs', 'n_routes',
             'created_at', 'created_by__first_name',
-            'map_file', 'scale',
+            'map_file', 'scale', 'map_scale',
             'name', 'author',
             'label__name', 'label__color',
         )
@@ -479,6 +413,7 @@ def load_snapshot(request, snapshot_id):
                 'id':              file.id,
                 'name':            file.name,
                 'scale':           snap.scale,
+                'map_scale':       snap.map_scale,
                 'scaled':          file.scaled,
                 'map_file':        snap.map_file,
                 'has_mask':        snap.has_mask,
@@ -532,6 +467,7 @@ def save_file(request):
 
         file.name            = data.get('name', 'Neues Projekt')
         file.scale           = data.get('scale')
+        file.map_scale       = data.get('map_scale') or 4000
         file.scaled          = data.get('scaled', False)
         file.map_file        = data.get('map_file', '')
         file.has_mask        = data.get('has_mask', False)
@@ -793,6 +729,7 @@ def save_snapshot(request):
             label           = file.label,
             author          = file.author or '',
             scale           = data.get('scale'),
+            map_scale       = data.get('map_scale') or 4000,
             map_file        = data.get('map_file', ''),
             has_mask        = data.get('has_mask', False),
             blocked_terrain = data.get('blocked_terrain'),
@@ -807,8 +744,6 @@ def save_snapshot(request):
         return JsonResponse({'error': str(e)}, status=500)
 
 
-@role_required('Trainer')
-@require_POST
 @role_required('Trainer')
 @require_POST
 def mark_has_mask(request):
@@ -836,6 +771,8 @@ def mark_has_mask(request):
         return JsonResponse({'error': str(e)}, status=500)
 
 
+@role_required('Trainer')
+@require_POST
 def save_mask(request):
     """Receive a PNG blob and save it as the mask for the given map file."""
     from django.utils import timezone as tz
@@ -852,246 +789,6 @@ def save_mask(request):
     # Update last_edited on the owning file
     File.objects.filter(map_file=filename, deleted=False).update(last_edited=tz.now())
     return JsonResponse({'status': 'ok'})
-
-
-def _run_mask_generation(*, job, job_key, map_path, scale, mask_filename,
-                         filename, file_id):
-    """Heavy UNet mask generation, run in a non-daemon background thread.
-
-    Fully decoupled from the request/SSE connection, so it always runs to
-    completion and writes the mask to the shared volume even if the user
-    disconnects. A non-daemon thread (unlike asyncio.create_task) also survives
-    gunicorn's --max-requests worker recycle: the interpreter joins it on
-    shutdown, within the 900s --graceful-timeout, which covers a mask run.
-    Releases the ~GB tile buffer + the ONNX session's native memory on exit."""
-    import gc
-    import math
-    import time
-    from io import BytesIO
-    from types import SimpleNamespace
-
-    import numpy as np
-    from PIL import Image
-    from django.db import close_old_connections, connection
-
-    t0 = time.time()
-    img = output_img = ort_session = None
-    close_old_connections()
-    try:
-        import onnxruntime as ort
-
-        Image.MAX_IMAGE_PIXELS = None
-        SCALE_FACTOR = scale / 0.710 * 4000 / 4000
-        with open(map_path, 'rb') as f:
-            img = Image.open(f); img.load(); img = img.convert("RGB")
-        new_size = (int(img.width * SCALE_FACTOR), int(img.height * SCALE_FACTOR))
-        if new_size[0] > 16000 or new_size[1] > 16000:
-            raise ValueError("Karte zu gross für das neuronale Netz. Skalierung prüfen.")
-        img = img.resize(new_size, resample=Image.BICUBIC)
-        ort_session = ort.InferenceSession("best_model_300dpi.onnx")
-
-        img_w, img_h = img.size
-        output_img = np.zeros((img_h, img_w), dtype=np.float32)
-        TILE_SIZE = 2048
-        overlap = int(TILE_SIZE * 0.2)
-        step = TILE_SIZE - overlap
-        total_tiles = max(1, max(1, math.ceil(img_h / step)) * max(1, math.ceil(img_w / step)))
-        job.publish({'current': 0, 'total': total_tiles})
-        print(f"[MASK] START file={filename} tiles={total_tiles}", flush=True)
-
-        processed = 0
-        for y0 in range(0, img_h, step):
-            for x0 in range(0, img_w, step):
-                y1 = min(y0 + TILE_SIZE, img_h)
-                x1 = min(x0 + TILE_SIZE, img_w)
-                tile = img.crop((x0, y0, x1, y1))
-                tile_np = np.transpose(np.array(tile) / 255.0, (2, 0, 1))[np.newaxis].astype(np.float32)
-
-                out = ort_session.run(None, {"input": tile_np})[0]
-                if out.ndim == 4: out = out[0]
-                if out.shape[0] > 1: out = out.argmax(axis=0)
-                tile_pred = out.astype(np.float32)
-
-                oy0 = y0 if y0 == 0 else y0 + overlap // 2; oy1 = y1 if y1 == img_h else y1 - overlap // 2
-                ox0 = x0 if x0 == 0 else x0 + overlap // 2; ox1 = x1 if x1 == img_w else x1 - overlap // 2
-                ty0, tx0 = oy0 - y0, ox0 - x0
-                ty1 = min(ty0 + (oy1 - oy0), tile_pred.shape[0])
-                tx1 = min(tx0 + (ox1 - ox0), tile_pred.shape[1])
-                output_img[oy0:oy0 + (ty1 - ty0), ox0:ox0 + (tx1 - tx0)] = tile_pred[ty0:ty1, tx0:tx1]
-
-                processed += 1
-                print(f"[MASK] tile {processed}/{total_tiles} ({time.time()-t0:.1f}s)", flush=True)
-                job.publish({'current': processed, 'total': total_tiles})
-
-        # ── Build + save the mask PNG ──────────────────────────────────────
-        mo = SimpleNamespace(impassable=0, outline=135, very_slow=135, slow=231, cross=241, fast=243)
-        vis = 255 * np.ones((img_h, img_w, 1), dtype=np.uint8)
-        vis[output_img < 10] = mo.impassable
-        vis[(output_img >= 10) & (output_img < 22)] = mo.very_slow
-        vis[(output_img >= 22) & (output_img < 26)] = mo.slow
-        vis[(output_img >= 26) & (output_img < 28)] = mo.cross
-        vis[(output_img >= 28) & (output_img < 32)] = mo.fast
-        vis[output_img == 32] = mo.cross
-        vis[output_img == 33] = mo.fast
-        vis[output_img == 34] = mo.impassable
-        # 1-px 8-connected outline around every impassable region at grey=135
-        # (cost 255-135 = 120/px). Soft-blocks paths from hugging obstacles
-        # without sealing narrow passages.
-        from scipy import ndimage as _ndi
-        vis_2d = vis[:, :, 0]
-        impassable_mask = vis_2d == mo.impassable
-        dilated = _ndi.binary_dilation(
-            impassable_mask, structure=np.ones((3, 3), dtype=bool), iterations=1,
-        )
-        vis_2d[dilated & ~impassable_mask] = mo.outline
-        final = Image.fromarray(np.repeat(vis, 3, axis=2).astype(np.uint8))
-        buf = BytesIO(); final.save(buf, format="PNG"); buf.seek(0)
-        mask_path = os.path.join(settings.MEDIA_ROOT, 'masks', mask_filename)
-        os.makedirs(os.path.dirname(mask_path), exist_ok=True)
-        with open(mask_path, 'wb') as f:
-            f.write(buf.read())
-        del vis, vis_2d, dilated, impassable_mask, final, buf
-
-        if file_id is not None:
-            File.objects.filter(id=file_id, deleted=False, map_file=filename).update(has_mask=True)
-        else:
-            File.objects.filter(map_file=filename, deleted=False).update(has_mask=True)
-
-        print(f"[MASK] DONE {time.time()-t0:.1f}s", flush=True)
-        job.publish({'done': True})
-
-    except Exception as e:
-        traceback.print_exc()
-        job.publish({'error': str(e)})
-    finally:
-        # Drop the registry entry and free the heavy buffers + ONNX session —
-        # runs no matter how the job ended.
-        with _mask_generation_jobs_lock:
-            if _mask_generation_jobs.get(job_key) is job:
-                _mask_generation_jobs.pop(job_key, None)
-        img = None
-        output_img = None
-        ort_session = None
-        gc.collect()
-        connection.close()
-
-
-async def generate_mask(request):
-    """Stream UNet mask generation progress via a true async generator.
-    Auth is checked inline because user_passes_test is not async-compatible.
-    The async generator is iterated directly by Django's ASGI handler, so each
-    yield is immediately flushed to the client without buffering."""
-    import asyncio, gc, math, json as _json, time
-    import numpy as np
-    from PIL import Image
-    from io import BytesIO
-    from types import SimpleNamespace
-    from asgiref.sync import sync_to_async
-
-    # ── Auth (sync_to_async so ORM thread-locals are set up correctly) ────
-    if request.method != "POST":
-        return HttpResponse(status=405)
-
-    def _check_auth():
-        if not request.user.is_authenticated:
-            return False
-        return request.user.groups.filter(name='Trainer').exists()
-
-    if not await sync_to_async(_check_auth)():
-        return JsonResponse({'error': 'Permission denied'}, status=403)
-
-    # ── Parse body ─────────────────────────────────────────────────────────
-    try:
-        body = _json.loads(request.body)
-    except Exception:
-        return HttpResponse("Invalid JSON body", status=400)
-
-    filename  = body.get('filename')
-    cqc_scale = body.get('scale')
-    file_id   = body.get('file_id')
-    if not filename or not cqc_scale:
-        return HttpResponse("Missing filename or scale", status=400)
-    try:
-        scale = float(cqc_scale)
-        if scale <= 0: raise ValueError()
-    except ValueError:
-        return HttpResponse("Invalid scale parameter", status=400)
-
-    basename, _   = os.path.splitext(filename)
-    mask_filename = f"mask_{basename}.png"
-    map_path      = os.path.join(settings.MEDIA_ROOT, 'maps', filename)
-    if not os.path.exists(map_path):
-        return HttpResponseNotFound(f"Map '{filename}' not found.")
-
-    if file_id is not None:
-        try:
-            file_id = int(file_id)
-        except (TypeError, ValueError):
-            return HttpResponse("Invalid file_id", status=400)
-
-        def _check_file():
-            return File.objects.filter(
-                id=file_id,
-                deleted=False,
-                team=request.user.profile.active_team,
-                map_file=filename,
-            ).exists()
-
-        if not await sync_to_async(_check_file)():
-            return HttpResponse("file_id does not match the requested map file", status=409)
-
-    active_team_id = await sync_to_async(lambda: request.user.profile.active_team_id)()
-    event_base = {
-        'file_id': file_id,
-        'filename': filename,
-        'map_file': filename,
-        'mask_file': mask_filename,
-    }
-    job_key = (active_team_id, file_id if file_id is not None else filename)
-    # In-process de-dup: if *this* worker is already generating this map, attach
-    # the new client to the running job (live progress, no extra compute).
-    with _mask_generation_jobs_lock:
-        existing_job = _mask_generation_jobs.get(job_key)
-        if existing_job and existing_job.done:
-            _mask_generation_jobs.pop(job_key, None)
-            existing_job = None
-        if existing_job:
-            print(f"[MASK] ATTACH file={filename}", flush=True)
-            resp = StreamingHttpResponse(existing_job.stream(), content_type="text/event-stream")
-            resp["Cache-Control"] = "no-cache"
-            resp["X-Accel-Buffering"] = "no"
-            return resp
-
-    # Fail fast if the model runtime is missing, before committing to a job.
-    try:
-        import onnxruntime  # noqa: F401
-    except ImportError:
-        return HttpResponse("onnxruntime not installed", status=500)
-
-    # Run the heavy generation in a detached, non-daemon background thread so it
-    # finishes — and writes the mask to the volume — even if the client closes
-    # the SSE stream. The thread pushes progress to the job; every connected SSE
-    # client relays those events (push-based via loop.call_soon_threadsafe).
-    loop = asyncio.get_running_loop()
-    job = _MaskGenerationJob(job_key, event_base, loop)
-    with _mask_generation_jobs_lock:
-        _mask_generation_jobs[job_key] = job
-
-    threading.Thread(
-        target=_run_mask_generation,
-        kwargs=dict(
-            job=job, job_key=job_key, map_path=map_path, scale=scale,
-            mask_filename=mask_filename, filename=filename, file_id=file_id,
-        ),
-        daemon=False,
-    ).start()
-
-    print(f"[MASK] SPAWN file={filename}", flush=True)
-    resp = StreamingHttpResponse(job.stream(), content_type="text/event-stream")
-    resp["Cache-Control"] = "no-cache"
-    resp["X-Accel-Buffering"] = "no"
-    return resp
-
 
 
 @role_required('Trainer')
@@ -1218,7 +915,7 @@ def upload_map(request):
         stamp = now().strftime('%Y%m%d_%H%M%S')
 
         if is_ocad:
-            from .ocad import OcadConversionError, convert_ocad_map_to_editor_assets
+            from .ocad_tools.ocad import OcadConversionError, convert_ocad_map_to_editor_assets
 
             tmp = tempfile.NamedTemporaryFile(delete=False, suffix=ext or '.ocd')
             source_path = tmp.name
@@ -1245,6 +942,7 @@ def upload_map(request):
                 'has_mask': False,
                 'auto_generate_mask': True,
                 'scale': conversion.get('scale'),
+                'map_scale': conversion.get('ocad_map_scale') or 4000,
                 'scaled': conversion.get('scaled', True),
                 'control_pairs': conversion.get('control_pairs', []),
                 'ocad': {
@@ -1270,6 +968,59 @@ def upload_map(request):
     except Exception as e:
         traceback.print_exc()
         return JsonResponse({'error': str(e)}, status=500)
+
+
+@role_required('Trainer')
+@require_POST
+def analyze_ocad(request):
+    uploaded = request.FILES.get('file')
+    if not uploaded:
+        return JsonResponse({'error': 'No file'}, status=400)
+
+    ext = os.path.splitext(uploaded.name)[1].lower()
+    if ext not in ('.ocd', '.ocad'):
+        return JsonResponse({'error': 'Nur OCAD erlaubt'}, status=400)
+    if uploaded.size > 50 * 1024 * 1024:
+        return JsonResponse({'error': 'Datei zu gross (max. 50 MB)'}, status=400)
+
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=ext or '.ocd')
+    source_path = tmp.name
+    try:
+        with tmp as f:
+            for chunk in uploaded.chunks():
+                f.write(chunk)
+
+        from .ocad_tools.ocad import OcadConversionError, extract_ocad_courses
+        try:
+            conversion = extract_ocad_courses(source_path)
+        except OcadConversionError as exc:
+            return JsonResponse({'error': f'OCAD-Analyse fehlgeschlagen: {exc}'}, status=400)
+
+        control_pairs = conversion.get('control_pairs') or []
+        n_routes = sum(len(cp.get('routes', [])) for cp in control_pairs if isinstance(cp, dict))
+        return JsonResponse({
+            'status': 'ok',
+            'has_controls': len(control_pairs) > 0,
+            'has_routes': n_routes > 0,
+            'n_control_pairs': len(control_pairs),
+            'n_routes': n_routes,
+            'ocad': {
+                'courses': conversion.get('courses', 0),
+                'controls': conversion.get('controls', 0),
+                'actual_route_segments': conversion.get('actual_route_segments', 0),
+                'width': conversion.get('width'),
+                'height': conversion.get('height'),
+                'map_scale': conversion.get('ocad_map_scale'),
+            },
+        })
+    except Exception as e:
+        traceback.print_exc()
+        return JsonResponse({'error': str(e)}, status=500)
+    finally:
+        try:
+            os.unlink(source_path)
+        except OSError:
+            pass
 
 
 @role_required('Trainer')
@@ -1302,8 +1053,8 @@ def import_courses(request):
             for chunk in uploaded.chunks():
                 f.write(chunk)
 
-        from .course_import import scale_ocad_import_to_target
-        from .ocad import OcadConversionError, extract_ocad_courses
+        from .ocad_tools.course_import import scale_ocad_import_to_target
+        from .ocad_tools.ocad import OcadConversionError, extract_ocad_courses
         try:
             conversion = extract_ocad_courses(source_path)
         except OcadConversionError as exc:

@@ -175,6 +175,7 @@ def get_file(request, file_id):
             'id':              file.id,
             'name':            file.name,
             'scale':           file.scale,
+            'map_scale':       file.map_scale,
             'scaled':          file.scaled,
             'map_file':        file.map_file,
             'blocked_terrain': file.blocked_terrain,

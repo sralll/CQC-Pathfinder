@@ -50,10 +50,9 @@ class Command(BaseCommand):
                     skipped += 1
                 continue
 
-            # Match the editor's live calc, which works on the raw rP pixel
-            # coordinates and does NOT apply the map scale.
-            new_length = calc_route_length(rP)
-            new_noA    = calc_route_noA(rP)
+            map_scale = r.control_pair.file.map_scale
+            new_length = calc_route_length(rP, map_scale=map_scale)
+            new_noA    = calc_route_noA(rP, map_scale=map_scale)
             new_rt     = calc_route_runtime(new_length, new_noA, r.elevation)
 
             len_diff = (r.length or 0) != new_length

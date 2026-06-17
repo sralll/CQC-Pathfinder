@@ -47,7 +47,7 @@ def _run_ocad_converter(
     mask_only=False,
     course_only=False,
 ):
-    script_path = os.path.join(settings.BASE_DIR, "project", "ocad_tools", "convert_ocad.js")
+    script_path = os.path.join(os.path.dirname(__file__), "convert_ocad.js")
     png_path = os.path.join(settings.MEDIA_ROOT, "maps", map_filename) if map_filename else None
     mask_path = os.path.join(settings.MEDIA_ROOT, "masks", mask_filename) if mask_filename else None
     node_binary = os.environ.get("OCAD_NODE_BINARY", "node")
