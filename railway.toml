@@ -1,0 +1,7 @@
+[build]
+builder = "RAILPACK"
+buildCommand = "python manage.py collectstatic --noinput"
+
+[deploy]
+preDeployCommand = ["python manage.py migrate"]
+startCommand = "chmod +x start.sh && ./start.sh"
