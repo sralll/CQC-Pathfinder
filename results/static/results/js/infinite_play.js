@@ -1,11 +1,11 @@
 /* =========================================================
-   RANDOM PLAY — procedurally-generated sprint route-choice
+   INFINITE PLAY — procedurally-generated sprint route-choice
    problem. Uses IOF-style colours, compound obstacles,
    decorative obstacles, rotated camera (start at bottom),
    and the same dot-and-trail animation as play.js.
 
-   Records each attempt to /play/random/submit-choice/ →
-   RandomChoice DB model.
+   Records each attempt to /play/infinity/submit-choice/ →
+   InfiniteChoice DB model.
 ========================================================= */
 
 /* ── Coordinate system & constants ────────────────────── */
@@ -1083,5 +1083,5 @@ function submitChoice(payload) {
         method:  'POST',
         headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf },
         body:    JSON.stringify(payload),
-    }).catch(err => console.error('submit-random-choice failed:', err));
+    }).catch(err => console.error('submit-infinite-choice failed:', err));
 }

@@ -1,7 +1,7 @@
 /* =========================================================
    THEME — shared design tokens for CQC Pathfinder.
    Loaded from base.html so every page (home, results, stats,
-   file_results, play, random_play, login, feedback, editor)
+   file_results, play, infinite_play, login, feedback, editor)
    reads the same palette, typography and spacing scale.
 ========================================================= */
 

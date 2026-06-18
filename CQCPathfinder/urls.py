@@ -10,7 +10,6 @@ from CQCPathfinder.forms import StyledLoginForm, StyledPasswordChangeForm
 from django.views.generic import RedirectView
 
 from main import views
-from results import views as results_views
 from account import views as account_views
 from CQCPathfinder import internal_views
 
@@ -24,29 +23,9 @@ urlpatterns = [
     path('coursesetter/', include('coursesetter.urls')),
     path("pathfinding/", include("pathfinding.urls")),
 
-    # Play
-    path('play/',                            results_views.index,              name='results_home'),
-    path('play/infinity/',                   results_views.infinite_play,      name='infinity_play'),
-    path('play/infinity/submit-choice/',     results_views.submit_infinite_choice, name='submit_infinity_choice'),
-    path('play/tutorial/',                   results_views.play_tutorial,      name='play_tutorial'),
-    path('play/tutorial-complete/',          results_views.tutorial_complete,  name='play_tutorial_complete'),
-    path('play/<int:file_id>/<str:mode>/',   results_views.play,               name='play'),
-    path('play/get-files/',                  results_views.get_files,          name='play_get_files'),
-    path('play/get-file/<int:file_id>/',     results_views.get_file,           name='play_get_file'),
-    path('play/get-map/<str:filename>/',     results_views.get_map,            name='play_get_map'),
-    path('play/submit-result/',              results_views.submit_result,      name='submit_result'),
-
-    # Results
-    path('results/',                         results_views.results_overview,   name='results_overview'),
-    path('results/<int:file_id>/',           results_views.file_results,       name='file_results'),
-    path('results/get-list/',                results_views.get_files_overview, name='results_get_list'),
-    path('results/<int:file_id>/get-data/',  results_views.get_file_results,   name='results_get_data'),
-
-    # Stats
-    path('stats/',                           results_views.stats_view,         name='results_stats'),
-    path('stats/get-stats/',                 results_views.get_user_stats,     name='stats_get_stats'),
-    path('stats/get-athletes/',              results_views.get_team_athletes,  name='stats_get_athletes'),
-    path('stats/get-table/',                 results_views.get_stats_table,    name='stats_get_table'),
+    path('play/', include('results.play_urls')),
+    path('results/', include('results.results_urls')),
+    path('stats/', include('results.stats_urls')),
 
     # Forum
     path('forum/',                           account_views.forum_index,        name='forum'),

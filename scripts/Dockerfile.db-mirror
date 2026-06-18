@@ -30,7 +30,6 @@ COPY account /app/account
 COPY accounts /app/accounts
 COPY coursesetter /app/coursesetter
 COPY CQCPathfinder /app/CQCPathfinder
-COPY debug /app/debug
 COPY main /app/main
 COPY pathfinding /app/pathfinding
 COPY play /app/play
