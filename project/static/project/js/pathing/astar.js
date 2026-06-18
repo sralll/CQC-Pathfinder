@@ -1,5 +1,5 @@
 // Weighted 8-connected A* on a Uint8Array grid.
-// Cost formula matches pathfinding/a_star.py exactly:
+// Cost formula matches the retired server A* implementation:
 //   move_cost = hypot(dx, dy) * (255 - grid[neighbor])
 // (only the neighbour's cost factor; no averaging). Impassable cells (grid==0)
 // are skipped, matching the Python condition `if grid[ny, nx] == 0: continue`.
@@ -64,7 +64,7 @@ export function astar(grid, w, h, start, goal) {
             const nIdx = ny * w + nx;
             const nGrey = grid[nIdx];
             if (nGrey === 0) continue;
-            // Production parity: legacy pathfinding/a_star.py:42 doesn't
+            // Production parity: the legacy server A* implementation didn't
             // block diagonal corner squeezes. With the runtime inflate_
             // obstacles + corridor pass downstream, wall-adjacent cells get
             // higher cost so A* naturally detours; the explicit corner

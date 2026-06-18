@@ -33,7 +33,7 @@ let isDragging = false;         //flag for map dragging
 let cDraw = rDraw = sDraw = false;  //flags for drawing control, route, sperre
 let isEditingElevation = false; //flag for elevation editing
 let nnController = null;        //controller for neural network fetch aborting
-let pfController = null;        //controller for pathfinding fetch aborting
+let pfController = null;        // controller for retired route fetch aborting
 let loadedFileName = null;      // name of currently loaded file (for better UX on reload)
 let editRoute = null;           // active route being edited
 let editContinuation = null;    // remaining points after split
@@ -294,7 +294,7 @@ document.addEventListener("keydown", function(e) {
 
         case 'z':
             if (mode === "drawRoutes" && cqc.cP.length > 0) {
-                send_pathfinding();
+                showServerRouteGenerationRetired();
             }
             break;
     }
@@ -1286,7 +1286,7 @@ function loadFileList() {
                 publishCell.appendChild(publishButton);
                 row.appendChild(publishCell);
 
-                // Batch pathfinding button
+                // Server-side batch route generation was retired.
                 const batchPFCell = document.createElement('td');
                 const batchProgressCell = document.createElement('td');
 
@@ -1297,13 +1297,6 @@ function loadFileList() {
                         progressSpan.innerHTML = renderBatchProgressBar(file.batch_progress.done, file.batch_progress.total);
                         progressSpan.style.color = "#757575";
                         batchProgressCell.appendChild(progressSpan);
-                    } else {
-                        const batchPFButton = document.createElement('button');
-                        batchPFButton.innerHTML = '<i class="fa-solid fa-industry"></i>';
-                        batchPFButton.style.padding = "2px 0px";
-                        batchPFButton.title = "Batch Pathfinding (2 Routen pro Postenpaar)";
-                        batchPFButton.addEventListener('click', () => runBatchFromProjectFile(file.filename, file.unique_filename, batchPFButton, batchPFCell, batchProgressCell, file.cPCount));
-                        batchPFCell.appendChild(batchPFButton);
                     }
                 }
 
@@ -1397,34 +1390,7 @@ function stopBatchProgressPolling() {
 }
 
 async function runBatchFromProjectFile(filename, uniqueFilename, batchPFButton, batchPFCell, batchProgressCell, ncP) {
-    // Immediately show empty progress bar
-    batchPFButton.style.display = 'none';
-    const progressSpan = document.createElement('span');
-    progressSpan.dataset.batchFilename = uniqueFilename;  // needed for poller to find it
-    progressSpan.innerHTML = renderBatchProgressBar(0, ncP);
-    progressSpan.style.color = "#757575";
-    batchProgressCell.appendChild(progressSpan);
-    try {
-        const response = await fetch("/pathfinding/batch/", {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                "X-CSRFToken": getCSRFToken()
-            },
-            body: JSON.stringify({ filename: filename })
-        });
-        const result = await response.json();
-        if (!response.ok) {
-            throw new Error(result.error || "Server error occurred");
-        }
-        // Start polling now that batch is confirmed running
-        startBatchProgressPolling(() => renderFilesTable());
-    } catch (err) {
-        console.error("Error in batch pathfinding:", err);
-        alert("Fehler: " + err.message);
-        batchPFButton.style.display = 'block';
-        batchProgressCell.innerHTML = '';
-    }
+    showServerRouteGenerationRetired();
 }
 
 function loadFile(filename) {
@@ -1464,7 +1430,7 @@ function loadFile(filename) {
         // Load mask in parallel
         if (cv_mask) {
             const mapFilename = cqc.mapFile.split('/').pop().split('.')[0];
-            const maskUrl = `/pathfinding/get_mask/mask_${mapFilename}.png`;
+            const maskUrl = `/media/masks/mask_${mapFilename}.png`;
 
             const tempMask = new Image();
             tempMask.onload = () => {
@@ -1681,6 +1647,9 @@ mapUploadForm.addEventListener('submit', function(event) {
 
 // neural net
 function runUNet() {
+    alertBox.innerHTML = "Diese alte Maskengenerierung ist nicht mehr verfÃ¼gbar.";
+    return;
+
     if (cv_mask) {
         mode = "mapCV";
         draw(rc);
@@ -1710,12 +1679,20 @@ function runUNet() {
     `;
 
     const filename = mapPath.split('/').pop();
-    const url = `/pathfinding/run_unet/?filename=${encodeURIComponent(filename)}&scale=${encodeURIComponent(scale)}`;
+    const url = "";
 
     nnController = new AbortController();
     const signal = nnController.signal;
 
-    fetch(url, { signal })
+    fetch(url, {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+            "X-CSRFToken": getCSRFToken(),
+        },
+        body: JSON.stringify({ filename, scale }),
+        signal,
+    })
         .then(response => {
             if (!response.ok) {
                 return response.text().then(t => { throw new Error(t); });
@@ -1757,7 +1734,7 @@ function runUNet() {
                                 markUnsaved();
 
                                 const basename = filename.split('.').slice(0, -1).join('.');
-                                const maskUrl = `/pathfinding/get_mask/mask_${basename}.png`;
+                                const maskUrl = `/media/masks/mask_${basename}.png`;
 
                                 if (!mask) {
                                     mask = new Image();
@@ -1813,6 +1790,9 @@ function removeCVBlock() {
 }
 
 function saveCanvas() {
+    alertBox.innerHTML = "Diese alte Maskenbearbeitung ist nicht mehr verfÃ¼gbar.";
+    return;
+
     const updatedCanvas = updateMaskFromEdits(mask);
 
     // Extract base name from cqc.mapFile
@@ -1822,9 +1802,10 @@ function saveCanvas() {
 
     updatedCanvas.toBlob(blob => {
         const formData = new FormData();
-        formData.append('mask', blob, maskFilename);
+        formData.append('file', blob, maskFilename);
+        formData.append('filename', `${baseName}.png`);
 
-        fetch('/pathfinding/upload-mask/', {
+        fetch('', {
             method: 'POST',
             body: formData,
             headers: {
@@ -2089,7 +2070,7 @@ function drawMask() {
     }
 }
 
-// pathfinding
+// retired server route generation
 function addFinalPathAsRoute(finalPath) {
 
     if (!finalPath || !Array.isArray(finalPath)) {
@@ -2137,65 +2118,15 @@ function addFinalPathAsRoute(finalPath) {
     draw(rc);
 }
 
-function send_pathfinding() {
-    alertBox.innerHTML = 'Pathfinding vorbereiten <i style="font-size: 1rem; padding: 0px 10px" class="fa-solid fa-spinner fa-spin-pulse"></i> <button id="cancelPF" onclick="cancelPathfinding()"><i class="fa-solid fa-x fa-sm" style="font-size: 0.8rem;"></i></button>';
-
-    if (cqc.cP[ncP].complex == false && cqc.cP[ncP].route.length == 2) {
-        alertBox.innerHTML = "Bei Links/Rechts-Posten maximal 2 Routen";
-        return;
-    }
-
-    // Create AbortController
-    pfController = new AbortController();
-    const signal = pfController.signal;
-
-    fetch("/pathfinding/find/", {
-        method: "POST",
-        headers: {
-            "Content-Type": "application/json",
-            "X-CSRFToken": getCSRFToken(),
-        },
-        body: JSON.stringify({
-            ...cqc.cP[ncP],
-            mapFile: cqc.mapFile,
-            blockedTerrain: cqc.blockedTerrain,
-        }),
-        signal
-    }).then(response => {
-        if (!response.ok) {
-            throw new Error("Network response was not ok");
-        }
-        return response.json();
-    }).then(data => {
-        if (data.error) {
-            alertBox.innerHTML = data.error;
-            pfController = null;
-            return;
-        }
-        const routes = data.routes || [];
-        if (!routes.length) {
-            alertBox.innerHTML = "Keine Route gefunden.";
-            pfController = null;
-            return;
-        }
-        for (const route of routes) {
-            addFinalPathAsRoute(route);
-        }
-        markUnsaved();
-        alertBox.innerHTML = routes.length > 1 ? `${routes.length} Routen generiert` : "Route generiert";
-        pfController = null;
-    }).catch(err => {
-        if (err.name === "AbortError") {
-            alertBox.innerHTML = "<span style='color:red;'>Pathfinding abgebrochen</span>";
-        } else {
-            alertBox.innerHTML = err.message;
-            console.error("Fetch error:", err);
-        }
-        pfController = null;
-    });
+function sendRetiredRouteGeneration() {
+    showServerRouteGenerationRetired();
 }
 
-function cancelPathfinding() {
+function showServerRouteGenerationRetired() {
+    alertBox.innerHTML = "Serverseitige Routengenerierung ist nicht mehr verfÃ¼gbar.";
+}
+
+function cancelRetiredRouteGeneration() {
     if (pfController) {
         pfController.abort(); // abort the fetch
         pfController = null;
@@ -2526,7 +2457,7 @@ function updateTableR() {
         tdZ.style.backgroundColor  = "white";
         tdZ.style.setProperty('--td-background-color', '#D6EEEE'); //set hover
         tdZ.title = "Zaubern (Z)";
-        tdZ.addEventListener('click', send_pathfinding); //function for new route
+        tdZ.addEventListener('click', showServerRouteGenerationRetired);
         row.appendChild(tdZ);
         tableBody.appendChild(row);
     }	
@@ -3143,7 +3074,7 @@ function renderProgressBar(current, total, width = 30) {
   const filledBoxes = "█".repeat(filledCount);
   const emptyBoxes = "░".repeat(emptyCount);
 
-  return 'θ* pathfinding ' + filledBoxes + emptyBoxes + `<i style="font-size: 1rem; padding: 0px 10px" class="fa-solid fa-spinner fa-spin-pulse"></i> <button id="cancelPF"><i class="fa-solid fa-x fa-sm" style="font-size: 0.8rem;"></i></button>`;
+  return 'θ* Routensuche ' + filledBoxes + emptyBoxes + `<i style="font-size: 1rem; padding: 0px 10px" class="fa-solid fa-spinner fa-spin-pulse"></i> <button id="cancelPF"><i class="fa-solid fa-x fa-sm" style="font-size: 0.8rem;"></i></button>`;
 }
 
 function renderUNetProgress(current, total, width = 30) {

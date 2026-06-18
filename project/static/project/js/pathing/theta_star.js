@@ -1,5 +1,5 @@
 // Guided theta* on a Uint8Array grid — direct port of
-// pathfinding/theta_star.py:guided_theta_star_sync.
+// Retired server guided_theta_star_sync.
 //
 // Per-neighbour decision (lifted verbatim from the Python):
 //   cost = 255 - grid[neighbor]
@@ -27,7 +27,7 @@ const DYS = new Int8Array([-1, 0, 1, -1, 1, -1, 0, 1]);
 
 // Plain Bresenham LOS + same-terrain check. Direct port of the inline
 // has_line_of_sight + same_terrain test in
-// pathfinding/theta_star.py:guided_theta_star_sync (lines 217-228).
+// Retired server guided_theta_star_sync behaviour.
 function losAndSameTerrain(grid, w, h, x0, y0, x1, y1) {
     const ref = grid[y0 * w + x0];
     let x = x0, y = y0;

@@ -21,7 +21,6 @@ urlpatterns = [
     path("internal/sync-volume-to-r2/", internal_views.trigger_volume_sync, name="trigger_volume_sync"),
     path("", include("main.urls")),
     path('coursesetter/', include('coursesetter.urls')),
-    path("pathfinding/", include("pathfinding.urls")),
     path('play-old/', include('play.urls')),
     path('play/', include('results.play_urls')),
     path('results/', include('results.results_urls')),

@@ -122,7 +122,7 @@ class Route(models.Model):
 
 class EditorSettings(models.Model):
     profile = models.OneToOneField('account.Profile', on_delete=models.CASCADE, related_name='editor_settings')
-    # Number of routes auto-pathfinding generates per control pair (0 = disabled, max 4).
+    # Number of routes auto-generation creates per control pair (0 = disabled, max 4).
     auto_pathfind = models.PositiveSmallIntegerField(
         default=2,
         validators=[MinValueValidator(0), MaxValueValidator(4)],

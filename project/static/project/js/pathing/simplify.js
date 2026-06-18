@@ -42,7 +42,7 @@ export function getAStarTurns(flatPath) {
 
 // LOS-based waypoint reduction. Walks j backward from the end; first j with
 // LOS(i, j) and distance >= min_distance wins. Mirrors the legacy Python
-// pathfinding/a_star.py:simplify_wps semantics.
+// Retired server simplify_wps semantics.
 //
 // CAVEAT: the legacy fallback (no LOS-valid distant j → step to i+1 without
 // re-checking LOS) can stitch a non-LOS pair into the output polyline when
@@ -286,7 +286,7 @@ function signedAngleDeg(v1x, v1y, v2x, v2y) {
 }
 
 // Angle/distance polyline trimmer. Direct port of
-// pathfinding/theta_star.py:simplify_theta_path.
+// Retired server simplify_theta_path.
 export function simplifyThetaPath(flatPath, angleThresholdDeg = 10.0, distanceThreshold = 5.0) {
     const n = flatPath.length / 2;
     if (n < 3) return flatPath.slice();

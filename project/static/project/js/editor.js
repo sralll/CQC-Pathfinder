@@ -385,7 +385,7 @@ function restoreState(state) {
 function undo() {
     if (readOnly) return;
     if (!undoStack.length) return;
-    cancelAllPathfinding();
+    cancelAllPathing();
     if (undoStack[undoStack.length - 1].isMaskUndo) {
         redoStack.push({ label: "Maske bearbeitet", isMaskUndo: true });
         undoStack.pop();
@@ -403,7 +403,7 @@ function undo() {
 function redo() {
     if (readOnly) return;
     if (!redoStack.length) return;
-    cancelAllPathfinding();
+    cancelAllPathing();
     if (redoStack[redoStack.length - 1].isMaskUndo) {
         undoStack.push({ label: "Maske bearbeitet", isMaskUndo: true });
         redoStack.pop();
@@ -1763,12 +1763,12 @@ const MaskLayer = (() => {
             maskData = tc.getImageData(0, 0, img.naturalWidth, img.naturalHeight);
             renderDisplay();
             loaded = true;
-            // Hand the freshly-decoded greyscale to the client-side pathfinding
+            // Hand the freshly-decoded greyscale to the client-side pathing
             // worker so the next CP auto-fire can answer without re-decoding.
             try { sendMaskToPathingWorker(mapFile, maskData); } catch (e) { console.warn("pathing worker: send mask failed", e); }
         };
         img.onerror = () => { loaded = false; };
-        img.src = `/pathfinding/get_mask/mask_${stem}.png`;
+        img.src = `/media/masks/mask_${stem}.png`;
     }
 
     function screenToMaskPx(clientX, clientY) {
@@ -4323,7 +4323,7 @@ function applyImportedCourses(controlPairs, mode = "append") {
         return false;
     }
 
-    cancelAllPathfinding();
+    cancelAllPathing();
     pushUndoState("OCAD-Bahn importiert");
     if (mode === "replace") {
         project.control_pairs = [];
@@ -4941,7 +4941,7 @@ function resetProjectForOcadUpload() {
     setReadOnly(false);
     checkinCurrentFile();
     if (activeTool !== ControlPairTool) activateTool(ControlPairTool);
-    // Drop pathfinding worker debug PNGs from the previous project.
+    // Drop pathing worker debug PNGs from the previous project.
     try { _clearDebugCorridors(); } catch (e) {}
 
     project = {
@@ -5757,7 +5757,7 @@ function startNewRoute() {
     activateTool(NewRouteTool.init(cp));
 }
 
-// (visibility-graph pathfinding removed)
+// (visibility-graph pathing removed)
 
 const _activePathfindByCp = new Map();   // legacy — kept so undefined references don't throw if other code paths still mention it
 let _autoPathfindInFlight = 0;           // for UI badge
@@ -6003,7 +6003,7 @@ const _autoPathfindRunningCps = new Set();
 let _autoPathfindBatchSaveActive = false;
 let _autoPathfindBatchSaveDirty = false;
 let _autoPathfindBatchSaveFinishing = false;
-// Number of routes auto-pathfinding generates per control pair — driven by the
+// Number of routes auto-generation creates per control pair — driven by the
 // nav-bar slider (0 = off, max 4). Replaces the former hard-coded limit of 4.
 function autoPathfindMaxRoutes() {
     return Math.max(0, Math.min(4, editorSettings.auto_pathfind | 0));
@@ -6064,7 +6064,7 @@ function _resolveAllPathingPending(error) {
     _queuePathfindUiUpdate();
 }
 
-function cancelAllPathfinding() {
+function cancelAllPathing() {
     _pathfindGeneration++;
     _pendingAutoPathfindCps.clear();
     _autoPathfindRunningCps.clear();
@@ -6640,7 +6640,7 @@ function updateCPList() {
                 const pathfindBusy = _isPathfindBusyForCp(cp);
                 const expectAnotherRoute = pathfindBusy && _canExpectAnotherPathfindRoute(cp);
                 const pathfindTitle = pathfindBusy
-                    ? (expectAnotherRoute ? "Pathfinding läuft - weitere Route möglich" : "Pathfinding läuft - keine weitere Route erwartet")
+                    ? (expectAnotherRoute ? "Routensuche läuft - weitere Route möglich" : "Routensuche läuft - keine weitere Route erwartet")
                     : "+ automatische Route";
                 const pathfindIcon = pathfindBusy
                     ? `<x-icon name="spinner" class="spin" size="1em"></x-icon>`

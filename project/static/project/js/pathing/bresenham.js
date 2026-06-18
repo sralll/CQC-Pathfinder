@@ -1,5 +1,5 @@
-// Integer Bresenham line walker — identical to pathfinding/preprocess.py:bresenham_line
-// (and pathfinding/a_star.py:bresenham_line). Yields every pixel along the
+// Integer Bresenham line walker from the retired server implementation.
+// Yields every pixel along the
 // line from (x0, y0) to (x1, y1) inclusive.
 
 export function bresenhamPoints(x0, y0, x1, y1) {
@@ -20,7 +20,7 @@ export function bresenhamPoints(x0, y0, x1, y1) {
     return pts;
 }
 
-// Plain Bresenham LOS — direct port of pathfinding/a_star.py:has_line_of_sight.
+// Plain Bresenham LOS from the retired server implementation.
 // Returns false as soon as the cell the line is currently at is 0.
 export function hasLineOfSight(grid, w, h, x0, y0, x1, y1) {
     let x = x0, y = y0;

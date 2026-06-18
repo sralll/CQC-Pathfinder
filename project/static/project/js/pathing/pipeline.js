@@ -9,9 +9,8 @@ import { astar } from './astar.js';
 import { simplifyAStarSameTerrainPath, simplifyThetaPath } from './simplify.js';
 import { guidedThetaStar } from './theta_star.js';
 
-// Direct port of pathfinding/views.py:find — see the production code at
-// https://github.com/sralll/CQC-Pathfinder/blob/main/pathfinding/views.py
-// Constants match pathfinding/preprocess.py + theta_star.py defaults so
+// Direct port of the retired server route finder.
+// Constants match the old preprocessing and theta* defaults so
 // the polylines mirror production.
 const SCALE_REFERENCE = 0.5;
 const INITIAL_MARGIN_BASE = 100;
@@ -216,7 +215,7 @@ export function runPipeline(grid, labels, w, h, startGrid, zielGrid, wasCached, 
         // Debug payload — the corridor-constrained inflated subgrid theta*
         // actually saw, plus its origin in mask-pixel coords. The worker
         // turns this into a downloadable PNG so coordinates can be verified
-        // against the production server's pathfinding output.
+        // against the production server's route output.
         debugBaseGrid: sub.subgrid,
         debugPaths: {
             astar_raw: aStarPath,

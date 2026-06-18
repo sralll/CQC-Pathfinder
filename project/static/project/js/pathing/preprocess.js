@@ -1,4 +1,4 @@
-// Pre/post processing — JS port of the helpers in pathfinding/preprocess.py
+// Pre/post processing — JS port of the retired server helpers
 // + the corridor mask from pathing/theta.py:_fast_corridor_mask.
 // All operate on a flat Uint8Array greyscale grid.
 
@@ -65,7 +65,7 @@ function fillPolygon(grid, w, h, points) {
 
 // Apply user-drawn blockers to a copy of the mask. Coordinates from the
 // editor are in *map* pixels and are divided by TRAIN_SCALE to enter the
-// mask grid — identical to pathfinding/preprocess.py:apply_blocked_terrain.
+// mask grid — identical to the retired server apply_blocked_terrain helper.
 export function applyBlockedTerrain(grid, w, h, blockedTerrain) {
     // The cached grid for the no-blockers case is shared; copy before mutating.
     const out = new Uint8Array(grid);
@@ -93,7 +93,7 @@ export function applyBlockedTerrain(grid, w, h, blockedTerrain) {
 // Crop the mask to a bbox around start/ziel padded by `margin`. Edges of the
 // returned subgrid are set to 0 to prevent A*/theta* from escaping. Returns
 // { subgrid: Uint8Array, sw, sh, offsetX, offsetY, startSub, zielSub }.
-// Mirrors pathfinding/preprocess.py:extract_subgrid.
+// Mirrors the retired server extract_subgrid helper.
 export function extractSubgrid(grid, w, h, start, ziel, margin) {
     const xs = [start.x, ziel.x];
     const ys = [start.y, ziel.y];
@@ -126,7 +126,7 @@ export function extractSubgrid(grid, w, h, start, ziel, margin) {
 }
 
 // 8-connected BFS to the nearest non-zero pixel. Mirrors
-// pathfinding/preprocess.py:move_to_nearest_free.
+// the retired server move_to_nearest_free helper.
 export function snapToFree(grid, w, h, x, y) {
     if (x < 0 || x >= w || y < 0 || y >= h) return null;
     if (grid[y * w + x] !== 0) return { x, y };
@@ -155,7 +155,7 @@ export function snapToFree(grid, w, h, x, y) {
 
 // Corridor mask along a polyline. Walks Bresenham between consecutive
 // vertices and stamps a circular disk of `radius` at every pixel. Direct port
-// of pathfinding/preprocess.py:generate_corridor_mask_numpy — production uses
+// of the retired server generate_corridor_mask_numpy helper. Production uses
 // this with the SIMPLIFIED A* waypoints (after simplify_wps), not the dense
 // A* path, so a `radius=40` corridor covers a wide tube around the high-level
 // turn polyline.
@@ -190,7 +190,7 @@ export function corridorMask(polyline, sw, sh, radius) {
 }
 
 // Soft-block cells adjacent to impassable pixels. Direct port of
-// pathfinding/preprocess.py:inflate_obstacles — every passable cell that has
+// the retired server inflate_obstacles helper: every passable cell that has
 // at least one impassable neighbour within `radius` is overwritten with
 // `dilationBlock` (default 150 ≈ "very slow"). Production runs this on the
 // subgrid before applying the corridor mask, so theta* sees an obstacle halo
@@ -220,7 +220,7 @@ export function inflateObstacles(grid, w, h, radius = 1, dilationBlock = 255 - 2
 
 // Black out the middle section of previously-generated routes so the next A*
 // is forced through a topologically different path. Port of
-// pathfinding/preprocess.py:draw_route_mask:
+// the retired server draw_route_mask helper:
 //   - skip the first/last 40% of the start-ziel distance (preserves approach)
 //   - within that band, stamp a circle of radius = min(dist_start, dist_end)/7
 //     so the blackout is widest mid-route and tapers near endpoints

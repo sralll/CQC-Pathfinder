@@ -44,7 +44,6 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     "CQCPathfinder",
     "coursesetter",
-    "pathfinding",
     "play",
     "main",
     "accounts",
