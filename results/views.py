@@ -86,14 +86,14 @@ def tutorial_complete(request):
 
 
 @login_required
-def random_play(request):
+def infinite_play(request):
     """Procedurally-generated single-obstacle scenarios."""
-    return render(request, 'results/random_play.html')
+    return render(request, 'results/infinite_play.html')
 
 
 @login_required
 @require_POST
-def submit_random_choice(request):
+def submit_infinite_choice(request):
     import json
     try:
         data         = json.loads(request.body)
@@ -102,8 +102,8 @@ def submit_random_choice(request):
         shorter_time = float(data['shorter_time'])
         longer_time  = float(data['longer_time'])
 
-        from .models import RandomChoice
-        RandomChoice.objects.create(
+        from .models import InfiniteChoice
+        InfiniteChoice.objects.create(
             user         = request.user,
             correct      = correct,
             choice_time  = choice_time,

@@ -34,6 +34,7 @@ let project = {
     id:            null,
     name:          '',
     scale:         null,
+    map_scale:     4000,
     scaled:        false,
     map_file:        '',
     blocked_terrain: null,   // { lines: [{start,end}], areas: [{points}] }
@@ -274,6 +275,7 @@ async function loadFile() {
         project.id            = data.id;
         project.name          = data.name;
         project.scale         = data.scale;
+        project.map_scale     = data.map_scale || 4000;
         project.scaled        = data.scaled;
         project.map_file        = data.map_file;
         project.blocked_terrain = data.blocked_terrain;

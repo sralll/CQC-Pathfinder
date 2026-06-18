@@ -50,7 +50,7 @@ def _calc_route_side(cp, route):
     return sum(dx * (p["y"] - start["y"]) - dy * (p["x"] - start["x"]) for p in rP) / len(rP)
 
 
-def _make_route(rP, cp, order, source=None):
+def _make_route(rP, cp, order, source=None, map_scale=None):
     route = {
         "id": None,
         "order": order,
@@ -61,8 +61,8 @@ def _make_route(rP, cp, order, source=None):
         "run_time": None,
         "elevation": 0,
     }
-    route["length"] = calc_route_length(rP)
-    route["noA"] = calc_route_noA(rP)
+    route["length"] = calc_route_length(rP, map_scale=map_scale)
+    route["noA"] = calc_route_noA(rP, map_scale=map_scale)
     route["run_time"] = calc_route_runtime(route["length"], route["noA"], route["elevation"])
     route["pos"] = _calc_route_side(cp, route)
     if source:
@@ -490,7 +490,7 @@ def _route_segments_from_chain(chain, markers, endpoint_distance):
     return segments
 
 
-def _add_svg_route(cp, raw_points, view_box, target_width, target_height, source):
+def _add_svg_route(cp, raw_points, view_box, target_width, target_height, source, map_scale=None):
     style = source.get("style") if isinstance(source, dict) else None
     if style:
         route_styles = cp.setdefault("_route_styles", set())
@@ -509,7 +509,7 @@ def _add_svg_route(cp, raw_points, view_box, target_width, target_height, source
     cp["_route_keys"].add(key)
     if style:
         cp["_route_styles"].add(style)
-    cp["routes"].append(_make_route(rP, cp, len(cp["routes"]), source))
+    cp["routes"].append(_make_route(rP, cp, len(cp["routes"]), source, map_scale=map_scale))
     return True
 
 
@@ -525,36 +525,46 @@ def _transform_to_editor(point, view_box, target_width, target_height):
     }
 
 
-def _scale_control_pairs(control_pairs, scale_x, scale_y):
-    if abs(scale_x - 1) < 0.0001 and abs(scale_y - 1) < 0.0001:
-        return control_pairs
+def _scale_control_pairs(control_pairs, scale_x, scale_y, map_scale=None):
+    apply_geometry_scale = not (abs(scale_x - 1) < 0.0001 and abs(scale_y - 1) < 0.0001)
     for cp in control_pairs:
-        for key in ("start", "ziel"):
-            point = cp.get(key)
-            if point:
-                point["x"] = round(point["x"] * scale_x, 2)
-                point["y"] = round(point["y"] * scale_y, 2)
+        if apply_geometry_scale:
+            for key in ("start", "ziel"):
+                point = cp.get(key)
+                if point:
+                    point["x"] = round(point["x"] * scale_x, 2)
+                    point["y"] = round(point["y"] * scale_y, 2)
         for route in cp.get("routes", []):
-            for point in route.get("rP", []):
-                point["x"] = round(point["x"] * scale_x, 2)
-                point["y"] = round(point["y"] * scale_y, 2)
-            route["length"] = calc_route_length(route.get("rP"))
-            route["noA"] = calc_route_noA(route.get("rP"))
+            if apply_geometry_scale:
+                for point in route.get("rP", []):
+                    point["x"] = round(point["x"] * scale_x, 2)
+                    point["y"] = round(point["y"] * scale_y, 2)
+            route["length"] = calc_route_length(route.get("rP"), map_scale=map_scale)
+            route["noA"] = calc_route_noA(route.get("rP"), map_scale=map_scale)
             route["run_time"] = calc_route_runtime(route["length"], route["noA"], route.get("elevation") or 0)
             route["pos"] = _calc_route_side(cp, route)
     return control_pairs
 
 
-def scale_ocad_import_to_target(conversion, target_width=None, target_height=None):
+def scale_ocad_import_to_target(conversion, target_width=None, target_height=None, map_scale=None):
     control_pairs = conversion.get("control_pairs") or []
+    if map_scale is None:
+        map_scale = conversion.get("ocad_map_scale") or 4000
     expected_width = (conversion.get("width") or 0) * (conversion.get("scale") or 1)
     expected_height = (conversion.get("height") or 0) * (conversion.get("scale") or 1)
     if target_width and target_height and expected_width > 0 and expected_height > 0:
-        _scale_control_pairs(control_pairs, target_width / expected_width, target_height / expected_height)
+        _scale_control_pairs(
+            control_pairs,
+            target_width / expected_width,
+            target_height / expected_height,
+            map_scale=map_scale,
+        )
+    else:
+        _scale_control_pairs(control_pairs, 1, 1, map_scale=map_scale)
     return control_pairs
 
 
-def import_svg_courses(source_path, target_width=None, target_height=None):
+def import_svg_courses(source_path, target_width=None, target_height=None, map_scale=None):
     root = ET.parse(source_path).getroot()
     view_box = _parse_view_box(root)
     target_width = float(target_width or view_box[2])
@@ -665,7 +675,7 @@ def import_svg_courses(source_path, target_width=None, target_height=None):
                 "source": "svg",
                 "style": segment["style"],
                 "endpoint_match": True,
-            }):
+            }, map_scale=map_scale):
                 styled_routes += 1
 
     if styled_routes == 0:
@@ -686,7 +696,7 @@ def import_svg_courses(source_path, target_width=None, target_height=None):
             _add_svg_route(cp, raw_points, view_box, target_width, target_height, {
                 "source": "svg",
                 "endpoint_match": True,
-            })
+            }, map_scale=map_scale)
 
     for cp in control_pairs:
         cp["complex"] = len(cp["routes"]) > 1

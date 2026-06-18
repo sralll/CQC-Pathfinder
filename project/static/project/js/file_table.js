@@ -126,6 +126,9 @@ export class FileTable {
         window.clearMaskUndoStacks?.();
         window.detachMaskGenerationUi?.();
         project = data.project;
+        project.map_scale = Number.isFinite(Number(project.map_scale)) && Number(project.map_scale) > 0
+            ? Number(project.map_scale)
+            : 4000;
         window.markProjectPersistenceIds?.(project);
         const repairedOrders = window.normalizeProjectOrders?.(project) || false;
         window.setReadOnly?.(data.project.read_only, data.project.locked_by_name, data.project.read_only_reason);

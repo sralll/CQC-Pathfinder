@@ -27,7 +27,7 @@ resvg_py==0.3.2  # project app: OCAD SVG-to-PNG rendering
 Pillow==11.2.1  # project app: OCAD rendering and UNet image handling
 numpy==2.2.4  # project app: UNet mask generation arrays
 onnxruntime==1.22.0  # project app: UNet model inference
-scipy==1.14.1  # project app: mask outline dilation in UNet
+# scipy==1.14.1  # no direct import found after UNet dilation moved to numpy
 
 # HTTP/util packages. No current direct app imports found; keep only if a dependency needs them.
 certifi==2025.4.26  # requests dependency

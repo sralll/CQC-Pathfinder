@@ -1,6 +1,6 @@
 from django.contrib import admin
 from django.db.models import Q
-from .models import Choice, RandomChoice
+from .models import Choice, InfiniteChoice
 from account.models import Profile
 from account.admin_access import StaffHiddenAdmin
 
@@ -45,8 +45,8 @@ class ChoiceAdmin(admin.ModelAdmin):
         return True
 
 
-@admin.register(RandomChoice)
-class RandomChoiceAdmin(StaffHiddenAdmin, admin.ModelAdmin):
+@admin.register(InfiniteChoice)
+class InfiniteChoiceAdmin(StaffHiddenAdmin, admin.ModelAdmin):
     list_display = ('user', 'correct', 'choice_time', 'shorter_time', 'longer_time', 'timestamp')
     list_filter = ('correct', 'timestamp')
     search_fields = ('user__username',)

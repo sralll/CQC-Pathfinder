@@ -8,6 +8,7 @@ let project = {
     published: false,
     label: null,
     scale: null,
+    map_scale: 4000,
     scaled: false,
     map_file: '',
     has_mask: false,
@@ -579,6 +580,9 @@ function _projectBody() {
         id:              project.id,
         name:            project.name,
         scale:           project.scale,
+        map_scale:       Number.isFinite(Number(project.map_scale)) && Number(project.map_scale) > 0
+                            ? Number(project.map_scale)
+                            : 4000,
         scaled:          project.scaled,
         map_file:        project.map_file,
         has_mask:        project.has_mask,
@@ -1004,8 +1008,18 @@ const R_CONTROL = 25;
 const GAP = 8;
 const RUN_SPEED = 4.75;         // average running speed in m/s
 const PX_TO_M  = 0.48;         // pixels to metres conversion factor
+const REFERENCE_MAP_SCALE = 4000;
 const PATHING_MASK_TRAIN_SCALE = 0.710;
 const CONTROL_POINT_PASSABLE_SNAP_M = 10;
+
+function projectMapScale() {
+    const value = Number(project?.map_scale);
+    return Number.isFinite(value) && value > 0 ? value : REFERENCE_MAP_SCALE;
+}
+
+function routeMetresPerEditorPx() {
+    return PX_TO_M * (projectMapScale() / REFERENCE_MAP_SCALE);
+}
 
 const camera = { x: 0, y: 0, zoom: 0.67 };
 
@@ -4622,7 +4636,7 @@ const CourseAlignMode = (() => {
             <div class="course-align-actions">
                 <button type="button" id="course-align-reset">Reset</button>
                 <button type="button" id="course-align-remove-anchor" ${state.anchors.length ? "" : "disabled"}>Anker zurück</button>
-                <button type="button" id="course-align-confirm">Uebernehmen</button>
+                <button type="button" id="course-align-confirm">Importieren</button>
             </div>
         `;
         el.querySelector("#course-align-routes")?.addEventListener("change", e => setRouteImport(e.target.checked));
@@ -4868,6 +4882,7 @@ async function importCourseFile(file) {
         fd.append("file", file);
         fd.append("target_width", String(targetSize.width));
         fd.append("target_height", String(targetSize.height));
+        fd.append("map_scale", String(projectMapScale()));
         const res = await fetch("/editor/import-courses/", {
             method: "POST",
             headers: { "X-CSRFToken": csrf },
@@ -4935,6 +4950,7 @@ function resetProjectForOcadUpload() {
         published: false,
         label: keepLabel,
         scale: null,
+        map_scale: 4000,
         scaled: false,
         map_file: "",
         has_mask: false,
@@ -5021,7 +5037,9 @@ async function uploadSelectedMap() {
         if (targetProjectId) project.id = targetProjectId;
         project.map_file = data.map_file;
         const uploadedScale = Number(data.scale);
+        const uploadedMapScale = Number(data.map_scale);
         project.scale    = Number.isFinite(uploadedScale) && uploadedScale > 0 ? uploadedScale : null;
+        project.map_scale = Number.isFinite(uploadedMapScale) && uploadedMapScale > 0 ? uploadedMapScale : 4000;
         project.scaled   = !!data.scaled && !!project.scale;
         project.has_mask = !!data.has_mask;
         const importPosten = !isOcad || _ocadImportChoices.posten;
@@ -5034,6 +5052,7 @@ async function uploadSelectedMap() {
                 complex: importRouten ? !!cp.complex : false,
                 routes:  importRouten && Array.isArray(cp.routes) ? cp.routes : [],
             }));
+            recalculateProjectRoutes();
             selection.ncp = 0;
             selection.nr  = 0;
         } else if (!project.control_pairs.length) {
@@ -5076,16 +5095,18 @@ function showLocalImagePreview(file, generation) {
     const prevSrc = img.getAttribute("src") || null;
     const prevDisplay = img.style.display || "";
     const prevScale = project.scale;
+    const prevMapScale = project.map_scale;
     const prevScaled = project.scaled;
     const prevHasMask = project.has_mask;
     if (localImagePreviewState.blobUrl) URL.revokeObjectURL(localImagePreviewState.blobUrl);
 
     const blobUrl = URL.createObjectURL(file);
-    localImagePreviewState = { generation, prevSrc, prevDisplay, prevScale, prevScaled, prevHasMask, blobUrl };
+    localImagePreviewState = { generation, prevSrc, prevDisplay, prevScale, prevMapScale, prevScaled, prevHasMask, blobUrl };
 
     // New raster needs fresh calibration; clear stale scale/mask state so the
     // immediate fit uses raw pixel dimensions instead of the previous map's scale.
     project.scale = null;
+    project.map_scale = 4000;
     project.scaled = false;
     project.has_mask = false;
 
@@ -5115,6 +5136,7 @@ function revertLocalImagePreview(generation) {
     img.onload = null;
     img.onerror = null;
     project.scale = localImagePreviewState.prevScale ?? null;
+    project.map_scale = localImagePreviewState.prevMapScale ?? 4000;
     project.scaled = localImagePreviewState.prevScaled ?? false;
     project.has_mask = localImagePreviewState.prevHasMask ?? false;
     const prevSrc = localImagePreviewState.prevSrc;
@@ -5282,7 +5304,7 @@ function _openScaleModal() {
     distInp.value  = "";
     c1Inp.value    = "";
     c2Inp.value    = "";
-    ratioInp.value = "4000";
+    ratioInp.value = String(projectMapScale());
     submitBtn.disabled = true;
 
     const check = () => {
@@ -5308,8 +5330,9 @@ function _openScaleModal() {
 
         // Same formula as old coursesetter: inputValue * 4000 / mapScale / dist / 0.48
         project.scale    = meters * 4000 / mapScale / _scalePixelDist / 0.48;
-        project.mapScale = mapScale;
+        project.map_scale = mapScale;
         project.scaled   = true;
+        recalculateProjectRoutes();
 
         modal.style.display = "none";
         _clearRuler();
@@ -6884,10 +6907,11 @@ function calcRouteLength(route) {
     const pts = route.rP;
     if (!pts || pts.length < 2) { route.length = 0; return; }
     let total = 0;
+    const metresPerPx = routeMetresPerEditorPx();
     for (let i = 1; i < pts.length; i++) {
         const dx = pts[i].x - pts[i - 1].x;
         const dy = pts[i].y - pts[i - 1].y;
-        total += Math.sqrt(dx * dx + dy * dy) * PX_TO_M;
+        total += Math.sqrt(dx * dx + dy * dy) * metresPerPx;
     }
     route.length = Math.round(total);
 }
@@ -6917,7 +6941,7 @@ const NOA_MIN_EFFECT_DEG         = 45;
 const NOA_COUNTER_MIN_DEG        = 45;
 
 function noaMetresToRouteUnits(metres) {
-    return metres / PX_TO_M;
+    return metres / routeMetresPerEditorPx();
 }
 
 function normalizeTurnRad(angle) {
@@ -7036,10 +7060,11 @@ function calcRouteNoA(route) {
     const cum      = [0];
     const headings = [];
     const segLen   = [];
+    const metresPerPx = routeMetresPerEditorPx();
     for (let i = 1; i < rP.length; i++) {
         const dx = rP[i].x - rP[i - 1].x;
         const dy = rP[i].y - rP[i - 1].y;
-        const len = Math.hypot(dx, dy) * PX_TO_M;
+        const len = Math.hypot(dx, dy) * metresPerPx;
         cum.push(cum[i - 1] + len);
         segLen.push(len);
         headings.push((dx === 0 && dy === 0) ? null : Math.atan2(dy, dx));
@@ -7114,6 +7139,18 @@ function calcRouteRunTime(route) {
     const adjSpeed  = RUN_SPEED / ((gapUp + gapDown) / 2);
     route.run_time  = length / adjSpeed + noAPenalty;
 }
+
+function recalculateProjectRoutes(targetProject = project) {
+    for (const cp of targetProject?.control_pairs || []) {
+        for (const route of cp.routes || []) {
+            calcRouteLength(route);
+            calcRouteNoA(route);
+            calcRouteRunTime(route);
+            calcRouteSide(cp, route);
+        }
+    }
+}
+window.recalculateProjectRoutes = recalculateProjectRoutes;
 
 /* =========================================================
     SNAP

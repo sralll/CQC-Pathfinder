@@ -4,7 +4,7 @@ RUN apk add --no-cache bash curl ca-certificates
 
 WORKDIR /app
 
-COPY scripts/sync_volume_r2.sh /app/sync_volume_r2.sh
-RUN chmod +x /app/sync_volume_r2.sh
+COPY scripts/sync_volume_r2.sh /app/scripts/sync_volume_r2.sh
+RUN chmod +x /app/scripts/sync_volume_r2.sh
 
-CMD ["bash", "/app/sync_volume_r2.sh"]
+CMD ["bash", "/app/scripts/sync_volume_r2.sh"]

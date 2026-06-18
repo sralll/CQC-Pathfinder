@@ -26,8 +26,8 @@ urlpatterns = [
 
     # Play
     path('play/',                            results_views.index,              name='results_home'),
-    path('play/infinity/',                   results_views.random_play,        name='infinity_play'),
-    path('play/infinity/submit-choice/',     results_views.submit_random_choice, name='submit_infinity_choice'),
+    path('play/infinity/',                   results_views.infinite_play,      name='infinity_play'),
+    path('play/infinity/submit-choice/',     results_views.submit_infinite_choice, name='submit_infinity_choice'),
     path('play/tutorial/',                   results_views.play_tutorial,      name='play_tutorial'),
     path('play/tutorial-complete/',          results_views.tutorial_complete,  name='play_tutorial_complete'),
     path('play/<int:file_id>/<str:mode>/',   results_views.play,               name='play'),

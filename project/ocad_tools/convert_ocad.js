@@ -118,6 +118,15 @@ function computeEditorScale(mapScale, rasterScale, calibrationFactor) {
   );
 }
 
+function mapScaleFactor(mapScale) {
+  const value = Number(mapScale);
+  return Number.isFinite(value) && value > 0 ? value / REFERENCE_MAP_SCALE : 1;
+}
+
+function routeMetresPerEditorPx(mapScale) {
+  return PX_TO_M * mapScaleFactor(mapScale);
+}
+
 function installSerializableIdSetter(dom) {
   const probe = dom.createElementNS("http://www.w3.org/2000/svg", "g");
   const proto = Object.getPrototypeOf(probe);
@@ -221,15 +230,16 @@ function appendRoutePoints(target, points) {
   }
 }
 
-function calcRouteLength(route) {
+function calcRouteLength(route, mapScale = REFERENCE_MAP_SCALE) {
   const pts = route.rP;
   if (!pts || pts.length < 2) {
     route.length = 0;
     return;
   }
   let total = 0;
+  const metresPerPx = routeMetresPerEditorPx(mapScale);
   for (let i = 1; i < pts.length; i++) {
-    total += Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y) * PX_TO_M;
+    total += Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y) * metresPerPx;
   }
   route.length = Math.round(total);
 }
@@ -244,8 +254,8 @@ function roundNoA(value) {
   return Math.round(value * 10) / 10;
 }
 
-function simplifiedNoAPoints(points) {
-  const minStep = NOA_MIN_SEGMENT_M / PX_TO_M;
+function simplifiedNoAPoints(points, mapScale = REFERENCE_MAP_SCALE) {
+  const minStep = NOA_MIN_SEGMENT_M / routeMetresPerEditorPx(mapScale);
   const out = [];
   for (const point of points || []) {
     if (!Number.isFinite(point?.x) || !Number.isFinite(point?.y)) continue;
@@ -260,8 +270,8 @@ function simplifiedNoAPoints(points) {
   return out;
 }
 
-function calcRouteNoA(route, scale) {
-  const rP = simplifiedNoAPoints(route.rP);
+function calcRouteNoA(route, mapScale = REFERENCE_MAP_SCALE) {
+  const rP = simplifiedNoAPoints(route.rP, mapScale);
   if (!rP || rP.length < 3) {
     route.noA = 0;
     return;
@@ -271,11 +281,12 @@ function calcRouteNoA(route, scale) {
   const cum = [0];
   const headings = [];
   const segLen = [];
+  const metresPerPx = routeMetresPerEditorPx(mapScale);
 
   for (let i = 1; i < rP.length; i++) {
     const dx = rP[i].x - rP[i - 1].x;
     const dy = rP[i].y - rP[i - 1].y;
-    const len = Math.hypot(dx, dy) * PX_TO_M;
+    const len = Math.hypot(dx, dy) * metresPerPx;
     cum.push(cum[i - 1] + len);
     segLen.push(len);
     headings.push(dx === 0 && dy === 0 ? null : Math.atan2(dy, dx));
@@ -364,7 +375,7 @@ function calcRouteSide(cp, route) {
   route.pos = sum / rP.length;
 }
 
-function makeRoute(rP, cp, order, scale, source) {
+function makeRoute(rP, cp, order, mapScale, source) {
   const route = {
     id: null,
     order,
@@ -376,8 +387,8 @@ function makeRoute(rP, cp, order, scale, source) {
     elevation: 0,
     source,
   };
-  calcRouteLength(route);
-  calcRouteNoA(route, scale);
+  calcRouteLength(route, mapScale);
+  calcRouteNoA(route, mapScale);
   calcRouteRunTime(route);
   calcRouteSide(cp, route);
   return route;
@@ -459,7 +470,7 @@ function routeGeometryKey(rP) {
   return rP.map(routePointKey).join("|");
 }
 
-function attachActualRoutesToControlPair(cp, from, to, points, routeIndex, editorScale) {
+function attachActualRoutesToControlPair(cp, from, to, points, routeIndex, mapScale) {
   const entries = routeIndex.segments.get(`${from}->${to}`) || [];
   const sortedEntries = [...entries].sort((a, b) => (a.routeOrder || 0) - (b.routeOrder || 0));
   if (!cp._routeKeys) cp._routeKeys = new Set();
@@ -472,7 +483,7 @@ function attachActualRoutesToControlPair(cp, from, to, points, routeIndex, edito
     const routeKey = routeGeometryKey(rP);
     if (cp._routeKeys.has(routeKey)) continue;
     cp._routeKeys.add(routeKey);
-    cp.routes.push(makeRoute(rP, cp, cp.routes.length, editorScale, {
+    cp.routes.push(makeRoute(rP, cp, cp.routes.length, mapScale, {
       from,
       to,
       fallback: "actual_route_segments",
@@ -495,7 +506,7 @@ function nearestControlPoint(pixel, points, maxDistance) {
   return bestId;
 }
 
-function buildControlPairsFromDisplayLines(ocadFile, bounds, rasterScale, editorScale, points, routeIndex) {
+function buildControlPairsFromDisplayLines(ocadFile, bounds, rasterScale, editorScale, points, routeIndex, mapScale) {
   const controlPairs = [];
   const seen = new Set();
   const pointLookup = { ...points };
@@ -537,7 +548,7 @@ function buildControlPairsFromDisplayLines(ocadFile, bounds, rasterScale, editor
       },
       _routeKeys: new Set(),
     };
-    attachActualRoutesToControlPair(cp, from, to, pointLookup, routeIndex, editorScale);
+    attachActualRoutesToControlPair(cp, from, to, pointLookup, routeIndex, mapScale);
     cp.complex = cp.routes.length > 1;
     delete cp._routeKeys;
     controlPairs.push(cp);
@@ -546,7 +557,7 @@ function buildControlPairsFromDisplayLines(ocadFile, bounds, rasterScale, editor
   return controlPairs;
 }
 
-function buildControlPairsFromRouteIndex(points, routeIndex, editorScale) {
+function buildControlPairsFromRouteIndex(points, routeIndex, mapScale) {
   const controlPairs = [];
   for (const [key] of routeIndex.segments.entries()) {
     const [from, to] = key.split("->");
@@ -564,14 +575,14 @@ function buildControlPairsFromRouteIndex(points, routeIndex, editorScale) {
       },
       _routeKeys: new Set(),
     };
-    attachActualRoutesToControlPair(cp, from, to, points, routeIndex, editorScale);
+    attachActualRoutesToControlPair(cp, from, to, points, routeIndex, mapScale);
     delete cp._routeKeys;
     controlPairs.push(cp);
   }
   return controlPairs;
 }
 
-function buildControlPairs(courses, points, routeIndex, editorScale, ocadFile = null, bounds = null, rasterScale = 1) {
+function buildControlPairs(courses, points, routeIndex, editorScale, mapScale, ocadFile = null, bounds = null, rasterScale = 1) {
   const seen = new Set();
   const byLeg = new Map();
   const controlPairs = [];
@@ -607,7 +618,7 @@ function buildControlPairs(courses, points, routeIndex, editorScale, ocadFile = 
       const routeKey = routeGeometryKey(rP);
       if (cp._routeKeys.has(routeKey)) continue;
       cp._routeKeys.add(routeKey);
-      cp.routes.push(makeRoute(rP, cp, cp.routes.length, editorScale, {
+      cp.routes.push(makeRoute(rP, cp, cp.routes.length, mapScale, {
         course: course.name,
         from,
         to,
@@ -620,9 +631,9 @@ function buildControlPairs(courses, points, routeIndex, editorScale, ocadFile = 
   for (const cp of controlPairs) delete cp._routeKeys;
   if (controlPairs.length) return controlPairs;
   const displayPairs = ocadFile && bounds
-    ? buildControlPairsFromDisplayLines(ocadFile, bounds, rasterScale, editorScale, points, routeIndex)
+    ? buildControlPairsFromDisplayLines(ocadFile, bounds, rasterScale, editorScale, points, routeIndex, mapScale)
     : [];
-  return displayPairs.length ? displayPairs : buildControlPairsFromRouteIndex(points, routeIndex, editorScale);
+  return displayPairs.length ? displayPairs : buildControlPairsFromRouteIndex(points, routeIndex, mapScale);
 }
 
 function ocadSymbolCode(sym) {
@@ -945,7 +956,9 @@ async function main() {
   const controlPoints = extractControlPoints(ocadFile, bounds, rasterScale, editorScale);
   const courses = extractCourses(ocadFile);
   const routeIndex = buildActualRouteIndex(ocadFile, bounds, rasterScale, editorScale);
-  const controlPairs = buildControlPairs(courses, controlPoints, routeIndex, editorScale, ocadFile, bounds, rasterScale);
+  const controlPairs = buildControlPairs(
+    courses, controlPoints, routeIndex, editorScale, mapScale, ocadFile, bounds, rasterScale
+  );
   const actualRouteSegments = Array.from(routeIndex.segments.values())
     .reduce((sum, entries) => sum + entries.length, 0);
 

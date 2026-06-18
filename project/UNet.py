@@ -146,11 +146,13 @@ def _run_mask_generation(*, job, job_key, map_path, scale, mask_filename,
         vis[output_img == 33] = mo.fast
         vis[output_img == 34] = mo.impassable
 
-        from scipy import ndimage as _ndi
         vis_2d = vis[:, :, 0]
         impassable_mask = vis_2d == mo.impassable
-        dilated = _ndi.binary_dilation(
-            impassable_mask, structure=np.ones((3, 3), dtype=bool), iterations=1,
+        padded = np.pad(impassable_mask, 1, mode="constant", constant_values=False)
+        dilated = (
+            padded[:-2, :-2] | padded[:-2, 1:-1] | padded[:-2, 2:] |
+            padded[1:-1, :-2] | padded[1:-1, 1:-1] | padded[1:-1, 2:] |
+            padded[2:, :-2] | padded[2:, 1:-1] | padded[2:, 2:]
         )
         vis_2d[dilated & ~impassable_mask] = mo.outline
         final = Image.fromarray(np.repeat(vis, 3, axis=2).astype(np.uint8))
@@ -161,7 +163,7 @@ def _run_mask_generation(*, job, job_key, map_path, scale, mask_filename,
         os.makedirs(os.path.dirname(mask_path), exist_ok=True)
         with open(mask_path, 'wb') as f:
             f.write(buf.read())
-        del vis, vis_2d, dilated, impassable_mask, final, buf
+        del vis, vis_2d, padded, dilated, impassable_mask, final, buf
 
         if file_id is not None:
             File.objects.filter(id=file_id, deleted=False, map_file=filename).update(has_mask=True)

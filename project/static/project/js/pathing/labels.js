@@ -1,5 +1,5 @@
 // 8-connected union-find connected-component labelling.
-// Output equivalent to scipy.ndimage.label(grid > 0, structure=np.ones((3,3))).
+// 8-connected component labeling for passable mask pixels.
 // Label 0 = background (grid == 0), labels >=1 = free-space components.
 
 export function labelConnected(grid, w, h) {

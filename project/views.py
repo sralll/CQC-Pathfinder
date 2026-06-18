@@ -32,6 +32,14 @@ def _normalize_order_payload(control_pairs):
     return control_pairs
 
 
+def _map_scale_value(raw, default=4000):
+    try:
+        value = int(float(raw))
+    except (TypeError, ValueError):
+        return default
+    return value if value > 0 else default
+
+
 def _create_db_snapshot(file, user, trigger):
     """Create a FileSnapshot from the current DB state of a File."""
     from .models import FileSnapshot
@@ -467,7 +475,7 @@ def save_file(request):
 
         file.name            = data.get('name', 'Neues Projekt')
         file.scale           = data.get('scale')
-        file.map_scale       = data.get('map_scale') or 4000
+        file.map_scale       = _map_scale_value(data.get('map_scale'))
         file.scaled          = data.get('scaled', False)
         file.map_file        = data.get('map_file', '')
         file.has_mask        = data.get('has_mask', False)
@@ -729,7 +737,7 @@ def save_snapshot(request):
             label           = file.label,
             author          = file.author or '',
             scale           = data.get('scale'),
-            map_scale       = data.get('map_scale') or 4000,
+            map_scale       = _map_scale_value(data.get('map_scale')),
             map_file        = data.get('map_file', ''),
             has_mask        = data.get('has_mask', False),
             blocked_terrain = data.get('blocked_terrain'),
@@ -1045,6 +1053,7 @@ def import_courses(request):
 
     target_width = _positive_float(request.POST.get('target_width'))
     target_height = _positive_float(request.POST.get('target_height'))
+    map_scale = _map_scale_value(request.POST.get('map_scale'))
 
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=ext or '.ocd')
     source_path = tmp.name
@@ -1059,7 +1068,9 @@ def import_courses(request):
             conversion = extract_ocad_courses(source_path)
         except OcadConversionError as exc:
             return JsonResponse({'error': f'OCAD-Bahn-Import fehlgeschlagen: {exc}'}, status=400)
-        control_pairs = scale_ocad_import_to_target(conversion, target_width, target_height)
+        control_pairs = scale_ocad_import_to_target(
+            conversion, target_width, target_height, map_scale=map_scale,
+        )
         meta = {
             'format': 'ocad',
             'courses': conversion.get('courses', 0),
@@ -1068,7 +1079,8 @@ def import_courses(request):
             'width': conversion.get('width'),
             'height': conversion.get('height'),
             'scale': conversion.get('scale'),
-            'map_scale': conversion.get('ocad_map_scale'),
+            'map_scale': map_scale,
+            'source_map_scale': conversion.get('ocad_map_scale'),
         }
 
         control_pairs = _normalize_order_payload(control_pairs)

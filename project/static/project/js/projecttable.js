@@ -1010,6 +1010,7 @@ async function createFileWithTitle() {
     project.id            = null;   // assigned on first real save (after scaling)
     project.name          = name;
     project.scale         = null;
+    project.map_scale     = 4000;
     project.scaled        = false;
     project.map_file      = "";
     project.has_mask      = false;

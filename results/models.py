@@ -32,11 +32,11 @@ class Choice(models.Model):
         return self.selected_route.run_time if self.selected_route else None
 
 
-class RandomChoice(models.Model):
-    """One attempt of the procedurally-generated /play/random/ leg."""
+class InfiniteChoice(models.Model):
+    """One attempt of the procedurally-generated /play/infinity/ leg."""
 
     user         = models.ForeignKey('auth.User', on_delete=models.SET_NULL,
-                                     null=True, blank=True, related_name='random_choices')
+                                     null=True, blank=True, related_name='infinite_choices')
     correct      = models.BooleanField()
     choice_time  = models.FloatField()                         # seconds from reveal → decision
     shorter_time = models.FloatField()                         # seconds the optimal route would have taken
