@@ -20,16 +20,7 @@ RUN python3 -m venv /opt/venv \
     && pip install --upgrade pip setuptools wheel \
     && pip install --no-cache-dir -r requirements.db-mirror.txt
 
-COPY account /app/account
-COPY accounts /app/accounts
-COPY coursesetter /app/coursesetter
-COPY CQCPathfinder /app/CQCPathfinder
-COPY main /app/main
-COPY pathfinding /app/pathfinding
-COPY play /app/play
-COPY project /app/project
-COPY results /app/results
-COPY scripts/mirror_prod_to_staging.sh /app/scripts/mirror_prod_to_staging.sh
+COPY . /app/
 
 RUN chmod +x /app/scripts/mirror_prod_to_staging.sh
 

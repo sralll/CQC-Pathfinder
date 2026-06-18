@@ -1,0 +1,17 @@
+.git
+.gitignore
+.claude
+.venv
+venv
+__pycache__
+*.pyc
+*.pyo
+*.sqlite3
+*.log
+.env
+node_modules
+media
+staticfiles
+desktop.ini
+changes.txt
+*.ocd

@@ -3,5 +3,5 @@ builder = "RAILPACK"
 buildCommand = "npm install --omit=dev && python manage.py collectstatic --clear --noinput"
 
 [deploy]
-preDeployCommand = ["python manage.py migrate"]
+preDeployCommand = "sh -c 'if command -v python >/dev/null 2>&1 && [ -f manage.py ] && [ -n \"${DATABASE_URL:-}\" ]; then python manage.py migrate --noinput; else echo \"Skipping Django migrations in pre-deploy (no python/manage.py/DATABASE_URL).\"; fi'"
 startCommand = "chmod +x start.sh && ./start.sh"
