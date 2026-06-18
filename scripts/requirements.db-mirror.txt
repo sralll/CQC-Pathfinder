@@ -1,0 +1,8 @@
+# Minimal dependencies for scripts/Dockerfile.db-mirror.
+# This image only runs PostgreSQL dump/restore plus `python manage.py migrate`.
+Django==5.2
+dj-database-url==2.3.0
+python-dotenv==1.1.0
+psycopg2-binary==2.9.10
+servestatic==3.0.1
+numpy==2.2.4

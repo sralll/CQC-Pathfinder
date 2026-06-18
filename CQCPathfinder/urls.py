@@ -22,7 +22,7 @@ urlpatterns = [
     path("", include("main.urls")),
     path('coursesetter/', include('coursesetter.urls')),
     path("pathfinding/", include("pathfinding.urls")),
-
+    path('play-old/', include('play.urls')),
     path('play/', include('results.play_urls')),
     path('results/', include('results.results_urls')),
     path('stats/', include('results.stats_urls')),
@@ -34,8 +34,6 @@ urlpatterns = [
     path('forum/thread/<int:pk>/edit/',      account_views.forum_thread_edit,  name='forum_thread_edit'),
     path('forum/comment/<int:pk>/vote/',     account_views.forum_comment_vote, name='forum_comment_vote'),
     path('forum/comment/<int:pk>/edit/',     account_views.forum_comment_edit, name='forum_comment_edit'),
-
-    path('play-old/', include('play.urls')),
 
     # login/logout — login page must stay public (else the redirect-to-login
     # would loop forever).
