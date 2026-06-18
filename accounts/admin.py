@@ -3,7 +3,6 @@ from django.contrib.auth.admin import UserAdmin
 from django.contrib.auth.models import User, Group
 from django.contrib.auth.forms import UserCreationForm
 from .models import UserProfile, Kader, DeviceCounter
-from main.models import Feedback
 from account.admin_access import StaffHiddenAdmin
 
 # --- UserProfile inline ---
@@ -132,24 +131,3 @@ class DeviceCounterAdmin(StaffHiddenAdmin, admin.ModelAdmin):
         return request.user.is_superuser
     def has_delete_permission(self, request, obj=None):
         return False
-
-# --- Feedback admin ---
-class FeedbackAdmin(admin.ModelAdmin):
-    list_display = ('created_at', 'short_comment')
-
-    def short_comment(self, obj):
-        return obj.comment[:50] + ('...' if len(obj.comment) > 50 else '')
-    short_comment.short_description = "Comment"
-
-    def has_module_permission(self, request):
-        return request.user.is_superuser
-    def has_view_permission(self, request, obj=None):
-        return request.user.is_superuser
-    def has_add_permission(self, request):
-        return False
-    def has_change_permission(self, request, obj=None):
-        return False
-    def has_delete_permission(self, request, obj=None):
-        return request.user.is_superuser
-
-admin.site.register(Feedback, FeedbackAdmin)

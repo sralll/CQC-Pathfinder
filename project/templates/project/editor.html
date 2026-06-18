@@ -55,11 +55,13 @@
     <div id="nav-panel-right" class="nav-ham-panel nav-ham-panel-right">
         <div id="menu-history" class="nav-menu-item">
             <x-icon name="history" size="13px"></x-icon>
+            <span class="nav-item-label">Verlauf</span>
             <div id="undo-dropdown" class="nav-dropdown" style="min-width:220px;max-height:320px;overflow-y:auto;"></div>
         </div>
 
         <div id="menu-batch" class="nav-menu-item">
             <x-icon name="industry" size="13px"></x-icon>
+            <span class="nav-item-label">Stapel</span>
             <div class="nav-dropdown" onclick="event.stopPropagation();" style="min-width:200px;">
                 <div id="batch-switch-lr" class="nav-dropdown-item">
                     <x-icon name="arrows-split" size="12px" style="transform:scaleY(-1)"></x-icon>
@@ -73,7 +75,7 @@
         </div>
 
         <div id="menu-einstellungen" class="nav-menu-item">
-            Einstellungen
+            <span class="nav-item-label">Einstellungen</span>
             <div class="nav-dropdown" onclick="event.stopPropagation();">
                 <div class="settings-toggle-row">
                     <span>Auto-Pathfind</span>

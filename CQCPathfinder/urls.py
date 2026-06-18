@@ -9,8 +9,7 @@ from django.contrib.auth.decorators import login_not_required
 from CQCPathfinder.forms import StyledLoginForm, StyledPasswordChangeForm
 from django.views.generic import RedirectView
 
-from main import views
-from account import views as account_views
+from CQCPathfinder import views
 from CQCPathfinder import internal_views
 
 urlpatterns = [
@@ -19,20 +18,12 @@ urlpatterns = [
 
     path("admin/", admin.site.urls),
     path("internal/sync-volume-to-r2/", internal_views.trigger_volume_sync, name="trigger_volume_sync"),
-    path("", include("main.urls")),
-    path('coursesetter/', include('coursesetter.urls')),
-    path('play-old/', include('play.urls')),
+    path("", views.home_view, name="home"),
+    path("feedback/", views.feedback_view, name="feedback"),
     path('play/', include('results.play_urls')),
     path('results/', include('results.results_urls')),
     path('stats/', include('results.stats_urls')),
-
-    # Forum
-    path('forum/',                           account_views.forum_index,        name='forum'),
-    path('forum/thread/<int:pk>/',           account_views.forum_thread,       name='forum_thread'),
-    path('forum/thread/<int:pk>/vote/',      account_views.forum_thread_vote,  name='forum_thread_vote'),
-    path('forum/thread/<int:pk>/edit/',      account_views.forum_thread_edit,  name='forum_thread_edit'),
-    path('forum/comment/<int:pk>/vote/',     account_views.forum_comment_vote, name='forum_comment_vote'),
-    path('forum/comment/<int:pk>/edit/',     account_views.forum_comment_edit, name='forum_comment_edit'),
+    path('forum/', include('account.forum_urls')),
 
     # login/logout — login page must stay public (else the redirect-to-login
     # would loop forever).

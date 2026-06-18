@@ -64,7 +64,7 @@ function setReadOnly(isReadOnly, lockedByName, reason) {
         const msg = reason === 'published'
             ? 'Diese Datei ist veröffentlicht'
             : `${lockedByName || 'jemand anderes'} bearbeitet diese Datei`;
-        bar.innerHTML = `<span>🔒 Schreibgeschützt — ${msg}</span>`;
+        bar.innerHTML = `<x-icon name="lock" size="13px"></x-icon><span>Schreibgeschützt: ${msg}</span>`;
         document.body.appendChild(bar);
     }
 }
@@ -650,6 +650,134 @@ function _handleDownloadHash() {
 window.addEventListener("hashchange", _handleDownloadHash);
 // Run once on load in case the page opened directly with #download in the URL.
 _handleDownloadHash();
+
+/* =========================================================
+    OFFLINE JSON IMPORT (escape hatch)
+    --------------------------------------------------------
+    Inverse of "#download": re-injects a previously exported
+    project JSON back into the editor by appending "#upload" to
+    the current editor URL (e.g. /editor/#upload). Opens a file
+    picker, parses the chosen JSON, loads it as the in-memory
+    `project`, then triggers a normal save so the rescued state
+    lands back on the server.
+
+    Entirely client-side — the file is read locally and applied
+    through the SAME path as opening a server file, so NO new
+    server endpoint is added. The existing /editor/save/ endpoint
+    remains the security boundary: it enforces team scoping (an id
+    that no longer resolves to the user's team creates a new file
+    rather than overwriting another team's data), so this is no
+    more privileged than normal autosave. Available to every editor
+    user on purpose — "#download" is too, and the rescue workflow
+    only works if the same user can restore what they downloaded.
+    There is intentionally no on-screen button.
+========================================================= */
+
+function applyUploadedProject(parsed) {
+    // Accept either the raw project object (what #download exports) or a
+    // { project: {...} } wrapper — be liberal in what we accept.
+    const incoming = (parsed && !Array.isArray(parsed.control_pairs) && parsed.project)
+        ? parsed.project
+        : parsed;
+
+    if (!incoming || typeof incoming !== "object" || !Array.isArray(incoming.control_pairs)) {
+        console.warn("uploadProjectJson: payload is not a recognizable project.", parsed);
+        window.showModal?.({ message: "Diese Datei ist kein gültiges Projekt." });
+        return;
+    }
+
+    const table = window._fileTable;
+    if (!table || typeof table._applyProject !== "function") {
+        console.warn("uploadProjectJson: file table not ready.");
+        window.showModal?.({ message: "Editor noch nicht bereit — bitte erneut versuchen." });
+        return;
+    }
+
+    // Reuse the exact same load path as opening a server file. _applyProject
+    // reads `data.project`; absent read_only/lock fields default to an editable
+    // project, which is what we want for a re-imported file.
+    table._applyProject({ project: incoming });
+
+    // Persist immediately so the rescued state is back on the server. save_file
+    // enforces team scoping: an id still resolving to the user's team updates
+    // that file; otherwise a fresh file is created.
+    if (!readOnly) saveFile("upload");
+
+    console.info("uploadProjectJson: imported project and triggered save.");
+}
+
+function _readProjectFile(file) {
+    const reader = new FileReader();
+    reader.onload = () => {
+        let parsed;
+        try {
+            parsed = JSON.parse(reader.result);
+        } catch (e) {
+            console.warn("uploadProjectJson: not valid JSON —", e);
+            window.showModal?.({ message: "Die Datei ist kein gültiges JSON." });
+            return;
+        }
+        applyUploadedProject(parsed);
+    };
+    reader.onerror = () => {
+        console.warn("uploadProjectJson: file read failed", reader.error);
+        window.showModal?.({ message: "Die Datei konnte nicht gelesen werden." });
+    };
+    reader.readAsText(file);
+}
+
+function uploadProjectJson() {
+    // A file picker requires transient user activation. A hashchange (e.g. typing
+    // "#upload" into the address bar) does NOT grant it, so clicking the input
+    // directly here would be blocked. Instead show a small prompt and open the
+    // picker from the user's click on its button — that click IS an activation.
+    if (document.getElementById("upload-project-overlay")) return;
+
+    const input = document.createElement("input");
+    input.type   = "file";
+    input.accept = ".json,application/json";
+    input.style.display = "none";
+    input.addEventListener("change", () => {
+        const file = input.files?.[0];
+        overlay.remove();
+        if (file) _readProjectFile(file);
+    });
+
+    const overlay = document.createElement("div");
+    overlay.id = "upload-project-overlay";
+    overlay.className = "dialog-overlay";
+    overlay.innerHTML = `
+        <div class="dialog-box">
+            <p class="dialog-message">Projekt-JSON wiederherstellen</p>
+            <div class="dialog-buttons">
+                <button class="dialog-btn dialog-btn-cancel" type="button">Abbrechen</button>
+                <button class="dialog-btn dialog-btn-confirm" type="button">Datei wählen…</button>
+            </div>
+        </div>`;
+    // Open the native picker synchronously inside the click handler so the user
+    // activation carries through.
+    overlay.querySelector(".dialog-btn-confirm").addEventListener("click", () => input.click());
+    overlay.querySelector(".dialog-btn-cancel").addEventListener("click", () => overlay.remove());
+    overlay.addEventListener("click", e => { if (e.target === overlay) overlay.remove(); });
+
+    overlay.appendChild(input);
+    document.body.appendChild(overlay);
+    overlay.querySelector(".dialog-btn-confirm").focus();
+}
+window.uploadProjectJson = uploadProjectJson;
+
+function _handleUploadHash() {
+    if ((location.hash || "").toLowerCase() !== "#upload") return;
+    // Clear the hash first (no navigation) so the import can be re-triggered.
+    try {
+        history.replaceState(null, "", location.pathname + location.search);
+    } catch (_) { /* replaceState unavailable — proceed with import anyway */ }
+    uploadProjectJson();
+}
+
+window.addEventListener("hashchange", _handleUploadHash);
+// Run once on load in case the page opened directly with #upload in the URL.
+_handleUploadHash();
 
 function markProjectPersistenceIds(targetProject = project) {
     const fileId = targetProject?.id ?? null;
@@ -5576,50 +5704,68 @@ function initMenus() {
     const isMobile = document.body.classList.contains("mobile");
 
     if (isMobile) {
-        menuItems.forEach(menu => {
-            if (menu.id === "menu-project") return;
-            menu.addEventListener("click", (e) => {
-                // Clicks on the sub-dropdown content are handled by their own
-                // listeners — don't toggle the menu, but still keep the
-                // surrounding hamburger panel open.
+        // ── Unified mobile hamburger ──────────────────────────
+        // Mobile collapses to a SINGLE hamburger on the left. Fold the
+        // right-hand panel's sections (Verlauf / Stapel / Einstellungen) into
+        // the project dropdown so every editor navbar option lives in one
+        // place, then drop the now-redundant right hamburger.
+        const projectMenu     = document.getElementById("menu-project");
+        const projectHam      = document.getElementById("nav-project-ham");
+        const projectDropdown = document.getElementById("project-dropdown");
+        const rightPanel      = document.getElementById("nav-panel-right");
+        const rightHam        = document.getElementById("nav-ham-right");
+
+        if (projectDropdown) {
+            ["menu-history", "menu-batch", "menu-einstellungen"].forEach(id => {
+                const sec = document.getElementById(id);
+                if (sec) projectDropdown.appendChild(sec);
+            });
+        }
+        rightHam?.remove();
+        rightPanel?.remove();
+
+        // The relocated sections expand inline (accordion) into a deeper layer;
+        // the flat project rows above them stay as direct actions.
+        const sections = projectDropdown
+            ? Array.from(projectDropdown.querySelectorAll(":scope > .nav-menu-item"))
+            : [];
+        const closeSections = () => sections.forEach(s => s.classList.remove("open"));
+
+        sections.forEach(sec => {
+            sec.addEventListener("click", (e) => {
+                // Interactions with the expanded deeper menu are handled by
+                // their own listeners — keep the section (and panel) open.
                 if (e.target.closest(".nav-dropdown")) { e.stopPropagation(); return; }
-                // Toggling a main menu option must NOT collapse the hamburger
-                // panel: stop the click from bubbling to the document-level
-                // closeAllHam handler in base.html.
                 e.stopPropagation();
-                const wasOpen = menu.classList.contains("open");
-                menuItems.forEach(other => other.classList.remove("open"));
-                menu.classList.toggle("open", !wasOpen);
+                const wasOpen = sec.classList.contains("open");
+                closeSections();
+                sec.classList.toggle("open", !wasOpen);
             });
         });
-        document.addEventListener("click", (e) => {
-            if (!e.target.closest(".nav-menu-item")) {
-                menuItems.forEach(m => m.classList.remove("open"));
-            }
-        });
 
-        // ── Mobile project-menu hamburger ─────────────────────
-        // "P..." still opens the file modal (wired in projecttable.js); the
-        // hamburger reveals the remaining project options (Duplizieren /
-        // Speichern). Toggle a dedicated class so it doesn't collide with the
-        // desktop hover-driven .open state.
-        const projectMenu = document.getElementById("menu-project");
-        const projectHam  = document.getElementById("nav-project-ham");
+        // The left hamburger toggles the whole panel. "P..." itself still opens
+        // the file modal (wired in projecttable.js); the dedicated class keeps
+        // this clear of the desktop hover-driven .open state.
         if (projectMenu && projectHam) {
             projectHam.addEventListener("click", (e) => {
                 e.stopPropagation();           // don't trigger openFileModal / document close
-                projectMenu.classList.toggle("project-menu-open");
+                const willOpen = !projectMenu.classList.contains("project-menu-open");
+                projectMenu.classList.toggle("project-menu-open", willOpen);
+                if (!willOpen) closeSections();
             });
-            // Tapping an option (Duplizieren / Speichern) closes the menu after
-            // its own handler runs; clicks inside the dropdown shouldn't bubble
-            // up to #menu-project's openFileModal handler.
-            const projectDropdown = document.getElementById("project-dropdown");
-            projectDropdown?.addEventListener("click", () => {
-                projectMenu.classList.remove("project-menu-open");
+            // Flat project actions (Liste / Duplizieren / Speichern / OCAD) run
+            // their own handler then close the menu. Section rows are excluded
+            // — they only expand/collapse their deeper layer.
+            projectDropdown?.querySelectorAll(":scope > div:not(.nav-menu-item)").forEach(row => {
+                row.addEventListener("click", () => {
+                    projectMenu.classList.remove("project-menu-open");
+                    closeSections();
+                });
             });
             document.addEventListener("click", (e) => {
                 if (!e.target.closest("#menu-project")) {
                     projectMenu.classList.remove("project-menu-open");
+                    closeSections();
                 }
             });
         }

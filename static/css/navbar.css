@@ -111,6 +111,95 @@
 .nav-results-link:hover { color: var(--text-strong); }
 .nav-results-link.active { color: var(--brand); }
 
+/* ── User section (username / team switcher / home) ───── */
+
+.nav-user-section {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-left: auto;
+    padding: 0 14px 0 10px;
+    flex-shrink: 0;
+}
+
+.nav-username {
+    font-size: var(--font-sm);
+    color: var(--text);
+    white-space: nowrap;
+}
+
+/* Team name — no dropdown (single team) */
+.nav-team-static {
+    font-size: var(--font-sm);
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+
+/* Team switcher — shown when user has multiple teams */
+.nav-team-switcher {
+    position: relative;
+    font-size: var(--font-sm);
+    color: var(--text-muted);
+    padding: 3px 6px;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+    transition: color var(--t-med), background var(--t-med);
+}
+.nav-team-switcher:hover {
+    color: var(--text-soft);
+    background: var(--bg-3);
+}
+.nav-team-switcher::after {
+    content: ' ▾';
+    font-size: 9px;
+    opacity: 0.6;
+}
+
+/* Dropdown panel */
+.nav-team-dropdown {
+    display: none;
+    position: absolute;
+    right: 0;
+    top: calc(100% + 4px);
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    min-width: 140px;
+    padding: 4px 0;
+    z-index: 10001;
+    box-shadow: var(--shadow-pop);
+}
+.nav-team-switcher.open .nav-team-dropdown { display: block; }
+
+.nav-team-option {
+    display: block;
+    padding: 8px 14px;
+    font-size: var(--font-sm);
+    color: var(--text-soft);
+    text-decoration: none;
+    white-space: nowrap;
+    transition: background 0.1s, color 0.1s;
+}
+.nav-team-option:hover  { background: var(--bg-4); color: var(--text-strong); }
+.nav-team-option.active { color: var(--brand); font-weight: 600; }
+
+/* Home icon button */
+.nav-home-btn {
+    display: flex;
+    align-items: center;
+    color: var(--text-dim);
+    text-decoration: none;
+    padding: 3px 4px;
+    border-radius: var(--radius-sm);
+    transition: color var(--t-med), background var(--t-med);
+    flex-shrink: 0;
+}
+.nav-home-btn:hover { color: var(--brand); background: var(--bg-3); }
+
+body.mobile .nav-team-option { padding: 12px 16px; font-size: var(--font-md); }
+
 /* ── Mobile hamburger ─────────────────────────────────── */
 
 .nav-ham-btn {

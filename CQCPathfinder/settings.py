@@ -45,7 +45,6 @@ INSTALLED_APPS = [
     "CQCPathfinder",
     "coursesetter",
     "play",
-    "main",
     "accounts",
     "account",
     "project",

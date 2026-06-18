@@ -194,11 +194,22 @@ body.mobile #nav-project-ham x-icon { font-size: 18px; }
 /* On mobile, neutralise the hover/.open rule so tapping "P..." does NOT drop
    the menu down — only the hamburger toggle (.project-menu-open) shows it. */
 body.mobile #menu-project.open > #project-dropdown { display: none; }
-body.mobile #menu-project.project-menu-open > #project-dropdown { display: block; }
 
-/* The list/overview row inside the dropdown duplicates the "P..." tap action,
-   so hide it on mobile to leave just the extra options. */
-body.mobile #project-dropdown #nav-open-projects { display: none; }
+/* The single mobile hamburger: a fixed, scrollable panel anchored to the left
+   edge below the navbar. It holds every editor navbar option (the project
+   actions plus the relocated Verlauf / Stapel / Einstellungen sections). */
+body.mobile #menu-project.project-menu-open > #project-dropdown {
+    display: block;
+    position: fixed;
+    top: 56px;
+    left: 0;
+    min-width: 240px;
+    max-width: calc(100vw - 24px);
+    max-height: calc(100vh - 56px);
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    border-radius: 0 0 var(--radius) 0;
+}
 
 body.mobile #project-dropdown > div {
     padding: 11px 16px;
@@ -208,8 +219,68 @@ body.mobile #project-dropdown > div {
 
 body.mobile .nav-user-section .nav-username { display: none; }
 
-/* Push the hamburger button to the right edge, next to the user section */
-body.mobile #nav-ham-right { margin-left: auto; }
+/* ── Relocated sections inside the unified menu (mobile only) ──
+   Verlauf / Stapel / Einstellungen move into the project dropdown and become
+   full-width accordion rows. Their text labels are hidden on desktop (icon-only
+   nav) and shown here; Einstellungen keeps its label on desktop too. */
+.nav-item-label { display: none; }
+body.desktop #menu-einstellungen .nav-item-label { display: inline; }
+
+body.mobile #project-dropdown > .nav-menu-item {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 10px;
+    width: 100%;
+    height: auto;
+    color: var(--text);
+    border-radius: 0;
+    /* Keep the tappable header pinned while its deeper layer scrolls below. */
+    position: sticky;
+    top: 0;
+    background: var(--bg-2);
+    z-index: 1;
+}
+body.mobile #project-dropdown > .nav-menu-item.open { background: var(--bg-3); }
+
+body.mobile #project-dropdown > .nav-menu-item .nav-item-label {
+    display: inline;
+    font-size: var(--font-lg);
+    color: var(--text);
+}
+
+/* Disclosure caret */
+body.mobile #project-dropdown > .nav-menu-item::after {
+    content: '▾';
+    margin-left: auto;
+    font-size: 10px;
+    color: var(--text-muted);
+    transition: transform 0.15s;
+}
+body.mobile #project-dropdown > .nav-menu-item.open::after { transform: rotate(180deg); }
+
+/* Deeper layer: expands inline below its section, edge-to-edge, scrolling
+   internally so the section headers above stay reachable on a phone. The
+   explicit display rules are needed because the relocated sub-menus are now
+   nested divs inside #project-dropdown, where `.nav-dropdown div` would
+   otherwise force them visible regardless of the .open state. */
+body.mobile #project-dropdown > .nav-menu-item > .nav-dropdown {
+    display: none;
+    position: static;
+    flex-basis: 100%;
+    width: 100%;
+    min-width: 0 !important;
+    max-height: 45vh;
+    margin: 4px -16px -11px;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+    background: var(--bg-1);
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+}
+body.mobile #project-dropdown > .nav-menu-item.open > .nav-dropdown { display: block; }
 
 /* ── Mobile publish button (left of filename input) ───────
    On mobile the small publish button was being cropped / tucked behind
@@ -241,36 +312,6 @@ body.mobile #navbar-filename-input {
    navbar height). On mobile the navbar is 56px tall, so the banner must
    drop to sit flush below it. Override the inline style here. */
 body.mobile #read-only-banner { top: 56px !important; }
-
-body.mobile .nav-ham-panel .nav-menu-item {
-    width: 100%;
-    padding: 11px 16px;
-    min-height: var(--touch-target);
-    box-sizing: border-box;
-}
-
-/* ── Mobile hamburger sub-dropdowns ───────────────────────
-   The hamburger panel (the "main navbar-option dropdown") stays
-   right-aligned to the hamburger button. Its sub-dropdowns must NOT
-   stack inline inside the column — instead they fly out beside the
-   tapped option. Because the panel hugs the right screen edge there is
-   no room to its right, so the flyout opens into the available screen
-   space (left of the panel) and is vertically aligned to the tapped
-   option's row. */
-body.mobile #nav-panel-right { right: 0; left: auto; }
-
-body.mobile .nav-ham-panel .nav-menu-item { position: relative; }
-
-body.mobile .nav-ham-panel .nav-menu-item > .nav-dropdown {
-    position: absolute;
-    top: 0;
-    right: 100%;
-    left: auto;
-    margin-right: 6px;
-    min-width: 170px;
-    max-width: calc(100vw - 24px);
-    border-radius: var(--radius);
-}
 
 /* =========================================================
    MENU  (editor-specific — shared nav rules in navbar.css)
