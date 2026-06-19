@@ -110,6 +110,16 @@ class Migration(migrations.Migration):
                         to=settings.AUTH_USER_MODEL,
                     ),
                 ),
+                (
+                    "team",
+                    models.ForeignKey(
+                        blank=True,
+                        null=True,
+                        on_delete=django.db.models.deletion.SET_NULL,
+                        related_name="infinite_choices",
+                        to="account.team",
+                    ),
+                ),
             ],
             options={
                 "ordering": ["-timestamp"],

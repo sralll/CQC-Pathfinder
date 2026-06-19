@@ -317,6 +317,9 @@ body.mobile #read-only-banner { top: 56px !important; }
    MENU  (editor-specific — shared nav rules in navbar.css)
 ========================================================= */
 
+/* Wide enough that "Auto-Pathfind" + its slider never wrap onto two lines. */
+#menu-einstellungen > .nav-dropdown { min-width: 250px; }
+
 .settings-toggle-row {
     display: flex;
     align-items: center;
@@ -326,6 +329,8 @@ body.mobile #read-only-banner { top: 56px !important; }
     cursor: default;
 }
 .settings-toggle-row:hover { background: transparent !important; }
+/* The label (first child) stays on one line; the control sits flush right. */
+.settings-toggle-row > span { white-space: nowrap; }
 
 .toggle-switch {
     position: relative;
@@ -359,10 +364,16 @@ body.mobile #read-only-banner { top: 56px !important; }
 
 /* Auto-Pathfind multi-stop switch (0–4 routes): the boolean toggle look,
    but the knob snaps across 5 discrete stops. */
-.toggle-switch-multi {
+/* Scoped + padding:0 to beat the generic `.nav-dropdown div` rule (which
+   would otherwise add 14px side padding and space-between, pushing the slider
+   off the right edge). justify-content:flex-end keeps the value tight to the
+   left of the slider and the slider flush right (aligned with Auto-Jump). */
+.settings-toggle-row .toggle-switch-multi {
     display: inline-flex;
     align-items: center;
+    justify-content: flex-end;
     gap: 10px;
+    padding: 0;
     flex-shrink: 0;
 }
 .toggle-multi-pill {

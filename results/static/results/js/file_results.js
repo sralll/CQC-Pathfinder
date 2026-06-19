@@ -22,7 +22,7 @@ let cpDistances    = [];     // min route length per CP, for x-axis scaling
 const MAP_R_CONTROL = 25;
 const MAP_GAP       = 8;
 const MAP_MAX_ZOOM  = 8;
-const ROUTE_COLORS  = ['#DD0011', '#CC6000', '#008888', '#0055FF', '#5500BB', '#8800CC'];
+const ROUTE_COLORS  = ['#DD0011', '#E36A00', '#00A6A6', '#0055FF', '#5500BB', '#007A2A'];
 const ROUTE_STROKE_MULTIPLIER       = 2.5;
 const ROUTE_STROKE_SCALE_EXPONENT   = 0.33;
 const ROUTE_STROKE_MIN_CAMERA_SCALE = 0.05;
@@ -32,10 +32,7 @@ let mapApplyTransform = () => {};
 let _mapCamAnim   = null;
 let _mapRouteAnim = null;
 
-const USER_COLORS = [
-    '#0B2E59', '#1F5AA6', '#7A1E1E',
-    '#2B2D80', '#4E342E', '#111827',
-];
+const USER_COLORS = ROUTE_COLORS;
 
 function routeStrokeWidthForZoom(baseWidth, scale = mapCam.scale) {
     const safeScale = Math.max(scale || 1, ROUTE_STROKE_MIN_CAMERA_SCALE);

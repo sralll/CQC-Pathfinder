@@ -32,8 +32,7 @@
                 <span class="menu-shortcut">(Ctrl+S)</span>
             </div>
             <div id="nav-import-courses">
-                <span>OCAD-Bahn</span>
-                <span class="menu-shortcut">OCD</span>
+                <span>Bahn importieren</span>
             </div>
         </div>
         <input type="file" id="course-import-input" accept=".ocd" hidden>
@@ -61,7 +60,7 @@
 
         <div id="menu-batch" class="nav-menu-item">
             <x-icon name="industry" size="13px"></x-icon>
-            <span class="nav-item-label">Stapel</span>
+            <span class="nav-item-label">Batch</span>
             <div class="nav-dropdown" onclick="event.stopPropagation();" style="min-width:200px;">
                 <div id="batch-switch-lr" class="nav-dropdown-item">
                     <x-icon name="arrows-split" size="12px" style="transform:scaleY(-1)"></x-icon>
@@ -80,13 +79,13 @@
                 <div class="settings-toggle-row">
                     <span>Auto-Pathfind</span>
                     <div class="toggle-switch-multi">
+                        <span id="auto-pathfind-value" class="toggle-multi-value">0</span>
                         <span class="toggle-multi-pill" id="auto-pathfind-pill" data-value="0" style="--i:0;">
                             <input type="range" id="slider-auto-pathfind" min="0" max="4" step="1"
                                    value="0" aria-label="Auto-Pathfind Routen">
                             <span class="toggle-track"></span>
                             <span class="toggle-knob"></span>
                         </span>
-                        <span id="auto-pathfind-value" class="toggle-multi-value">0</span>
                     </div>
                 </div>
                 <div class="settings-toggle-row">
@@ -218,7 +217,7 @@
                 <span id="mask-gen-text">Maske wird generiert…</span>
                 <progress id="mask-gen-progress" value="0" max="100"></progress>
             </div>
-            <button id="mask-gen-cancel" title="Abbrechen">✕</button>
+            <button id="mask-gen-cancel" title="Abbrechen"><x-icon name="xmark" size="11px"></x-icon></button>
         </div>
         <div id="map-background"></div>
         <div id="camera">

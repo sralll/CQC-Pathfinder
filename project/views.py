@@ -43,11 +43,13 @@ def _map_scale_value(raw, default=4000):
 def _create_db_snapshot(file, user, trigger):
     """Create a FileSnapshot from the current DB state of a File."""
     from .models import FileSnapshot
-    cps_qs   = file.control_pairs.prefetch_related('routes').order_by('order')
+    cps_qs   = file.control_pairs.prefetch_related(
+        Prefetch('routes', queryset=Route.objects.order_by('order'))
+    ).order_by('order')
     cp_data  = []
     n_routes = 0
     for cp in cps_qs:
-        routes = list(cp.routes.order_by('order'))
+        routes = list(cp.routes.all())
         n_routes += len(routes)
         cp_data.append({
             'id': cp.id, 'order': cp.order,
@@ -92,7 +94,12 @@ def get_files(request):
             else:
                 qs = File.objects.none()
 
-        qs = qs.select_related('locked_by').annotate(cp_count=Count('control_pairs'))
+        qs = (
+            qs
+            .select_related('locked_by', 'team', 'label')
+            .defer('blocked_terrain')
+            .annotate(cp_count=Count('control_pairs'))
+        )
         labels = Label.objects.filter(team=active_team)
 
         team_qs = File.objects.filter(deleted=False)

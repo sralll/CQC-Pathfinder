@@ -107,6 +107,7 @@ def submit_infinite_choice(request):
         from .models import InfiniteChoice
         InfiniteChoice.objects.create(
             user         = request.user,
+            team         = getattr(request.user.profile, 'active_team', None),
             correct      = correct,
             choice_time  = choice_time,
             shorter_time = shorter_time,
@@ -130,14 +131,7 @@ def get_file(request, file_id):
         active_team = profile.active_team
 
         file = get_object_or_404(
-            File.objects
-            .select_related('team', 'label')
-            .prefetch_related(
-                Prefetch('control_pairs',
-                    queryset=ControlPair.objects.prefetch_related(
-                        Prefetch('routes', queryset=Route.objects.order_by('order'))
-                    ).order_by('order'))
-            ),
+            File.objects.select_related('team'),
             id=file_id,
             deleted=False,
             published=True,
@@ -156,7 +150,11 @@ def get_file(request, file_id):
         # so a CP is "done" for the user if any Choice exists for it
         # (irrespective of competition vs. training mode).
         from .models import Choice
-        all_cps     = list(file.control_pairs.all())
+        all_cps     = list(
+            ControlPair.objects
+            .filter(file=file)
+            .order_by('order')
+        )
         done_cp_ids = set(
             Choice.objects
                   .filter(user=request.user, control_pair__file_id=file_id)
@@ -172,6 +170,14 @@ def get_file(request, file_id):
             # First attempt (neu) or resuming a partial run (begonnen)
             cps_to_play = remaining
             replay      = False
+
+        cp_ids_to_play = [cp.id for cp in cps_to_play]
+        cps_to_play = list(
+            ControlPair.objects
+            .filter(id__in=cp_ids_to_play)
+            .prefetch_related(Prefetch('routes', queryset=Route.objects.order_by('order')))
+            .order_by('order')
+        )
 
         return JsonResponse({
             'id':              file.id,
@@ -246,6 +252,7 @@ def get_files(request):
     qs = (qs
           .annotate(cp_count=Count('control_pairs'))
           .select_related('team', 'label')
+          .defer('blocked_terrain')
           .order_by('-last_edited'))
 
     file_list = list(qs)

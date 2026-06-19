@@ -242,7 +242,7 @@ function renderPublishFilterDropdown() {
     dropdown.innerHTML = `
         <div class="filter-clear">
             <div class="filter-clear-left" onclick="event.stopPropagation(); clearPublishFilter()"><b>Alle</b></div>
-            <button class="filter-close-btn" onclick="event.stopPropagation(); closeAllFilters()" type="button">✕</button>
+            <button class="filter-close-btn" onclick="event.stopPropagation(); closeAllFilters()" type="button"><x-icon name="xmark" size="1em"></x-icon></button>
         </div>
         <div class="filter-options-list">
             <div class="filter-option" onclick="event.stopPropagation(); setPublishFilter(true)">
@@ -281,7 +281,7 @@ function renderLabelFilterDropdown() {
     dropdown.innerHTML = `
         <div class="filter-clear">
             <div class="filter-clear-left" onclick="event.stopPropagation(); clearLabelFilter()"><b>Alle</b></div>
-            <button class="filter-close-btn" onclick="event.stopPropagation(); closeAllFilters()" type="button">✕</button>
+            <button class="filter-close-btn" onclick="event.stopPropagation(); closeAllFilters()" type="button"><x-icon name="xmark" size="1em"></x-icon></button>
         </div>
         <div class="filter-options-list">
             ${getAllLabels().map(label => `
@@ -318,7 +318,7 @@ function renderAuthorFilterDropdown() {
     dropdown.innerHTML = `
         <div class="filter-clear">
             <div class="filter-clear-left" onclick="event.stopPropagation(); clearAuthorFilters()"><b>Alle</b></div>
-            <button class="filter-close-btn" onclick="event.stopPropagation(); closeAllFilters()" type="button">✕</button>
+            <button class="filter-close-btn" onclick="event.stopPropagation(); closeAllFilters()" type="button"><x-icon name="xmark" size="1em"></x-icon></button>
         </div>
         <div class="filter-options-list">
             ${getAllAuthors().map(author => `
@@ -360,7 +360,7 @@ function renderTeamFilterDropdown() {
     dropdown.innerHTML = `
         <div class="filter-clear">
             <div class="filter-clear-left" onclick="event.stopPropagation(); clearTeamFilters()"><b>Alle</b></div>
-            <button class="filter-close-btn" onclick="event.stopPropagation(); closeAllFilters()" type="button">✕</button>
+            <button class="filter-close-btn" onclick="event.stopPropagation(); closeAllFilters()" type="button"><x-icon name="xmark" size="1em"></x-icon></button>
         </div>
         <div class="filter-options-list">
             ${orderedTeams.map(team => `

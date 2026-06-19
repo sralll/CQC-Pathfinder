@@ -1,5 +1,5 @@
 from django.contrib.auth.decorators import login_required
-from django.db.models import Count, Q, Prefetch
+from django.db.models import Count, Min, Q
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, render
 from django.views.decorators.http import require_GET
@@ -36,6 +36,7 @@ def get_files_overview(request):
     qs = (qs
           .annotate(cp_count=Count('control_pairs', distinct=True))
           .select_related('team', 'label')
+          .defer('blocked_terrain')
           .order_by('-last_edited'))
 
     file_list    = list(qs)
@@ -92,7 +93,12 @@ def get_file_results(request, file_id):
     from .models import Choice
     from collections import defaultdict
 
-    file = get_object_or_404(File, id=file_id, deleted=False, published=True)
+    file = get_object_or_404(
+        File.objects.select_related('team'),
+        id=file_id,
+        deleted=False,
+        published=True,
+    )
 
     # Permission check
     if not request.user.is_superuser:
@@ -105,20 +111,24 @@ def get_file_results(request, file_id):
         if not (own or shared):
             return JsonResponse({'error': 'Permission denied'}, status=403)
 
-    # Load all CPs and their routes (min run_time per CP)
+    # Load CP order, then calculate min route runtime per CP without pulling route geometry.
     cps = list(
         ControlPair.objects
         .filter(file=file)
-        .prefetch_related(Prefetch('routes', queryset=Route.objects.all()))
         .order_by('order')
     )
     cp_ids   = [cp.id for cp in cps]
     cp_count = len(cp_ids)
 
-    min_time_per_cp = {}
-    for cp in cps:
-        times = [r.run_time for r in cp.routes.all() if r.run_time]
-        min_time_per_cp[cp.id] = min(times) if times else None
+    min_time_per_cp = {
+        row['control_pair_id']: row['min_time']
+        for row in (
+            Route.objects
+            .filter(control_pair_id__in=cp_ids, run_time__isnull=False)
+            .values('control_pair_id')
+            .annotate(min_time=Min('run_time'))
+        )
+    }
 
     # Load all choices for these CPs
     choices = (

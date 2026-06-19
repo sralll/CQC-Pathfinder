@@ -844,7 +844,7 @@ function saveFile(trigger = "save") {
                             Neu laden
                         </button>
                         <button onclick="this.closest('#conflict-warning').remove();"
-                            style="background:transparent;color:#ccc;border:none;cursor:pointer;font-size:14px;">✕</button>`;
+                            style="background:transparent;color:#ccc;border:none;cursor:pointer;font-size:14px;"><x-icon name="xmark" size="1em"></x-icon></button>`;
                     document.body.appendChild(bar);
                 }
                 return; // stop this save; future saves will retry with new last_edited after reload
@@ -897,7 +897,7 @@ function _showSaveFailedWarning() {
         background:#5a4000;color:#ffd;padding:8px 16px;border-radius:0 0 6px 6px;
         font-size:12px;z-index:9999;display:flex;align-items:center;gap:10px;
     `;
-    bar.innerHTML = `<span>⚠ Verbindung unterbrochen — Änderungen werden nicht gespeichert</span>`;
+    bar.innerHTML = `<x-icon name="warning" size="1em"></x-icon><span>Verbindung unterbrochen — Änderungen werden nicht gespeichert</span>`;
     document.body.appendChild(bar);
 }
 
@@ -1139,6 +1139,9 @@ const PX_TO_M  = 0.48;         // pixels to metres conversion factor
 const REFERENCE_MAP_SCALE = 4000;
 const PATHING_MASK_TRAIN_SCALE = 0.710;
 const CONTROL_POINT_PASSABLE_SNAP_M = 10;
+const ROUTE_STROKE_MULTIPLIER       = 2;
+const ROUTE_STROKE_SCALE_EXPONENT   = 0.33;
+const ROUTE_STROKE_MIN_CAMERA_ZOOM  = 0.05;
 
 function projectMapScale() {
     const value = Number(project?.map_scale);
@@ -1150,6 +1153,26 @@ function routeMetresPerEditorPx() {
 }
 
 const camera = { x: 0, y: 0, zoom: 0.67 };
+
+function routeStrokeWidthForZoom(baseWidth, zoom = camera.zoom) {
+    const safeZoom = Math.max(zoom || 1, ROUTE_STROKE_MIN_CAMERA_ZOOM);
+    const visualWidth = baseWidth
+        * ROUTE_STROKE_MULTIPLIER
+        * Math.pow(safeZoom, ROUTE_STROKE_SCALE_EXPONENT);
+    return visualWidth / safeZoom;
+}
+
+function setAdaptiveRouteStroke(el, baseWidth) {
+    el.dataset.routeBaseStroke = String(baseWidth);
+    el.setAttribute("stroke-width", routeStrokeWidthForZoom(baseWidth));
+}
+
+function updateRouteStrokeWidths() {
+    document.querySelectorAll("#route-layer [data-route-base-stroke], #edit-layer [data-route-base-stroke]").forEach(el => {
+        const baseWidth = parseFloat(el.dataset.routeBaseStroke);
+        if (Number.isFinite(baseWidth)) el.setAttribute("stroke-width", routeStrokeWidthForZoom(baseWidth));
+    });
+}
 
 /* =========================================================
     DOM REFERENCES
@@ -1407,11 +1430,13 @@ const RouteEditTool = (() => {
     function evEnsure() {
         if (!_ev.orig) {
             _ev.orig = svgNode("polyline", { fill: "none", stroke: "rgba(229, 57, 53, 0.67)",
-                "stroke-width": "1.5", "stroke-linecap": "round", "stroke-linejoin": "round",
+                "stroke-linecap": "round", "stroke-linejoin": "round",
                 "vector-effect": "non-scaling-stroke", "pointer-events": "none" });
             _ev.orig.classList.add("route-edit-original-preview");
-            _ev.line = svgNode("line", { stroke: "#E53935", "stroke-width": "1",
+            setAdaptiveRouteStroke(_ev.orig, 1.5);
+            _ev.line = svgNode("line", { stroke: "#E53935",
                 "stroke-linecap": "round", "vector-effect": "non-scaling-stroke" });
+            setAdaptiveRouteStroke(_ev.line, 1.5);
         }
         ensureInLayer(_ev.orig, "edit-layer");
         ensureInLayer(_ev.line, "edit-layer");
@@ -1585,12 +1610,15 @@ const NewRouteTool = (() => {
     const _rv = {};
     function rvEnsure() {
         if (!_rv.bg) {
-            _rv.bg   = svgNode("polyline", { fill: "none", stroke: "white",   "stroke-width": "3",
+            _rv.bg   = svgNode("polyline", { fill: "none", stroke: "white",
                 "stroke-linecap": "round", "stroke-linejoin": "round", "vector-effect": "non-scaling-stroke" });
-            _rv.fg   = svgNode("polyline", { fill: "none", stroke: "#E53935", "stroke-width": "1.5",
+            _rv.fg   = svgNode("polyline", { fill: "none", stroke: "#E53935",
                 "stroke-linecap": "round", "stroke-linejoin": "round", "vector-effect": "non-scaling-stroke" });
-            _rv.line = svgNode("line", { stroke: "#E53935", "stroke-width": "1",
+            _rv.line = svgNode("line", { stroke: "#E53935",
                 "stroke-linecap": "round", "vector-effect": "non-scaling-stroke" });
+            setAdaptiveRouteStroke(_rv.bg, 3);
+            setAdaptiveRouteStroke(_rv.fg, 1.5);
+            setAdaptiveRouteStroke(_rv.line, 1.5);
         }
         ensureInLayer(_rv.bg,   "edit-layer");
         ensureInLayer(_rv.fg,   "edit-layer");
@@ -3831,7 +3859,8 @@ function createRoutePolyline(route, {
     opacity = 1,
     className = "",
     dataset = {},
-    pointerEvents = "none"
+    pointerEvents = "none",
+    adaptiveStroke = false
 } = {}) {
     if (!route?.rP || route.rP.length < 2) return null;
     const points = route.rP.map(p => `${p.x},${p.y}`).join(" ");
@@ -3839,7 +3868,8 @@ function createRoutePolyline(route, {
     el.setAttribute("points", points);
     el.setAttribute("fill", "none");
     el.setAttribute("stroke", stroke);
-    el.setAttribute("stroke-width", strokeWidth);
+    if (adaptiveStroke) setAdaptiveRouteStroke(el, strokeWidth);
+    else el.setAttribute("stroke-width", strokeWidth);
     el.setAttribute("opacity", opacity);
     el.setAttribute("stroke-linecap", "round");
     el.setAttribute("stroke-linejoin", "round");
@@ -3873,6 +3903,7 @@ function renderGeneratedRouteAnimation(layer, route, cp, phase) {
             opacity: previewOpacity,
             className: "route-generated-anim",
             dataset,
+            adaptiveStroke: true,
         });
         const fg = createRoutePolyline(route, {
             stroke: GENERATED_ROUTE_ANIM_COLOR,
@@ -3880,6 +3911,7 @@ function renderGeneratedRouteAnimation(layer, route, cp, phase) {
             opacity: previewOpacity,
             className: "route-generated-anim",
             dataset,
+            adaptiveStroke: true,
         });
         if (bg) {
             layer.appendChild(bg);
@@ -3947,6 +3979,7 @@ function drawRoutes() {
                 stroke: "white", strokeWidth: 3,
                 className: "route-bg",
                 dataset: { ncp: cp.order, nr: route.order },
+                adaptiveStroke: true,
             });
             if (el) base.appendChild(el);
         });
@@ -3965,6 +3998,7 @@ function drawRoutes() {
                 strokeWidth: 1.5,
                 className: isHolding ? "route-polyline route-holding" : "route-polyline",
                 dataset: { ncp: cp.order, nr: route.order },
+                adaptiveStroke: true,
             });
             if (el) base.appendChild(el);
         });
@@ -3999,12 +4033,14 @@ function updateRoutes() {
             stroke: "white", strokeWidth: 3,
             opacity: routeDeletePreviewOpacity(cp.order),
             className: "route-active",
+            adaptiveStroke: true,
         });
         const fg = createRoutePolyline(route, {
             stroke: "#E53935", strokeWidth: 1.5,
             opacity: routeDeletePreviewOpacity(cp.order),
             className: "route-active",
             dataset: { ncp: cp.order, nr: route.order },
+            adaptiveStroke: true,
         });
         if (bg) (activeLayer || routeLayer).appendChild(bg);
         if (fg) (activeLayer || routeLayer).appendChild(fg);
@@ -5732,10 +5768,14 @@ function initMenus() {
         const closeSections = () => sections.forEach(s => s.classList.remove("open"));
 
         sections.forEach(sec => {
+            const sub = sec.querySelector(":scope > .nav-dropdown");
             sec.addEventListener("click", (e) => {
-                // Interactions with the expanded deeper menu are handled by
-                // their own listeners — keep the section (and panel) open.
-                if (e.target.closest(".nav-dropdown")) { e.stopPropagation(); return; }
+                // Taps inside this section's own deeper menu are handled by their
+                // own listeners — don't toggle. (We can't use
+                // closest('.nav-dropdown') here: the whole panel #project-dropdown
+                // is itself a .nav-dropdown, so it would always match and the
+                // accordion would never open.)
+                if (sub && sub.contains(e.target)) { e.stopPropagation(); return; }
                 e.stopPropagation();
                 const wasOpen = sec.classList.contains("open");
                 closeSections();
@@ -5820,6 +5860,7 @@ function updateCameraTransform({ x = camera.x, y = camera.y, zoom = camera.zoom 
 
     document.getElementById("camera").style.transform =
         `translate(${x}px, ${y}px) scale(${zoom})`;
+    updateRouteStrokeWidths();
 
     const bg       = document.getElementById("map-background");
     const major    = 250 * zoom;

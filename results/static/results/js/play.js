@@ -47,7 +47,7 @@ const GAP        = 8;
 const MIN_ZOOM   = 0.2;
 const MAX_ZOOM   = 8;
 const RUN_SPEED  = 4.75;   // m/s — flat-terrain reference speed
-const routeColor = ['#DD0011', '#CC6000', '#008888', '#0055FF', '#5500BB', '#8800CC'];
+const routeColor = ['#DD0011', '#E36A00', '#00A6A6', '#0055FF', '#5500BB', '#007A2A'];
 const ROUTE_STROKE_MULTIPLIER       = 2.5;
 const ROUTE_STROKE_SCALE_EXPONENT   = 0.33;
 const ROUTE_STROKE_MIN_CAMERA_SCALE = 0.05;
@@ -141,8 +141,7 @@ function tryAdvance() {
 function showEndOfFileModal() {
     let modal = document.getElementById('play-end-modal');
     if (!modal) {
-        const homeIcon = (typeof window.icon === 'function') ? window.icon('home', '1.1em')
-                       : '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512" width="1.1em" height="1.1em" fill="currentColor"><path d="M575.8 255.5c0 18-15 32.1-32 32.1l-32 0 .7 160.2c0 2.7-.2 5.4-.5 8.1l0 16.2c0 22.1-17.9 40-40 40l-16 0c-1.1 0-2.2 0-3.3-.1-1.4 .1-2.8 .1-4.2 .1l-72 0c-22.1 0-40-17.9-40-40l0-88c0-17.7-14.3-32-32-32l-64 0c-17.7 0-32 14.3-32 32l0 88c0 22.1-17.9 40-40 40l-72 0c-1.5 0-3 0-4.5-.1-1.2 .1-2.4 .1-3.6 .1l-16 0c-22.1 0-40-17.9-40-40l0-112 0-1.4c0-5.1 .3-10.3 .9-15.3l0-58.7L32 287.6c-18 0-32-14-32-32.1 0-9 3-17 10-24L266.4 8c7-7 15-8 22-8s15 2 21 7l255.4 224.5c8 7 12 15 11 24z"/></svg>';
+        const homeIcon = window.icon('home', '1.1em');
         // A tutorial has no results page, so omit "Resultate" and let "Play"
         // be the primary action — only Play / Home are offered.
         const resultsBtn = TUTORIAL

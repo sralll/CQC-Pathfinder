@@ -74,9 +74,7 @@
                         {% if thread.edited_at %}<span class="dot">•</span><span class="edited">bearbeitet</span>{% endif %}
                         <span class="dot">•</span>
                         <span class="replies">
-                            <svg viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg" fill="currentColor">
-                                <path d="M512 240c0 114.9-114.6 208-256 208c-37.1 0-72.3-6.4-104.1-17.9c-11.9 8.7-31.3 20.6-54.3 30.6C73.6 471.1 44.7 480 16 480c-6.5 0-12.3-3.9-14.8-9.9c-2.5-6-1.1-12.8 3.4-17.4l.4-.4c.4-.4 1.1-1.1 2-2.1c1.7-1.9 4.2-4.8 7.3-8.7c6.1-7.5 14.3-18.3 22.6-30.8c10.8-16.4 11.5-31.3 11.4-39.3C16.7 350.7 0 297.9 0 240C0 125.1 114.6 32 256 32s256 93.1 256 208z"/>
-                            </svg>
+                            <x-icon name="comment" size="13px"></x-icon>
                             {{ thread.n_comments }}
                         </span>
                     </div>

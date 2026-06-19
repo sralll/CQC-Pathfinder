@@ -14,7 +14,7 @@ const TEAM_COLORS      = ['rgba(76,175,80,0.32)', 'rgba(255,193,7,0.32)', 'rgba(
 function categoryLabelHtml(i, size) {
     if (i === 0) {
         const sz = size || '11px';
-        return `<span class="stats-donut-legend-icon">${typeof icon === 'function' ? icon('crown', sz) : '👑'}</span>`;
+        return `<span class="stats-donut-legend-icon">${typeof icon === 'function' ? icon('crown', sz) : ''}</span>`;
     }
     return escapeHtml(CATEGORY_LABELS[i]);
 }

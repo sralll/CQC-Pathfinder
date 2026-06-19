@@ -37,6 +37,8 @@ class InfiniteChoice(models.Model):
 
     user         = models.ForeignKey('auth.User', on_delete=models.SET_NULL,
                                      null=True, blank=True, related_name='infinite_choices')
+    team         = models.ForeignKey('account.Team', on_delete=models.SET_NULL,
+                                     null=True, blank=True, related_name='infinite_choices')
     correct      = models.BooleanField()
     choice_time  = models.FloatField()                         # seconds from reveal → decision
     shorter_time = models.FloatField()                         # seconds the optimal route would have taken

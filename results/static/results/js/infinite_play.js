@@ -19,22 +19,25 @@ const ROUTE_COLORS  = ['#DD0011', '#CC6000'];   // play.js's first two route col
 const CONTROL_COLOR = '#a033f0';                // standard orienteering pink/purple
 const R_CONTROL     = 25;                       // control circle radius
 
-// IOF (ISSprOM 2019) palette
+// IOF/OCAD-like sprint palette, sampled from the reference SVG exports.
 const IOF = {
-    open_yellow:   '#FFE9A7',
-    open_orange:   '#FFB259',
-    paved:         '#FFC880',
-    forest_run:    '#FFFFFF',
-    veg_light:     '#C5EBC4',
-    veg_medium:    '#88C97A',
-    veg_slow:      '#5BA15C',
-    building:      '#0a0a0a',
-    pond:          '#00B0EF',
-    pond_border:   '#0080CC',
-    stone_wall:    '#0a0a0a',
-    fence:         '#0a0a0a',
-    cliff:         '#0a0a0a',
-    contour:       '#bf8b57',
+    open_yellow:   'rgb(255,204,54)',
+    open_orange:   'rgb(255,194,54)',
+    paved:         'rgb(184,184,184)',
+    paved_dark:    'rgb(128,128,128)',
+    forest_run:    'rgb(255,255,255)',
+    veg_light:     'rgb(138,255,115)',
+    veg_medium:    'rgb(74,255,23)',
+    veg_slow:      'rgb(61,255,23)',
+    veg_olive:     'rgb(158,186,0)',
+    building:      'rgb(0,0,0)',
+    pond:          'rgb(0,128,255)',
+    pond_border:   'rgb(0,96,220)',
+    stone_wall:    'rgb(0,0,0)',
+    fence:         'rgb(0,0,0)',
+    cliff:         'rgb(0,0,0)',
+    contour:       'rgb(191,128,64)',
+    uncrossable:   'rgb(102,102,102)',
 };
 
 const NS    = 'http://www.w3.org/2000/svg';
@@ -93,8 +96,26 @@ function next() {
 }
 
 function generateScene() {
+    let best = null;
+    let bestDiff = -1;
+    for (let i = 0; i < 8; i++) {
+        const candidate = buildSceneCandidate();
+        const diff = Math.abs(candidate.routes[0].time - candidate.routes[1].time);
+        if (diff > bestDiff) {
+            best = candidate;
+            bestDiff = diff;
+        }
+        if (diff >= 0.45) return candidate;
+    }
+    return best;
+}
+
+function buildSceneCandidate() {
     // 1. Build a compound "primary" obstacle (1–3 connected shapes)
     const primary = generatePrimaryCompound();
+    const cluster = generateBlockingCluster(primary.hull);
+    primary.shapes = [...primary.shapes, ...cluster];
+    primary.hull = convexHull(primary.shapes.flatMap(s => s.hull || []));
 
     // 2. Place start + ziel on opposite sides of the primary obstacle's hull
     let { start, ziel } = placeEndpoints(primary.hull);
@@ -334,9 +355,95 @@ function generatePrimaryCompound() {
 
 /* ── Shape builders ───────────────────────────────────── */
 
+function generateBlockingCluster(anchorHull) {
+    const bb = boundingBox(anchorHull);
+    const cx = (bb.minX + bb.maxX) / 2;
+    const cy = (bb.minY + bb.maxY) / 2;
+    const radius = Math.max(bb.maxX - bb.minX, bb.maxY - bb.minY);
+    const count = randInt(2, 5);
+    const shapes = [];
+
+    for (let i = 0; i < count; i++) {
+        const angle = (i / count) * Math.PI * 2 + rand(-0.55, 0.55);
+        const dist = radius * rand(0.45, 0.85);
+        const x = clamp(cx + Math.cos(angle) * dist, 110, VB_W - 110);
+        const y = clamp(cy + Math.sin(angle) * dist, 90, VB_H - 90);
+        const rot = angle + rand(-0.8, 0.8);
+        const item = pickWeighted([
+            ['building', 5],
+            ['wall',     3],
+            ['fence',    2],
+            ['hedge',    3],
+            ['pond',     2],
+        ]);
+
+        if (item === 'building') {
+            shapes.push(rectAt(x, y, rand(55, 135), rand(45, 115), rot, IOF.building, 'building'));
+        } else if (item === 'wall' || item === 'fence' || item === 'hedge') {
+            const len = rand(90, 190);
+            const half = item === 'hedge' ? rand(9, 15) : item === 'wall' ? 6 : 4;
+            const color = item === 'hedge' ? IOF.veg_slow : IOF.fence;
+            const a = { x: x - Math.cos(rot) * len / 2, y: y - Math.sin(rot) * len / 2 };
+            const b = { x: x + Math.cos(rot) * len / 2, y: y + Math.sin(rot) * len / 2 };
+            shapes.push(wallShape(a, b, color, half, item === 'fence'));
+        } else {
+            shapes.push(blobShape(x, y, rand(35, 70), IOF.pond, IOF.pond_border, 'pond'));
+        }
+    }
+
+    return shapes;
+}
+
 function rectAt(cx, cy, w, h, angle, fill, kind) {
-    const corners = rectCorners(cx, cy, w, h, angle);
-    return { kind, polygon: corners, hull: corners, color: fill, stroke: '#000' };
+    const polygon = kind && kind.includes('building')
+        ? buildingFootprint(cx, cy, w, h, angle)
+        : rectCorners(cx, cy, w, h, angle);
+    return { kind, polygon, hull: convexHull(polygon), color: fill, stroke: '#000' };
+}
+
+function buildingFootprint(cx, cy, w, h, angle) {
+    const hw = w / 2, hh = h / 2;
+    const style = pickWeighted([['chamfer', 4], ['notch', 5], ['step', 3], ['plain', 2]]);
+    let pts;
+
+    if (style === 'chamfer') {
+        const c = Math.min(w, h) * rand(0.10, 0.22);
+        pts = [
+            { x: -hw + c, y: -hh }, { x: hw - c, y: -hh },
+            { x: hw, y: -hh + c }, { x: hw, y: hh - c },
+            { x: hw - c, y: hh }, { x: -hw + c, y: hh },
+            { x: -hw, y: hh - c }, { x: -hw, y: -hh + c },
+        ];
+    } else if (style === 'notch') {
+        const nw = w * rand(0.20, 0.36);
+        const nd = h * rand(0.15, 0.28);
+        pts = [
+            { x: -hw, y: -hh }, { x: -nw / 2, y: -hh },
+            { x: -nw / 2, y: -hh + nd }, { x: nw / 2, y: -hh + nd },
+            { x: nw / 2, y: -hh }, { x: hw, y: -hh },
+            { x: hw, y: hh }, { x: -hw, y: hh },
+        ];
+    } else if (style === 'step') {
+        const sx = w * rand(0.18, 0.34);
+        const sy = h * rand(0.18, 0.34);
+        pts = [
+            { x: -hw, y: -hh }, { x: hw - sx, y: -hh },
+            { x: hw - sx, y: -hh + sy }, { x: hw, y: -hh + sy },
+            { x: hw, y: hh }, { x: -hw + sx, y: hh },
+            { x: -hw + sx, y: hh - sy }, { x: -hw, y: hh - sy },
+        ];
+    } else {
+        pts = [
+            { x: -hw, y: -hh }, { x: hw, y: -hh },
+            { x: hw, y: hh }, { x: -hw, y: hh },
+        ];
+    }
+
+    const ca = Math.cos(angle), sa = Math.sin(angle);
+    return pts.map(p => ({
+        x: cx + p.x * ca - p.y * sa,
+        y: cy + p.x * sa + p.y * ca,
+    }));
 }
 
 function rectCorners(cx, cy, w, h, angle) {
@@ -423,19 +530,50 @@ function placeEndpoints(hull) {
 function generateDecoration(primaryHull, routePts, start, ziel) {
     const items = [];
 
-    // Background "tiles": light paved areas / vegetation patches
-    const tileCount = randInt(3, 7);
-    for (let i = 0; i < tileCount; i++) {
-        const w = rand(120, 280), h = rand(80, 200);
-        const x = rand(0, VB_W - w), y = rand(0, VB_H - h);
-        const kind = pickWeighted([['paved', 3], ['veg_light', 4], ['veg_medium', 2]]);
-        const color = kind === 'paved' ? IOF.paved
-                    : kind === 'veg_light' ? IOF.veg_light : IOF.veg_medium;
-        items.push({ kind: 'tile', x, y, w, h, color, rot: rand(-0.2, 0.2) });
+    const terrainCount = randInt(7, 12);
+    for (let i = 0; i < terrainCount; i++) {
+        const kind = pickWeighted([
+            ['open',       4],
+            ['paved_area', 4],
+            ['veg_light',  3],
+            ['veg_medium', 2],
+            ['olive',      1],
+        ]);
+        const color = {
+            open: IOF.open_yellow,
+            paved_area: pickRandom([IOF.paved, IOF.paved_dark]),
+            veg_light: IOF.veg_light,
+            veg_medium: IOF.veg_medium,
+            olive: IOF.veg_olive,
+        }[kind];
+        items.push(areaPatch(
+            rand(80, VB_W - 80),
+            rand(65, VB_H - 65),
+            rand(90, 260),
+            rand(55, 190),
+            rand(0, Math.PI * 2),
+            color,
+            kind
+        ));
     }
 
-    // Scattered decorative obstacles (buildings / hedges / fences / vegetation blobs)
-    const decorCount = randInt(4, 8);
+    const roadCount = randInt(2, 4);
+    for (let i = 0; i < roadCount; i++) {
+        items.push(lineFeature(
+            randomEdgePoint(),
+            randomEdgePoint(),
+            rand(18, 34),
+            pickRandom([IOF.paved, IOF.paved_dark]),
+            'road'
+        ));
+    }
+
+    const contourCount = randInt(5, 9);
+    for (let i = 0; i < contourCount; i++) {
+        items.push(contourLine(rand(80, VB_W - 80), rand(70, VB_H - 70), rand(120, 320), rand(0, Math.PI * 2)));
+    }
+
+    const decorCount = randInt(9, 15);
     for (let i = 0; i < decorCount; i++) {
         let attempts = 20, placed = null;
         while (attempts-- > 0) {
@@ -464,18 +602,20 @@ function generateDecoration(primaryHull, routePts, start, ziel) {
 
 function generateDecorItem(cx, cy) {
     const kind = pickWeighted([
-        ['small_building', 4],
-        ['vegetation',     5],
-        ['short_fence',    2],
+        ['small_building', 3],
+        ['vegetation',     6],
+        ['short_fence',    3],
         ['boulder',        2],
-        ['small_pond',     1],
+        ['small_pond',     2],
+        ['canopy',         2],
+        ['path',           3],
     ]);
     const angle = rand(0, Math.PI * 2);
     switch (kind) {
         case 'small_building':
             return rectAt(cx, cy, rand(45, 90), rand(35, 80), angle, IOF.building, 'small_building');
         case 'vegetation':
-            return blobShape(cx, cy, rand(25, 55), pickRandom([IOF.veg_light, IOF.veg_medium]), null, 'vegetation');
+            return blobShape(cx, cy, rand(25, 65), pickRandom([IOF.veg_light, IOF.veg_medium, IOF.veg_olive]), null, 'vegetation');
         case 'short_fence': {
             const len = rand(80, 150);
             const a = { x: cx - Math.cos(angle) * len / 2, y: cy - Math.sin(angle) * len / 2 };
@@ -486,7 +626,67 @@ function generateDecorItem(cx, cy) {
             return { kind: 'boulder', cx, cy, r: rand(3, 6), color: IOF.cliff };
         case 'small_pond':
             return blobShape(cx, cy, rand(25, 45), IOF.pond, IOF.pond_border, 'small_pond');
+        case 'canopy':
+            return areaPatch(cx, cy, rand(50, 100), rand(35, 85), angle, IOF.open_orange, 'canopy');
+        case 'path': {
+            const len = rand(85, 180);
+            const a = { x: cx - Math.cos(angle) * len / 2, y: cy - Math.sin(angle) * len / 2 };
+            const b = { x: cx + Math.cos(angle) * len / 2, y: cy + Math.sin(angle) * len / 2 };
+            return lineFeature(a, b, rand(4, 7), IOF.contour, 'path');
+        }
     }
+}
+
+function areaPatch(cx, cy, w, h, angle, color, kind) {
+    const n = randInt(9, 15);
+    const pts = [];
+    const ca = Math.cos(angle), sa = Math.sin(angle);
+    for (let i = 0; i < n; i++) {
+        const a = (i / n) * Math.PI * 2 + rand(-0.11, 0.11);
+        const rx = w / 2 * rand(0.78, 1.18);
+        const ry = h / 2 * rand(0.78, 1.18);
+        const lx = Math.cos(a) * rx;
+        const ly = Math.sin(a) * ry;
+        pts.push({
+            x: cx + lx * ca - ly * sa,
+            y: cy + lx * sa + ly * ca,
+        });
+    }
+    return { kind, polygon: pts, hull: convexHull(pts), color };
+}
+
+function lineFeature(a, b, width, color, kind) {
+    return {
+        kind,
+        a, b,
+        width,
+        color,
+        hull: inflatePolyline([a, b], width / 2),
+    };
+}
+
+function contourLine(cx, cy, length, angle) {
+    const pts = [];
+    const segs = randInt(4, 7);
+    const step = length / segs;
+    const normal = angle + Math.PI / 2;
+    for (let i = 0; i <= segs; i++) {
+        const along = (i - segs / 2) * step;
+        const wave = Math.sin(i * rand(0.8, 1.25)) * rand(8, 18);
+        pts.push({
+            x: cx + Math.cos(angle) * along + Math.cos(normal) * wave,
+            y: cy + Math.sin(angle) * along + Math.sin(normal) * wave,
+        });
+    }
+    return { kind: 'contour', polyline: pts, hull: inflatePolyline(pts, 2), color: IOF.contour };
+}
+
+function randomEdgePoint() {
+    const side = randInt(0, 3);
+    if (side === 0) return { x: rand(0, VB_W), y: -30 };
+    if (side === 1) return { x: VB_W + 30, y: rand(0, VB_H) };
+    if (side === 2) return { x: rand(0, VB_W), y: VB_H + 30 };
+    return { x: -30, y: rand(0, VB_H) };
 }
 
 /* =========================================================
@@ -583,10 +783,7 @@ function tangentRoutes(start, ziel, obstacleHull) {
     const sIdx = hull.findIndex(p => p === start);
     const zIdx = hull.findIndex(p => p === ziel);
     if (sIdx === -1 || zIdx === -1) {
-        return [
-            { points: [start, ziel], length: pathLength([start, ziel]) },
-            { points: [start, ziel], length: pathLength([start, ziel]) },
-        ];
+        return [route([start, ziel]), route([start, ziel])];
     }
 
     const arc1 = walkArc(hull, sIdx, zIdx,  1);
@@ -646,7 +843,7 @@ function drawBackground() {
     const bg = svgEl('rect');
     bg.setAttribute('x', 0); bg.setAttribute('y', 0);
     bg.setAttribute('width', VB_W); bg.setAttribute('height', VB_H);
-    bg.setAttribute('fill', IOF.open_yellow);
+    bg.setAttribute('fill', IOF.forest_run);
     SVG('rp-bg-layer').appendChild(bg);
 }
 
@@ -668,6 +865,17 @@ function drawDecor(items) {
 function drawShape(shape, primary, layer) {
     layer = layer || SVG('rp-obstacle-layer');
     switch (shape.kind) {
+        case 'open':
+        case 'paved_area':
+        case 'canopy':
+        case 'olive': {
+            const p = svgEl('polygon');
+            p.setAttribute('points', shape.polygon.map(v => `${v.x},${v.y}`).join(' '));
+            p.setAttribute('fill', shape.color);
+            p.setAttribute('opacity', shape.kind === 'paved_area' ? '0.92' : '0.86');
+            layer.appendChild(p);
+            break;
+        }
         case 'building':
         case 'small_building': {
             const p = svgEl('polygon');
@@ -688,12 +896,48 @@ function drawShape(shape, primary, layer) {
             layer.appendChild(p);
             break;
         }
+        case 'veg_light':
+        case 'veg_medium':
         case 'vegetation': {
             const p = svgEl('polygon');
             p.setAttribute('points', shape.polygon.map(v => `${v.x},${v.y}`).join(' '));
-            p.setAttribute('fill', shape.color);
+            p.setAttribute('fill', shape.color === IOF.veg_medium ? 'url(#rp-veg-stripe)' : shape.color);
             p.setAttribute('opacity', '0.85');
             layer.appendChild(p);
+            break;
+        }
+        case 'road': {
+            const polygon = svgEl('polygon');
+            polygon.setAttribute('points', shape.hull.map(v => `${v.x},${v.y}`).join(' '));
+            polygon.setAttribute('fill', shape.color);
+            polygon.setAttribute('stroke', IOF.uncrossable);
+            polygon.setAttribute('stroke-width', '1');
+            polygon.setAttribute('opacity', '0.9');
+            layer.appendChild(polygon);
+            break;
+        }
+        case 'path': {
+            const line = svgEl('line');
+            line.setAttribute('x1', shape.a.x); line.setAttribute('y1', shape.a.y);
+            line.setAttribute('x2', shape.b.x); line.setAttribute('y2', shape.b.y);
+            line.setAttribute('stroke', shape.color);
+            line.setAttribute('stroke-width', shape.width);
+            line.setAttribute('stroke-linecap', 'round');
+            line.setAttribute('stroke-dasharray', '9 7');
+            line.setAttribute('opacity', '0.85');
+            layer.appendChild(line);
+            break;
+        }
+        case 'contour': {
+            const poly = svgEl('polyline');
+            poly.setAttribute('points', shape.polyline.map(v => `${v.x},${v.y}`).join(' '));
+            poly.setAttribute('fill', 'none');
+            poly.setAttribute('stroke', shape.color);
+            poly.setAttribute('stroke-width', '1.4');
+            poly.setAttribute('stroke-linejoin', 'round');
+            poly.setAttribute('stroke-linecap', 'round');
+            poly.setAttribute('opacity', '0.72');
+            layer.appendChild(poly);
             break;
         }
         case 'wall': {
@@ -878,7 +1122,7 @@ function pickSide(idx) {
     // .play-btn-label slot is reused so the text simply gets swapped out.
     const correctLabel = buttons[correctIdx].querySelector('.play-btn-label');
     if (correctLabel) {
-        correctLabel.innerHTML = window.icon ? window.icon('crown', '1.6em') : '👑';
+        correctLabel.innerHTML = window.icon ? window.icon('crown', '1.6em') : '';
         correctLabel.classList.add('rp-btn-crown');
     }
     buttons[correctIdx].classList.add('route-btn-fastest');

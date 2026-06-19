@@ -162,7 +162,7 @@ def _cached_team_random_stats(active_team):
 
     from .models import InfiniteChoice
     stats = _aggregate_random(
-        list(InfiniteChoice.objects.filter(user__profile__active_team=active_team))
+        list(InfiniteChoice.objects.filter(_team_choice_filter(active_team)))
     )
     cache.set(cache_key, stats, STATS_TEAM_CACHE_TIMEOUT)
     return stats
@@ -353,8 +353,8 @@ def _cached_team_progress(active_team):
     per_user = {}
     rows = (
         Choice.objects
-        .filter(control_pair__file_id__in=file_ids,
-                user__profile__active_team=active_team)
+        .filter(control_pair__file_id__in=file_ids)
+        .filter(_team_choice_filter(active_team))
         .values('user_id', 'competition')
         .annotate(n=Count('id', distinct=True))
     )
@@ -397,9 +397,22 @@ def get_stats_table(request):
     if cached_table is not None:
         return JsonResponse(cached_table, safe=False)
 
+    # Roster = everyone with results stamped with this team (current OR former
+    # members), not just the current roster — so historical results stay visible
+    # after a user switches/leaves the team.
+    if mode == 'random':
+        roster_ids = (InfiniteChoice.objects
+                      .filter(_team_choice_filter(active_team))
+                      .values_list('user_id', flat=True).distinct())
+    else:
+        roster_ids = (Choice.objects
+                      .filter(competition=(mode == 'competition'))
+                      .filter(_team_choice_filter(active_team))
+                      .values_list('user_id', flat=True).distinct())
+
     team_users = list(
         User.objects
-            .filter(profile__active_team=active_team)
+            .filter(id__in=roster_ids)
             .exclude(groups__name='Trainer')
             .order_by('last_name', 'first_name')
     )
@@ -556,7 +569,10 @@ def get_stats_table(request):
 @login_required
 @require_GET
 def get_team_athletes(request):
-    """List athletes (non-trainers) sharing the requesting trainer's active team."""
+    """List athletes (non-trainers) with results stamped with the requesting
+    trainer's active team — current or former members, mirroring the search
+    semantics used by the stats table."""
+    from .models import Choice, InfiniteChoice
     from django.contrib.auth.models import User
 
     if not _is_trainer(request.user):
@@ -567,9 +583,14 @@ def get_team_athletes(request):
     if not active_team:
         return JsonResponse({'athletes': []})
 
+    team_filter = _team_choice_filter(active_team)
+    roster_ids = (
+        set(Choice.objects.filter(team_filter).values_list('user_id', flat=True))
+        | set(InfiniteChoice.objects.filter(team_filter).values_list('user_id', flat=True))
+    )
     users = (
         User.objects
-        .filter(profile__active_team=active_team)
+        .filter(id__in=roster_ids)
         .exclude(groups__name='Trainer')
         .exclude(id=request.user.id)
         .order_by('first_name', 'last_name', 'username')

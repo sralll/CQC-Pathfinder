@@ -84,7 +84,7 @@ body.mobile .rp-hud-streak      { font-size: var(--font-md); transform: translat
     inset: 0;
     width: 100%;
     height: 100%;
-    background: #FFE9A7;   /* IOF open yellow base */
+    background: rgb(255,255,255);
 }
 
 #rp-rotation { transition: none; }
