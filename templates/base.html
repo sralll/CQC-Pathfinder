@@ -1,6 +1,7 @@
-{% load static %}
+{% load static i18n %}
+{% get_current_language as LANGUAGE_CODE %}
 <!DOCTYPE html>
-<html lang="en">
+<html lang="{{ LANGUAGE_CODE }}">
 <head>
     <meta charset="UTF-8">
     <meta name="csrf-token" content="{{ csrf_token }}">
@@ -36,7 +37,18 @@
             {% endif %}
             {% endif %}
             <span class="nav-username">{{ user.first_name|default:user.username }}</span>
-            <a href="{% url 'home' %}" class="nav-home-btn" title="Home">
+            <form action="{% url 'set_language' %}" method="post" class="nav-lang-switcher">
+                {% csrf_token %}
+                <input name="next" type="hidden" value="{{ request.get_full_path }}">
+                {% get_current_language as CUR_LANG %}
+                {% get_available_languages as LANGS %}
+                <select name="language" onchange="this.form.submit()" aria-label="{% trans 'Language' %}">
+                    {% for code, name in LANGS %}
+                    <option value="{{ code }}"{% if code == CUR_LANG %} selected{% endif %}>{{ code|upper }}</option>
+                    {% endfor %}
+                </select>
+            </form>
+            <a href="{% url 'home' %}" class="nav-home-btn" title="{% trans 'Home' %}">
                 <x-icon name="home" size="13px"></x-icon>
             </a>
         </div>
@@ -88,6 +100,7 @@
     document.body.classList.add('desktop');
     }
     </script>
+    <script src="{% url 'javascript-catalog' %}"></script>
     <script src="{% static 'js/icons.js' %}"></script>
     {% block scripts %}{% endblock %}
 </body>

@@ -172,7 +172,7 @@ function renderHeader() {
                 </span>
             </th>
             <th class="col-results" data-sort="results_count" style="text-align:center;">
-                <span class="sortable">Resultate
+                <span class="sortable">${gettext('Results')}
                     <span id="sort-results_count" class="sort-indicator"></span>
                 </span>
             </th>

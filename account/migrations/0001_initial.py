@@ -80,6 +80,7 @@ class Migration(migrations.Migration):
                 ("teams", models.ManyToManyField(blank=True, to="account.team")),
                 ("first_play_desktop", models.BooleanField(default=True)),
                 ("first_play_mobile", models.BooleanField(default=True)),
+                ("language", models.CharField(blank=True, default="", max_length=10)),
             ],
         ),
         migrations.CreateModel(

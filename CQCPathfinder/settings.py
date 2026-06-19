@@ -2,6 +2,7 @@ from pathlib import Path
 import os
 import dj_database_url
 from dotenv import load_dotenv
+from django.utils.translation import gettext_lazy as _
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 FILES_DIR = os.path.join(BASE_DIR, 'jsonfiles')
@@ -56,6 +57,10 @@ MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
     "servestatic.middleware.ServeStaticMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
+    # LocaleMiddleware must sit after SessionMiddleware (it reads the language
+    # from the session/cookie) and before CommonMiddleware (which may need the
+    # active language for URL handling).
+    "django.middleware.locale.LocaleMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
@@ -105,6 +110,7 @@ TEMPLATES = [
             'context_processors': [
                 'django.template.context_processors.debug',
                 'django.template.context_processors.request',
+                'django.template.context_processors.i18n',
                 'django.contrib.auth.context_processors.auth',
                 'django.contrib.messages.context_processors.messages',
                 'account.context_processors.user_context',
@@ -146,7 +152,17 @@ LOGIN_URL = '/login/'
 LOGIN_REDIRECT_URL = '/'
 LOGOUT_REDIRECT_URL = 'login'
 
-LANGUAGE_CODE = "en-us"
+# English is the source language (msgids in code are English); de/fr/it are
+# translation catalogs under LOCALE_PATHS. The language is selected via the
+# cookie/session switcher (set_language) — see CQCPathfinder/urls.py.
+LANGUAGE_CODE = "en"
+LANGUAGES = [
+    ("en", _("English")),
+    ("de", _("Deutsch")),
+    ("fr", _("Français")),
+    ("it", _("Italiano")),
+]
+LOCALE_PATHS = [BASE_DIR / "locale"]
 TIME_ZONE = "CET"
 USE_I18N = True
 USE_TZ = True

@@ -26,6 +26,13 @@ class Profile(models.Model):
     first_play_desktop = models.BooleanField(default=True)
     first_play_mobile = models.BooleanField(default=True)
 
+    # Persistent UI language preference (the durable source of truth that follows
+    # the account across devices). Blank = no preference → fall back to the
+    # language cookie / Accept-Language / settings.LANGUAGE_CODE. Validated
+    # against settings.LANGUAGES in the switcher view (account.views.set_language)
+    # and re-applied to the cookie on login (CQCPathfinder.views.LocaleLoginView).
+    language = models.CharField(max_length=10, blank=True, default='')
+
     def __str__(self):
         return self.user.username
 

@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% load static %}
+{% load static i18n %}
 
 {% block styles %}
 <link rel="stylesheet" href="{% static 'css/home.css' %}">
@@ -17,31 +17,31 @@
             {% if is_trainer %}
             <a class="home-tile" href="/editor/">
                 <span class="home-tile-icon"><x-icon name="pencil" size="32px"></x-icon></span>
-                <span class="home-tile-label">Editor</span>
+                <span class="home-tile-label">{% trans "Editor" %}</span>
             </a>
             {% endif %}
 
             <a class="home-tile home-tile-primary" href="/play/">
                 <span class="home-tile-icon"><x-icon name="trophy" size="32px"></x-icon></span>
-                <span class="home-tile-label">Play</span>
+                <span class="home-tile-label">{% trans "Play" %}</span>
             </a>
 
             <a class="home-tile" href="/results/">
                 <span class="home-tile-icon"><x-icon name="list" size="32px"></x-icon></span>
-                <span class="home-tile-label">Resultate</span>
+                <span class="home-tile-label">{% trans "Results" %}</span>
             </a>
 
             <a class="home-tile" href="/stats/">
                 <span class="home-tile-icon"><x-icon name="chart-simple" size="32px"></x-icon></span>
-                <span class="home-tile-label">Statistik</span>
+                <span class="home-tile-label">{% trans "Statistics" %}</span>
             </a>
         </div>
 
-        <a class="home-feedback" href="{% url 'forum' %}"><span class="home-tile-label"></span>Forum</span></a>
+        <a class="home-feedback" href="{% url 'forum' %}"><span class="home-tile-label"></span>{% trans "Forum" %}</span></a>
 
         <div class="home-links">
-            <a href="/logout/">Abmelden</a>
-            <a href="/password_change/">Passwort ändern</a>
+            <a href="/logout/">{% trans "Log out" %}</a>
+            <a href="/password_change/">{% trans "Change password" %}</a>
             {% if is_trainer %}
             <a href="{% static 'docs/Anleitung für Trainer_4.pdf' %}" target="_blank">Guide (PDF)</a>
             <a href="https://youtu.be/YS3Q4i0wBB8" target="_blank">Guide (Video)</a>
