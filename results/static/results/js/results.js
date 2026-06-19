@@ -13,10 +13,12 @@ let sharedPool      = false;
 let multiTeam       = false;
 let activeTeamName  = '';
 
+// key = stable identifier used for filtering/matching (never translated);
+// label = display text (translated).
 const STATUS = {
-    neu:      { label: 'neu',      color: '#0044CC', rgb: '0,68,204'    },
-    begonnen: { label: 'begonnen', color: '#E07020', rgb: '224,112,32'  },
-    erledigt: { label: 'erledigt', color: '#1A8833', rgb: '26,136,51'   },
+    neu:      { key: 'neu',      label: gettext('new'),     color: '#0044CC', rgb: '0,68,204'    },
+    begonnen: { key: 'begonnen', label: gettext('started'), color: '#E07020', rgb: '224,112,32'  },
+    erledigt: { key: 'erledigt', label: gettext('done'),    color: '#1A8833', rgb: '26,136,51'   },
 };
 
 function fileStatus(f) {
@@ -168,7 +170,7 @@ function applyFilters() {
         const matchKader  = !activeKaderFilters.length
             || activeKaderFilters.includes((f.team_name || '').trim());
         const matchStatus = !activeStatusFilters.length
-            || activeStatusFilters.includes(fileStatus(f).label);
+            || activeStatusFilters.includes(fileStatus(f).key);
         return matchSearch && matchLabel && matchAuthor && matchKader && matchStatus;
     });
 
@@ -225,7 +227,7 @@ function renderHeader() {
     const thead = document.getElementById('play-thead');
     const kaderCol = multiTeam
         ? `<th class="col-kader">
-               <span class="filterable" id="kader-filter-btn">Kader
+               <span class="filterable" id="kader-filter-btn">${gettext('Squad')}
                    <span class="filter-indicator active-filter-icon">${window.icon('filter', '0.8em')}</span>
                </span>
            </th>`
@@ -234,33 +236,33 @@ function renderHeader() {
     thead.innerHTML = `
         <tr>
             <th class="col-name" data-sort="name">
-                <span class="sortable">Name
+                <span class="sortable">${gettext('Name')}
                     <span id="sort-name" class="sort-indicator"></span>
                 </span>
             </th>
             <th class="col-label">
-                <span class="filterable" id="label-filter-btn">Label
+                <span class="filterable" id="label-filter-btn">${gettext('Label')}
                     <span class="filter-indicator active-filter-icon">${window.icon('filter', '0.8em')}</span>
                 </span>
             </th>
             <th class="col-status">
-                <span class="filterable" id="status-filter-btn">Status
+                <span class="filterable" id="status-filter-btn">${gettext('Status')}
                     <span class="filter-indicator active-filter-icon">${window.icon('filter', '0.8em')}</span>
                 </span>
             </th>
             <th class="col-cp" data-sort="cp_count" style="text-align:center;">
-                <span class="sortable">Posten
+                <span class="sortable">${gettext('Controls')}
                     <span id="sort-cp_count" class="sort-indicator"></span>
                 </span>
             </th>
             <th class="col-author">
-                <span class="filterable" id="author-filter-btn">Autor
+                <span class="filterable" id="author-filter-btn">${gettext('Author')}
                     <span class="filter-indicator active-filter-icon">${window.icon('filter', '0.8em')}</span>
                 </span>
             </th>
             ${kaderCol}
             <th class="col-date" data-sort="last_edited">
-                <span class="sortable">Erstellt
+                <span class="sortable">${gettext('Created')}
                     <span id="sort-last_edited" class="sort-indicator"></span>
                 </span>
             </th>
@@ -365,7 +367,7 @@ function renderLabelFilterDropdown() {
     const labels = getAllLabels();
     dropdown.innerHTML = `
         <div class="filter-clear">
-            <div class="filter-clear-left" onclick="event.stopPropagation(); clearLabelFilter()"><b>Alle</b></div>
+            <div class="filter-clear-left" onclick="event.stopPropagation(); clearLabelFilter()"><b>${gettext('All')}</b></div>
             <button class="filter-close-btn" onclick="event.stopPropagation(); closeAllFilters()" type="button"><x-icon name="xmark" size="1em"></x-icon></button>
         </div>
         <div class="filter-options-list">
@@ -442,7 +444,7 @@ function renderKaderFilterDropdown() {
         : allKader;
     dropdown.innerHTML = `
         <div class="filter-clear">
-            <div class="filter-clear-left" onclick="event.stopPropagation(); clearKaderFilters()"><b>Alle</b></div>
+            <div class="filter-clear-left" onclick="event.stopPropagation(); clearKaderFilters()"><b>${gettext('All')}</b></div>
             <button class="filter-close-btn" onclick="event.stopPropagation(); closeAllFilters()" type="button"><x-icon name="xmark" size="1em"></x-icon></button>
         </div>
         <div class="filter-options-list">
@@ -479,14 +481,14 @@ function renderStatusFilterDropdown() {
     const dropdown = document.getElementById('status-filter-dropdown');
     dropdown.innerHTML = `
         <div class="filter-clear">
-            <div class="filter-clear-left" onclick="event.stopPropagation(); clearStatusFilters()"><b>Alle</b></div>
+            <div class="filter-clear-left" onclick="event.stopPropagation(); clearStatusFilters()"><b>${gettext('All')}</b></div>
             <button class="filter-close-btn" onclick="event.stopPropagation(); closeAllFilters()" type="button"><x-icon name="xmark" size="1em"></x-icon></button>
         </div>
         <div class="filter-options-list">
         ${Object.values(STATUS).map(s => `
-            <div class="filter-option" onclick="event.stopPropagation(); toggleStatusSelection('${s.label}')">
+            <div class="filter-option" onclick="event.stopPropagation(); toggleStatusSelection('${s.key}')">
                 <span style="color:${s.color};font-weight:600;">${s.label}</span>
-                ${activeStatusFilters.includes(s.label) ? window.icon('square-check') : window.icon('square')}
+                ${activeStatusFilters.includes(s.key) ? window.icon('square-check') : window.icon('square')}
             </div>
         `).join('')}
         </div>`;
@@ -531,7 +533,7 @@ function renderTable() {
         const colCount = 6 + (multiTeam ? 1 : 0);
         const tr = document.createElement('tr');
         tr.className = 'play-empty-row';
-        tr.innerHTML = `<td colspan="${colCount}">Keine Projekte gefunden.</td>`;
+        tr.innerHTML = `<td colspan="${colCount}">${gettext('No projects found.')}</td>`;
         tbody.appendChild(tr);
         return;
     }
@@ -578,7 +580,7 @@ function renderCards() {
     if (filteredFiles.length === 0) {
         const msg = document.createElement('div');
         msg.className = 'play-empty-card';
-        msg.textContent = 'Keine Projekte gefunden.';
+        msg.textContent = gettext('No projects found.');
         wrap.appendChild(msg);
         return;
     }
@@ -640,9 +642,9 @@ function renderMobileControls() {
     sortRow.className = 'play-ctrl-row';
 
     const sortFields = [
-        { key: 'name',        label: 'Name'   },
-        { key: 'cp_count',    label: 'Posten' },
-        { key: 'last_edited', label: 'Datum'  },
+        { key: 'name',        label: gettext('Name')     },
+        { key: 'cp_count',    label: gettext('Controls') },
+        { key: 'last_edited', label: gettext('Date')     },
     ];
     sortFields.forEach(({ key, label }) => {
         const btn   = document.createElement('button');
@@ -659,11 +661,11 @@ function renderMobileControls() {
     filterRow.className = 'play-ctrl-row';
 
     const filterFields = [
-        { field: 'label',  label: 'Label',  toggle: toggleLabelFilter  },
-        { field: 'author', label: 'Autor',  toggle: toggleAuthorFilter },
-        { field: 'status', label: 'Status', toggle: toggleStatusFilter },
+        { field: 'label',  label: gettext('Label'),  toggle: toggleLabelFilter  },
+        { field: 'author', label: gettext('Author'), toggle: toggleAuthorFilter },
+        { field: 'status', label: gettext('Status'), toggle: toggleStatusFilter },
         ...(multiTeam
-            ? [{ field: 'kader', label: 'Kader', toggle: toggleKaderFilter }]
+            ? [{ field: 'kader', label: gettext('Squad'), toggle: toggleKaderFilter }]
             : []),
     ];
     filterFields.forEach(({ field, label, toggle }) => {

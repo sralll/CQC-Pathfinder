@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% load static %}
+{% load static i18n %}
 
 {% block styles %}
 <link rel="stylesheet" href="{% static 'results/css/results.css' %}">
@@ -8,7 +8,7 @@
 
 {% block nav_content %}
 <div class="nav-left">
-    <a href="/results/" class="nav-home-btn fr-back-btn" title="Zurück zur Übersicht">
+    <a href="/results/" class="nav-home-btn fr-back-btn" title="{% trans 'Back to overview' %}">
         <x-icon name="back" size="14px"></x-icon>
     </a>
 
@@ -20,8 +20,8 @@
         <div class="mode-icon-tip mode-active" data-mode="training">
             <x-icon name="book-open" size="14px"></x-icon>
             <div class="mode-tip-box">
-                <b>Trainingsresultate einbeziehen</b><br>
-                Schalter aus → nur Wettkampfläufe werden angezeigt.
+                <b>{% trans "Include training results" %}</b><br>
+                {% trans "Switch off → only competition runs are shown." %}
             </div>
         </div>
     </div>
@@ -40,7 +40,7 @@
 <div id="play-wrap" data-file-id="{{ file_id }}">
     <div id="play-container">
 
-        <div id="play-loading">Laden…</div>
+        <div id="play-loading">{% trans "Loading…" %}</div>
 
         <!-- Left column: table + toolbar + chart -->
         <div id="fr-left">
@@ -51,10 +51,10 @@
                         <tr>
                             <th class="fr-col-check"><input type="checkbox" id="fr-check-all"></th>
                             <th class="fr-col-rank">#</th>
-                            <th class="fr-col-name">Name</th>
-                            <th class="fr-col-time" title="Summe der Entscheidungszeiten">Zeit</th>
-                            <th class="fr-col-time" title="Gesamte Zeitverluste gegenüber der schnellsten Route">Routen</th>
-                            <th class="fr-col-time fr-col-total">Total</th>
+                            <th class="fr-col-name">{% trans "Name" %}</th>
+                            <th class="fr-col-time" title="{% trans 'Sum of decision times' %}">{% trans "Time" %}</th>
+                            <th class="fr-col-time" title="{% trans 'Total time lost vs. the fastest route' %}">{% trans "Routes" %}</th>
+                            <th class="fr-col-time fr-col-total">{% trans "Total" %}</th>
                         </tr>
                     </thead>
                     <tbody id="fr-tbody"></tbody>
@@ -78,7 +78,7 @@
             <div id="fr-map-section">
                 <div id="fr-nav-bar">
                     <button class="fr-nav-btn" id="fr-prev-btn" onclick="prevCp()"><x-icon name="cp-prev" size="13px"></x-icon></button>
-                    <span id="fr-cp-label">Posten 1</span>
+                    <span id="fr-cp-label">{% trans "Control" %} 1</span>
                     <button class="fr-nav-btn" id="fr-next-btn" onclick="nextCp()"><x-icon name="cp-next" size="13px"></x-icon></button>
                     <button class="fr-nav-btn fr-replay-btn" onclick="replayAnimation()"><x-icon name="replay" size="12px"></x-icon></button>
                 </div>

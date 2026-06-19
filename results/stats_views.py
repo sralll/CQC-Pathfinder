@@ -32,7 +32,7 @@ def _team_random_cache_key(team_id):
 
 
 def _stats_table_cache_key(team_id, mode):
-    return f"stats:table:v3:{team_id}:{mode}"
+    return f"stats:table:v4:{team_id}:{mode}"
 
 
 def _team_progress_cache_key(team_id):
@@ -239,6 +239,31 @@ def _linear_fit_from_sums(row):
     }
 
 
+def _fit_sums_from_points(points):
+    """Component sums (n, Σx, Σy, Σx², Σxy) of a least-squares line fit, computed
+    from in-memory points. Feeds `_linear_fit_from_sums`."""
+    n = len(points)
+    sx = sy = sx2 = sxy = 0.0
+    for p in points:
+        x = float(p['x'])
+        y = float(p['y'])
+        sx  += x
+        sy  += y
+        sx2 += x * x
+        sxy += x * y
+    return {'n': n, 'sx': sx, 'sy': sy, 'sx2': sx2, 'sxy': sxy}
+
+
+def _combine_fit_sums(rows):
+    """Element-wise sum of fit-sum rows. A line fit's component sums are additive,
+    so the combined fit over several groups is the fit of their summed components."""
+    total = {'n': 0, 'sx': 0.0, 'sy': 0.0, 'sx2': 0.0, 'sxy': 0.0}
+    for r in rows:
+        for k in total:
+            total[k] += r[k]
+    return total
+
+
 def _linear_fit_sums(qs, group_by=None):
     qs = qs.annotate(
         fit_x2=ExpressionWrapper(F('fit_x') * F('fit_x'), output_field=FloatField()),
@@ -308,13 +333,6 @@ def _choice_error_potential_fit(qs):
     return _linear_fit_from_sums(_linear_fit_sums(_error_potential_fit_queryset(qs)))
 
 
-def _choice_error_potential_fits_by_user(qs):
-    return {
-        row['user_id']: _linear_fit_from_sums(row)
-        for row in _linear_fit_sums(_error_potential_fit_queryset(qs), 'user_id')
-    }
-
-
 def _time_benchmark_subqueries(benchmark_qs):
     benchmark = (
         benchmark_qs
@@ -358,13 +376,6 @@ def _time_sensitivity_fit_queryset(rows_qs, benchmark_qs):
 
 def _choice_time_sensitivity_fit(rows_qs, benchmark_qs):
     return _linear_fit_from_sums(_linear_fit_sums(_time_sensitivity_fit_queryset(rows_qs, benchmark_qs)))
-
-
-def _choice_time_sensitivity_fits_by_user(rows_qs, benchmark_qs):
-    return {
-        row['user_id']: _linear_fit_from_sums(row)
-        for row in _linear_fit_sums(_time_sensitivity_fit_queryset(rows_qs, benchmark_qs), 'user_id')
-    }
 
 
 def _fit_sensitivity_ms(points):
@@ -909,18 +920,36 @@ def get_stats_table(request):
 
         all_rows  = choices
         get_rows  = lambda uid: per_user.get(uid, [])
-        sensitivity_by_user = {
-            uid: fit['sensitivity_ms'] if fit else None
-            for uid, fit in _choice_error_potential_fits_by_user(choices_qs).items()
+
+        # Sensitivity fits (Fehlerpotential-Erkennung & Zeitsensitivität) are
+        # computed in Python from the choice rows already fetched above, reusing
+        # the same point helpers as the per-athlete graph view. This replaces four
+        # correlated-subquery aggregates (per-user + summary, ×2 metrics) with two
+        # plain GROUP BY queries. Because a least-squares line's component sums are
+        # additive, the Kaderdurchschnitt fit is just the element-wise sum of the
+        # per-athlete sums — no separate query needed.
+        runtime_stats   = _route_runtime_stats_for_cp(cp_ids)
+        time_benchmarks = _choice_time_benchmarks_per_cp(choices_qs, cp_ids)
+
+        error_sums_by_user = {
+            uid: _fit_sums_from_points(_choice_error_potential_points(rows, runtime_stats))
+            for uid, rows in per_user.items()
         }
-        time_sensitivity_by_user = {
-            uid: fit['sensitivity_ms'] if fit else None
-            for uid, fit in _choice_time_sensitivity_fits_by_user(choices_qs, choices_qs).items()
+        time_sums_by_user = {
+            uid: _fit_sums_from_points(
+                _choice_time_sensitivity_points(rows, min_time_per_cp, time_benchmarks)
+            )
+            for uid, rows in per_user.items()
         }
-        summary_error_fit = _choice_error_potential_fit(choices_qs)
-        summary_time_fit = _choice_time_sensitivity_fit(choices_qs, choices_qs)
-        summary_error_sensitivity = summary_error_fit['sensitivity_ms'] if summary_error_fit else None
-        summary_time_sensitivity = summary_time_fit['sensitivity_ms'] if summary_time_fit else None
+
+        def _sensitivity_ms(sums):
+            fit = _linear_fit_from_sums(sums)
+            return fit['sensitivity_ms'] if fit else None
+
+        sensitivity_by_user      = {uid: _sensitivity_ms(s) for uid, s in error_sums_by_user.items()}
+        time_sensitivity_by_user = {uid: _sensitivity_ms(s) for uid, s in time_sums_by_user.items()}
+        summary_error_sensitivity = _sensitivity_ms(_combine_fit_sums(error_sums_by_user.values()))
+        summary_time_sensitivity  = _sensitivity_ms(_combine_fit_sums(time_sums_by_user.values()))
 
     # ── File-completion progress (Fortschritt) — mode-independent ──────
     progress = _cached_team_progress(active_team)

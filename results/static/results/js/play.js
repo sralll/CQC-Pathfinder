@@ -146,7 +146,7 @@ function showEndOfFileModal() {
         // be the primary action — only Play / Home are offered.
         const resultsBtn = TUTORIAL
             ? ''
-            : `<a class="play-end-btn" href="/results/${fileId}/">Resultate</a>`;
+            : `<a class="play-end-btn" href="/results/${fileId}/">${gettext('Results')}</a>`;
         const playClass = TUTORIAL ? 'play-end-btn' : 'play-end-btn secondary';
         modal = document.createElement('div');
         modal.id = 'play-end-modal';
@@ -284,6 +284,7 @@ async function loadFile() {
         // Any prior results in the DB → grey progress bar, regardless of mode
         document.body.classList.toggle('has-prior-results', (data.done_cp_count || 0) > 0);
         await loadMap(project.map_file);
+        emitPlay('map-loaded', { id: project.id });
         const isDesktop  = document.body.classList.contains('desktop');
         const readyFontSize = isDesktop
             ? `${Math.min(28, Math.max(14, Math.round(56 / 1)))}px`
@@ -292,9 +293,9 @@ async function loadFile() {
         //   replay      → "Wiedergabe?" (no save)
         //   resuming    → "Weiter?"     (continuing a 'begonnen' run)
         //   first play  → "Bereit?"
-        let firstLabel = 'Bereit?';
-        if (replayMode)                       firstLabel = 'Wiedergabe?';
-        else if ((data.done_cp_count || 0) > 0) firstLabel = 'Weiter?';
+        let firstLabel = gettext('Ready?');
+        if (replayMode)                       firstLabel = gettext('Replay?');
+        else if ((data.done_cp_count || 0) > 0) firstLabel = gettext('Continue?');
         renderButtons([{
             label:    firstLabel,
             cls:      'route-btn route-btn-labeled',
@@ -614,10 +615,9 @@ function handleRouteHit(cp, i, e) {
         selectRoute(cp, i);
         return;
     }
-    // Tutorial, FIRST control only: never commit a direct pick before the
-    // reveal — always reveal first, so the athlete always sees tip 2 and the
-    // countdown bar running out. Later controls allow direct picks (tip 6).
-    if (TUTORIAL && cp.complex && currentCpIndex === 0) {
+    // Tutorial, third control only: never commit a direct pick before reveal.
+    // Earlier controls allow direct picks when the hit is unambiguous.
+    if (TUTORIAL && cp.complex && currentCpIndex === 2) {
         revealRoutes(cp);
         return;
     }
@@ -636,6 +636,7 @@ function showControlPair(index) {
     const cp = project.control_pairs[index];
     if (!cp?.start || !cp?.ziel) return;
     currentCpIndex = index;
+    emitPlay('cp-starting', { index, complex: !!cp.complex });
 
     // Cancel any running route animation from the previous CP
     if (_routeAnim) { cancelAnimationFrame(_routeAnim); _routeAnim = null; }
@@ -736,7 +737,7 @@ function showControlPair(index) {
             choiceStartTime = performance.now();
             pendingReveal   = cp;
             renderButtons([{
-                label:    'Routen anzeigen',
+                label:    gettext('Show routes'),
                 cls:      'route-btn route-btn-labeled',
                 bgColor:  '#e07020',
                 fontSize: revealFontSize,
@@ -1012,7 +1013,7 @@ function renderAllButtons(cp) {
             bgColor:   currentRouteColors[i] || '#888',
             fontSize:  btnFontSize,
             cls:       cp.complex ? 'route-btn' : 'route-btn route-btn-labeled',
-            label:    cp.complex ? undefined : (route.pos === minPos ? 'Links' : 'Rechts'),
+            label:    cp.complex ? undefined : (route.pos === minPos ? gettext('Left') : gettext('Right')),
             active:   selectedRouteIdx === i,
             disabled: buttonsDisabled,
             fastest,

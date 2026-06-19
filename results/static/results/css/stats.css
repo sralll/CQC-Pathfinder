@@ -332,8 +332,8 @@ body.desktop #stats-header { width: 100%; max-width: none; }
     top: calc(100% + 8px);
     left: 0;
     z-index: 40;
-    width: min(330px, calc(100vw - 48px));
-    max-height: min(220px, 55vh);
+    width: min(350px, calc(100vw - 48px));
+    max-height: 160px !important;
     overflow: auto;
     background: var(--bg-2);
     border: 0.5px solid var(--border-strong);
@@ -590,7 +590,7 @@ body.desktop #stats-header { width: 100%; max-width: none; }
 
 /* ── Mobile ──────────────────────────────────────────── */
 
-@media (max-width: 700px) {
+@media (max-width: 1280px) {
     html, body { overflow: auto; }
     body.desktop #play-wrap { overflow: auto; }
     #play-wrap {
@@ -675,4 +675,11 @@ body.mobile .stats-tooltip          { font-size: var(--font-md); padding: 8px 12
 #stats-table tbody tr.stats-row-clickable:hover td:first-child {
     color: #fff;
     transform: translateX(3px);
+}
+
+ul.noindent {
+    margin-left: 5px;
+    margin-right: 0px;
+    padding-left: 10px;
+    padding-right: 0px;
 }

@@ -45,6 +45,11 @@ def home_view(request):
 
 
 @login_required
+def guide_view(request):
+    return render(request, 'guide.html')
+
+
+@login_required
 def feedback_view(request):
     return redirect('forum')
 

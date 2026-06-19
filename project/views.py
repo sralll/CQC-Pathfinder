@@ -56,7 +56,8 @@ def _create_db_snapshot(file, user, trigger):
             'start': cp.start, 'ziel': cp.ziel, 'complex': cp.complex,
             'routes': [{'id': r.id, 'order': r.order, 'rP': r.rP,
                          'noA': r.noA, 'pos': r.pos, 'length': r.length,
-                         'run_time': r.run_time, 'elevation': r.elevation}
+                         'run_time': r.run_time, 'elevation': r.elevation,
+                         'obstacle': r.obstacle}
                         for r in routes],
         })
     FileSnapshot.objects.create(
@@ -254,6 +255,7 @@ def open_file(request, file_id):
                                 'length': r.length,
                                 'run_time': r.run_time,
                                 'elevation': r.elevation,
+                                'obstacle': r.obstacle,
                             }
                             for r in cp.routes.all()
                         ]
@@ -521,6 +523,7 @@ def save_file(request):
                         length       = r_d.get('length'),
                         run_time     = r_d.get('run_time'),
                         elevation    = r_d.get('elevation'),
+                        obstacle     = r_d.get('obstacle'),
                     ))
             created_routes = Route.objects.bulk_create(route_objects)
 
@@ -691,6 +694,7 @@ def save_element(request):
             route.length    = route_data.get('length')
             route.run_time  = route_data.get('run_time')
             route.elevation = route_data.get('elevation')
+            route.obstacle  = route_data.get('obstacle')
             route.save()
             if not cp.complex and cp.routes.count() > 2:
                 cp.complex = True
@@ -1115,6 +1119,7 @@ def get_editor_settings(request):
     return JsonResponse({
         'auto_pathfind': s.auto_pathfind,
         'auto_jump':     s.auto_jump,
+        'auto_obstacle': s.auto_obstacle,
     })
 
 
@@ -1138,6 +1143,10 @@ def toggle_editor_setting(request):
             s.auto_jump = not s.auto_jump
             s.save(update_fields=['auto_jump'])
             return JsonResponse({'auto_jump': s.auto_jump})
+        elif setting == 'auto_obstacle':
+            s.auto_obstacle = not s.auto_obstacle
+            s.save(update_fields=['auto_obstacle'])
+            return JsonResponse({'auto_obstacle': s.auto_obstacle})
         return JsonResponse({'error': 'unknown setting'}, status=400)
     except Exception as e:
         traceback.print_exc()

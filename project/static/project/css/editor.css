@@ -2201,6 +2201,12 @@ body.auto-pathfind-busy .cp-route-theta-btn[aria-busy="true"] {
 
 .cp-route-row.selected .route-elevation-label { color: #777; }
 
+.route-obstacle-icon {
+    display: inline-flex;
+    align-items: center;
+    color: inherit;
+}
+
 .route-elevation-input {
     width: 25px;
     height: 18px;

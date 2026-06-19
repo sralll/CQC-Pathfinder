@@ -25,6 +25,9 @@ NOA_EPSILON_DEG               = 2          # ignore micro-changes smaller than t
 NOA_MIN_EFFECT_DEG            = 45
 NOA_COUNTER_MIN_DEG           = 45
 NOA_PENALTY_SECONDS_PER       = 1.0        # 1 s added per corner to the runtime estimate
+DOWNHILL_CREDIT               = 0.0        # how much a downhill pays back the matching uphill
+                                           # 0.0 = neutral (sprint: you can't bank the descent)
+                                           # 1.0 = full Strava GAP credit (symmetric model)
 
 
 def _normalize_turn_rad(angle):
@@ -237,27 +240,37 @@ def calc_route_noA(rP, scale=None, map_scale=None):
     return _round_noA(noA)
 
 
-def calc_route_runtime(length_m, noA, elevation_m):
+def calc_route_runtime(length_m, noA, elevation_m, obstacle_s=0):
     """Predict the running time (seconds) for a route.
 
-        run_time = length / adjusted_speed + 1 s × noA
+        run_time = length × grade_factor / RUN_SPEED + 1 s × noA + obstacle_s
 
-    `adjusted_speed` is `RUN_SPEED` divided by the average of the Tobler-
-    style up/down gradient adjustment polynomials. With elevation 0 we
-    skip the polynomial (calibration point: flat ground runs at the bare
-    `RUN_SPEED`).
+    We don't know the elevation profile, so we assume the `elevation_m` is
+    split half up / half down, both at the route's average gradient. Each
+    half is adjusted with the Strava GAP polynomial (re-anchored so flat
+    ground == 1.0 exactly). Because a symmetric split cancels the up/down
+    asymmetry, a downhill would otherwise "refund" the matching uphill — so
+    `DOWNHILL_CREDIT` controls how much of that refund is allowed (0.0 = none,
+    which is what a sprint feels like). The result is always >= 1: more
+    elevation never makes a route faster.
     """
     if not length_m:
         return None
     noA_penalty = (noA or 0) * NOA_PENALTY_SECONDS_PER
+    try:
+        obstacle_penalty = float(obstacle_s or 0)
+    except (TypeError, ValueError):
+        obstacle_penalty = 0
     if not elevation_m:
-        return length_m / RUN_SPEED + noA_penalty
+        return length_m / RUN_SPEED + noA_penalty + obstacle_penalty
 
-    gradient  = (elevation_m / length_m) * 100
-    gap_up    = 0.0017 * gradient ** 2 + 0.02901 * gradient + 0.99387
-    gap_down  = 0.0017 * gradient ** 2 - 0.02901 * gradient + 0.99387
-    adj_speed = RUN_SPEED / ((gap_up + gap_down) / 2)
-    return length_m / adj_speed + noA_penalty
+    gradient  = (elevation_m / length_m) * 100        # avg % grade of each half
+    gap_up    = 1 + 0.02901 * gradient + 0.0017 * gradient ** 2
+    gap_down  = 1 - 0.02901 * gradient + 0.0017 * gradient ** 2
+    if gap_down < 1:                                  # only credit a real downhill benefit
+        gap_down = 1 - DOWNHILL_CREDIT * (1 - gap_down)
+    grade_factor = (gap_up + gap_down) / 2
+    return length_m * grade_factor / RUN_SPEED + noA_penalty + obstacle_penalty
 
 
 def calc_route_length(rP, scale=None, map_scale=None):

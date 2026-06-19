@@ -40,6 +40,7 @@ class Migration(migrations.Migration):
                     ),
                 ),
                 ("auto_jump", models.BooleanField(default=True)),
+                ("auto_obstacle", models.BooleanField(default=True)),
                 ("autosave", models.BooleanField(default=False)),
                 (
                     "profile",
@@ -243,6 +244,7 @@ class Migration(migrations.Migration):
                 ("length", models.IntegerField(blank=True, null=True)),
                 ("run_time", models.FloatField(blank=True, null=True)),
                 ("elevation", models.IntegerField(blank=True, null=True)),
+                ("obstacle", models.IntegerField(blank=True, null=True)),
                 (
                     "control_pair",
                     models.ForeignKey(

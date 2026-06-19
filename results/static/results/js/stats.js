@@ -6,7 +6,7 @@
 let statsData = null;
 
 const CATEGORY_KEYS    = ['fastest', 'less_5', 'between_5_10', 'more_10'];
-const CATEGORY_LABELS  = ['Schnellste', '< 5%', '5–10%', '> 10%'];
+const CATEGORY_LABELS  = [gettext('Fastest'), '< 5%', '5–10%', '> 10%'];
 const USER_COLORS      = ['#4CAF50', '#FFC107', '#FF9800', '#F44336'];
 const TEAM_COLORS      = ['rgba(76,175,80,0.32)', 'rgba(255,193,7,0.32)', 'rgba(255,152,0,0.32)', 'rgba(244,67,54,0.32)'];
 const TEAM_BLUE        = '#2675c5';
@@ -38,8 +38,8 @@ Object.defineProperty(PAGE, 'competition', {
 });
 
 const MODE_LABEL = {
-    competition: 'Wettkampf',
-    training:    'Training',
+    competition: gettext('Competition'),
+    training:    gettext('Training'),
     random:      'Infinity',
 };
 
@@ -111,7 +111,7 @@ function setExpandIcon(btn, expanded) {
     if (typeof icon === 'function') {
         btn.innerHTML = icon(expanded ? 'collapse' : 'expand', '13px');
     }
-    btn.title          = expanded ? 'Verkleinern' : 'Vergrössern';
+    btn.title          = expanded ? gettext('Shrink') : gettext('Enlarge');
     btn.ariaLabel      = btn.title;
 }
 
@@ -286,10 +286,10 @@ function renderAthleteDropdown(query, open) {
 
     const parts = [];
     parts.push(
-        `<div class="trainer-athlete-option trainer-own ${PAGE.selectedAthlete === null ? 'active' : ''}" data-id="">Eigene Stats</div>`
+        `<div class="trainer-athlete-option trainer-own ${PAGE.selectedAthlete === null ? 'active' : ''}" data-id="">${gettext('Own stats')}</div>`
     );
     if (filtered.length === 0 && q) {
-        parts.push('<div class="trainer-athlete-empty">Keine Athleten gefunden</div>');
+        parts.push(`<div class="trainer-athlete-empty">${gettext('No athletes found')}</div>`);
     } else {
         filtered.forEach(a => {
             const isActive = PAGE.selectedAthlete?.id === a.id;
@@ -447,7 +447,7 @@ function renderTrainerTable(rows) {
     if (!tbody) return;
     tbody.innerHTML = '';
     if (!rows.length) {
-        tbody.innerHTML = '<tr><td colspan="11" style="text-align:center;color:#666;padding:24px;">Keine Daten vorhanden</td></tr>';
+        tbody.innerHTML = `<tr><td colspan="11" style="text-align:center;color:#666;padding:24px;">${gettext('No data available')}</td></tr>`;
         updateTableSortIndicators();
         return;
     }
@@ -563,7 +563,7 @@ function renderCharts() {
     if (!statsData) return;
     const modeLabel = MODE_LABEL[PAGE.mode];
     const title = document.getElementById('stats-card-routes-title');
-    if (title) title.textContent = `Routenwahl`;
+    if (title) title.textContent = gettext('Route choice');
     drawDonut();
     drawDonutLegend();
     drawAvgChart();
@@ -627,7 +627,7 @@ function drawDonut() {
     sub.setAttribute('text-anchor', 'middle');
     sub.setAttribute('fill', '#777');
     sub.setAttribute('font-size', subFs);
-    sub.textContent = 'Posten';
+    sub.textContent = gettext('Controls');
     svg.appendChild(sub);
 }
 
@@ -712,8 +712,8 @@ function drawAvgChart() {
     const chartH = H - MT - MB;
 
     const groups = [
-        { label: 'Entscheidungszeit', team: statsData.team.avg_choice_time, user: statsData.user.avg_choice_time },
-        { label: 'Routenwahlfehler',  team: statsData.team.avg_route_diff,  user: statsData.user.avg_route_diff  },
+        { label: gettext('Decision time'),     team: statsData.team.avg_choice_time, user: statsData.user.avg_choice_time },
+        { label: gettext('Route-choice error'), team: statsData.team.avg_route_diff,  user: statsData.user.avg_route_diff  },
     ];
 
     const maxVal = Math.max(0.1, ...groups.flatMap(g => [g.team, g.user]));
@@ -850,7 +850,7 @@ function drawActivityChart() {
         t.setAttribute('text-anchor', 'middle');
         t.setAttribute('fill', '#444');
         t.setAttribute('font-size', '11');
-        t.textContent = 'Noch keine Aktivität';
+        t.textContent = gettext('No activity yet');
         svg.appendChild(t);
         return;
     }
@@ -1086,11 +1086,11 @@ function drawErrorScatterChart() {
 
     const points = errorPotentialPoints();
     if (!points.length) {
-        drawCenteredEmpty(svg, W, H, 'Keine Daten');
+        drawCenteredEmpty(svg, W, H, gettext('No data'));
         return;
     }
     if (points.length < 100) {
-        drawCenteredEmpty(svg, W, H, 'nicht genügend Resultate');
+        drawCenteredEmpty(svg, W, H, gettext('not enough results'));
         return;
     }
 
@@ -1119,7 +1119,7 @@ function drawErrorScatterChart() {
         c.setAttribute('fill', '#e07020');
         c.setAttribute('fill-opacity', sample.length > 900 ? '0.28' : '0.42');
         c.setAttribute('class', 'stats-hover-target stats-scatter-point');
-        bindTooltip(c, `Potential: ${p.x.toFixed(2)}s · Zeit: ${p.y.toFixed(2)}s · Routen: ${p.route_count}`);
+        bindTooltip(c, `${gettext('Potential')}: ${p.x.toFixed(2)}s · ${gettext('Time')}: ${p.y.toFixed(2)}s · ${gettext('Routes')}: ${p.route_count}`);
         svg.appendChild(c);
     });
 
@@ -1129,7 +1129,7 @@ function drawErrorScatterChart() {
         drawTrendLine(svg, toX, toY, xMax, yMax, teamFit, TEAM_BLUE, `Team: ${formatMsSensitivity(teamFit)} ms/s`);
     }
     if (userFit) {
-        drawTrendLine(svg, toX, toY, xMax, yMax, userFit, '#f3b27d', `Persönlich: ${formatMsSensitivity(userFit)} ms/s`);
+        drawTrendLine(svg, toX, toY, xMax, yMax, userFit, '#f3b27d', `${gettext('Personal')}: ${formatMsSensitivity(userFit)} ms/s`);
     }
     drawSensitivityLabels(svg, W, MT, userFit, teamFit);
 }
@@ -1144,7 +1144,7 @@ function drawErrorBinsChart() {
 
     const points = errorPotentialPoints();
     if (!points.length) {
-        drawCenteredEmpty(svg, W, H, 'Keine Daten');
+        drawCenteredEmpty(svg, W, H, gettext('No data'));
         return;
     }
 
@@ -1231,11 +1231,11 @@ function drawSequenceEffectChart() {
 
     const points = timeSensitivityPoints();
     if (!points.length) {
-        drawCenteredEmpty(svg, W, H, 'Keine Daten');
+        drawCenteredEmpty(svg, W, H, gettext('No data'));
         return;
     }
     if (points.length < 100) {
-        drawCenteredEmpty(svg, W, H, 'nicht genügend Resultate');
+        drawCenteredEmpty(svg, W, H, gettext('not enough results'));
         return;
     }
 
@@ -1257,7 +1257,7 @@ function drawSequenceEffectChart() {
     const toY = v => MT + chartH - (yMax > 0 ? (v / yMax) * chartH : 0);
 
     drawGridRange(svg, ML, MT, chartW, chartH, xMin, xMax, 0, yMax, xStep, yStep, toX, toY);
-    drawAxisLabels(svg, W, H, ML, MT, chartH, 'Differenz Entscheidungszeit', 'Routenwahlfehler');
+    drawAxisLabels(svg, W, H, ML, MT, chartH, gettext('Decision time difference'), gettext('Route-choice error'));
 
     const visiblePoints = points.filter(p => p.x >= xMin && p.x <= xMax && p.y <= yMax);
     const sample = samplePoints(visiblePoints, 1800);
@@ -1287,7 +1287,7 @@ function drawSequenceEffectChart() {
         line.setAttribute('stroke', '#f3b27d');
         line.setAttribute('stroke-width', '1.8');
         line.setAttribute('class', 'stats-hover-target stats-trend-line');
-        bindTooltip(line, `Zeitsensitivität: ${formatMsSensitivity(fit)} ms/s`);
+        bindTooltip(line, `${gettext('Time sensitivity')}: ${formatMsSensitivity(fit)} ms/s`);
         svg.appendChild(line);
 
         const label = svgEl('text');
@@ -1297,7 +1297,7 @@ function drawSequenceEffectChart() {
         label.setAttribute('fill', '#f3b27d');
         label.setAttribute('font-size', '10');
         label.setAttribute('font-weight', '600');
-        label.textContent = `Sensitivität: ${formatMsSensitivity(fit)} ms/s`;
+        label.textContent = `${gettext('Sensitivity')}: ${formatMsSensitivity(fit)} ms/s`;
         svg.appendChild(label);
     }
 }
@@ -1597,10 +1597,10 @@ function renderFacts(facts) {
     wrap.innerHTML = '';
     const modeLabel = MODE_LABEL[PAGE.mode];
     const items = [
-        { value: facts.total_cp,          label: `Posten absolviert (${modeLabel})` },
-        { value: `${facts.fastest_pct}%`, label: 'schnellste Route gewählt' },
-        { value: facts.longest_streak,    label: 'längste Serie schnellster Routen' },
-        { value: facts.current_streak,    label: 'aktuelle Serie' },
+        { value: facts.total_cp,          label: `${gettext('Controls completed')} (${modeLabel})` },
+        { value: `${facts.fastest_pct}%`, label: gettext('fastest route chosen') },
+        { value: facts.longest_streak,    label: gettext('longest streak of fastest routes') },
+        { value: facts.current_streak,    label: gettext('current streak') },
     ];
     items.forEach(item => {
         const el = document.createElement('div');

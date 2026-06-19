@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% load static %}
+{% load static i18n %}
 
 {% block styles %}
 <link rel="stylesheet" href="{% static 'project/css/editor.css' %}">
@@ -13,48 +13,48 @@
 
 {% block nav_content %}
     <div id="menu-project" class="nav-menu-item">
-        <span class="nav-label-full">Projekte...</span>
+        <span class="nav-label-full">{% trans "Projects..." %}</span>
         <span class="nav-label-short">P...</span>
-        <button id="nav-project-ham" class="nav-project-ham" type="button" title="Projekt-Menü">
+        <button id="nav-project-ham" class="nav-project-ham" type="button" title="{% trans 'Project menu' %}">
             <x-icon name="bars" size="13px"></x-icon>
         </button>
         <div class="nav-dropdown" id="project-dropdown" onclick="event.stopPropagation();">
             <div id="nav-open-projects">
-                <span>Liste</span>
+                <span>{% trans "List" %}</span>
                 <span class="menu-shortcut">(P)</span>
             </div>
             <div id="nav-copy-project">
-                <span>Duplizieren</span>
+                <span>{% trans "Duplicate" %}</span>
                 <span class="menu-shortcut">(Ctrl+D)</span>
             </div>
             <div id="nav-save-project">
-                <span>Speichern</span>
+                <span>{% trans "Save" %}</span>
                 <span class="menu-shortcut">(Ctrl+S)</span>
             </div>
             <div id="nav-import-courses">
-                <span>Bahn importieren</span>
+                <span>{% trans "Import course" %}</span>
             </div>
         </div>
         <input type="file" id="course-import-input" accept=".ocd" hidden>
     </div>
 
     <div class="nav-center">
-        <button id="nav-publish-btn" class="nav-publish-btn" title="Veröffentlichen" onclick="toggleNavPublish()">
+        <button id="nav-publish-btn" class="nav-publish-btn" title="{% trans 'Publish' %}" onclick="toggleNavPublish()">
             <x-icon name="globe" size="12px"></x-icon>
         </button>
         <input type="text" id="navbar-filename-input" placeholder="—" autocomplete="off" spellcheck="false">
-        <div id="nav-label-slot" class="nav-label-slot" title="Label auswählen">
+        <div id="nav-label-slot" class="nav-label-slot" title="{% trans 'Select label' %}">
             <span id="nav-label-chip"></span>
         </div>
     </div>
 
-    <button id="nav-ham-right" class="nav-ham-btn" title="Menü">
+    <button id="nav-ham-right" class="nav-ham-btn" title="{% trans 'Menu' %}">
         <x-icon name="bars" size="14px"></x-icon>
     </button>
     <div id="nav-panel-right" class="nav-ham-panel nav-ham-panel-right">
         <div id="menu-history" class="nav-menu-item">
             <x-icon name="history" size="13px"></x-icon>
-            <span class="nav-item-label">Verlauf</span>
+            <span class="nav-item-label">{% trans "History" %}</span>
             <div id="undo-dropdown" class="nav-dropdown" style="min-width:220px;max-height:320px;overflow-y:auto;"></div>
         </div>
 
@@ -64,34 +64,41 @@
             <div class="nav-dropdown" onclick="event.stopPropagation();" style="min-width:200px;">
                 <div id="batch-switch-lr" class="nav-dropdown-item">
                     <x-icon name="arrows-split" size="12px" style="transform:scaleY(-1)"></x-icon>
-                    <span>Alle Posten</span>
+                    <span>{% trans "All controls" %}</span>
                 </div>
                 <div id="batch-auto-pathfind" class="nav-dropdown-item">
                     <x-icon name="wand-magic-sparkles" size="12px"></x-icon>
-                    <span>Alle Posten</span>
+                    <span>{% trans "All controls" %}</span>
                 </div>
             </div>
         </div>
 
         <div id="menu-einstellungen" class="nav-menu-item">
-            <span class="nav-item-label">Einstellungen</span>
+            <span class="nav-item-label">{% trans "Settings" %}</span>
             <div class="nav-dropdown" onclick="event.stopPropagation();">
                 <div class="settings-toggle-row">
-                    <span>Auto-Pathfind</span>
+                    <span>{% trans "Auto-Pathfind" %}</span>
                     <div class="toggle-switch-multi">
                         <span id="auto-pathfind-value" class="toggle-multi-value">0</span>
                         <span class="toggle-multi-pill" id="auto-pathfind-pill" data-value="0" style="--i:0;">
                             <input type="range" id="slider-auto-pathfind" min="0" max="4" step="1"
-                                   value="0" aria-label="Auto-Pathfind Routen">
+                                   value="0" aria-label="{% trans 'Auto-Pathfind routes' %}">
                             <span class="toggle-track"></span>
                             <span class="toggle-knob"></span>
                         </span>
                     </div>
                 </div>
                 <div class="settings-toggle-row">
-                    <span>Auto-Jump</span>
+                    <span>{% trans "Auto-Jump" %}</span>
                     <label class="toggle-switch">
                         <input type="checkbox" id="toggle-auto-jump">
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+                <div class="settings-toggle-row">
+                    <span>{% trans "Auto-Obstacle" %}</span>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="toggle-auto-obstacle">
                         <span class="toggle-slider"></span>
                     </label>
                 </div>
@@ -106,22 +113,22 @@
         <div id="sidebar-top">
             <div id="scale-panel" style="display:none;">
                 <div class="scale-panel-info">
-                    <div class="scale-step"><span class="scale-step-num">1</span><span class="scale-step-text">Zwei Punkte auf der Karte heraussuchen.</span></div>
-                    <div class="scale-step"><span class="scale-step-num">2</span><span class="scale-step-text">Abstand messen (<a href="https://earth.google.com" target="_blank" rel="noopener noreferrer">Google Earth</a>, <a href="https://www.google.com/maps" target="_blank" rel="noopener noreferrer">Google Maps</a>).</span></div>
-                    <div class="scale-step"><span class="scale-step-num">3</span><span class="scale-step-text">Punkte auf der Karte anklicken und Distanz eingeben.</span></div>
+                    <div class="scale-step"><span class="scale-step-num">1</span><span class="scale-step-text">{% trans "Pick two points on the map." %}</span></div>
+                    <div class="scale-step"><span class="scale-step-num">2</span><span class="scale-step-text">{% trans "Measure the distance" %} (<a href="https://earth.google.com" target="_blank" rel="noopener noreferrer">Google Earth</a>, <a href="https://www.google.com/maps" target="_blank" rel="noopener noreferrer">Google Maps</a>).</span></div>
+                    <div class="scale-step"><span class="scale-step-num">3</span><span class="scale-step-text">{% trans "Click the points on the map and enter the distance." %}</span></div>
                 </div>
-                <div id="scale-status" class="scale-status">Klicke ersten Punkt auf der Karte…</div>
+                <div id="scale-status" class="scale-status">{% trans "Click the first point on the map…" %}</div>
             </div>
 
             <div id="cp-list"></div>
             <div id="block-list"></div>
             <div id="mask-controls">
                 <div class="mask-slider-row">
-                    <label class="mask-slider-label">Füllung</label>
+                    <label class="mask-slider-label">{% trans "Fill" %}</label>
                     <input type="range" id="mask-opacity-slider" min="0" max="1" step="0.01" value="0.8">
                 </div>
                 <div class="mask-slider-row">
-                    <label class="mask-slider-label">Tool-Grösse</label>
+                    <label class="mask-slider-label">{% trans "Tool size" %}</label>
                     <input type="range" id="mask-size-slider" min="1" max="15" step="1" value="5">
                 </div>
             </div>
@@ -214,10 +221,10 @@
         <div id="mask-gen-bar" style="display:none">
             <x-icon name="spinner" class="spin" size="14px"></x-icon>
             <div id="mask-gen-content">
-                <span id="mask-gen-text">Maske wird generiert…</span>
+                <span id="mask-gen-text">{% trans "Generating mask…" %}</span>
                 <progress id="mask-gen-progress" value="0" max="100"></progress>
             </div>
-            <button id="mask-gen-cancel" title="Abbrechen"><x-icon name="xmark" size="11px"></x-icon></button>
+            <button id="mask-gen-cancel" title="{% trans 'Cancel' %}"><x-icon name="xmark" size="11px"></x-icon></button>
         </div>
         <div id="map-background"></div>
         <div id="camera">
@@ -275,12 +282,12 @@
     <div class="modal-box">
         <div class="modal-header">
             <div class="modal-header-left">
-                <button id="label-manage-btn" title="Labels" class="toolbar-btn">
+                <button id="label-manage-btn" title="{% trans 'Labels' %}" class="toolbar-btn">
                     <x-icon name="tags" size="1.5rem"></x-icon>
                 </button>
                 <div class="save-group">
-                    <input type="text" id="project-title-input" placeholder="Projektname…">
-                    <button id="new-project-btn" title="Neues Projekt erstellen (Ctrl+N)" class="toolbar-btn save-btn">
+                    <input type="text" id="project-title-input" placeholder="{% trans 'Project name…' %}">
+                    <button id="new-project-btn" title="{% trans 'Create new project (Ctrl+N)' %}" class="toolbar-btn save-btn">
                         <x-icon name="file-circle-plus" size="1.5rem"></x-icon>
                     </button>
                 </div>
@@ -288,7 +295,7 @@
             <div class="modal-header-center">
                 <div class="search-wrapper">
                     <x-icon name="search" size="1.1rem" class="project-search-icon"></x-icon>
-                    <input type="text" id="project-search" placeholder="Suchen...">
+                    <input type="text" id="project-search" placeholder="{% trans 'Search...' %}">
                     <button id="clear-search-btn" class="search-clear" type="button">
                         <x-icon name="xmark" size="1.2rem"></x-icon>
                     </button>
@@ -301,13 +308,13 @@
                     </button>
                     <div id="label-dropdown-menu" class="label-dropdown-menu">
                         <div class="label-dropdown-create">
-                            <input type="text" id="new-label-input" placeholder="Neues Label...">
+                            <input type="text" id="new-label-input" placeholder="{% trans 'New label...' %}">
                             <button id="create-label-btn"><x-icon name="plus"></x-icon></button>
                         </div>
                         <div id="label-list"></div>
                     </div>
                 </div>
-                <button id="close-file-modal-btn" class="toolbar-btn" title="Schliessen" onclick="closeFileModal()">
+                <button id="close-file-modal-btn" class="toolbar-btn" title="{% trans 'Close' %}" onclick="closeFileModal()">
                     <x-icon name="xmark" size="1.5rem"></x-icon>
                 </button>
             </div>
@@ -346,7 +353,7 @@
     <div class="modal-box modal-map-box">
         <div class="modal-header">
             <div class="modal-header-left">
-                <h2>Karte hochladen</h2>
+                <h2>{% trans "Upload map" %}</h2>
             </div>
             <div class="modal-header-right">
                 <button id="close-map-modal-btn" class="toolbar-btn">
@@ -357,9 +364,9 @@
         <div class="map-upload-wrap">
             <div id="map-dropzone" class="map-dropzone">
                 <x-icon name="cloud-arrow-up" size="3rem"></x-icon>
-                <div class="map-upload-title">Karte ablegen</div>
-                <div class="map-upload-subtitle">PNG, JPEG oder OCAD • max. 15 MB</div>
-                <button id="browse-map-btn" type="button" class="browse-btn">Durchsuchen</button>
+                <div class="map-upload-title">{% trans "Drop map here" %}</div>
+                <div class="map-upload-subtitle">{% trans "PNG, JPEG or OCAD • max. 15 MB" %}</div>
+                <button id="browse-map-btn" type="button" class="browse-btn">{% trans "Browse" %}</button>
                 <input type="file" id="map-file-input" accept="image/*,.ocd,.ocad" hidden>
             </div>
             <div id="ocad-import-options" class="ocad-import-options" style="display:none;">
@@ -367,19 +374,19 @@
                 <div class="ocad-import-checks">
                     <label class="ocad-import-check disabled">
                         <x-icon name="check" size="14px"></x-icon>
-                        <span>Karte</span>
+                        <span>{% trans "Map" %}</span>
                     </label>
                     <label class="ocad-import-check" id="ocad-import-posten-row">
                         <input type="checkbox" id="ocad-import-posten" checked>
-                        <span>Posten</span>
+                        <span>{% trans "Controls" %}</span>
                     </label>
                     <label class="ocad-import-check" id="ocad-import-routen-row">
                         <input type="checkbox" id="ocad-import-routen" checked>
-                        <span>Routen</span>
+                        <span>{% trans "Routes" %}</span>
                     </label>
                 </div>
-                <div class="ocad-import-checking">Datei wird analysiert…</div>
-                <button id="ocad-upload-btn" class="browse-btn ocad-upload-btn">Importieren</button>
+                <div class="ocad-import-checking">{% trans "Analyzing file…" %}</div>
+                <button id="ocad-upload-btn" class="browse-btn ocad-upload-btn">{% trans "Import" %}</button>
             </div>
         </div>
     </div>
@@ -391,23 +398,23 @@
     <div class="modal-scale-box" style="pointer-events:auto;">
         <div class="scale-modal-body">
             <label class="scale-modal-label">
-                Distanz
+                {% trans "Distance" %}
                 <input type="text" id="scale-distance-m" inputmode="decimal" autocomplete="off"
-                       placeholder='z.B. 1234 m'>
+                       placeholder="{% trans 'e.g. 1234 m' %}">
             </label>
-            <div class="scale-modal-or">oder Koordinaten</div>
+            <div class="scale-modal-or">{% trans "or coordinates" %}</div>
             <label class="scale-modal-label">
-                Punkt 1
+                {% trans "Point 1" %}
                 <input type="text" id="scale-coord-1" autocomplete="off"
                        placeholder='46.907604, 7.165145'>
             </label>
             <label class="scale-modal-label">
-                Punkt 2
+                {% trans "Point 2" %}
                 <input type="text" id="scale-coord-2" autocomplete="off"
                        placeholder='46.914287, 7.138275'>
             </label>
             <div class="scale-ratio-row">
-                <span class="scale-ratio-text">Massstab&nbsp;&nbsp;1 :</span>
+                <span class="scale-ratio-text">{% trans "Scale" %}&nbsp;&nbsp;1 :</span>
                 <input type="number" id="scale-ratio-input" class="scale-ratio-inline" value="4000" step="500" min="100" max="10000">
             </div>
         </div>

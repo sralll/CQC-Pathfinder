@@ -69,11 +69,12 @@ def migrate_data(apps, schema_editor):
             for route_order, route_data in enumerate(cp_data.get('route', [])):
                 rP        = route_data.get('rP') or []
                 elevation = to_int(route_data.get('elevation'))
+                obstacle  = to_int(route_data.get('obstacle')) or 0
                 # Legacy PublishedFile data predates per-file map_scale, so it
                 # is migrated as the 1:4000 baseline.
                 new_length   = calc_route_length(rP, map_scale=4000)
                 new_noA      = calc_route_noA(rP, map_scale=4000)
-                new_run_time = calc_route_runtime(new_length, new_noA, elevation)
+                new_run_time = calc_route_runtime(new_length, new_noA, elevation, obstacle)
 
                 Route.objects.create(
                     control_pair=cp,
@@ -84,6 +85,7 @@ def migrate_data(apps, schema_editor):
                     length=new_length,
                     run_time=new_run_time,
                     elevation=elevation,
+                    obstacle=obstacle,
                 )
                 migrated_routes += 1
 

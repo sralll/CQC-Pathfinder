@@ -17,7 +17,7 @@ export class FileRow {
                 <button id="publish-btn-${this.file.id}"
                     class="publish-btn ${this.file.published ? 'publish-btn-active' : ''} ${!this.file.can_edit || this.file.is_locked ? 'publish-btn-disabled' : ''}"
                     ${!this.file.can_edit || this.file.is_locked ? 'disabled' : ''}
-                    ${this.file.is_locked ? 'title="Datei wird gerade bearbeitet"' : ''}>
+                    ${this.file.is_locked ? `title="${gettext('File is currently being edited')}"` : ''}>
                     ${icon("globe")}
                 </button>
             </td>
@@ -25,13 +25,13 @@ export class FileRow {
             <td class="label-cell">${this.file.label ? `
                 <div class="label-chip-wrap">
                     <span class="table-label-chip" style="background:${this.file.label.color}22;color:${this.file.label.color};border-color:${this.file.label.color}55;">${this.file.label.name}</span>
-                    ${this.file.can_edit ? `<button class="label-remove-btn" title="Label entfernen">×</button>` : ''}
+                    ${this.file.can_edit ? `<button class="label-remove-btn" title="${gettext('Remove label')}">×</button>` : ''}
                 </div>` : ''}
             </td>
             <td style="text-align:left;">${this.file.cp_count}</td>
             <td>
                 ${this.file.author || ''}
-                ${this.file.is_locked ? `<span class="file-lock-warning" title="${this.file.locked_by_name} bearbeitet gerade">${icon("lock", "1em")}</span>` : ''}
+                ${this.file.is_locked ? `<span class="file-lock-warning" title="${this.file.locked_by_name} ${gettext('is editing')}">${icon("lock", "1em")}</span>` : ''}
             </td>
             <td class="col-team">${this.file.team_name || ''}</td>
             <td style="text-align:center;">
@@ -43,7 +43,7 @@ export class FileRow {
             <td>
                 ${this.file.can_edit ? `
                     <div class="file-action-group">
-                        <button class="action-btn danger-btn delete-btn" ${this.file.is_locked ? 'disabled title="Datei wird gerade bearbeitet"' : ''}>
+                        <button class="action-btn danger-btn delete-btn" ${this.file.is_locked ? `disabled title="${gettext('File is currently being edited')}"` : ''}>
                             ${icon("trash")}
                         </button>
                     </div>` : ''}
@@ -187,7 +187,7 @@ export class FileRow {
 
             if (data.has_more) {
                 const moreRow = document.createElement('tr');
-                moreRow.innerHTML = `<td colspan="8" class="version-load-more">Alle Versionen anzeigen</td>`;
+                moreRow.innerHTML = `<td colspan="8" class="version-load-more">${gettext('Show all versions')}</td>`;
                 moreRow.querySelector('td').addEventListener('click', async () => {
                     moreRow.querySelector('td').innerHTML =
                         `<x-icon name="spinner" class="spin" size="12px"></x-icon>`;

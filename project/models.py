@@ -92,6 +92,7 @@ class Route(models.Model):
     length = models.IntegerField(null=True, blank=True)
     run_time = models.FloatField(null=True, blank=True)
     elevation = models.IntegerField(null=True, blank=True)
+    obstacle = models.IntegerField(null=True, blank=True)
 
     class Meta:
         ordering = ['order']
@@ -131,6 +132,7 @@ class EditorSettings(models.Model):
         validators=[MinValueValidator(0), MaxValueValidator(4)],
     )
     auto_jump = models.BooleanField(default=True)
+    auto_obstacle = models.BooleanField(default=True)
     autosave = models.BooleanField(default=False)
 
     def __str__(self):

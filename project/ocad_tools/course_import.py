@@ -60,10 +60,11 @@ def _make_route(rP, cp, order, source=None, map_scale=None):
         "length": None,
         "run_time": None,
         "elevation": 0,
+        "obstacle": 0,
     }
     route["length"] = calc_route_length(rP, map_scale=map_scale)
     route["noA"] = calc_route_noA(rP, map_scale=map_scale)
-    route["run_time"] = calc_route_runtime(route["length"], route["noA"], route["elevation"])
+    route["run_time"] = calc_route_runtime(route["length"], route["noA"], route["elevation"], route["obstacle"])
     route["pos"] = _calc_route_side(cp, route)
     if source:
         route["source"] = source
@@ -541,7 +542,8 @@ def _scale_control_pairs(control_pairs, scale_x, scale_y, map_scale=None):
                     point["y"] = round(point["y"] * scale_y, 2)
             route["length"] = calc_route_length(route.get("rP"), map_scale=map_scale)
             route["noA"] = calc_route_noA(route.get("rP"), map_scale=map_scale)
-            route["run_time"] = calc_route_runtime(route["length"], route["noA"], route.get("elevation") or 0)
+            route["obstacle"] = route.get("obstacle") or 0
+            route["run_time"] = calc_route_runtime(route["length"], route["noA"], route.get("elevation") or 0, route["obstacle"])
             route["pos"] = _calc_route_side(cp, route)
     return control_pairs
 

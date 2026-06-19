@@ -4,7 +4,7 @@
 
 let project = {
     id: null,
-    name: 'Neues Projekt',
+    name: gettext('New project'),
     published: false,
     label: null,
     scale: null,
@@ -19,13 +19,13 @@ let project = {
 let projectFiles = [];
 let filteredFiles = [];
 let filesLoadingPromise = null;
-let currentProjectName = "Neues Projekt";
+let currentProjectName = gettext("New project");
 
 /* =========================================================
     EDITOR SETTINGS
 ========================================================= */
 
-let editorSettings = { auto_pathfind: 0, auto_jump: true };  // auto_pathfind: 0–4 routes (0 = off)
+let editorSettings = { auto_pathfind: 0, auto_jump: true, auto_obstacle: true };  // auto_pathfind: 0–4 routes (0 = off)
 
 /* =========================================================
     READ-ONLY STATE
@@ -62,9 +62,9 @@ function setReadOnly(isReadOnly, lockedByName, reason) {
             font-size:12px;z-index:9999;display:flex;align-items:center;gap:8px;pointer-events:none;
         `;
         const msg = reason === 'published'
-            ? 'Diese Datei ist veröffentlicht'
-            : `${lockedByName || 'jemand anderes'} bearbeitet diese Datei`;
-        bar.innerHTML = `<x-icon name="lock" size="13px"></x-icon><span>Schreibgeschützt: ${msg}</span>`;
+            ? gettext('This file is published')
+            : `${lockedByName || gettext('someone else')} ${gettext('is editing this file')}`;
+        bar.innerHTML = `<x-icon name="lock" size="13px"></x-icon><span>${gettext('Read-only:')} ${msg}</span>`;
         document.body.appendChild(bar);
     }
 }
@@ -94,7 +94,7 @@ function initFilenameInput() {
     input.addEventListener("blur", () => {
         const newName = input.value.trim();
         if (!project.id) {
-            project.name = newName || project.name || 'Neues Projekt';
+            project.name = newName || project.name || gettext('New project');
             input.value  = project.name;
             return;
         }
@@ -129,7 +129,7 @@ function updateFilenameInput() {
     if (!input) return;
     // Always reflect the in-memory project name — even for new files that
     // haven't been saved to the DB yet. The JS state already carries a
-    // default name ('Neues Projekt') that is meaningful to the user.
+    // default name (gettext('New project')) that is meaningful to the user.
     input.value    = project.name || "";
     input.disabled = readOnly;
 }
@@ -181,7 +181,7 @@ function updateNavLabel() {
     if (label) {
         chip.innerHTML = `<span class="table-label-chip" style="background:${label.color}22;color:${label.color};border-color:${label.color}55;">${label.name}</span>`;
     } else {
-        chip.innerHTML = `<span class="nav-label-empty">Label…</span>`;
+        chip.innerHTML = `<span class="nav-label-empty">${gettext('Label…')}</span>`;
     }
 }
 window.updateNavLabel = updateNavLabel;
@@ -212,7 +212,7 @@ function openNavLabelPicker(slotEl) {
             body: JSON.stringify({ label_id: label ? label.id : null }),
         });
         if (!res.ok) { project.label = prevLabel; updateNavLabel(); return; }
-        saveSnapshot("Label");
+        saveSnapshot(gettext("Label"));
         // Also update projectFiles so the file table stays in sync
         const f = (projectFiles || []).find(f => f.id === project.id);
         if (f) f.label = label;
@@ -222,7 +222,7 @@ function openNavLabelPicker(slotEl) {
     if (project.label) {
         const rem = document.createElement("div");
         rem.style.cssText = "padding:5px 12px;font-size:12px;color:#888;cursor:pointer;";
-        rem.textContent = "Kein Label";
+        rem.textContent = gettext("No label");
         rem.onmouseenter = () => rem.style.background = "#222";
         rem.onmouseleave = () => rem.style.background = "";
         rem.onclick = () => assignAndClose(null);
@@ -235,7 +235,7 @@ function openNavLabelPicker(slotEl) {
     if (labels.length === 0) {
         const none = document.createElement("div");
         none.style.cssText = "padding:5px 12px;font-size:12px;color:#555;font-style:italic;";
-        none.textContent = "Keine Labels vorhanden";
+        none.textContent = gettext("No labels yet");
         drop.appendChild(none);
     }
 
@@ -270,6 +270,7 @@ async function loadEditorSettings() {
         const data = await res.json();
         if (data.auto_pathfind !== undefined) editorSettings.auto_pathfind = data.auto_pathfind;
         if (data.auto_jump     !== undefined) editorSettings.auto_jump     = data.auto_jump;
+        if (data.auto_obstacle !== undefined) editorSettings.auto_obstacle = data.auto_obstacle;
         _applySettingsUI();
     } catch (e) { console.warn('Failed to load editor settings', e); }
 }
@@ -290,9 +291,11 @@ function _renderAutoPathfindUI(v) {
 function _applySettingsUI() {
     const apEl = document.getElementById('slider-auto-pathfind');
     const ajEl = document.getElementById('toggle-auto-jump');
+    const aoEl = document.getElementById('toggle-auto-obstacle');
     if (apEl) apEl.value = editorSettings.auto_pathfind;
     _renderAutoPathfindUI(editorSettings.auto_pathfind);
     if (ajEl) ajEl.checked = editorSettings.auto_jump;
+    if (aoEl) aoEl.checked = editorSettings.auto_obstacle;
 }
 
 // Persist a setting. For auto_pathfind, `value` (0–4) is sent; for boolean
@@ -308,6 +311,7 @@ async function saveEditorSetting(setting, value) {
         const data = await res.json();
         if (data.auto_pathfind !== undefined) editorSettings.auto_pathfind = data.auto_pathfind;
         if (data.auto_jump     !== undefined) editorSettings.auto_jump     = data.auto_jump;
+        if (data.auto_obstacle !== undefined) editorSettings.auto_obstacle = data.auto_obstacle;
         _applySettingsUI();
         if (editorSettings.auto_pathfind) drainPendingAutoPathfindQueue();
         if (setting === 'auto_pathfind') {
@@ -316,6 +320,13 @@ async function saveEditorSetting(setting, value) {
             } else if (currentToolMode !== ToolMode.MASK) {
                 hideMaskGenBar();
             }
+        }
+        if (setting === 'auto_obstacle' && editorSettings.auto_obstacle) {
+            recalculateProjectRoutes();
+            drawRoutes();
+            updateRoutes();
+            updateCPList();
+            if (project?.id) saveFile("auto_obstacle");
         }
     } catch (e) { console.warn('Failed to save setting', e); }
 }
@@ -387,13 +398,13 @@ function undo() {
     if (!undoStack.length) return;
     cancelAllPathing();
     if (undoStack[undoStack.length - 1].isMaskUndo) {
-        redoStack.push({ label: "Maske bearbeitet", isMaskUndo: true });
+        redoStack.push({ label: gettext("Mask edited"), isMaskUndo: true });
         undoStack.pop();
         undoMask();
         updateUndoMenu();
         return;
     }
-    redoStack.push(captureState("Rückgängig"));
+    redoStack.push(captureState(gettext("Undo")));
     restoreState(undoStack.pop());
     saveFile("undo");
     updateUndoMenu();
@@ -405,7 +416,7 @@ function redo() {
     if (!redoStack.length) return;
     cancelAllPathing();
     if (redoStack[redoStack.length - 1].isMaskUndo) {
-        undoStack.push({ label: "Maske bearbeitet", isMaskUndo: true });
+        undoStack.push({ label: gettext("Mask edited"), isMaskUndo: true });
         redoStack.pop();
         redoMask();
         updateUndoMenu();
@@ -492,6 +503,9 @@ document.addEventListener("DOMContentLoaded", () => {
     document.getElementById('toggle-auto-jump')?.addEventListener('change', () => {
         toggleEditorSetting('auto_jump');
     });
+    document.getElementById('toggle-auto-obstacle')?.addEventListener('change', () => {
+        toggleEditorSetting('auto_obstacle');
+    });
 
     // ── P key → open file modal ───────────────────────────
     window.addEventListener("keydown", e => {
@@ -574,6 +588,7 @@ function _projectBody() {
             length: route.length,
             run_time: route.run_time,
             elevation: route.elevation,
+            obstacle: route.obstacle,
         })),
     }));
     return {
@@ -682,7 +697,7 @@ function applyUploadedProject(parsed) {
 
     if (!incoming || typeof incoming !== "object" || !Array.isArray(incoming.control_pairs)) {
         console.warn("uploadProjectJson: payload is not a recognizable project.", parsed);
-        window.showModal?.({ message: "Diese Datei ist kein gültiges Projekt." });
+        window.showModal?.({ message: gettext("This file is not a valid project.") });
         return;
     }
 
@@ -714,7 +729,7 @@ function _readProjectFile(file) {
             parsed = JSON.parse(reader.result);
         } catch (e) {
             console.warn("uploadProjectJson: not valid JSON —", e);
-            window.showModal?.({ message: "Die Datei ist kein gültiges JSON." });
+            window.showModal?.({ message: gettext("The file is not valid JSON.") });
             return;
         }
         applyUploadedProject(parsed);
@@ -1015,7 +1030,7 @@ function saveRoute(cp, route) {
                 db_id: (Number(route._fileId) === Number(fileId) && Number(route._cpDbId) === Number(cp.id)) ? (route.id ?? null) : null,
                 order: route.order,
                 rP: route.rP, noA: route.noA, pos: route.pos,
-                length: route.length, run_time: route.run_time, elevation: route.elevation,
+                length: route.length, run_time: route.run_time, elevation: route.elevation, obstacle: route.obstacle,
             },
         }), fileId);
     }).then(data => {
@@ -1073,9 +1088,9 @@ async function duplicateFile() {
     // Strip any existing "Kopie von " prefix so we don't nest them.
     const originalName = project.name.replace(/^Kopie von (.+?)( \d+)?$/, '$1');
     const existing     = new Set((projectFiles || []).map(f => f.name));
-    let dupName = `Kopie von ${originalName}`;
+    let dupName = `${gettext('Copy of')} ${originalName}`;
     let counter = 2;
-    while (existing.has(dupName)) { dupName = `Kopie von ${originalName} ${counter++}`; }
+    while (existing.has(dupName)) { dupName = `${gettext('Copy of')} ${originalName} ${counter++}`; }
 
     // Mutate project in-place: clear all IDs so saveFile creates new records.
     // Locked/published files must also be duplicatable — clear those states here.
@@ -1135,9 +1150,16 @@ const SNAP_DISTANCE_ROUTE_EDIT   = 5;
 const R_CONTROL = 25;
 const GAP = 8;
 const RUN_SPEED = 4.75;         // average running speed in m/s
+const DOWNHILL_CREDIT = 0.0;   // how much a downhill pays back the matching uphill
+                               // 0.0 = neutral (sprint: you can't bank the descent)
+                               // 1.0 = full Strava GAP credit (symmetric model)
 const PX_TO_M  = 0.48;         // pixels to metres conversion factor
 const REFERENCE_MAP_SCALE = 4000;
 const PATHING_MASK_TRAIN_SCALE = 0.710;
+const ROUTE_OBSTACLE_THRESHOLD = 200;
+const ROUTE_OBSTACLE_SECONDS_PER_ENTRY = 2;
+const ROUTE_STAIR_VALUE = 242;
+const ROUTE_STAIR_SECONDS_PER_ENTRY = 1;
 const CONTROL_POINT_PASSABLE_SNAP_M = 10;
 const ROUTE_STROKE_MULTIPLIER       = 1.5;
 const ROUTE_STROKE_SCALE_EXPONENT   = 0.33;
@@ -1284,7 +1306,7 @@ const ControlPairTool = (() => {
             originX: point.x,
             originY: point.y,
         };
-        pushUndoState("Posten verschoben");
+        pushUndoState(gettext("Control moved"));
         setRouteDeletePreview(null);
         mapContainer.classList.add("dragging");
         mapContainer.style.cursor = "grabbing";
@@ -1335,6 +1357,7 @@ const ControlPairTool = (() => {
                 rpt.y = point.y;
                 calcRouteLength(r);
                 calcRouteNoA(r);
+                updateRouteObstacle(r);
                 calcRouteRunTime(r);
                 calcRouteSide(cp, r);
             });
@@ -1523,7 +1546,7 @@ const RouteEditTool = (() => {
             route       = r;
             cpRef       = cp;
             originalPts = structuredClone(r.rP);
-            pushUndoState("Route bearbeitet");
+            pushUndoState(gettext("Route edited"));
 
             r.rP.splice(segmentIndex + 1, 0, { x: insertPoint.x, y: insertPoint.y });
             continuation = r.rP.slice(segmentIndex + 1);
@@ -1548,7 +1571,7 @@ const RouteEditTool = (() => {
             clearEditLayer();
             hideCrosshair();
             if (route) {
-                calcRouteLength(route); calcRouteNoA(route); calcRouteRunTime(route); calcRouteSide(cpRef, route);
+                calcRouteLength(route); calcRouteNoA(route); updateRouteObstacle(route); calcRouteRunTime(route); calcRouteSide(cpRef, route);
                 if (cpRef) saveRoute(cpRef, route);
             }
             reset();
@@ -1652,10 +1675,11 @@ const NewRouteTool = (() => {
     const scheduleDraw = makeRafScheduler(drawPreview);   // PERF-FIX #2
 
     function completeRoute() {
-        pushUndoState("Route erstellt");
+        pushUndoState(gettext("Route created"));
         calcRouteLength(route);
         route.elevation = 0;
         calcRouteNoA(route);
+        updateRouteObstacle(route);
         calcRouteRunTime(route);
         calcRouteSide(cp, route);
         cp.routes.push(route);
@@ -1665,7 +1689,7 @@ const NewRouteTool = (() => {
         drawRoutes();
         updateRoutes();
         // Start a fresh route
-        route     = { id: null, order: cp.routes.length, rP: [], noA: null, pos: null, length: null, run_time: null, elevation: null };
+        route     = { id: null, order: cp.routes.length, rP: [], noA: null, pos: null, length: null, run_time: null, elevation: null, obstacle: 0 };
         previewPt = null;
         clearEditLayer();
         updateCPList();
@@ -1716,7 +1740,7 @@ const NewRouteTool = (() => {
 
         init(controlPair) {
             cp        = controlPair;
-            route     = { id: null, order: cp.routes.length, rP: [], noA: null, pos: null, length: null, run_time: null, elevation: null };
+            route     = { id: null, order: cp.routes.length, rP: [], noA: null, pos: null, length: null, run_time: null, elevation: null, obstacle: 0 };
             previewPt = null;
             return this;
         },
@@ -1762,7 +1786,7 @@ const NewRouteTool = (() => {
             clearEditLayer();
             hideCrosshair();
             cp        = controlPair;
-            route     = { id: null, order: cp.routes.length, rP: [], noA: null, pos: null, length: null, run_time: null, elevation: null };
+            route     = { id: null, order: cp.routes.length, rP: [], noA: null, pos: null, length: null, run_time: null, elevation: null, obstacle: 0 };
             previewPt = null;
             updateCPList();
         },
@@ -2088,6 +2112,63 @@ const MaskLayer = (() => {
         return null;
     }
 
+    function obstacleSecondsForRoute(route) {
+        const pts = route?.rP || [];
+        if (!maskData || pts.length < 2) return null;
+        const W = maskData.width;
+        const H = maskData.height;
+        const data = maskData.data;
+        let seconds = 0;
+        let terrain = null;
+        let lastX = null;
+        let lastY = null;
+
+        function visit(x, y) {
+            if (x === lastX && y === lastY) return;
+            lastX = x;
+            lastY = y;
+            if (x < 0 || x >= W || y < 0 || y >= H) {
+                terrain = null;
+                return;
+            }
+            const value = data[(y * W + x) * 4];
+            const nextTerrain = value < ROUTE_OBSTACLE_THRESHOLD
+                ? "obstacle"
+                : value === ROUTE_STAIR_VALUE
+                    ? "stairs"
+                    : null;
+            if (nextTerrain && nextTerrain !== terrain) {
+                seconds += nextTerrain === "stairs"
+                    ? ROUTE_STAIR_SECONDS_PER_ENTRY
+                    : ROUTE_OBSTACLE_SECONDS_PER_ENTRY;
+            }
+            terrain = nextTerrain;
+        }
+
+        for (let i = 1; i < pts.length; i++) {
+            let x0 = Math.round(Number(pts[i - 1]?.x) / PATHING_MASK_TRAIN_SCALE);
+            let y0 = Math.round(Number(pts[i - 1]?.y) / PATHING_MASK_TRAIN_SCALE);
+            const x1 = Math.round(Number(pts[i]?.x) / PATHING_MASK_TRAIN_SCALE);
+            const y1 = Math.round(Number(pts[i]?.y) / PATHING_MASK_TRAIN_SCALE);
+            if (![x0, y0, x1, y1].every(Number.isFinite)) continue;
+
+            const dx = Math.abs(x1 - x0);
+            const dy = Math.abs(y1 - y0);
+            const sx = x0 < x1 ? 1 : -1;
+            const sy = y0 < y1 ? 1 : -1;
+            let err = dx - dy;
+            while (true) {
+                visit(x0, y0);
+                if (x0 === x1 && y0 === y1) break;
+                const e2 = 2 * err;
+                if (e2 > -dy) { err -= dy; x0 += sx; }
+                if (e2 < dx)  { err += dx; y0 += sy; }
+            }
+        }
+
+        return seconds;
+    }
+
     return {
         clearMask() {
             ensureCanvas();
@@ -2102,6 +2183,7 @@ const MaskLayer = (() => {
         applyMapDimensions,
         screenToMaskPx,
         nearestPassableMapPoint,
+        obstacleSecondsForRoute,
         isLoaded:    () => loaded,
         resetStroke: ()  => { lastPx = null; },
         getBrush:    ()      => brushR,
@@ -2230,7 +2312,7 @@ function pushMaskDiff(diff) {
     if (maskUndoStack.length > MASK_UNDO_MAX) maskUndoStack.shift();
     maskRedoStack = [];
     // Mirror into main undo stack so it appears in the dropdown
-    undoStack.push({ label: "Maske bearbeitet", isMaskUndo: true });
+    undoStack.push({ label: gettext("Mask edited"), isMaskUndo: true });
     if (undoStack.length > UNDO_MAX) undoStack.shift();
     redoStack = [];
     updateUndoMenu();
@@ -2601,7 +2683,7 @@ const BlockTool = (() => {
             if (!lineStart) {
                 lineStart = { x: pt.x, y: pt.y };
             } else {
-                pushUndoState("Sperrlinie hinzugefügt");
+                pushUndoState(gettext("Block line added"));
                 project.blocked_terrain.lines.push({ start: lineStart, end: { x: pt.x, y: pt.y } });
                 lineStart = null;
                 clearEditLayer();
@@ -2612,7 +2694,7 @@ const BlockTool = (() => {
 
         if (S === "polygon") {
             if (polyPoints.length >= 3 && pt === polyPoints[0]) {
-                pushUndoState("Sperrgebiet hinzugefügt");
+                pushUndoState(gettext("Block area added"));
                 project.blocked_terrain.areas.push({ points: [...polyPoints] });
                 polyPoints = [];
                 clearEditLayer();
@@ -2628,7 +2710,7 @@ const BlockTool = (() => {
             if (hit) {
                 const idx  = Number(hit.dataset.blockIdx);
                 const type = hit.dataset.blockType;
-                pushUndoState("Sperrelement gelöscht");
+                pushUndoState(gettext("Block element deleted"));
                 if (type === "line")  project.blocked_terrain.lines.splice(idx, 1);
                 if (type === "area")  project.blocked_terrain.areas.splice(idx, 1);
                 drawBlockedTerrain();
@@ -2867,7 +2949,7 @@ const PlaceControlTool = (() => {
                 updateCPList();
             } else {
                 const snapped = _movePointToNearestPassableIfImpassable(snapToControlPoints(pt));
-                pushUndoState(isOverwrite ? "Posten neu gezeichnet" : "Posten erstellt");
+                pushUndoState(isOverwrite ? gettext("Control redrawn") : gettext("Control created"));
                 cp.start = tempStart;
                 cp.ziel  = { x: snapped.x, y: snapped.y };
                 if (!isOverwrite) {
@@ -4472,9 +4554,11 @@ function importedCourseRoute(route, cp, order) {
         length: route?.length ?? null,
         run_time: route?.run_time ?? null,
         elevation: route?.elevation ?? 0,
+        obstacle: route?.obstacle ?? 0,
     };
     calcRouteLength(next);
     calcRouteNoA(next);
+    updateRouteObstacle(next);
     calcRouteRunTime(next);
     calcRouteSide(cp, next);
     return next;
@@ -4537,9 +4621,9 @@ function startCourseAlignment(controlPairs) {
 function chooseOcadBahnImportMode() {
     if (!project.control_pairs.length) return Promise.resolve("replace");
     const opts = {
-        message: "Bestehende Posten ersetzen oder OCAD-Bahn zusätzlich importieren?",
-        confirmText: "Ersetzen",
-        cancelText: "Zusätzlich",
+        message: gettext("Replace existing controls or additionally import the OCAD course?"),
+        confirmText: gettext("Replace"),
+        cancelText: gettext("Additionally"),
     };
     if (typeof window.showModal === "function") {
         return window.showModal(opts).then(replace => replace ? "replace" : "append");
@@ -4616,6 +4700,7 @@ const CourseAlignMode = (() => {
             for (const route of cp.routes || []) {
                 calcRouteLength(route);
                 calcRouteNoA(route);
+                updateRouteObstacle(route);
                 calcRouteRunTime(route);
                 calcRouteSide(cp, route);
             }
@@ -5099,7 +5184,7 @@ function clearMapDisplayForUpload({ clearLayers = true } = {}) {
 window.clearMapDisplayForUpload = clearMapDisplayForUpload;
 
 function resetProjectForOcadUpload() {
-    const keepName = (project.name || currentProjectName || "Neues Projekt").trim() || "Neues Projekt";
+    const keepName = (project.name || currentProjectName || gettext("New project")).trim() || gettext("New project");
     const keepLabel = project.label || null;
 
     setReadOnly(false);
@@ -5821,7 +5906,7 @@ function initMenus() {
 
     document.getElementById("batch-switch-lr")?.addEventListener("click", () => {
         if (readOnly || !project?.control_pairs?.length) return;
-        pushUndoState("Postentypen angepasst");
+        pushUndoState(gettext("Control types adjusted"));
         let changed = 0;
         project.control_pairs.forEach(cp => {
             if (cp.complex && cp.routes.length == 2) {
@@ -6004,9 +6089,11 @@ function _routeFromPolyline(cp, polyline) {
         length:   null,
         run_time: null,
         elevation: 0,
+        obstacle: 0,
     };
     calcRouteLength(route);
     calcRouteNoA(route);
+    updateRouteObstacle(route);
     calcRouteRunTime(route);
     calcRouteSide(cp, route);
     return route;
@@ -6091,6 +6178,7 @@ function _syncRoutesToControlEndpoint(cp, pointType) {
         endpoint.y = point.y;
         calcRouteLength(route);
         calcRouteNoA(route);
+        updateRouteObstacle(route);
         calcRouteRunTime(route);
         calcRouteSide(cp, route);
         saveRoute(cp, route);
@@ -6507,7 +6595,7 @@ async function thetaCPClient(cp, source = "editor_auto", options = {}) {
 
     if (gen !== _pathfindGeneration) return { error: "cancelled" };
 
-    pushUndoState("automatische Route");
+    pushUndoState(gettext("automatic route"));
     _appendRouteObject(cp, candidateRoute, { animate: true });
     selection.nr = cp.routes.length - 1;
     drawRoutes();
@@ -6659,12 +6747,12 @@ function updateCPList() {
             + (cp.order === selection.ncp ? " selected" : "")
             + (CourseAlignMode.isImportedOrder(cp.order) ? " ocad-bahn-new" : "");
         row.dataset.ncp = cp.order;
-        textRouten = cp.routes.length === 1 ? "Route" : "Routen";
+        textRouten = cp.routes.length === 1 ? gettext("Route") : gettext("Routes");
         const cpBusy = _isPathfindBusyForCp(cp);
         row.innerHTML = `
             ${readOnly ? '' : `<span class="cp-grip" title="Drag to reorder"></span>`}
             <span class="cp-row-label">
-                <span class="cp-posten-text">Posten ${cp.order + 1}</span>
+                <span class="cp-posten-text">${gettext("Control")} ${cp.order + 1}</span>
                 <span class="cp-route-count">${cp.routes.length} ${textRouten}</span>
                 ${cpBusy ? `<x-icon name="spinner" class="spin cp-busy-spinner" size="1em"></x-icon>` : ''}
             </span>
@@ -6673,12 +6761,12 @@ function updateCPList() {
                     ${readOnly ? 'disabled' : ''}>
                     ${icon("m")}
                 </button>
-                <button class="cp-mode-btn ${!cp.complex ? "active" : ""}" data-mode="lr" title="Links/Rechts"
+                <button class="cp-mode-btn ${!cp.complex ? "active" : ""}" data-mode="lr" title="${gettext('Left/Right')}"
                     ${readOnly ? 'disabled' : ''}>
                     ${icon("arrows-split", undefined, "scaleY(-1)")}
                 </button>
             </div>
-            ${readOnly ? '' : `<button class="cp-delete-btn" title="Posten löschen">${icon("trash", "11px")}</button>`}
+            ${readOnly ? '' : `<button class="cp-delete-btn" title="${gettext('Delete control')}">${icon("trash", "11px")}</button>`}
         `;
 
         row.querySelector(".cp-grip")?.addEventListener("mousedown", e => {
@@ -6702,7 +6790,7 @@ function updateCPList() {
 
         row.querySelector(".cp-delete-btn")?.addEventListener("click", e => {
             e.stopPropagation();
-            pushUndoState("Posten gelöscht");
+            pushUndoState(gettext("Control deleted"));
             deleteControlPair(cp);
             project.control_pairs = project.control_pairs.filter(c => c !== cp);
             project.control_pairs.forEach((c, i) => { c.order = i; });
@@ -6726,7 +6814,7 @@ function updateCPList() {
                     }
                     return;
                 }
-                pushUndoState("Postentyp geändert");
+                pushUndoState(gettext("Control type changed"));
                 cp.complex = complex;
                 saveControlPair(cp);
                 updateCPList();
@@ -6777,12 +6865,18 @@ function updateCPList() {
                             ${readOnly ? 'disabled' : ''}>
                         <span>Hm</span>
                     </label>
-                    ${readOnly ? '' : `<button class="cp-delete-btn" title="Route löschen">${icon("trash", "11px")}</button>`}
+                    <label class="route-elevation-label route-obstacle-label">
+                        <span class="route-obstacle-icon">${icon("obstacle", "11px")}</span>
+                        <input class="route-elevation-input route-obstacle-input" type="number" min="0" step="1"
+                            value="${route.obstacle ?? ""}" placeholder="—"
+                            ${readOnly ? 'disabled' : ''}>
+                    </label>
+                    ${readOnly ? '' : `<button class="cp-delete-btn" title="${gettext('Delete route')}">${icon("trash", "11px")}</button>`}
                 `;
 
                 rRow.querySelector(".cp-delete-btn")?.addEventListener("click", e => {
                     e.stopPropagation();
-                    pushUndoState("Route gelöscht");
+                    pushUndoState(gettext("Route deleted"));
                     deleteRoute(cp, route);
                     cp.routes = cp.routes.filter(r => r !== route);
                     cp.routes.forEach((r, i) => { r.order = i; });
@@ -6793,7 +6887,7 @@ function updateCPList() {
                 });
 
                 rRow.addEventListener("click", e => {
-                    if (e.target.closest(".route-elevation-input") || e.target.closest(".cp-delete-btn")) return;
+                    if (e.target.closest(".route-elevation-input") || e.target.closest(".route-obstacle-input") || e.target.closest(".cp-delete-btn")) return;
                     e.stopPropagation();
                     selection.nr = route.order;
                     updateRoutes();
@@ -6801,8 +6895,10 @@ function updateCPList() {
                 });
 
                 const elevInput = rRow.querySelector(".route-elevation-input");
+                const obstacleInput = rRow.querySelector(".route-obstacle-input");
 
                 elevInput.addEventListener("focus", e => { e.target.select(); });
+                obstacleInput.addEventListener("focus", e => { e.target.select(); });
 
                 elevInput.addEventListener("change", e => {
                     e.stopPropagation();
@@ -6810,7 +6906,18 @@ function updateCPList() {
                     const parsed = Number(val);
                     route.elevation = (val === "" || isNaN(parsed)) ? 0 : parsed;
                     calcRouteRunTime(route);
-                    pushUndoState("Höhe geändert");
+                    pushUndoState(gettext("Elevation changed"));
+                    saveRoute(cp, route);
+                    updateCPList();
+                });
+
+                obstacleInput.addEventListener("change", e => {
+                    e.stopPropagation();
+                    const val = e.target.value.trim();
+                    const parsed = Number(val);
+                    route.obstacle = (val === "" || isNaN(parsed)) ? 0 : parsed;
+                    calcRouteRunTime(route);
+                    pushUndoState(gettext("Obstacle changed"));
                     saveRoute(cp, route);
                     updateCPList();
                 });
@@ -6827,14 +6934,14 @@ function updateCPList() {
                 const pathfindBusy = _isPathfindBusyForCp(cp);
                 const expectAnotherRoute = pathfindBusy && _canExpectAnotherPathfindRoute(cp);
                 const pathfindTitle = pathfindBusy
-                    ? (expectAnotherRoute ? "Routensuche läuft - weitere Route möglich" : "Routensuche läuft - keine weitere Route erwartet")
-                    : "+ automatische Route";
+                    ? (expectAnotherRoute ? gettext("Route search running — another route possible") : gettext("Route search running — no further route expected"))
+                    : gettext("+ automatic route");
                 const pathfindIcon = pathfindBusy
                     ? `<x-icon name="spinner" class="spin" size="1em"></x-icon>`
                     : icon("wand-magic-sparkles", "1em");
                 newRouteRow.innerHTML = `
                     <button type="button" class="cp-new-route-draw-btn">
-                        <span>Neue Route</span>
+                        <span>${gettext('New route')}</span>
                         ${partialLen != null ? `<span class="route-stat route-length">${partialLen}m</span>` : ""}
                     </button>
                     ${canThetaPathfind ? `<button type="button" class="cp-new-route-pathfind-btn" title="${pathfindTitle}" aria-label="${pathfindTitle}" ${pathfindBusy ? 'disabled aria-busy="true"' : ""}>${pathfindIcon}</button>` : ""}
@@ -6864,7 +6971,7 @@ function updateCPList() {
     if (activeTool === PlaceControlTool && PlaceControlTool.isPlacingZiel()) {
         const placeholder = document.createElement("div");
         placeholder.className = "cp-row cp-row-pending";
-        placeholder.innerHTML = `<span class="cp-row-label">Neuer Posten…</span>`;
+        placeholder.innerHTML = `<span class="cp-row-label">${gettext('New control…')}</span>`;
         list.appendChild(placeholder);
         requestAnimationFrame(() => placeholder.scrollIntoView({ block: "nearest" }));
     }
@@ -6874,7 +6981,7 @@ function updateCPList() {
         const isAddingControlPair = currentToolMode === ToolMode.CONTROL_PAIR
             && activeSubtool[ToolMode.CONTROL_PAIR] === "add";
         addBtn.className = "cp-add-btn" + (isAddingControlPair ? " adding" : "");
-        addBtn.innerHTML = `${icon("plus", "0.8em")} Posten`;
+        addBtn.innerHTML = `${icon("plus", "0.8em")} ${gettext("Control")}`;
         addBtn.addEventListener("click", startNewPlacement);
         list.appendChild(addBtn);
     }
@@ -6979,7 +7086,7 @@ function onCPDragEnd() {
     arr.splice(insertIndex, 0, cp);
     arr.forEach((c, i) => { c.order = i; });
 
-    if (fromIndex !== insertIndex) pushUndoState("Postenreihenfolge geändert");
+    if (fromIndex !== insertIndex) pushUndoState(gettext("Control order changed"));
 
     // Bulk-reorder atomically (sequential saves would clash on the unique constraint)
     const orderPairs = arr.filter(c => c.id).map(c => ({ db_id: c.id, order: c.order }));
@@ -7305,26 +7412,49 @@ function calcRouteNoA(route) {
     route.noA = roundNoA(noA);
 }
 
+function updateRouteObstacle(route) {
+    if (!route) return false;
+    if (!editorSettings.auto_obstacle) {
+        if (route.obstacle == null) route.obstacle = 0;
+        return false;
+    }
+    const seconds = MaskLayer.obstacleSecondsForRoute?.(route);
+    if (seconds == null) {
+        if (route.obstacle == null) route.obstacle = 0;
+        return false;
+    }
+    const next = Math.max(0, Math.round(Number(seconds) || 0));
+    const changed = route.obstacle !== next;
+    route.obstacle = next;
+    return changed;
+}
+
 function calcRouteRunTime(route) {
     const length    = route.length;
     const elevation = route.elevation;
+    const obstacle  = route.obstacle;
     if (length == null || length === 0) {
         route.run_time = null;
         return;
     }
     const noAPenalty = route.noA || 0;
+    const obstaclePenalty = Number.isFinite(Number(obstacle)) ? Number(obstacle) : 0;
     // elevation = 0 is the calibration point: no grade penalty, pure flat speed.
-    // Also avoids the formula artefact where gapUp/gapDown ≈ 0.994 at grade 0
-    // would make flat terrain slightly faster than RUN_SPEED.
     if (!elevation) {
-        route.run_time = length / RUN_SPEED + noAPenalty;
+        route.run_time = length / RUN_SPEED + noAPenalty + obstaclePenalty;
         return;
     }
+    // No elevation profile, so assume the elevation is split half up / half down,
+    // both at the route's average gradient. Strava GAP polynomial, re-anchored so
+    // flat (grade 0) == 1.0. A symmetric split cancels the up/down asymmetry, so a
+    // downhill would otherwise refund the matching uphill — DOWNHILL_CREDIT caps that
+    // refund (0 = none, sprint reality). grade_factor stays >= 1: elevation never speeds up.
     const gradient  = (elevation / length) * 100;
-    const gapUp     = 0.0017 * gradient ** 2 + 0.02901 * gradient + 0.99387;
-    const gapDown   = 0.0017 * gradient ** 2 - 0.02901 * gradient + 0.99387;
-    const adjSpeed  = RUN_SPEED / ((gapUp + gapDown) / 2);
-    route.run_time  = length / adjSpeed + noAPenalty;
+    const gapUp     = 1 + 0.02901 * gradient + 0.0017 * gradient ** 2;
+    let   gapDown   = 1 - 0.02901 * gradient + 0.0017 * gradient ** 2;
+    if (gapDown < 1) gapDown = 1 - DOWNHILL_CREDIT * (1 - gapDown);
+    const gradeFactor = (gapUp + gapDown) / 2;
+    route.run_time  = length * gradeFactor / RUN_SPEED + noAPenalty + obstaclePenalty;
 }
 
 function recalculateProjectRoutes(targetProject = project) {
@@ -7332,6 +7462,7 @@ function recalculateProjectRoutes(targetProject = project) {
         for (const route of cp.routes || []) {
             calcRouteLength(route);
             calcRouteNoA(route);
+            updateRouteObstacle(route);
             calcRouteRunTime(route);
             calcRouteSide(cp, route);
         }

@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% load static %}
+{% load static i18n %}
 
 {% block styles %}
 <link rel="stylesheet" href="{% static 'results/css/results.css' %}">
@@ -22,7 +22,7 @@
 
             <div id="play-search-wrap">
                 <x-icon name="search" size="1.1rem" class="play-search-icon"></x-icon>
-                <input type="text" id="play-search" placeholder="Suchen…" autocomplete="off">
+                <input type="text" id="play-search" placeholder="{% trans 'Search…' %}" autocomplete="off">
                 <button id="play-search-clear" type="button"><x-icon name="xmark" size="1.2rem"></x-icon></button>
             </div>
 
@@ -32,7 +32,7 @@
             <div id="play-mobile-controls"></div>
         </div>
 
-        <div id="play-loading">Laden…</div>
+        <div id="play-loading">{% trans "Loading…" %}</div>
 
         <!-- Desktop table -->
         <div id="play-table-wrap">

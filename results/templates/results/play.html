@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% load static %}
+{% load static i18n %}
 
 {% block styles %}
 <link rel="stylesheet" href="{% static 'results/css/play.css' %}">
@@ -64,7 +64,7 @@
     <!-- First-play tutorial overlay (populated by tutorial.js, only in tutorial mode) -->
     <div id="tutorial-overlay" aria-hidden="true">
         <div id="tutorial-box" role="dialog" aria-modal="true">
-            <button id="tutorial-close" type="button" aria-label="Weiter">
+            <button id="tutorial-close" type="button" aria-label="{% trans 'Next' %}">
                 <x-icon name="xmark" size="1.1em"></x-icon>
             </button>
             <div id="tutorial-text"></div>

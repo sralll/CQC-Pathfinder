@@ -135,13 +135,14 @@ def _run_mask_generation(*, job, job_key, map_path, scale, mask_filename,
                 print(f"[MASK] tile {processed}/{total_tiles} ({time.time() - t0:.1f}s)", flush=True)
                 job.publish({'current': processed, 'total': total_tiles})
 
-        mo = SimpleNamespace(impassable=0, outline=135, very_slow=135, slow=231, cross=241, fast=243)
+        mo = SimpleNamespace(impassable=0, outline=135, very_slow=135, slow=231, cross=241, stairs=242, fast=243)
         vis = 255 * np.ones((img_h, img_w, 1), dtype=np.uint8)
         vis[output_img < 10] = mo.impassable
         vis[(output_img >= 10) & (output_img < 22)] = mo.very_slow
         vis[(output_img >= 22) & (output_img < 26)] = mo.slow
         vis[(output_img >= 26) & (output_img < 28)] = mo.cross
-        vis[(output_img >= 28) & (output_img < 32)] = mo.fast
+        vis[output_img == 28] = mo.stairs
+        vis[(output_img >= 29) & (output_img < 32)] = mo.fast
         vis[output_img == 32] = mo.cross
         vis[output_img == 33] = mo.fast
         vis[output_img == 34] = mo.impassable

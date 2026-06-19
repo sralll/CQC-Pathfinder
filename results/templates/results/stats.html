@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% load static %}
+{% load static i18n %}
 
 {% block styles %}
 <link rel="stylesheet" href="{% static 'results/css/results.css' %}">
@@ -8,7 +8,7 @@
 
 {% block nav_content %}
 <div class="nav-center">
-    <span id="stats-nav-title" class="fr-nav-title">Statistik</span>
+    <span id="stats-nav-title" class="fr-nav-title">{% trans "Statistics" %}</span>
 </div>
 {% endblock %}
 
@@ -21,14 +21,14 @@
 
     <div id="stats-header">
         <!-- 3-way slider toggle: Training | Competition | Infinity -->
-        <div class="stats-3way" data-mode="competition" role="radiogroup" aria-label="Modus">
-            <button class="stats-3way-stop" data-mode="training" aria-label="Training">
+        <div class="stats-3way" data-mode="competition" role="radiogroup" aria-label="{% trans 'Mode' %}">
+            <button class="stats-3way-stop" data-mode="training" aria-label="{% trans 'Training' %}">
                 <x-icon name="book-open" size="14px"></x-icon>
             </button>
-            <button class="stats-3way-stop" data-mode="competition" aria-label="Wettkampf">
+            <button class="stats-3way-stop" data-mode="competition" aria-label="{% trans 'Competition' %}">
                 <x-icon name="trophy" size="14px"></x-icon>
             </button>
-            <button class="stats-3way-stop" data-mode="random" aria-label="Infinity">
+            <button class="stats-3way-stop" data-mode="random" aria-label="{% trans 'Infinity' %}">
                 <x-icon name="infinity" size="14px"></x-icon>
             </button>
             <div class="stats-3way-thumb" id="stats-3way-thumb">
@@ -37,11 +37,11 @@
         </div>
 
         {% if is_trainer %}
-        <div class="stats-2way" data-view="graph" aria-label="Ansicht">
-            <button class="stats-2way-stop trainer-view-btn active" data-view="graph" aria-label="Diagramm">
+        <div class="stats-2way" data-view="graph" aria-label="{% trans 'View' %}">
+            <button class="stats-2way-stop trainer-view-btn active" data-view="graph" aria-label="{% trans 'Chart' %}">
                 <x-icon name="chart-pie" size="14px"></x-icon>
             </button>
-            <button class="stats-2way-stop trainer-view-btn" data-view="table" aria-label="Tabelle">
+            <button class="stats-2way-stop trainer-view-btn" data-view="table" aria-label="{% trans 'Table' %}">
                 <x-icon name="table-cells" size="14px"></x-icon>
             </button>
             <div class="stats-2way-thumb" id="stats-2way-thumb">
@@ -49,8 +49,8 @@
             </div>
         </div>
         <div id="trainer-athlete-picker">
-            <input type="text" id="trainer-athlete-search" placeholder="Athlet auswählen…" autocomplete="off">
-            <button id="trainer-athlete-clear" type="button" title="Zurücksetzen"><x-icon name="xmark" size="1.2rem"></x-icon></button>
+            <input type="text" id="trainer-athlete-search" placeholder="{% trans 'Select athlete…' %}" autocomplete="off">
+            <button id="trainer-athlete-clear" type="button" title="{% trans 'Reset' %}"><x-icon name="xmark" size="1.2rem"></x-icon></button>
             <div id="trainer-athlete-dropdown" class="trainer-dropdown"></div>
         </div>
         {% endif %}
@@ -60,8 +60,8 @@
 
         <div class="stats-card" id="stats-card-routes">
             <div class="stats-card-head">
-                <h2 class="stats-card-title" id="stats-card-routes-title">Routenwahl</h2>
-                <button class="stats-card-expand" type="button" title="Vergrössern" aria-label="Vergrössern"></button>
+                <h2 class="stats-card-title" id="stats-card-routes-title">{% trans "Route choice" %}</h2>
+                <button class="stats-card-expand" type="button" title="{% trans 'Enlarge' %}" aria-label="{% trans 'Enlarge' %}"></button>
             </div>
             <div class="stats-card-body stats-donut-body loading">
                 <svg class="stats-svg" id="stats-donut-chart" preserveAspectRatio="xMidYMid meet"></svg>
@@ -71,8 +71,8 @@
 
         <div class="stats-card" id="stats-card-avg">
             <div class="stats-card-head">
-                <h2 class="stats-card-title">Ø Zeiten pro Posten</h2>
-                <button class="stats-card-expand" type="button" title="Vergrössern" aria-label="Vergrössern"></button>
+                <h2 class="stats-card-title">{% trans "Ø Times per control" %}</h2>
+                <button class="stats-card-expand" type="button" title="{% trans 'Enlarge' %}" aria-label="{% trans 'Enlarge' %}"></button>
             </div>
             <div class="stats-card-body loading">
                 <svg class="stats-svg" id="stats-bar-chart" preserveAspectRatio="xMidYMid meet"></svg>
@@ -81,8 +81,8 @@
 
         <div class="stats-card" id="stats-card-activity">
             <div class="stats-card-head">
-                <h2 class="stats-card-title">Aktivität</h2>
-                <button class="stats-card-expand" type="button" title="Vergrössern" aria-label="Vergrössern"></button>
+                <h2 class="stats-card-title">{% trans "Activity" %}</h2>
+                <button class="stats-card-expand" type="button" title="{% trans 'Enlarge' %}" aria-label="{% trans 'Enlarge' %}"></button>
             </div>
             <div class="stats-card-body loading">
                 <svg class="stats-svg" id="stats-activity-chart" preserveAspectRatio="xMidYMid meet"></svg>
@@ -92,11 +92,11 @@
         <div class="stats-card" id="stats-card-error-scatter">
             <div class="stats-card-head">
                 <div class="stats-card-title-wrap">
-                    <h2 class="stats-card-title">Fehlerpotential-Erkennung</h2>
-                    <button class="stats-info-btn" type="button" aria-label="Information zu Fehlerpotential-Erkennung">?</button>
-                    <div class="stats-info-popover" role="dialog">Die Fehlerpotential-Erkennung zeigt, wie sich deine Entscheidungszeiten im Verhältnis zu möglichen Routenwahlfehlern pro Posten verhalten. Pro Sekunde Fehlerpotential (Unterschied der Laufzeiten von verschiedenen Routen) verändert sich deine durchschnittliche Entscheidungszeit um einige Millisekunden.</div>
+                    <h2 class="stats-card-title">{% trans "Error potential detection" %}</h2>
+                    <button class="stats-info-btn" type="button" aria-label="{% trans 'Information about error potential detection' %}">?</button>
+                    <div class="stats-info-popover" role="dialog">{% trans "The error potential detection shows how strongly you react when a control has the potential for a big mistake." %}</div>
                 </div>
-                <button class="stats-card-expand" type="button" title="Vergrössern" aria-label="Vergrössern"></button>
+                <button class="stats-card-expand" type="button" title="{% trans 'Enlarge' %}" aria-label="{% trans 'Enlarge' %}"></button>
             </div>
             <div class="stats-card-body loading">
                 <svg class="stats-svg" id="stats-error-scatter-chart" preserveAspectRatio="xMidYMid meet"></svg>
@@ -106,11 +106,22 @@
         <div class="stats-card" id="stats-card-sequence">
             <div class="stats-card-head">
                 <div class="stats-card-title-wrap">
-                    <h2 class="stats-card-title">Zeitsensitivität</h2>
-                    <button class="stats-info-btn" type="button" aria-label="Information zu Zeitsensitivität">?</button>
-                    <div class="stats-info-popover" role="dialog">Die Zeitsensitivität soll aufzeigen, wie sich deine Routenwahlfehler im Verhältnis deiner Entscheidungszeiten verhalten. Um die Variation der Schwierigkeit zwischen verschiedenen Posten zu kompensieren, wird die Abweichung deiner Entscheidungszeit vom Kaderdurchschnitt für den jeweiligen Posten verwendet. <br> Eine negative Sensitivität bedeutet, dass wenn du länger als der Kaderdurchschnitt überlegst, deine Routenentscheide genauer sind. Eine positive Sensitität bedeutet, dass du intuitiv die richtige Entscheidung triffst und länger nachdenken dir im Vergleich zum Team nicht hilft.</div>
+                    <h2 class="stats-card-title">{% trans "Time sensitivity" %}</h2>
+                    <button class="stats-info-btn" type="button" aria-label="{% trans 'Information about time sensitivity' %}">?</button>
+                    <div class="stats-info-popover" role="dialog">
+                        {% trans "Time sensitivity shows how your route-choice errors relate to your decision times. It shows the deviation of your decision time from the squad average per control, and how that affects your error rate." %}
+                        <ul class="noindent">
+                            <li>
+                                {% trans "A negative sensitivity means your route decisions become more accurate when you think longer than the squad average." %}
+                            </li>
+                            <li>
+                                {% trans "A positive sensitivity means you intuitively make the right decision and thinking longer does not help you compared to other athletes." %}
+                            </li>
+                        </ul>
+                        <x-icon name="warning"></x-icon> {% trans "This analysis should be taken with caution." %}
+                    </div>
                 </div>
-                <button class="stats-card-expand" type="button" title="Vergrössern" aria-label="Vergrössern"></button>
+                <button class="stats-card-expand" type="button" title="{% trans 'Enlarge' %}" aria-label="{% trans 'Enlarge' %}"></button>
             </div>
             <div class="stats-card-body loading">
                 <svg class="stats-svg" id="stats-sequence-chart" preserveAspectRatio="xMidYMid meet"></svg>
@@ -119,8 +130,8 @@
 
         <div class="stats-card" id="stats-card-facts">
             <div class="stats-card-head">
-                <h2 class="stats-card-title">Auf einen Blick</h2>
-                <button class="stats-card-expand" type="button" title="Vergrössern" aria-label="Vergrössern"></button>
+                <h2 class="stats-card-title">{% trans "At a glance" %}</h2>
+                <button class="stats-card-expand" type="button" title="{% trans 'Enlarge' %}" aria-label="{% trans 'Enlarge' %}"></button>
             </div>
             <div class="stats-card-body loading" id="stats-facts"></div>
         </div>
@@ -132,19 +143,19 @@
         <table id="stats-table">
             <thead>
                 <tr>
-                    <th class="stats-th-name" data-sort="athlete">Athlet<span class="stats-th-sort"></span></th>
-                    <th class="stats-th-num"  data-sort="posten">Posten<span class="stats-th-sort"></span></th>
-                    <th class="stats-th-num"  data-sort="avg_choice_time" title="Durchschnittliche Entscheidungszeit">Ø Entsch.<span class="stats-th-sort"></span></th>
-                    <th class="stats-th-num"  data-sort="avg_error" title="Durchschnittlicher Routenwahlfehler">Ø Fehler<span class="stats-th-sort"></span></th>
+                    <th class="stats-th-name" data-sort="athlete">{% trans "Athlete" %}<span class="stats-th-sort"></span></th>
+                    <th class="stats-th-num"  data-sort="posten">{% trans "Controls" %}<span class="stats-th-sort"></span></th>
+                    <th class="stats-th-num"  data-sort="avg_choice_time" title="{% trans 'Average decision time' %}">{% trans "Ø Dec." %}<span class="stats-th-sort"></span></th>
+                    <th class="stats-th-num"  data-sort="avg_error" title="{% trans 'Average route-choice error' %}">{% trans "Ø Error" %}<span class="stats-th-sort"></span></th>
                     <th class="stats-th-num stats-th-cat stats-th-crown" data-sort="schnellste" style="color:#4CAF50">
                         <x-icon name="crown" size="13px"></x-icon><span class="stats-th-sort"></span>
                     </th>
                     <th class="stats-th-num stats-th-cat" data-sort="lt5"  style="color:#FFC107">&lt; 5%<span class="stats-th-sort"></span></th>
                     <th class="stats-th-num stats-th-cat" data-sort="lt10" style="color:#FF9800">5–10%<span class="stats-th-sort"></span></th>
                     <th class="stats-th-num stats-th-cat" data-sort="gt10" style="color:#F44336">&gt; 10%<span class="stats-th-sort"></span></th>
-                    <th class="stats-th-num stats-th-prog" data-sort="fortschritt" title="Anteil der absolvierten Posten am gesamten verfügbaren Kartenmaterial (Training + Wettkampf)">Fortschritt<span class="stats-th-sort"></span></th>
-                    <th class="stats-th-num" data-sort="error_potential_sensitivity" title="Fehlerpotential-Erkennung in ms/s">Fehlerpotential-Erkennung<span class="stats-th-sort"></span></th>
-                    <th class="stats-th-num" data-sort="time_sensitivity" title="Zeitsensitivität in ms/s">Zeitsensitivität<span class="stats-th-sort"></span></th>
+                    <th class="stats-th-num stats-th-prog" data-sort="fortschritt" title="{% trans 'Share of completed controls out of all available map material (training + competition)' %}">{% trans "Progress" %}<span class="stats-th-sort"></span></th>
+                    <th class="stats-th-num" data-sort="error_potential_sensitivity" title="{% trans 'Error potential detection in ms/s' %}">{% trans "Error potential detection" %}<span class="stats-th-sort"></span></th>
+                    <th class="stats-th-num" data-sort="time_sensitivity" title="{% trans 'Time sensitivity in ms/s' %}">{% trans "Time sensitivity" %}<span class="stats-th-sort"></span></th>
                 </tr>
             </thead>
             <tbody></tbody>

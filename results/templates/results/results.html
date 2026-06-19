@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% load static %}
+{% load static i18n %}
 
 {% block styles %}
 <link rel="stylesheet" href="{% static 'results/css/results.css' %}">
@@ -22,9 +22,8 @@
                 <div class="mode-icon-tip" data-mode="training">
                     <x-icon name="book-open" size="14px"></x-icon>
                     <div class="mode-tip-box">
-                        <b>Trainingsmodus</b><br>
-                        Routen werden nicht direkt angezeigt und sollen selber gefunden werden.
-                        Ein im Trainingsmodus absolviertes Projekt wird nicht in der Rangliste aufgeführt.
+                        <b>{% trans "Training mode" %}</b><br>
+                        {% trans "Routes are not shown directly and must be found yourself. A project completed in training mode is not listed in the ranking." %}
                     </div>
                 </div>
                 <label class="mode-switch">
@@ -34,9 +33,8 @@
                 <div class="mode-icon-tip" data-mode="competition">
                     <x-icon name="trophy" size="14px"></x-icon>
                     <div class="mode-tip-box">
-                        <b>Wettkampfmodus</b><br>
-                        Der erste Versuch eines Projekts im Wettkampfmodus wird in der Rangliste aufgeführt.
-                        Die Entscheidungszeit und die zusätzliche Zeit für nicht-ideale Routen werden gemessen.
+                        <b>{% trans "Competition mode" %}</b><br>
+                        {% trans "The first attempt of a project in competition mode is listed in the ranking. The decision time and the extra time for non-ideal routes are measured." %}
                     </div>
                 </div>
             </div>
@@ -44,7 +42,7 @@
             <!-- Search (centred on desktop, fills remaining on mobile) -->
             <div id="play-search-wrap">
                 <x-icon name="search" size="1.1rem" class="play-search-icon"></x-icon>
-                <input type="text" id="play-search" placeholder="Suchen…" autocomplete="off">
+                <input type="text" id="play-search" placeholder="{% trans 'Search…' %}" autocomplete="off">
                 <button id="play-search-clear" type="button"><x-icon name="xmark" size="1.2rem"></x-icon></button>
             </div>
 
@@ -55,7 +53,7 @@
             <div id="play-mobile-controls"></div>
         </div>
 
-        <div id="play-loading">Laden…</div>
+        <div id="play-loading">{% trans "Loading…" %}</div>
 
         <!-- Desktop table -->
         <div id="play-table-wrap">

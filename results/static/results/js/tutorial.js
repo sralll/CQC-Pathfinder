@@ -29,6 +29,7 @@
     const box       = document.getElementById('tutorial-box');
     const textEl    = document.getElementById('tutorial-text');
     const closeBtn  = document.getElementById('tutorial-close');
+    const mapContainer = document.getElementById('map-container');
     if (!overlay || !box || !textEl || !closeBtn) return;
 
     const isDesktop = document.body.classList.contains('desktop');
@@ -128,6 +129,20 @@
     let seenStep3     = false;    // the "view stats" hint shows only once
     let awaitingStats = false;    // step 3 dismissed → waiting for a button-bar tap
     let finished      = false;    // after the last step, no more modals ever
+    let titleEl       = null;      // pre-start title shown over the loaded map
+
+    function showTitle() {
+        if (!mapContainer || titleEl) return;
+        titleEl = document.createElement('div');
+        titleEl.id = 'tutorial-title';
+        titleEl.textContent = 'Tutorial';
+        mapContainer.appendChild(titleEl);
+    }
+
+    function hideTitle() {
+        titleEl?.remove();
+        titleEl = null;
+    }
 
     function clearHighlight() {
         if (highlightedEl) {
@@ -214,14 +229,23 @@
         // several complex controls, and tip 1 must not re-fire on each one.
         const { index } = e.detail || {};
         if      (index === 0) showStep(1);   // first control → full walkthrough
-        else if (index === 1) showStep(6);   // second control → brief reminder
-        // index >= 2 → no modal; the athlete just plays the rest of the file.
+        else if (index === 2) showStep(6);   // third control brief reminder
+        // Other controls have no modal; the athlete just plays the rest of the file.
     });
 
-    document.addEventListener('play:routes-revealed', () => {
+    document.addEventListener('play:map-loaded', () => {
         if (finished) return;
-        // Step 2 only matters during the first (complex) control's reveal.
-        if (currentStep <= 2) showStep(2);
+        showTitle();
+    });
+
+    document.addEventListener('play:cp-starting', () => {
+        hideTitle();
+    });
+
+    document.addEventListener('play:routes-revealed', e => {
+        if (finished) return;
+        // Step 2 is held until the third control, where direct picks reveal first.
+        if (e.detail?.index === 2 && currentStep <= 2) showStep(2);
     });
 
     document.addEventListener('play:selection-made', () => {

@@ -89,7 +89,7 @@ export class FileTable {
     }
 
     async deleteFile(id) {
-        if (!await showModal({ message: 'Projekt löschen — Sicher?', confirmText: 'Löschen', cancelText: 'Abbrechen', danger: true })) return;
+        if (!await showModal({ message: gettext('Delete project — are you sure?'), confirmText: gettext('Delete'), cancelText: gettext('Cancel'), danger: true })) return;
         const csrf = document.cookie.match(/csrftoken=([^;]+)/)?.[1] ?? "";
         window.showTableLoading?.();
         try {

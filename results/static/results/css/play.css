@@ -64,6 +64,23 @@ body.desktop #play-btn-bar {
 
 #map-container.panning { cursor: grabbing; }
 
+#tutorial-title {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    z-index: 100;
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+    background: rgba(10, 10, 10, 0.88);
+    color: #fff;
+    border-radius: 8px;
+    padding: 0.22em 0.44em;
+    font-size: clamp(42px, 8vw, 96px);
+    font-weight: 800;
+    line-height: 1;
+    box-shadow: 0 14px 34px rgba(0, 0, 0, 0.45);
+}
+
 #camera {
     position: absolute;
     top: 0;

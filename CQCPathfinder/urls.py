@@ -28,6 +28,7 @@ urlpatterns = [
 
     path("internal/sync-volume-to-r2/", internal_views.trigger_volume_sync, name="trigger_volume_sync"),
     path("", views.home_view, name="home"),
+    path("guide/", views.guide_view, name="guide"),
     path("feedback/", views.feedback_view, name="feedback"),
     path('play/', include('results.play_urls')),
     path('results/', include('results.results_urls')),

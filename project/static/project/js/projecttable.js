@@ -98,30 +98,30 @@ function renderTableHeader() {
                 </span>
             </th>
             <th class="col-name" data-sort="name">
-                <span class="sortable">Projekt <span id="sort-name" class="sort-indicator"></span></span>
+                <span class="sortable">${gettext("Project")} <span id="sort-name" class="sort-indicator"></span></span>
             </th>
             <th class="col-label">
-                <span class="filterable" id="label-filter-btn">Label
+                <span class="filterable" id="label-filter-btn">${gettext("Label")}
                     <span class="filter-indicator active-filter-icon">${icon("filter", "0.8em")}</span>
                 </span>
             </th>
             <th class="col-cp" data-sort="cp_count" style="text-align:right;">
-                <span class="sortable">Posten <span id="sort-cp_count" class="sort-indicator"></span></span>
+                <span class="sortable">${gettext("Controls")} <span id="sort-cp_count" class="sort-indicator"></span></span>
             </th>
             <th class="col-author">
-                <span class="filterable" id="author-filter-btn">Autor
+                <span class="filterable" id="author-filter-btn">${gettext("Author")}
                     <span class="filter-indicator active-filter-icon">${icon("filter", "0.8em")}</span>
                 </span>
             </th>
             ${showTeamColumn ? `
             <th class="col-team">
-                <span class="filterable" id="team-filter-btn">Kader
+                <span class="filterable" id="team-filter-btn">${gettext("Squad")}
                     <span class="filter-indicator active-filter-icon">${icon("filter", "0.8em")}</span>
                 </span>
             </th>` : ''}
             <th class="col-history" style="text-align:center;">${icon("history")}</th>
             <th class="col-date" data-sort="last_edited">
-                <span class="sortable">Geändert <span id="sort-last_edited" class="sort-indicator"></span></span>
+                <span class="sortable">${gettext("Modified")} <span id="sort-last_edited" class="sort-indicator"></span></span>
             </th>
             <th class="col-actions"></th>
         </tr>
@@ -280,7 +280,7 @@ function renderLabelFilterDropdown() {
     const dropdown = document.getElementById("label-filter-dropdown");
     dropdown.innerHTML = `
         <div class="filter-clear">
-            <div class="filter-clear-left" onclick="event.stopPropagation(); clearLabelFilter()"><b>Alle</b></div>
+            <div class="filter-clear-left" onclick="event.stopPropagation(); clearLabelFilter()"><b>${gettext('All')}</b></div>
             <button class="filter-close-btn" onclick="event.stopPropagation(); closeAllFilters()" type="button"><x-icon name="xmark" size="1em"></x-icon></button>
         </div>
         <div class="filter-options-list">
@@ -502,7 +502,7 @@ function renderCards() {
     if (filteredFiles.length === 0) {
         const msg = document.createElement('div');
         msg.className = 'file-card-empty';
-        msg.textContent = 'Keine Projekte gefunden.';
+        msg.textContent = gettext('No projects found.');
         wrap.appendChild(msg);
         return;
     }
@@ -524,7 +524,7 @@ function renderCards() {
 
         const publishBtn = f.can_edit && !f.is_locked
             ? `<button class="file-card-publish ${f.published ? 'file-card-publish-active' : ''}"
-                       title="${f.published ? 'Veröffentlichung aufheben' : 'Veröffentlichen'}"
+                       title="${f.published ? gettext('Unpublish') : gettext('Publish')}"
                        data-file-id="${f.id}">${icon("globe", "1em")}</button>`
             : (f.published
                 ? `<span class="file-card-publish file-card-publish-active file-card-publish-disabled">${icon("globe", "1em")}</span>`
@@ -544,7 +544,7 @@ function renderCards() {
             : '';
 
         const lockHtml = f.is_locked
-            ? `<span class="file-card-lock" title="${f.locked_by_name || ''} bearbeitet gerade">${icon("lock", "0.9em")}</span>
+            ? `<span class="file-card-lock" title="${f.locked_by_name || ''} ${gettext('is editing')}">${icon("lock", "0.9em")}</span>
                <span class="file-card-sep">·</span>`
             : '';
 
@@ -610,8 +610,8 @@ function renderMobileControls() {
     sortRow.className = 'file-ctrl-row';
 
     const sortFields = [
-        { key: 'name',        label: 'Name'   },
-        { key: 'cp_count',    label: 'Posten' },
+        { key: 'name',        label: gettext('Name')     },
+        { key: 'cp_count',    label: gettext('Controls') },
         { key: 'last_edited', label: 'Datum'  },
     ];
     sortFields.forEach(({ key, label }) => {
@@ -636,10 +636,10 @@ function renderMobileControls() {
     filterRow.appendChild(publishBtn);
 
     const filterFields = [
-        { field: 'label',  label: 'Label',  toggle: toggleLabelFilter  },
-        { field: 'author', label: 'Autor',  toggle: toggleAuthorFilter },
+        { field: 'label',  label: gettext('Label'),  toggle: toggleLabelFilter  },
+        { field: 'author', label: gettext('Author'), toggle: toggleAuthorFilter },
         ...(showTeamColumn
-            ? [{ field: 'team', label: 'Kader', toggle: toggleTeamFilter }]
+            ? [{ field: 'team', label: gettext('Squad'), toggle: toggleTeamFilter }]
             : []),
     ];
     filterFields.forEach(({ field, label, toggle }) => {
@@ -732,7 +732,7 @@ function renderLabelManageDropdown() {
             palBtn.dataset.palBtn = "";
             palBtn.style.cssText = "background:none;border:none;cursor:pointer;padding:2px;color:#666;display:flex;align-items:center;";
             palBtn.innerHTML = icon("palette", "13px");
-            palBtn.title = "Farbe wählen";
+            palBtn.title = gettext("Choose color");
 
             palBtn.addEventListener("click", e => {
                 e.stopPropagation();
@@ -824,7 +824,7 @@ function renderLabelManageDropdown() {
             const delBtn = document.createElement("button");
             delBtn.style.cssText = "background:none;border:none;cursor:pointer;padding:2px;color:#666;display:flex;align-items:center;";
             delBtn.innerHTML = icon("trash", "12px");
-            delBtn.title = "Label löschen";
+            delBtn.title = gettext("Delete label");
             delBtn.addEventListener("click", () => {
                 // Optimistic: remove immediately
                 window.allLabels = (window.allLabels || []).filter(l => l.id !== label.id);
@@ -854,7 +854,7 @@ function renderLabelManageDropdown() {
         const inp = document.createElement("input");
         inp.type        = "text";
         inp.maxLength   = 25;
-        inp.placeholder = "Neues Label…";
+        inp.placeholder = gettext("New label…");
         inp.style.cssText = `flex:1;background:#2a2a2a;border:1px solid #3a3a3a;border-radius:4px;
             color:#ccc;font-size:13px;padding:4px 8px;min-height:32px;outline:none;`;
 
@@ -1001,10 +1001,10 @@ async function createFileWithTitle() {
         }
     };
 
-    if (!name) { markError("Bitte einen Projektnamen eingeben."); input?.focus(); return; }
+    if (!name) { markError(gettext("Please enter a project name.")); input?.focus(); return; }
 
     const duplicate = (projectFiles || []).some(f => f.name === name);
-    if (duplicate) { markError("Ein Projekt mit diesem Namen existiert bereits."); input?.focus(); return; }
+    if (duplicate) { markError(gettext("A project with this name already exists.")); input?.focus(); return; }
 
     // ── Reset project state — server save happens after map is scaled ──
     project.id            = null;   // assigned on first real save (after scaling)

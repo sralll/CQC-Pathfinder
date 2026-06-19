@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% load static %}
+{% load static i18n %}
 
 {% block styles %}
 <link rel="stylesheet" href="{% static 'css/forum.css' %}">
@@ -11,14 +11,14 @@
 
         <a class="forum-back" href="{% url 'forum' %}">
             <x-icon name="arrow-left" size="12px"></x-icon>
-            Zurück zum Forum
+            {% trans "Back to forum" %}
         </a>
 
         <article class="thread-detail">
             <button type="button"
                     class="vote{% if thread_voted %} voted{% endif %}"
                     data-vote-url="{% url 'forum_thread_vote' thread.pk %}"
-                    title="Upvote" aria-label="Upvote">
+                    title="{% trans 'Upvote' %}" aria-label="{% trans 'Upvote' %}">
                 <x-icon name="chevron-up"></x-icon>
                 <span class="vote-count">{{ n_upvotes }}</span>
             </button>
@@ -27,11 +27,11 @@
                 <div class="fe-view">
                     <h1 class="thread-detail-title">{{ thread.title }}</h1>
                     <div class="thread-meta">
-                        <span class="author">{% if thread.author %}{{ thread.author.get_full_name|default:thread.author.username }}{% else %}Unbekannt{% endif %}</span>
+                        <span class="author">{% if thread.author %}{{ thread.author.get_full_name|default:thread.author.username }}{% else %}{% trans "Unknown" %}{% endif %}</span>
                         <span class="dot">•</span>
                         <span>{{ thread.created_at|date:"d.m.Y H:i" }}</span>
-                        {% if thread.edited_at %}<span class="dot">•</span><span class="edited">bearbeitet</span>{% endif %}
-                        {% if thread.author_id == user.id %}<button type="button" class="fe-edit">Bearbeiten</button>{% endif %}
+                        {% if thread.edited_at %}<span class="dot">•</span><span class="edited">{% trans "edited" %}</span>{% endif %}
+                        {% if thread.author_id == user.id %}<button type="button" class="fe-edit">{% trans "Edit" %}</button>{% endif %}
                     </div>
                     <p class="thread-detail-body">{{ thread.body }}</p>
                 </div>
@@ -45,15 +45,15 @@
                         <textarea name="body" maxlength="4000" required>{{ thread.body }}</textarea>
                     </div>
                     <div class="forum-compose-actions">
-                        <button type="submit" class="forum-submit">Speichern</button>
-                        <button type="button" class="forum-cancel fe-cancel">Abbrechen</button>
+                        <button type="submit" class="forum-submit">{% trans "Save" %}</button>
+                        <button type="button" class="forum-cancel fe-cancel">{% trans "Cancel" %}</button>
                     </div>
                 </form>
                 {% endif %}
             </div>
         </article>
 
-        <h2 class="comments-head">{{ n_comments }} Antwort{{ n_comments|pluralize:",en" }}</h2>
+        <h2 class="comments-head">{{ n_comments }} {% if n_comments == 1 %}{% trans "answer" %}{% else %}{% trans "answers" %}{% endif %}</h2>
 
         <div class="comment-list">
             {% for comment in comments %}
@@ -61,7 +61,7 @@
                 <button type="button"
                         class="vote{% if comment.id in voted_comment_ids %} voted{% endif %}"
                         data-vote-url="{% url 'forum_comment_vote' comment.pk %}"
-                        title="Upvote" aria-label="Upvote">
+                        title="{% trans 'Upvote' %}" aria-label="{% trans 'Upvote' %}">
                     <x-icon name="chevron-up"></x-icon>
                     <span class="vote-count">{{ comment.n_upvotes }}</span>
                 </button>
@@ -69,11 +69,11 @@
                     <div class="fe-view">
                         <p class="comment-body">{{ comment.body }}</p>
                         <div class="comment-meta">
-                            <span class="author">{% if comment.author %}{{ comment.author.get_full_name|default:comment.author.username }}{% else %}Unbekannt{% endif %}</span>
+                            <span class="author">{% if comment.author %}{{ comment.author.get_full_name|default:comment.author.username }}{% else %}{% trans "Unknown" %}{% endif %}</span>
                             <span class="dot">•</span>
                             <span>{{ comment.created_at|date:"d.m.Y H:i" }}</span>
-                            {% if comment.edited_at %}<span class="dot">•</span><span class="edited">bearbeitet</span>{% endif %}
-                            {% if comment.author_id == user.id %}<button type="button" class="fe-edit">Bearbeiten</button>{% endif %}
+                            {% if comment.edited_at %}<span class="dot">•</span><span class="edited">{% trans "edited" %}</span>{% endif %}
+                            {% if comment.author_id == user.id %}<button type="button" class="fe-edit">{% trans "Edit" %}</button>{% endif %}
                         </div>
                     </div>
                     {% if comment.author_id == user.id %}
@@ -97,9 +97,9 @@
 
         <form class="reply-form" method="post">
             {% csrf_token %}
-            <textarea name="body" maxlength="4000" placeholder="Antwort schreiben…" required></textarea>
+            <textarea name="body" maxlength="4000" placeholder="{% trans 'Write a reply…' %}" required></textarea>
             <div class="reply-actions">
-                <button type="submit" class="forum-submit">Antworten</button>
+                <button type="submit" class="forum-submit">{% trans "Reply" %}</button>
             </div>
         </form>
 

@@ -1314,7 +1314,7 @@ function renderChoiceButtons() {
 
         const label = document.createElement('span');
         label.className = 'play-btn-label';
-        label.textContent = i === 0 ? 'Links' : 'Rechts';
+        label.textContent = i === 0 ? gettext('Left') : gettext('Right');
         btn.appendChild(label);
 
         btn.addEventListener('click', () => pickSide(i));

@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% load static %}
+{% load static i18n %}
 
 {% block styles %}
 <link rel="stylesheet" href="{% static 'css/forum.css' %}">
@@ -10,44 +10,44 @@
     <div class="forum-shell">
 
         <div class="forum-head">
-            <h1 class="forum-title">Forum</h1>
-            <span class="forum-count" id="forum-count">{{ threads|length }} Them{{ threads|length|pluralize:"a,en" }}</span>
+            <h1 class="forum-title">{% trans "Forum" %}</h1>
+            <span class="forum-count" id="forum-count">{{ threads|length }} {% if threads|length == 1 %}{% trans "topic" %}{% else %}{% trans "topics" %}{% endif %}</span>
         </div>
 
         <div class="forum-toolbar">
             <div class="forum-search" role="search">
                 <x-icon name="search" class="forum-search-icon"></x-icon>
-                <input type="text" id="forum-search-input" placeholder="Themen durchsuchen…"
-                       autocomplete="off" aria-label="Suche">
-                <button type="button" id="forum-search-clear" aria-label="Suche löschen">
+                <input type="text" id="forum-search-input" placeholder="{% trans 'Search topics…' %}"
+                       autocomplete="off" aria-label="{% trans 'Search' %}">
+                <button type="button" id="forum-search-clear" aria-label="{% trans 'Clear search' %}">
                     <x-icon name="xmark" size="1.1rem"></x-icon>
                 </button>
             </div>
 
-            <div class="forum-sort" role="tablist" aria-label="Sortierung">
-                <a href="?sort=new" class="{% if sort == 'new' %}active{% endif %}">Neu</a>
-                <a href="?sort=top" class="{% if sort == 'top' %}active{% endif %}">Top</a>
+            <div class="forum-sort" role="tablist" aria-label="{% trans 'Sorting' %}">
+                <a href="?sort=new" class="{% if sort == 'new' %}active{% endif %}">{% trans "New" %}</a>
+                <a href="?sort=top" class="{% if sort == 'top' %}active{% endif %}">{% trans "Top" %}</a>
             </div>
 
             <button type="button" class="forum-new-btn" id="forum-new-btn">
-                <x-icon name="plus" size="13px"></x-icon> Neues Thema
+                <x-icon name="plus" size="13px"></x-icon> {% trans "New topic" %}
             </button>
         </div>
 
         <form class="forum-compose" id="forum-compose" method="post" {% if not open_form %}hidden{% endif %}>
             {% csrf_token %}
-            <h2 class="forum-compose-title">Neues Thema erstellen</h2>
+            <h2 class="forum-compose-title">{% trans "Create new topic" %}</h2>
             {% if form_error %}<p class="forum-error">{{ form_error }}</p>{% endif %}
             <div class="forum-field">
-                <input type="text" name="title" maxlength="160" placeholder="Titel" required
+                <input type="text" name="title" maxlength="160" placeholder="{% trans 'Title' %}" required
                        value="{{ request.POST.title }}">
             </div>
             <div class="forum-field">
-                <textarea name="body" maxlength="4000" placeholder="Beschreibe dein Anliegen…" required>{{ request.POST.body }}</textarea>
+                <textarea name="body" maxlength="4000" placeholder="{% trans 'Describe your topic…' %}" required>{{ request.POST.body }}</textarea>
             </div>
             <div class="forum-compose-actions">
-                <button type="submit" class="forum-submit">Veröffentlichen</button>
-                <button type="button" class="forum-cancel">Abbrechen</button>
+                <button type="submit" class="forum-submit">{% trans "Publish" %}</button>
+                <button type="button" class="forum-cancel">{% trans "Cancel" %}</button>
             </div>
         </form>
 
@@ -57,7 +57,7 @@
                 <button type="button"
                         class="vote{% if thread.id in voted_thread_ids %} voted{% endif %}"
                         data-vote-url="{% url 'forum_thread_vote' thread.pk %}"
-                        title="Upvote" aria-label="Upvote">
+                        title="{% trans 'Upvote' %}" aria-label="{% trans 'Upvote' %}">
                     <x-icon name="chevron-up"></x-icon>
                     <span class="vote-count">{{ thread.n_upvotes }}</span>
                 </button>
@@ -68,10 +68,10 @@
                         <p class="thread-snippet">{{ thread.body }}</p>
                     </a>
                     <div class="thread-meta">
-                        <span class="author">{% if thread.author %}{{ thread.author.get_full_name|default:thread.author.username }}{% else %}Unbekannt{% endif %}</span>
+                        <span class="author">{% if thread.author %}{{ thread.author.get_full_name|default:thread.author.username }}{% else %}{% trans "Unknown" %}{% endif %}</span>
                         <span class="dot">•</span>
                         <span>{{ thread.created_at|date:"d.m.Y H:i" }}</span>
-                        {% if thread.edited_at %}<span class="dot">•</span><span class="edited">bearbeitet</span>{% endif %}
+                        {% if thread.edited_at %}<span class="dot">•</span><span class="edited">{% trans "edited" %}</span>{% endif %}
                         <span class="dot">•</span>
                         <span class="replies">
                             <x-icon name="comment" size="13px"></x-icon>
@@ -81,7 +81,7 @@
                 </div>
             </article>
             {% empty %}
-            <div class="forum-empty">Noch keine Themen. Erstelle das erste!</div>
+            <div class="forum-empty">{% trans "No topics yet. Create the first one!" %}</div>
             {% endfor %}
         </div>
 

@@ -344,20 +344,22 @@ function calcRouteNoA(route, mapScale = REFERENCE_MAP_SCALE) {
 function calcRouteRunTime(route) {
   const length = route.length;
   const elevation = route.elevation;
+  const obstacle = route.obstacle;
   if (length == null || length === 0) {
     route.run_time = null;
     return;
   }
   const noAPenalty = route.noA || 0;
+  const obstaclePenalty = Number.isFinite(Number(obstacle)) ? Number(obstacle) : 0;
   if (!elevation) {
-    route.run_time = length / RUN_SPEED + noAPenalty;
+    route.run_time = length / RUN_SPEED + noAPenalty + obstaclePenalty;
     return;
   }
   const gradient = (elevation / length) * 100;
   const gapUp = 0.0017 * gradient ** 2 + 0.02901 * gradient + 0.99387;
   const gapDown = 0.0017 * gradient ** 2 - 0.02901 * gradient + 0.99387;
   const adjSpeed = RUN_SPEED / ((gapUp + gapDown) / 2);
-  route.run_time = length / adjSpeed + noAPenalty;
+  route.run_time = length / adjSpeed + noAPenalty + obstaclePenalty;
 }
 
 function calcRouteSide(cp, route) {
@@ -385,6 +387,7 @@ function makeRoute(rP, cp, order, mapScale, source) {
     length: null,
     run_time: null,
     elevation: 0,
+    obstacle: 0,
     source,
   };
   calcRouteLength(route, mapScale);

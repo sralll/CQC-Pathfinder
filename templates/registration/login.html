@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% load static %}
+{% load static i18n %}
 
 {% block styles %}
 <link rel="stylesheet" href="{% static 'css/login.css' %}">
@@ -10,24 +10,24 @@
     <img src="{% static 'img/logo.svg' %}" class="login-logo" alt="CQC Pathfinder">
     <div class="login-overlay">
         {% if form.errors %}
-        <div class="login-error">Falsche Benutzerdaten</div>
+        <div class="login-error">{% trans "Invalid credentials" %}</div>
         {% endif %}
 
         <form class="login-form" method="post" action="">
             {% csrf_token %}
 
             <label class="login-field">
-                <span class="login-field-label">Benutzername</span>
+                <span class="login-field-label">{% trans "Username" %}</span>
                 <input type="text" name="username" autocomplete="username"
                        autocapitalize="off" autocorrect="off" spellcheck="false"
                        required>
             </label>
 
             <label class="login-field">
-                <span class="login-field-label">Passwort</span>
+                <span class="login-field-label">{% trans "Password" %}</span>
                 <div class="login-input-group">
                     <input type="password" name="password" autocomplete="current-password" required>
-                    <button type="submit" class="login-submit" title="Anmelden" aria-label="Anmelden">
+                    <button type="submit" class="login-submit" title="{% trans 'Log in' %}" aria-label="{% trans 'Log in' %}">
                         <x-icon name="sign-in" size="18px"></x-icon>
                     </button>
                 </div>
