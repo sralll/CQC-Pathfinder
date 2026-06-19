@@ -9,6 +9,7 @@ const CATEGORY_KEYS    = ['fastest', 'less_5', 'between_5_10', 'more_10'];
 const CATEGORY_LABELS  = ['Schnellste', '< 5%', '5–10%', '> 10%'];
 const USER_COLORS      = ['#4CAF50', '#FFC107', '#FF9800', '#F44336'];
 const TEAM_COLORS      = ['rgba(76,175,80,0.32)', 'rgba(255,193,7,0.32)', 'rgba(255,152,0,0.32)', 'rgba(244,67,54,0.32)'];
+const TEAM_BLUE        = '#2675c5';
 
 // HTML labels: index 0 (Schnellste) becomes the crown icon
 function categoryLabelHtml(i, size) {
@@ -50,6 +51,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     PAGE.isTrainer = document.getElementById('play-wrap').dataset.isTrainer === '1';
     initModeToggle();
     initExpandButtons();
+    initInfoButtons();
     updateNavTitle();
     if (PAGE.isTrainer) {
         initTrainerControls();
@@ -134,6 +136,36 @@ function toggleCardExpand(card) {
     }
     // Re-flow SVGs after size change
     if (statsData) renderCharts();
+}
+
+function closeInfoPopovers(except = null) {
+    document.querySelectorAll('.stats-info-popover.open').forEach(popover => {
+        if (popover === except) return;
+        popover.classList.remove('open');
+        const btn = popover.parentElement?.querySelector('.stats-info-btn');
+        if (btn) btn.setAttribute('aria-expanded', 'false');
+    });
+}
+
+function initInfoButtons() {
+    document.querySelectorAll('.stats-info-btn').forEach(btn => {
+        const popover = btn.parentElement?.querySelector('.stats-info-popover');
+        if (!popover) return;
+        btn.setAttribute('aria-expanded', 'false');
+        btn.addEventListener('click', e => {
+            e.stopPropagation();
+            const opening = !popover.classList.contains('open');
+            closeInfoPopovers(popover);
+            popover.classList.toggle('open', opening);
+            btn.setAttribute('aria-expanded', opening ? 'true' : 'false');
+        });
+        popover.addEventListener('click', e => e.stopPropagation());
+    });
+
+    document.addEventListener('click', () => closeInfoPopovers());
+    document.addEventListener('keydown', e => {
+        if (e.key === 'Escape') closeInfoPopovers();
+    });
 }
 
 /* =========================================================
@@ -400,11 +432,12 @@ function tableSortValue(row, key) {
         case 'lt10':            return row.lt10            == null ? NaN : Number(row.lt10);
         case 'gt10':            return row.gt10            == null ? NaN : Number(row.gt10);
         case 'fortschritt':     return row.progress ? Number(row.progress.pct) : NaN;
-        case 'sensitivity':     return row.sensitivity == null || row.sensitivity === '-' ? NaN : Number(row.sensitivity);
-        case 'roi_slope': {
-            const m = /^-?\d+(\.\d+)?/.exec(String(row.roi_slope || ''));
-            return m ? Number(m[0]) : NaN;
-        }
+        case 'error_potential_sensitivity':
+        case 'sensitivity':
+            return row.error_potential_sensitivity == null ? NaN : Number(row.error_potential_sensitivity);
+        case 'time_sensitivity':
+        case 'roi_slope':
+            return row.time_sensitivity == null ? NaN : Number(row.time_sensitivity);
         default: return 0;
     }
 }
@@ -450,6 +483,12 @@ function renderTrainerTable(rows) {
 
     const fmtPct = v => (v == null ? '–' : `${Number(v).toFixed(1)}%`);
     const fmtSec = v => (v == null ? '–' : `${Number(v).toFixed(2)}s`);
+    const fmtMs = v => {
+        if (v == null || v === '-') return '–';
+        const ms = Math.round(Number(v));
+        if (!Number.isFinite(ms)) return '–';
+        return `${ms >= 0 ? '+' : ''}${ms} ms/s`;
+    };
     for (const row of ordered) {
         const isSummary = String(row.athlete || '').includes('Kaderdurchschnitt');
         const tr = document.createElement('tr');
@@ -470,8 +509,8 @@ function renderTrainerTable(rows) {
             <td style="color:#FF9800">${fmtPct(row.lt10)}</td>
             <td style="color:#F44336">${fmtPct(row.gt10)}</td>
             <td class="stats-cell-prog">${fmtProgressBar(row.progress)}</td>
-            <td>${row.sensitivity ?? '–'}</td>
-            <td>${row.roi_slope ?? '–'}</td>`;
+            <td>${fmtMs(row.error_potential_sensitivity)}</td>
+            <td>${fmtMs(row.time_sensitivity)}</td>`;
         tbody.appendChild(tr);
     }
     updateTableSortIndicators();
@@ -524,11 +563,13 @@ function renderCharts() {
     if (!statsData) return;
     const modeLabel = MODE_LABEL[PAGE.mode];
     const title = document.getElementById('stats-card-routes-title');
-    if (title) title.textContent = `Routenwahl (${modeLabel})`;
+    if (title) title.textContent = `Routenwahl`;
     drawDonut();
     drawDonutLegend();
     drawAvgChart();
     drawActivityChart();
+    drawErrorScatterChart();
+    drawSequenceEffectChart();
 }
 
 function drawDonutLegend() {
@@ -814,7 +855,7 @@ function drawActivityChart() {
         return;
     }
 
-    const ML = 26, MR = 12, MT = 14, MB = 26;
+    const ML = 26, MR = 32, MT = 14, MB = 26;
     const chartW = W - ML - MR;
     const chartH = H - MT - MB;
 
@@ -840,6 +881,7 @@ function drawActivityChart() {
         const idx = Math.floor((t.getTime() - start0) / (binDays * dayMs));
         if (idx >= 0 && idx < binCount) bins[idx]++;
     }
+    const qualityBins = buildActivityQualityBins(start0, binDays, binCount);
 
     const maxCount = Math.max(1, ...bins);
     const step     = niceStep(maxCount, Math.max(1, Math.floor(chartH / 30))) || 1;
@@ -876,6 +918,8 @@ function drawActivityChart() {
     const slotW = chartW / bins.length;
     const barW  = Math.max(1.5, slotW * 0.75);
 
+    drawActivityAccuracyOverlay(svg, qualityBins, ML, MT, chartW, chartH, slotW);
+
     bins.forEach((count, i) => {
         const binStart = new Date(start0 + i * binDays * dayMs);
         const binEnd   = new Date(start0 + (i + 1) * binDays * dayMs - 1);
@@ -887,7 +931,7 @@ function drawActivityChart() {
         rect.setAttribute('y', y);
         rect.setAttribute('width', barW);
         rect.setAttribute('height', Math.max(0, baseY - y));
-        rect.setAttribute('fill', count > 0 ? '#e07020' : '#262626');
+        rect.setAttribute('fill', count > 0 ? TEAM_BLUE : '#262626');
         rect.setAttribute('rx', 1.5);
         if (count > 0) {
             rect.setAttribute('class', 'stats-hover-target stats-activity-bar');
@@ -912,6 +956,636 @@ function drawActivityChart() {
             svg.appendChild(lbl);
         }
     });
+}
+
+function buildActivityQualityBins(start0, binDays, binCount) {
+    const dayMs = 24 * 60 * 60 * 1000;
+    const bins = Array.from({ length: binCount }, () => ({
+        fastest: 0,
+        less_5: 0,
+        between_5_10: 0,
+        more_10: 0,
+        total: 0,
+    }));
+    (statsData.activity_quality || []).forEach(item => {
+        const t = new Date(item.timestamp);
+        if (Number.isNaN(t.getTime()) || !CATEGORY_KEYS.includes(item.bucket)) return;
+        const idx = Math.floor((t.getTime() - start0) / (binDays * dayMs));
+        if (idx < 0 || idx >= binCount) return;
+        bins[idx][item.bucket] += 1;
+        bins[idx].total += 1;
+    });
+    return bins;
+}
+
+function drawActivityAccuracyOverlay(svg, bins, ML, MT, chartW, chartH, slotW) {
+    if (!bins.some(b => b.total > 0)) return;
+    const toPctY = pct => MT + chartH - (pct / 100) * chartH;
+    const rightX = ML + chartW;
+
+    const cumulativeCounts = { fastest: 0, less_5: 0, between_5_10: 0, more_10: 0 };
+    let cumulativeTotal = 0;
+    const cumulative = bins.map(bin => {
+        CATEGORY_KEYS.forEach(key => { cumulativeCounts[key] += bin[key]; });
+        cumulativeTotal += bin.total;
+        if (!cumulativeTotal) return null;
+        let running = 0;
+        return CATEGORY_KEYS.map(key => {
+            const lower = running / cumulativeTotal * 100;
+            running += cumulativeCounts[key];
+            return { lower, upper: running / cumulativeTotal * 100 };
+        });
+    });
+
+    CATEGORY_KEYS.forEach((key, idx) => {
+        const path = svgEl('path');
+        path.setAttribute('d', areaPathForSeries(
+            cumulative.map(bin => bin ? bin[idx].lower : null),
+            cumulative.map(bin => bin ? bin[idx].upper : null),
+            ML,
+            slotW,
+            toPctY
+        ));
+        path.setAttribute('fill', USER_COLORS[idx]);
+        path.setAttribute('fill-opacity', '0.33');
+        path.setAttribute('stroke', 'none');
+        path.setAttribute('class', 'stats-accuracy-area');
+        svg.appendChild(path);
+    });
+
+    [0, 50, 100].forEach(pct => {
+        const y = toPctY(pct);
+        const tick = svgEl('line');
+        tick.setAttribute('x1', rightX);
+        tick.setAttribute('y1', y);
+        tick.setAttribute('x2', rightX + 4);
+        tick.setAttribute('y2', y);
+        tick.setAttribute('stroke', '#444');
+        tick.setAttribute('stroke-width', '0.7');
+        svg.appendChild(tick);
+
+        const lbl = svgEl('text');
+        lbl.setAttribute('x', rightX + 7);
+        lbl.setAttribute('y', y + 3);
+        lbl.setAttribute('fill', '#666');
+        lbl.setAttribute('font-size', '9');
+        lbl.textContent = `${pct}%`;
+        svg.appendChild(lbl);
+    });
+}
+
+function areaPathForSeries(lowerValues, upperValues, ML, slotW, toY) {
+    let d = '';
+    let upper = [];
+    let lower = [];
+
+    const flush = () => {
+        if (!upper.length) return;
+        d += `${d ? ' ' : ''}M ${upper.map(p => `${p.x.toFixed(2)} ${p.y.toFixed(2)}`).join(' L ')}`;
+        d += ` L ${lower.reverse().map(p => `${p.x.toFixed(2)} ${p.y.toFixed(2)}`).join(' L ')} Z`;
+        upper = [];
+        lower = [];
+    };
+
+    upperValues.forEach((upperValue, i) => {
+        const lowerValue = lowerValues[i];
+        if (upperValue == null || lowerValue == null) {
+            flush();
+            return;
+        }
+        const x = ML + i * slotW + slotW / 2;
+        upper.push({ x, y: toY(upperValue) });
+        lower.push({ x, y: toY(lowerValue) });
+    });
+    flush();
+    return d;
+}
+
+/* =========================================================
+   ERROR POTENTIAL - decision time vs. route runtime spread
+========================================================= */
+
+function errorPotentialPoints() {
+    return (statsData?.error_potential?.points || [])
+        .map(p => ({
+            x: Number(p.x),
+            y: Number(p.y),
+            route_count: Number(p.route_count) || 0,
+            max_error: Number(p.max_error),
+        }))
+        .filter(p => Number.isFinite(p.x) && Number.isFinite(p.y));
+}
+
+function drawErrorScatterChart() {
+    const svg = document.getElementById('stats-error-scatter-chart');
+    if (!svg) return;
+    svg.innerHTML = '';
+    const W = svg.clientWidth  || 320;
+    const H = svg.clientHeight || 220;
+    svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+
+    const points = errorPotentialPoints();
+    if (!points.length) {
+        drawCenteredEmpty(svg, W, H, 'Keine Daten');
+        return;
+    }
+    if (points.length < 100) {
+        drawCenteredEmpty(svg, W, H, 'nicht genügend Resultate');
+        return;
+    }
+
+    const ML = 42, MR = 14, MT = 14, MB = 32;
+    const chartW = W - ML - MR;
+    const chartH = H - MT - MB;
+    const maxX = Math.max(0.1, percentile(points.map(p => p.x), 0.95));
+    const maxY = Math.max(0.1, percentile(points.map(p => p.y), 0.95));
+    const xStep = niceStep(maxX, Math.max(2, Math.floor(chartW / 70)));
+    const yStep = niceStep(maxY, Math.max(2, Math.floor(chartH / 36)));
+    const xMax = Math.ceil(maxX / xStep) * xStep;
+    const yMax = Math.ceil(maxY / yStep) * yStep;
+    const toX = v => ML + (xMax > 0 ? (v / xMax) * chartW : 0);
+    const toY = v => MT + chartH - (yMax > 0 ? (v / yMax) * chartH : 0);
+
+    drawGrid(svg, ML, MT, chartW, chartH, xMax, yMax, xStep, yStep, toX, toY);
+    drawAxisLabels(svg, W, H, ML, MT, chartH, 'Fehlerpotential', 'Entscheidungszeit');
+
+    const visiblePoints = points.filter(p => p.x <= xMax && p.y <= yMax);
+    const sample = samplePoints(visiblePoints, 1800);
+    sample.forEach(p => {
+        const c = svgEl('circle');
+        c.setAttribute('cx', toX(p.x));
+        c.setAttribute('cy', toY(p.y));
+        c.setAttribute('r', sample.length > 900 ? 1.7 : 2.2);
+        c.setAttribute('fill', '#e07020');
+        c.setAttribute('fill-opacity', sample.length > 900 ? '0.28' : '0.42');
+        c.setAttribute('class', 'stats-hover-target stats-scatter-point');
+        bindTooltip(c, `Potential: ${p.x.toFixed(2)}s · Zeit: ${p.y.toFixed(2)}s · Routen: ${p.route_count}`);
+        svg.appendChild(c);
+    });
+
+    const userFit = regressionFit(statsData?.error_potential?.user_fit);
+    const teamFit = regressionFit(statsData?.error_potential?.team_fit);
+    if (teamFit) {
+        drawTrendLine(svg, toX, toY, xMax, yMax, teamFit, TEAM_BLUE, `Team: ${formatMsSensitivity(teamFit)} ms/s`);
+    }
+    if (userFit) {
+        drawTrendLine(svg, toX, toY, xMax, yMax, userFit, '#f3b27d', `Persönlich: ${formatMsSensitivity(userFit)} ms/s`);
+    }
+    drawSensitivityLabels(svg, W, MT, userFit, teamFit);
+}
+
+function drawErrorBinsChart() {
+    const svg = document.getElementById('stats-error-bins-chart');
+    if (!svg) return;
+    svg.innerHTML = '';
+    const W = svg.clientWidth  || 320;
+    const H = svg.clientHeight || 220;
+    svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+
+    const points = errorPotentialPoints();
+    if (!points.length) {
+        drawCenteredEmpty(svg, W, H, 'Keine Daten');
+        return;
+    }
+
+    const bins = makeErrorBins(points, 6);
+    const ML = 42, MR = 14, MT = 18, MB = 32;
+    const chartW = W - ML - MR;
+    const chartH = H - MT - MB;
+    const maxAvg = Math.max(0.1, ...bins.map(b => b.avgY));
+    const yStep = niceStep(maxAvg, Math.max(2, Math.floor(chartH / 36)));
+    const yMax = Math.ceil(maxAvg / yStep) * yStep;
+    const toY = v => MT + chartH - (yMax > 0 ? (v / yMax) * chartH : 0);
+
+    for (let v = 0; v <= yMax + yStep * 0.01; v += yStep) {
+        const y = toY(v);
+        const line = svgEl('line');
+        line.setAttribute('x1', ML); line.setAttribute('y1', y);
+        line.setAttribute('x2', ML + chartW); line.setAttribute('y2', y);
+        line.setAttribute('stroke', v === 0 ? '#444' : '#222');
+        line.setAttribute('stroke-width', v === 0 ? '1' : '0.5');
+        svg.appendChild(line);
+
+        const lbl = svgEl('text');
+        lbl.setAttribute('x', ML - 6); lbl.setAttribute('y', y + 3);
+        lbl.setAttribute('text-anchor', 'end');
+        lbl.setAttribute('fill', '#555');
+        lbl.setAttribute('font-size', '9');
+        lbl.textContent = `${v.toFixed(yStep < 1 ? 1 : 0)}s`;
+        svg.appendChild(lbl);
+    }
+
+    const slotW = chartW / bins.length;
+    const barW = Math.max(10, slotW * 0.64);
+    bins.forEach((b, i) => {
+        const cx = ML + i * slotW + slotW / 2;
+        const y = toY(b.avgY);
+        const baseY = MT + chartH;
+        const rect = svgEl('rect');
+        rect.setAttribute('x', cx - barW / 2);
+        rect.setAttribute('y', y);
+        rect.setAttribute('width', barW);
+        rect.setAttribute('height', Math.max(0, baseY - y));
+        rect.setAttribute('rx', 2);
+        rect.setAttribute('fill', '#e07020');
+        rect.setAttribute('fill-opacity', '0.78');
+        rect.setAttribute('class', 'stats-hover-target stats-bar');
+        rect.style.transformOrigin = `${cx}px ${baseY}px`;
+        rect.style.transform = 'scaleY(0)';
+        requestAnimationFrame(() => { rect.style.transform = 'scaleY(1)'; });
+        bindTooltip(rect, `${formatBinLabel(b)}: ${b.avgY.toFixed(2)}s (${b.count})`);
+        svg.appendChild(rect);
+
+        const lbl = svgEl('text');
+        lbl.setAttribute('x', cx);
+        lbl.setAttribute('y', MT + chartH + 15);
+        lbl.setAttribute('text-anchor', 'middle');
+        lbl.setAttribute('fill', '#777');
+        lbl.setAttribute('font-size', '9');
+        lbl.textContent = formatShortBinLabel(b);
+        svg.appendChild(lbl);
+    });
+
+    drawAxisLabels(svg, W, H, ML, MT, chartH, 'Potential', 'Ø Zeit');
+}
+
+function timeSensitivityPoints() {
+    return (statsData?.time_sensitivity?.points || [])
+        .map(p => ({
+            x: Number(p.x),
+            y: Number(p.y),
+            choice_time: Number(p.choice_time),
+            avg_choice_time: Number(p.avg_choice_time),
+            result_count: Number(p.result_count) || 0,
+        }))
+        .filter(p => Number.isFinite(p.x) && Number.isFinite(p.y) && Number.isFinite(p.choice_time));
+}
+
+function drawSequenceEffectChart() {
+    const svg = document.getElementById('stats-sequence-chart');
+    if (!svg) return;
+    svg.innerHTML = '';
+    const W = svg.clientWidth  || 320;
+    const H = svg.clientHeight || 220;
+    svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+
+    const points = timeSensitivityPoints();
+    if (!points.length) {
+        drawCenteredEmpty(svg, W, H, 'Keine Daten');
+        return;
+    }
+    if (points.length < 100) {
+        drawCenteredEmpty(svg, W, H, 'nicht genügend Resultate');
+        return;
+    }
+
+    const ML = 42, MR = 14, MT = 14, MB = 32;
+    const chartW = W - ML - MR;
+    const chartH = H - MT - MB;
+    const xRange = niceRange(
+        percentile(points.map(p => p.x), 0.025),
+        percentile(points.map(p => p.x), 0.975),
+        Math.max(2, Math.floor(chartW / 70)),
+    );
+    const maxY = Math.max(0.1, percentile(points.map(p => p.y), 0.95));
+    const yStep = niceStep(maxY, Math.max(2, Math.floor(chartH / 36)));
+    const yMax = Math.ceil(maxY / yStep) * yStep;
+    const xMin = xRange.min;
+    const xMax = xRange.max;
+    const xStep = xRange.step;
+    const toX = v => ML + (xMax > xMin ? ((v - xMin) / (xMax - xMin)) * chartW : chartW / 2);
+    const toY = v => MT + chartH - (yMax > 0 ? (v / yMax) * chartH : 0);
+
+    drawGridRange(svg, ML, MT, chartW, chartH, xMin, xMax, 0, yMax, xStep, yStep, toX, toY);
+    drawAxisLabels(svg, W, H, ML, MT, chartH, 'Differenz Entscheidungszeit', 'Routenwahlfehler');
+
+    const visiblePoints = points.filter(p => p.x >= xMin && p.x <= xMax && p.y <= yMax);
+    const sample = samplePoints(visiblePoints, 1800);
+    sample.forEach(p => {
+        const c = svgEl('circle');
+        c.setAttribute('cx', toX(p.x));
+        c.setAttribute('cy', toY(p.y));
+        c.setAttribute('r', sample.length > 900 ? 1.7 : 2.2);
+        c.setAttribute('fill', '#e07020');
+        c.setAttribute('fill-opacity', sample.length > 900 ? '0.28' : '0.42');
+        c.setAttribute('class', 'stats-hover-target stats-scatter-point');
+        const rel = `${p.x >= 0 ? '+' : ''}${p.x.toFixed(2)}s`;
+        const avg = Number.isFinite(p.avg_choice_time) ? ` · Ø: ${p.avg_choice_time.toFixed(2)}s` : '';
+        bindTooltip(c, `Zeit vs Ø: ${rel} · Fehler: ${p.y.toFixed(2)}s · Zeit: ${p.choice_time.toFixed(2)}s${avg} · n=${p.result_count}`);
+        svg.appendChild(c);
+    });
+
+    const fit = regressionFit(statsData?.time_sensitivity?.fit);
+    if (fit) {
+        const y0 = Math.max(0, Math.min(yMax, fit.intercept + fit.slope * xMin));
+        const y1 = Math.max(0, Math.min(yMax, fit.intercept + fit.slope * xMax));
+        const line = svgEl('line');
+        line.setAttribute('x1', toX(xMin));
+        line.setAttribute('y1', toY(y0));
+        line.setAttribute('x2', toX(xMax));
+        line.setAttribute('y2', toY(y1));
+        line.setAttribute('stroke', '#f3b27d');
+        line.setAttribute('stroke-width', '1.8');
+        line.setAttribute('class', 'stats-hover-target stats-trend-line');
+        bindTooltip(line, `Zeitsensitivität: ${formatMsSensitivity(fit)} ms/s`);
+        svg.appendChild(line);
+
+        const label = svgEl('text');
+        label.setAttribute('x', W - 14);
+        label.setAttribute('y', MT + 10);
+        label.setAttribute('text-anchor', 'end');
+        label.setAttribute('fill', '#f3b27d');
+        label.setAttribute('font-size', '10');
+        label.setAttribute('font-weight', '600');
+        label.textContent = `Sensitivität: ${formatMsSensitivity(fit)} ms/s`;
+        svg.appendChild(label);
+    }
+}
+
+function regressionFit(raw) {
+    if (!raw || !Number.isFinite(Number(raw.slope)) || !Number.isFinite(Number(raw.intercept))) {
+        return null;
+    }
+    return {
+        slope: Number(raw.slope),
+        intercept: Number(raw.intercept),
+        n: Number(raw.n) || 0,
+        sensitivity_ms: Number.isFinite(Number(raw.sensitivity_ms))
+            ? Number(raw.sensitivity_ms)
+            : Math.round(Number(raw.slope) * 1000),
+    };
+}
+
+function formatMsSensitivity(fit) {
+    const ms = Math.round(fit.sensitivity_ms);
+    return `${ms >= 0 ? '+' : ''}${ms}`;
+}
+
+function drawSensitivityLabels(svg, W, MT, userFit, teamFit) {
+    const rows = [];
+    if (userFit) rows.push({ label: `Du: ${formatMsSensitivity(userFit)} ms/s`, color: '#f3b27d' });
+    if (teamFit) rows.push({ label: `Team: ${formatMsSensitivity(teamFit)} ms/s`, color: TEAM_BLUE });
+    rows.forEach((row, i) => {
+        const t = svgEl('text');
+        t.setAttribute('x', W - 14);
+        t.setAttribute('y', MT + 10 + i * 13);
+        t.setAttribute('text-anchor', 'end');
+        t.setAttribute('fill', row.color);
+        t.setAttribute('font-size', '10');
+        t.setAttribute('font-weight', '600');
+        t.textContent = row.label;
+        svg.appendChild(t);
+    });
+}
+
+function drawCenteredEmpty(svg, W, H, text) {
+    const t = svgEl('text');
+    t.setAttribute('x', W / 2); t.setAttribute('y', H / 2);
+    t.setAttribute('text-anchor', 'middle');
+    t.setAttribute('fill', '#444');
+    t.setAttribute('font-size', '11');
+    t.textContent = text;
+    svg.appendChild(t);
+}
+
+function drawGridRange(svg, ML, MT, chartW, chartH, xMin, xMax, yMin, yMax, xStep, yStep, toX, toY, xUnit = 's', yUnit = 's') {
+    const yStart = Math.ceil(yMin / yStep) * yStep;
+    for (let v = yStart; v <= yMax + yStep * 0.01; v += yStep) {
+        const y = toY(v);
+        const isZero = Math.abs(v) < 1e-9;
+        const line = svgEl('line');
+        line.setAttribute('x1', ML); line.setAttribute('y1', y);
+        line.setAttribute('x2', ML + chartW); line.setAttribute('y2', y);
+        line.setAttribute('stroke', isZero ? '#444' : '#222');
+        line.setAttribute('stroke-width', isZero ? '1' : '0.5');
+        svg.appendChild(line);
+
+        const lbl = svgEl('text');
+        lbl.setAttribute('x', ML - 6); lbl.setAttribute('y', y + 3);
+        lbl.setAttribute('text-anchor', 'end');
+        lbl.setAttribute('fill', '#555');
+        lbl.setAttribute('font-size', '9');
+        lbl.textContent = `${v.toFixed(yStep < 1 ? 1 : 0)}${yUnit}`;
+        svg.appendChild(lbl);
+    }
+
+    const xStart = Math.ceil(xMin / xStep) * xStep;
+    for (let v = xStart; v <= xMax + xStep * 0.01; v += xStep) {
+        const x = toX(v);
+        const isZero = Math.abs(v) < 1e-9;
+        const line = svgEl('line');
+        line.setAttribute('x1', x); line.setAttribute('y1', MT);
+        line.setAttribute('x2', x); line.setAttribute('y2', MT + chartH);
+        line.setAttribute('stroke', isZero ? '#444' : '#222');
+        line.setAttribute('stroke-width', isZero ? '1' : '0.5');
+        svg.appendChild(line);
+
+        const lbl = svgEl('text');
+        lbl.setAttribute('x', x); lbl.setAttribute('y', MT + chartH + 15);
+        lbl.setAttribute('text-anchor', 'middle');
+        lbl.setAttribute('fill', '#555');
+        lbl.setAttribute('font-size', '9');
+        lbl.textContent = `${v.toFixed(xStep < 1 ? 1 : 0)}${xUnit}`;
+        svg.appendChild(lbl);
+    }
+}
+
+function drawGrid(svg, ML, MT, chartW, chartH, xMax, yMax, xStep, yStep, toX, toY, xUnit = 's', yUnit = 's') {
+    for (let v = 0; v <= yMax + yStep * 0.01; v += yStep) {
+        const y = toY(v);
+        const line = svgEl('line');
+        line.setAttribute('x1', ML); line.setAttribute('y1', y);
+        line.setAttribute('x2', ML + chartW); line.setAttribute('y2', y);
+        line.setAttribute('stroke', v === 0 ? '#444' : '#222');
+        line.setAttribute('stroke-width', v === 0 ? '1' : '0.5');
+        svg.appendChild(line);
+
+        const lbl = svgEl('text');
+        lbl.setAttribute('x', ML - 6); lbl.setAttribute('y', y + 3);
+        lbl.setAttribute('text-anchor', 'end');
+        lbl.setAttribute('fill', '#555');
+        lbl.setAttribute('font-size', '9');
+        lbl.textContent = `${v.toFixed(yStep < 1 ? 1 : 0)}${yUnit}`;
+        svg.appendChild(lbl);
+    }
+
+    for (let v = 0; v <= xMax + xStep * 0.01; v += xStep) {
+        const x = toX(v);
+        const line = svgEl('line');
+        line.setAttribute('x1', x); line.setAttribute('y1', MT);
+        line.setAttribute('x2', x); line.setAttribute('y2', MT + chartH);
+        line.setAttribute('stroke', v === 0 ? '#444' : '#222');
+        line.setAttribute('stroke-width', v === 0 ? '1' : '0.5');
+        svg.appendChild(line);
+
+        const lbl = svgEl('text');
+        lbl.setAttribute('x', x); lbl.setAttribute('y', MT + chartH + 15);
+        lbl.setAttribute('text-anchor', 'middle');
+        lbl.setAttribute('fill', '#555');
+        lbl.setAttribute('font-size', '9');
+        lbl.textContent = `${v.toFixed(xStep < 1 ? 1 : 0)}${xUnit}`;
+        svg.appendChild(lbl);
+    }
+}
+
+function drawAxisLabels(svg, W, H, ML, MT, chartH, xLabel, yLabel) {
+    const x = svgEl('text');
+    x.setAttribute('x', W / 2);
+    x.setAttribute('y', H - 3);
+    x.setAttribute('text-anchor', 'middle');
+    x.setAttribute('fill', '#777');
+    x.setAttribute('font-size', '9');
+    x.textContent = xLabel;
+    svg.appendChild(x);
+
+    const y = svgEl('text');
+    const yx = 10;
+    const yy = MT + chartH / 2;
+    y.setAttribute('x', yx);
+    y.setAttribute('y', yy);
+    y.setAttribute('text-anchor', 'middle');
+    y.setAttribute('transform', `rotate(-90 ${yx} ${yy})`);
+    y.setAttribute('fill', '#777');
+    y.setAttribute('font-size', '9');
+    y.textContent = yLabel;
+    svg.appendChild(y);
+}
+
+function samplePoints(points, maxPoints) {
+    if (points.length <= maxPoints) return points;
+    const step = points.length / maxPoints;
+    const out = [];
+    for (let i = 0; i < maxPoints; i++) {
+        out.push(points[Math.floor(i * step)]);
+    }
+    return out;
+}
+
+function percentile(values, p) {
+    const sorted = values
+        .filter(v => Number.isFinite(v))
+        .sort((a, b) => a - b);
+    if (!sorted.length) return 0;
+    if (sorted.length === 1) return sorted[0];
+    const idx = (sorted.length - 1) * Math.max(0, Math.min(1, p));
+    const lo = Math.floor(idx);
+    const hi = Math.ceil(idx);
+    if (lo === hi) return sorted[lo];
+    return sorted[lo] + (sorted[hi] - sorted[lo]) * (idx - lo);
+}
+
+function niceRange(minVal, maxVal, maxSteps) {
+    if (!Number.isFinite(minVal) || !Number.isFinite(maxVal)) {
+        return { min: -1, max: 1, step: 1 };
+    }
+    if (Math.abs(maxVal - minVal) < 1e-9) {
+        const pad = Math.max(1, Math.abs(maxVal) * 0.25);
+        minVal -= pad;
+        maxVal += pad;
+    }
+    minVal = Math.min(minVal, 0);
+    maxVal = Math.max(maxVal, 0);
+    const step = niceStep(maxVal - minVal, maxSteps);
+    return {
+        min: Math.floor(minVal / step) * step,
+        max: Math.ceil(maxVal / step) * step,
+        step,
+    };
+}
+
+function linearRegression(points) {
+    if (points.length < 3) return null;
+    const n = points.length;
+    const sx = points.reduce((s, p) => s + p.x, 0);
+    const sy = points.reduce((s, p) => s + p.y, 0);
+    const mx = sx / n;
+    const my = sy / n;
+    let sxx = 0, sxy = 0;
+    points.forEach(p => {
+        const dx = p.x - mx;
+        sxx += dx * dx;
+        sxy += dx * (p.y - my);
+    });
+    if (sxx <= 1e-9) return null;
+    const slope = sxy / sxx;
+    return { slope, intercept: my - slope * mx };
+}
+
+function drawTrendLine(svg, toX, toY, xMax, yMax, trend, color, tooltip) {
+    const y0 = Math.max(0, Math.min(yMax, trend.intercept));
+    const y1 = Math.max(0, Math.min(yMax, trend.intercept + trend.slope * xMax));
+    const line = svgEl('line');
+    line.setAttribute('x1', toX(0));
+    line.setAttribute('y1', toY(y0));
+    line.setAttribute('x2', toX(xMax));
+    line.setAttribute('y2', toY(y1));
+    line.setAttribute('stroke', color);
+    line.setAttribute('stroke-width', '1.8');
+    line.setAttribute('class', 'stats-hover-target stats-trend-line');
+    bindTooltip(line, tooltip);
+    svg.appendChild(line);
+}
+
+function valueExtent(values) {
+    return {
+        min: Math.min(...values),
+        max: Math.max(...values),
+    };
+}
+
+function drawMiniLegend(svg, W, items) {
+    let x = W - 12;
+    const y = 4;
+    items.slice().reverse().forEach(item => {
+        const t = svgEl('text');
+        t.setAttribute('y', y + 9);
+        t.setAttribute('fill', '#888');
+        t.setAttribute('font-size', '10');
+        t.setAttribute('text-anchor', 'end');
+        t.setAttribute('x', x);
+        t.textContent = item.label;
+        svg.appendChild(t);
+        x -= item.label.length * 5.2 + 5;
+
+        const line = svgEl('line');
+        line.setAttribute('x1', x - 16);
+        line.setAttribute('y1', y + 5);
+        line.setAttribute('x2', x - 2);
+        line.setAttribute('y2', y + 5);
+        line.setAttribute('stroke', item.color);
+        line.setAttribute('stroke-width', '1.8');
+        line.setAttribute('class', 'stats-trend-line');
+        svg.appendChild(line);
+        x -= 26;
+    });
+}
+
+function makeErrorBins(points, targetBins) {
+    const maxX = Math.max(...points.map(p => p.x));
+    const binCount = maxX <= 0 ? 1 : Math.min(targetBins, Math.max(1, Math.ceil(points.length / 4)));
+    const width = maxX <= 0 ? 1 : maxX / binCount;
+    const bins = Array.from({ length: binCount }, (_, i) => ({
+        min: i * width,
+        max: i === binCount - 1 ? maxX : (i + 1) * width,
+        count: 0,
+        sumY: 0,
+        avgY: 0,
+    }));
+    points.forEach(p => {
+        const idx = maxX <= 0 ? 0 : Math.min(binCount - 1, Math.floor(p.x / width));
+        bins[idx].count += 1;
+        bins[idx].sumY += p.y;
+    });
+    return bins.filter(b => b.count > 0).map(b => ({ ...b, avgY: b.sumY / b.count }));
+}
+
+function formatBinLabel(b) {
+    return `${b.min.toFixed(1)}-${b.max.toFixed(1)}s`;
+}
+
+function formatShortBinLabel(b) {
+    if (b.max <= 0) return '0s';
+    return `${b.min.toFixed(0)}-${b.max.toFixed(0)}s`;
 }
 
 /* =========================================================

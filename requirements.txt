@@ -8,6 +8,7 @@ tzdata==2025.2  # Django/timezone dependency on Windows
 dj-database-url==2.3.0  # settings.py database configuration
 psycopg2-binary==2.9.10  # PostgreSQL database driver
 python-dotenv==1.1.0  # settings.py loads .env
+redis==5.2.1  # Django RedisCache backend for shared stats caching
 gunicorn==23.0.0  # production process manager
 uvicorn==0.34.2  # production ASGI worker in start.sh
 h11==0.16.0  # uvicorn dependency

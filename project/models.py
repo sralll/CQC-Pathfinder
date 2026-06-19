@@ -96,6 +96,9 @@ class Route(models.Model):
     class Meta:
         ordering = ['order']
         unique_together = ('control_pair', 'order')
+        indexes = [
+            models.Index(fields=['control_pair', 'run_time'], name='route_cp_runtime_idx'),
+        ]
 
     def __str__(self):
         return f"Route {self.order} - CP {self.control_pair.order} - {self.control_pair.file.name}"

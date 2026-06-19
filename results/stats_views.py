@@ -1,7 +1,8 @@
 from django.conf import settings
 from django.contrib.auth.decorators import login_required
 from django.core.cache import cache
-from django.db.models import Count, Min, Q
+from django.db.models import Avg, Count, F, FloatField, IntegerField, Min, OuterRef, Q, Subquery, Sum
+from django.db.models import ExpressionWrapper
 from django.http import JsonResponse
 from django.shortcuts import render
 from django.views.decorators.http import require_GET
@@ -23,7 +24,7 @@ STATS_TEAM_CACHE_TIMEOUT = getattr(settings, 'STATS_TEAM_CACHE_TIMEOUT', 600)
 
 
 def _team_choice_cache_key(team_id, competition_flag):
-    return f"stats:team-choice:v1:{team_id}:{int(competition_flag)}"
+    return f"stats:team-choice:v2:{team_id}:{int(competition_flag)}"
 
 
 def _team_random_cache_key(team_id):
@@ -31,11 +32,15 @@ def _team_random_cache_key(team_id):
 
 
 def _stats_table_cache_key(team_id, mode):
-    return f"stats:table:v1:{team_id}:{mode}"
+    return f"stats:table:v3:{team_id}:{mode}"
 
 
 def _team_progress_cache_key(team_id):
-    return f"stats:progress:v1:{team_id}"
+    return f"stats:progress:v2:{team_id}"
+
+
+def _team_error_fit_cache_key(team_id, competition_flag):
+    return f"stats:team-error-fit:v1:{team_id}:{int(competition_flag)}"
 
 
 def _clear_stats_cache_for_team(team):
@@ -45,6 +50,8 @@ def _clear_stats_cache_for_team(team):
     cache.delete(_team_choice_cache_key(team.id, False))
     cache.delete(_team_random_cache_key(team.id))
     cache.delete(_team_progress_cache_key(team.id))
+    cache.delete(_team_error_fit_cache_key(team.id, True))
+    cache.delete(_team_error_fit_cache_key(team.id, False))
     for mode in ('competition', 'training', 'random'):
         cache.delete(_stats_table_cache_key(team.id, mode))
 
@@ -81,10 +88,20 @@ def _choice_row_queryset(qs):
         'id',
         'user_id',
         'control_pair_id',
+        'control_pair__order',
+        'control_pair__file_id',
         'selected_route_id',
         'selected_route__run_time',
         'choice_time',
         'timestamp',
+    )
+
+
+def _choice_stats_queryset(qs, competition_flag):
+    return (
+        qs
+        .filter(competition=competition_flag)
+        .filter(control_pair__file__deleted=False)
     )
 
 
@@ -100,6 +117,343 @@ def _min_time_per_cp(cp_ids):
             .annotate(min_time=Min('run_time'))
         )
     }
+
+
+def _median(values):
+    values = sorted(values)
+    n = len(values)
+    if n == 0:
+        return None
+    mid = n // 2
+    if n % 2:
+        return values[mid]
+    return (values[mid - 1] + values[mid]) / 2
+
+
+def _route_runtime_stats_for_cp(cp_ids):
+    """Return per-CP runtime stats used by the decision/error scatter plot.
+
+    For two-route legs the error potential is the direct slower-fastest gap.
+    For legs with three or more routes, use the median positive loss behind the
+    fastest route. That keeps a single obviously bad route from dominating the
+    analysis while still increasing the potential when several alternatives are
+    meaningfully slower.
+    """
+    if not cp_ids:
+        return {}
+
+    runtimes_by_cp = {}
+    for cp_id, run_time in (
+        Route.objects
+        .filter(control_pair_id__in=cp_ids, run_time__isnull=False)
+        .order_by('control_pair_id', 'run_time')
+        .values_list('control_pair_id', 'run_time')
+    ):
+        if run_time is None or run_time <= 0:
+            continue
+        runtimes_by_cp.setdefault(cp_id, []).append(float(run_time))
+
+    stats = {}
+    for cp_id, runtimes in runtimes_by_cp.items():
+        runtimes = sorted(runtimes)
+        if len(runtimes) < 2:
+            continue
+        fastest = runtimes[0]
+        max_gap = max(0.0, runtimes[-1] - fastest)
+        if len(runtimes) == 2:
+            potential = max_gap
+        else:
+            positive_losses = [rt - fastest for rt in runtimes[1:] if rt > fastest]
+            potential = _median(positive_losses) if positive_losses else 0.0
+        stats[cp_id] = {
+            'route_count': len(runtimes),
+            'fastest': fastest,
+            'error_potential': max(0.0, potential),
+            'max_error_potential': max_gap,
+        }
+    return stats
+
+
+def _choice_error_potential_points(choices, runtime_stats):
+    points = []
+    for c in choices:
+        cp_id = c.get('control_pair_id')
+        stat = runtime_stats.get(cp_id)
+        choice_time = c.get('choice_time')
+        if (
+            not stat
+            or stat['route_count'] <= 1
+            or choice_time is None
+        ):
+            continue
+        points.append({
+            'x': round(stat['max_error_potential'], 2),
+            'y': round(max(0.0, float(choice_time)), 2),
+            'route_count': stat['route_count'],
+            'max_error': round(stat['max_error_potential'], 2),
+        })
+    return points
+
+
+def _linear_fit(points):
+    if len(points) < 2:
+        return None
+    xs = [float(p['x']) for p in points]
+    ys = [float(p['y']) for p in points]
+    n = len(points)
+    mean_x = sum(xs) / n
+    mean_y = sum(ys) / n
+    sxx = sum((x - mean_x) ** 2 for x in xs)
+    if sxx <= 1e-9:
+        return None
+    slope = sum((x - mean_x) * (y - mean_y) for x, y in zip(xs, ys)) / sxx
+    intercept = mean_y - slope * mean_x
+    return {
+        'slope': round(slope, 6),
+        'intercept': round(intercept, 6),
+        'n': n,
+        'sensitivity_ms': round(slope * 1000),
+    }
+
+
+def _linear_fit_from_sums(row):
+    n = int(row.get('n') or 0)
+    if n < 2:
+        return None
+    sx = float(row.get('sx') or 0)
+    sy = float(row.get('sy') or 0)
+    sx2 = float(row.get('sx2') or 0)
+    sxy = float(row.get('sxy') or 0)
+    mean_x = sx / n
+    mean_y = sy / n
+    sxx = sx2 - (sx * sx / n)
+    if sxx <= 1e-9:
+        return None
+    slope = (sxy - (sx * sy / n)) / sxx
+    intercept = mean_y - slope * mean_x
+    return {
+        'slope': round(slope, 6),
+        'intercept': round(intercept, 6),
+        'n': n,
+        'sensitivity_ms': round(slope * 1000),
+    }
+
+
+def _linear_fit_sums(qs, group_by=None):
+    qs = qs.annotate(
+        fit_x2=ExpressionWrapper(F('fit_x') * F('fit_x'), output_field=FloatField()),
+        fit_xy=ExpressionWrapper(F('fit_x') * F('fit_y'), output_field=FloatField()),
+    )
+    aggregates = {
+        'n': Count('id'),
+        'sx': Sum('fit_x'),
+        'sy': Sum('fit_y'),
+        'sx2': Sum('fit_x2'),
+        'sxy': Sum('fit_xy'),
+    }
+    if group_by:
+        return qs.values(group_by).annotate(**aggregates)
+    return qs.aggregate(**aggregates)
+
+
+def _valid_route_stats_subqueries():
+    routes = (
+        Route.objects
+        .filter(control_pair_id=OuterRef('control_pair_id'), run_time__isnull=False, run_time__gt=0)
+        .order_by()
+    )
+    by_cp = routes.values('control_pair_id')
+    return {
+        'min_route_time': Subquery(
+            routes.order_by('run_time').values('run_time')[:1],
+            output_field=FloatField(),
+        ),
+        'max_route_time': Subquery(
+            routes.order_by('-run_time').values('run_time')[:1],
+            output_field=FloatField(),
+        ),
+        'route_count': Subquery(
+            by_cp.annotate(n=Count('id')).values('n')[:1],
+            output_field=IntegerField(),
+        ),
+    }
+
+
+def _min_route_time_subquery():
+    return Subquery(
+        Route.objects
+        .filter(control_pair_id=OuterRef('control_pair_id'), run_time__isnull=False, run_time__gt=0)
+        .order_by('run_time')
+        .values('run_time')[:1],
+        output_field=FloatField(),
+    )
+
+
+def _error_potential_fit_queryset(qs):
+    route_stats = _valid_route_stats_subqueries()
+    return (
+        qs
+        .filter(control_pair_id__isnull=False, choice_time__isnull=False)
+        .annotate(**route_stats)
+        .filter(route_count__gt=1, min_route_time__isnull=False, max_route_time__isnull=False)
+        .annotate(
+            fit_x=ExpressionWrapper(F('max_route_time') - F('min_route_time'), output_field=FloatField()),
+            fit_y=ExpressionWrapper(F('choice_time'), output_field=FloatField()),
+        )
+        .filter(fit_x__gte=0)
+    )
+
+
+def _choice_error_potential_fit(qs):
+    return _linear_fit_from_sums(_linear_fit_sums(_error_potential_fit_queryset(qs)))
+
+
+def _choice_error_potential_fits_by_user(qs):
+    return {
+        row['user_id']: _linear_fit_from_sums(row)
+        for row in _linear_fit_sums(_error_potential_fit_queryset(qs), 'user_id')
+    }
+
+
+def _time_benchmark_subqueries(benchmark_qs):
+    benchmark = (
+        benchmark_qs
+        .filter(control_pair_id=OuterRef('control_pair_id'))
+        .order_by()
+        .values('control_pair_id')
+    )
+    return {
+        'avg_choice_time': Subquery(
+            benchmark.annotate(avg_choice_time=Avg('choice_time')).values('avg_choice_time')[:1],
+            output_field=FloatField(),
+        ),
+        'benchmark_count': Subquery(
+            benchmark.annotate(result_count=Count('id')).values('result_count')[:1],
+            output_field=IntegerField(),
+        ),
+    }
+
+
+def _time_sensitivity_fit_queryset(rows_qs, benchmark_qs):
+    return (
+        rows_qs
+        .filter(
+            control_pair_id__isnull=False,
+            selected_route__run_time__isnull=False,
+            choice_time__isnull=False,
+        )
+        .annotate(min_route_time=_min_route_time_subquery(), **_time_benchmark_subqueries(benchmark_qs))
+        .filter(
+            benchmark_count__gte=5,
+            min_route_time__isnull=False,
+            avg_choice_time__isnull=False,
+        )
+        .annotate(
+            fit_x=ExpressionWrapper(F('choice_time') - F('avg_choice_time'), output_field=FloatField()),
+            fit_y=ExpressionWrapper(F('selected_route__run_time') - F('min_route_time'), output_field=FloatField()),
+        )
+        .filter(fit_y__gte=0)
+    )
+
+
+def _choice_time_sensitivity_fit(rows_qs, benchmark_qs):
+    return _linear_fit_from_sums(_linear_fit_sums(_time_sensitivity_fit_queryset(rows_qs, benchmark_qs)))
+
+
+def _choice_time_sensitivity_fits_by_user(rows_qs, benchmark_qs):
+    return {
+        row['user_id']: _linear_fit_from_sums(row)
+        for row in _linear_fit_sums(_time_sensitivity_fit_queryset(rows_qs, benchmark_qs), 'user_id')
+    }
+
+
+def _fit_sensitivity_ms(points):
+    fit = _linear_fit(points)
+    return fit['sensitivity_ms'] if fit else None
+
+
+def _random_error_potential_points(rcs):
+    points = []
+    for rc in rcs:
+        if rc.choice_time is None or rc.shorter_time is None or rc.longer_time is None:
+            continue
+        points.append({
+            'x': round(max(0.0, rc.longer_time - rc.shorter_time), 2),
+            'y': round(max(0.0, rc.choice_time), 2),
+            'route_count': 2,
+            'max_error': round(max(0.0, rc.longer_time - rc.shorter_time), 2),
+        })
+    return points
+
+
+def _choice_activity_quality_events(choices, min_time_per_cp):
+    events = []
+    for c in choices:
+        classified = _bucket_choice(c, min_time_per_cp)
+        timestamp = c.get('timestamp')
+        if not classified or not timestamp:
+            continue
+        events.append({
+            'timestamp': timestamp.isoformat(),
+            'bucket': classified[0],
+        })
+    return events
+
+
+def _random_activity_quality_events(rcs):
+    return [
+        {'timestamp': rc.timestamp.isoformat(), 'bucket': _bucket_random(rc)[0]}
+        for rc in rcs
+        if rc.timestamp
+    ]
+
+
+def _choice_time_benchmarks_per_cp(qs, cp_ids):
+    if not cp_ids:
+        return {}
+    return {
+        row['control_pair_id']: {
+            'avg_choice_time': float(row['avg_choice_time'] or 0),
+            'result_count': row['result_count'],
+        }
+        for row in (
+            qs
+            .filter(control_pair_id__in=cp_ids)
+            .values('control_pair_id')
+            .annotate(
+                avg_choice_time=Avg('choice_time'),
+                result_count=Count('id'),
+            )
+        )
+    }
+
+
+def _choice_time_sensitivity_points(choices, min_time_per_cp, benchmarks):
+    points = []
+    for c in choices:
+        cp_id = c.get('control_pair_id')
+        cp_min = min_time_per_cp.get(cp_id)
+        benchmark = benchmarks.get(cp_id)
+        selected_runtime = c.get('selected_route__run_time')
+        choice_time = c.get('choice_time')
+        if (
+            not cp_min
+            or not benchmark
+            or benchmark['result_count'] < 5
+            or selected_runtime is None
+            or choice_time is None
+        ):
+            continue
+        relative_choice_time = float(choice_time) - benchmark['avg_choice_time']
+        route_loss = max(0.0, float(selected_runtime) - float(cp_min))
+        points.append({
+            'x': round(relative_choice_time, 2),
+            'y': round(route_loss, 2),
+            'choice_time': round(max(0.0, float(choice_time)), 2),
+            'avg_choice_time': round(benchmark['avg_choice_time'], 2),
+            'result_count': benchmark['result_count'],
+        })
+    return points
 
 
 def _aggregate_choices(choices, min_time_per_cp):
@@ -146,8 +500,7 @@ def _cached_team_choice_stats(active_team, competition_flag):
 
     from .models import Choice
     stats = _aggregate_choice_queryset(
-        Choice.objects
-        .filter(competition=competition_flag)
+        _choice_stats_queryset(Choice.objects, competition_flag)
         .filter(_team_choice_filter(active_team))
     )
     cache.set(cache_key, stats, STATS_TEAM_CACHE_TIMEOUT)
@@ -166,6 +519,30 @@ def _cached_team_random_stats(active_team):
     )
     cache.set(cache_key, stats, STATS_TEAM_CACHE_TIMEOUT)
     return stats
+
+
+def _cached_team_error_potential_fit(active_team, competition_flag):
+    cache_key = _team_error_fit_cache_key(active_team.id, competition_flag)
+    fit = cache.get(cache_key)
+    if fit is not None:
+        return fit
+
+    from .models import Choice
+    from django.contrib.auth.models import User
+
+    member_user_ids = list(
+        User.objects
+        .filter(profile__teams=active_team)
+        .exclude(groups__name='Trainer')
+        .distinct()
+        .values_list('id', flat=True)
+    )
+    fit = _choice_error_potential_fit(
+        _choice_stats_queryset(Choice.objects, competition_flag)
+        .filter(user_id__in=member_user_ids)
+    )
+    cache.set(cache_key, fit, STATS_TEAM_CACHE_TIMEOUT)
+    return fit
 
 
 def _bucket_random(rc):
@@ -236,6 +613,8 @@ def get_user_stats(request):
 
         # Send raw timestamps; the client bins them dynamically (~50 bars)
         activity = [rc.timestamp.isoformat() for rc in target_rcs if rc.timestamp]
+        activity_quality = _random_activity_quality_events(target_rcs)
+        error_potential = {'points': _random_error_potential_points(target_rcs)}
 
         longest_streak = 0
         current_run    = 0
@@ -251,6 +630,9 @@ def get_user_stats(request):
             'user':        user_stats,
             'team':        team_stats,
             'activity':    activity,
+            'activity_quality': activity_quality,
+            'error_potential': {**error_potential, 'user_fit': None, 'team_fit': None},
+            'time_sensitivity': {'points': [], 'fit': None},
             'facts': {
                 'total_cp':       user_stats['total'],
                 'fastest_pct':    fastest_pct,
@@ -274,10 +656,13 @@ def get_user_stats(request):
     else:
         team_filter = Q(user=target_user)
 
-    user_choices = list(
-        _choice_row_queryset(Choice.objects
-        .filter(competition=competition_flag)
+    comparable_choices_qs = (
+        _choice_stats_queryset(Choice.objects, competition_flag)
         .filter(team_filter)
+    )
+
+    user_choices = list(
+        _choice_row_queryset(comparable_choices_qs
         .filter(user_id=target_user.id)
         .order_by('timestamp')
         )
@@ -285,6 +670,15 @@ def get_user_stats(request):
 
     cp_ids = {c['control_pair_id'] for c in user_choices if c['control_pair_id']}
     min_time_per_cp = _min_time_per_cp(cp_ids)
+    runtime_stats = _route_runtime_stats_for_cp(cp_ids)
+    error_points = _choice_error_potential_points(user_choices, runtime_stats)
+    time_sensitivity_points = _choice_time_sensitivity_points(
+        user_choices,
+        min_time_per_cp,
+        _choice_time_benchmarks_per_cp(comparable_choices_qs, cp_ids),
+    )
+
+    team_error_fit = _cached_team_error_potential_fit(active_team, competition_flag) if active_team else None
 
     team_stats = (
         _cached_team_choice_stats(active_team, competition_flag)
@@ -295,6 +689,7 @@ def get_user_stats(request):
 
     # Activity: raw ISO timestamps; the client picks a bin width that targets ~50 bars
     activity = [c['timestamp'].isoformat() for c in user_choices if c['timestamp']]
+    activity_quality = _choice_activity_quality_events(user_choices, min_time_per_cp)
 
     # Streaks: longest & current run of consecutive "fastest route chosen" choices
     longest_streak = 0
@@ -313,6 +708,16 @@ def get_user_stats(request):
         'user':        user_stats,
         'team':        team_stats,
         'activity':    activity,
+        'activity_quality': activity_quality,
+        'error_potential': {
+            'points': error_points,
+            'user_fit': _linear_fit(error_points),
+            'team_fit': team_error_fit,
+        },
+        'time_sensitivity': {
+            'points': time_sensitivity_points,
+            'fit': _linear_fit(time_sensitivity_points),
+        },
         'facts': {
             'total_cp':       user_stats['total'],
             'fastest_pct':    fastest_pct,
@@ -405,8 +810,7 @@ def get_stats_table(request):
                       .filter(_team_choice_filter(active_team))
                       .values_list('user_id', flat=True).distinct())
     else:
-        roster_ids = (Choice.objects
-                      .filter(competition=(mode == 'competition'))
+        roster_ids = (_choice_stats_queryset(Choice.objects, mode == 'competition')
                       .filter(_team_choice_filter(active_team))
                       .values_list('user_id', flat=True).distinct())
 
@@ -466,16 +870,22 @@ def get_stats_table(request):
 
         all_rows  = rcs
         get_rows  = lambda uid: per_user.get(uid, [])
+        sensitivity_by_user = {}
+        time_sensitivity_by_user = {}
+        summary_error_sensitivity = None
+        summary_time_sensitivity = None
     else:
         competition_flag = (mode == 'competition')
-        choices = list(
-            _choice_row_queryset(Choice.objects
-                  .filter(competition=competition_flag, user_id__in=team_user_ids)
-                  .filter(
-                      Q(team=active_team) |
-                      Q(team__isnull=True, user__profile__active_team=active_team)
-                  )
+        choices_qs = (
+            _choice_stats_queryset(Choice.objects, competition_flag)
+            .filter(user_id__in=team_user_ids)
+            .filter(
+                Q(team=active_team) |
+                Q(team__isnull=True, user__profile__active_team=active_team)
             )
+        )
+        choices = list(
+            _choice_row_queryset(choices_qs)
         )
         per_user = {}
         for c in choices:
@@ -499,6 +909,18 @@ def get_stats_table(request):
 
         all_rows  = choices
         get_rows  = lambda uid: per_user.get(uid, [])
+        sensitivity_by_user = {
+            uid: fit['sensitivity_ms'] if fit else None
+            for uid, fit in _choice_error_potential_fits_by_user(choices_qs).items()
+        }
+        time_sensitivity_by_user = {
+            uid: fit['sensitivity_ms'] if fit else None
+            for uid, fit in _choice_time_sensitivity_fits_by_user(choices_qs, choices_qs).items()
+        }
+        summary_error_fit = _choice_error_potential_fit(choices_qs)
+        summary_time_fit = _choice_time_sensitivity_fit(choices_qs, choices_qs)
+        summary_error_sensitivity = summary_error_fit['sensitivity_ms'] if summary_error_fit else None
+        summary_time_sensitivity = summary_time_fit['sensitivity_ms'] if summary_time_fit else None
 
     # ── File-completion progress (Fortschritt) — mode-independent ──────
     progress = _cached_team_progress(active_team)
@@ -524,11 +946,16 @@ def get_stats_table(request):
         s = aggregate_rows(get_rows(u.id), classify)
         if s is None:
             continue
+        show_sensitivity = s['posten'] > 100
+        error_sensitivity = sensitivity_by_user.get(u.id) if show_sensitivity else None
+        time_sensitivity = time_sensitivity_by_user.get(u.id) if show_sensitivity else None
         athlete_rows.append({
             'athlete':      u.get_full_name() or u.username,
             'user_id':      u.id,
-            'sensitivity':  '-',
-            'roi_slope':    '- (-)',
+            'error_potential_sensitivity': error_sensitivity,
+            'time_sensitivity':            time_sensitivity,
+            'sensitivity':  error_sensitivity,
+            'roi_slope':    time_sensitivity,
             'progress':     progress_payload(u.id),
             **s,
         })
@@ -551,11 +978,14 @@ def get_stats_table(request):
                 'total': total_cp, 'done': 0, 'training': 0, 'competition': 0,
                 'training_pct': 0, 'competition_pct': 0, 'pct': 0,
             }
+        show_summary_sensitivity = summary['posten'] > 100
         data.append({
             'athlete':      'Kaderdurchschnitt',
             'user_id':      None,
-            'sensitivity':  '-',
-            'roi_slope':    '- (-)',
+            'error_potential_sensitivity': summary_error_sensitivity if show_summary_sensitivity else None,
+            'time_sensitivity':            summary_time_sensitivity if show_summary_sensitivity else None,
+            'sensitivity':  summary_error_sensitivity if show_summary_sensitivity else None,
+            'roi_slope':    summary_time_sensitivity if show_summary_sensitivity else None,
             'progress':     summary_progress,
             **summary,
         })
@@ -585,7 +1015,7 @@ def get_team_athletes(request):
 
     team_filter = _team_choice_filter(active_team)
     roster_ids = (
-        set(Choice.objects.filter(team_filter).values_list('user_id', flat=True))
+        set(Choice.objects.filter(team_filter, control_pair__file__deleted=False).values_list('user_id', flat=True))
         | set(InfiniteChoice.objects.filter(team_filter).values_list('user_id', flat=True))
     )
     users = (

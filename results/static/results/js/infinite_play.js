@@ -23,7 +23,7 @@ const R_CONTROL     = 25;                       // control circle radius
 const IOF = {
     open_yellow:   'rgb(255,204,54)',
     open_orange:   'rgb(255,194,54)',
-    paved:         'rgb(184,184,184)',
+    paved:         'rgb(205,205,205)',
     paved_dark:    'rgb(128,128,128)',
     forest_run:    'rgb(255,255,255)',
     veg_light:     'rgb(138,255,115)',
@@ -38,6 +38,7 @@ const IOF = {
     cliff:         'rgb(0,0,0)',
     contour:       'rgb(191,128,64)',
     uncrossable:   'rgb(102,102,102)',
+    private_garden:'rgb(158,186,0)',
 };
 
 const NS    = 'http://www.w3.org/2000/svg';
@@ -95,11 +96,11 @@ function next() {
     choiceStartTime = performance.now();
 }
 
-function generateScene() {
+function generateExperimentalScene() {
     let best = null;
     let bestDiff = -1;
     for (let i = 0; i < 8; i++) {
-        const candidate = buildSceneCandidate();
+        const candidate = buildExperimentalSceneCandidate();
         const diff = Math.abs(candidate.routes[0].time - candidate.routes[1].time);
         if (diff > bestDiff) {
             best = candidate;
@@ -110,7 +111,7 @@ function generateScene() {
     return best;
 }
 
-function buildSceneCandidate() {
+function buildExperimentalSceneCandidate() {
     // 1. Build a compound "primary" obstacle (1–3 connected shapes)
     const primary = generatePrimaryCompound();
     const cluster = generateBlockingCluster(primary.hull);
@@ -690,6 +691,222 @@ function randomEdgePoint() {
 }
 
 /* =========================================================
+   URBAN/PARK GENERATOR
+   Paved base, blocky grass, buildings, private gardens and
+   sensible walls/fences. These declarations intentionally replace
+   the experimental terrain generator above.
+========================================================= */
+
+function generateScene() {
+    let best = null;
+    let bestDiff = -1;
+    for (let i = 0; i < 10; i++) {
+        const candidate = buildSceneCandidate();
+        const diff = Math.abs(candidate.routes[0].time - candidate.routes[1].time);
+        if (diff > bestDiff) {
+            best = candidate;
+            bestDiff = diff;
+        }
+        if (diff >= 0.55) return candidate;
+    }
+    return best;
+}
+
+function buildSceneCandidate() {
+    const primary = generateUrbanPrimary();
+    let { start, ziel } = placeEndpoints(primary.hull);
+    let routes = tangentRoutes(start, ziel, primary.hull);
+    const decor = generateUrbanDecoration(primary.hull, [routes[0].points, routes[1].points], start, ziel);
+
+    const angle = Math.atan2(ziel.y - start.y, ziel.x - start.x);
+    const rot = -Math.PI / 2 - angle;
+    const mid = { x: (start.x + ziel.x) / 2, y: (start.y + ziel.y) / 2 };
+    const dst = { x: VB_W / 2, y: VB_H / 2 };
+
+    const transform = p => {
+        const dx = p.x - mid.x, dy = p.y - mid.y;
+        const ca = Math.cos(rot), sa = Math.sin(rot);
+        return { x: dst.x + dx * ca - dy * sa, y: dst.y + dx * sa + dy * ca };
+    };
+
+    const start2 = transform(start);
+    const ziel2 = transform(ziel);
+    const primary2 = applyTransformToCompound(primary, transform);
+    const routes2 = tangentRoutes(start2, ziel2, primary2.hull);
+    const decor2 = decor.map(d => applyTransformToShape(d, transform));
+
+    return { primary: primary2, decor: decor2, start: start2, ziel: ziel2, routes: routes2 };
+}
+
+function generateUrbanPrimary() {
+    const cx = rand(VB_W * 0.40, VB_W * 0.60);
+    const cy = rand(VB_H * 0.38, VB_H * 0.62);
+    const angle = rand(-0.45, 0.45) + pickRandom([0, Math.PI / 2, Math.PI, -Math.PI / 2]);
+    const across = angle + Math.PI / 2;
+    const shapes = [];
+
+    const main = urbanRect(cx, cy, rand(150, 235), rand(70, 115), angle, IOF.building, 'building');
+    shapes.push(main);
+
+    const wingSide = pickRandom([-1, 1]);
+    const wingOffset = rotate({ x: rand(-35, 35), y: wingSide * rand(72, 112) }, angle);
+    const wing = urbanRect(cx + wingOffset.x, cy + wingOffset.y, rand(75, 135), rand(55, 95), angle, IOF.building, 'building');
+    shapes.push(wing);
+
+    if (Math.random() < 0.7) {
+        const rowSide = pickRandom([-1, 1]);
+        const rowOffset = rotate({ x: rowSide * rand(145, 220), y: rand(-18, 18) }, angle);
+        shapes.push(urbanRect(cx + rowOffset.x, cy + rowOffset.y, rand(70, 125), rand(58, 105), angle, IOF.building, 'building'));
+    }
+
+    const buildings = shapes.filter(s => s.kind === 'building');
+    for (const b of buildings) {
+        if (Math.random() < 0.85) {
+            const garden = gardenForBuilding(b, pickRandom([-1, 1]));
+            shapes.push(garden);
+            shapes.push(...fencesForPatch(garden, angle, Math.random() < 0.5));
+        }
+    }
+
+    const barrierLen = rand(170, 270);
+    const offset = rotate({ x: rand(-35, 35), y: -wingSide * rand(88, 125) }, angle);
+    const a = {
+        x: cx + offset.x - Math.cos(angle) * barrierLen / 2,
+        y: cy + offset.y - Math.sin(angle) * barrierLen / 2,
+    };
+    const b = {
+        x: cx + offset.x + Math.cos(angle) * barrierLen / 2,
+        y: cy + offset.y + Math.sin(angle) * barrierLen / 2,
+    };
+    shapes.push(wallShape(a, b, IOF.stone_wall, 5.5, false));
+
+    const hull = convexHull(shapes.flatMap(s => s.hull || []));
+    return { composition: 'urban_block', shapes, hull };
+}
+
+function generateUrbanDecoration(primaryHull, routePts, start, ziel) {
+    const items = [];
+
+    for (let i = 0; i < randInt(5, 8); i++) {
+        items.push(blockPatch(
+            rand(90, VB_W - 90),
+            rand(70, VB_H - 70),
+            rand(115, 280),
+            rand(65, 170),
+            pickRandom([0, Math.PI / 2, rand(-0.25, 0.25)]),
+            IOF.open_yellow,
+            'grass',
+            pickRandom(['none', 'left', 'right'])
+        ));
+    }
+
+    for (let i = 0; i < randInt(3, 5); i++) {
+        const p = placeAwayFromRoutes(primaryHull, routePts, start, ziel, 75);
+        if (!p) continue;
+        const angle = pickRandom([0, Math.PI / 2, -Math.PI / 2]) + rand(-0.18, 0.18);
+        const building = urbanRect(p.x, p.y, rand(55, 115), rand(45, 90), angle, IOF.building, 'small_building');
+        items.push(building);
+        if (Math.random() < 0.75) {
+            const garden = gardenForBuilding(building, pickRandom([-1, 1]));
+            items.push(garden);
+            items.push(...fencesForPatch(garden, angle, true));
+        }
+    }
+
+    for (let i = 0; i < randInt(3, 6); i++) {
+        const p = placeAwayFromRoutes(primaryHull, routePts, start, ziel, 40);
+        if (!p) continue;
+        const angle = pickRandom([0, Math.PI / 2]) + rand(-0.2, 0.2);
+        const len = rand(75, 165);
+        const a = { x: p.x - Math.cos(angle) * len / 2, y: p.y - Math.sin(angle) * len / 2 };
+        const b = { x: p.x + Math.cos(angle) * len / 2, y: p.y + Math.sin(angle) * len / 2 };
+        items.push(wallShape(a, b, IOF.fence, Math.random() < 0.45 ? 3.2 : 4.8, Math.random() < 0.65));
+    }
+
+    return items;
+}
+
+function placeAwayFromRoutes(primaryHull, routePts, start, ziel, clearance) {
+    for (let attempts = 0; attempts < 40; attempts++) {
+        const p = { x: rand(55, VB_W - 55), y: rand(55, VB_H - 55) };
+        if (pointInPolygon(p, primaryHull)) continue;
+        if (distToPolygon(p, primaryHull) < 35) continue;
+        if (Math.hypot(p.x - start.x, p.y - start.y) < 70) continue;
+        if (Math.hypot(p.x - ziel.x, p.y - ziel.y) < 70) continue;
+        const minRouteDist = Math.min(pathMinDistance(p, routePts[0]), pathMinDistance(p, routePts[1]));
+        if (minRouteDist < clearance) continue;
+        return p;
+    }
+    return null;
+}
+
+function urbanRect(cx, cy, w, h, angle, color, kind) {
+    const polygon = rectCorners(cx, cy, w, h, angle);
+    return { kind, polygon, hull: polygon, color, stroke: IOF.building, angle, cx, cy, w, h };
+}
+
+function gardenForBuilding(building, side) {
+    const along = rand(-building.w * 0.12, building.w * 0.12);
+    const gw = clamp(building.w * rand(0.72, 1.05), 55, 155);
+    const gh = clamp(building.h * rand(0.62, 1.10), 45, 120);
+    const offset = rotate({ x: along, y: side * (building.h / 2 + gh / 2 + rand(2, 8)) }, building.angle);
+    return blockPatch(
+        building.cx + offset.x,
+        building.cy + offset.y,
+        gw,
+        gh,
+        building.angle,
+        IOF.private_garden,
+        'private_garden',
+        'none'
+    );
+}
+
+function fencesForPatch(patch, angle, ticked) {
+    const pts = patch.polygon;
+    const walls = [];
+    for (let i = 0; i < pts.length; i++) {
+        const a = pts[i], b = pts[(i + 1) % pts.length];
+        if (Math.hypot(b.x - a.x, b.y - a.y) < 18) continue;
+        if (Math.random() < 0.78) walls.push(wallShape(a, b, IOF.fence, ticked ? 3.2 : 4.8, ticked));
+    }
+    if (walls.length === 0 && pts.length >= 2) walls.push(wallShape(pts[0], pts[1], IOF.fence, 3.2, ticked));
+    return walls;
+}
+
+function blockPatch(cx, cy, w, h, angle, color, kind, roundedSide = 'none') {
+    const hw = w / 2, hh = h / 2;
+    let pts;
+    if (roundedSide === 'left' || roundedSide === 'right') {
+        const side = roundedSide === 'right' ? 1 : -1;
+        const xFlat = -side * hw;
+        const xRound = side * hw;
+        pts = [{ x: xFlat, y: -hh }, { x: xFlat, y: hh }];
+        const steps = 8;
+        for (let i = 0; i <= steps; i++) {
+            const t = -Math.PI / 2 + (i / steps) * Math.PI;
+            pts.push({
+                x: xRound - side * (w * 0.18) * (1 - Math.cos(t)),
+                y: Math.sin(t) * hh,
+            });
+        }
+        if (side < 0) pts.reverse();
+    } else {
+        pts = [
+            { x: -hw, y: -hh }, { x: hw, y: -hh },
+            { x: hw, y: hh }, { x: -hw, y: hh },
+        ];
+    }
+
+    const ca = Math.cos(angle), sa = Math.sin(angle);
+    const polygon = pts.map(p => ({
+        x: cx + p.x * ca - p.y * sa,
+        y: cy + p.x * sa + p.y * ca,
+    }));
+    return { kind, polygon, hull: convexHull(polygon), color, angle, cx, cy, w, h };
+}
+
+/* =========================================================
    GEOMETRY HELPERS
 ========================================================= */
 
@@ -843,7 +1060,7 @@ function drawBackground() {
     const bg = svgEl('rect');
     bg.setAttribute('x', 0); bg.setAttribute('y', 0);
     bg.setAttribute('width', VB_W); bg.setAttribute('height', VB_H);
-    bg.setAttribute('fill', IOF.forest_run);
+    bg.setAttribute('fill', IOF.paved);
     SVG('rp-bg-layer').appendChild(bg);
 }
 
@@ -865,6 +1082,17 @@ function drawDecor(items) {
 function drawShape(shape, primary, layer) {
     layer = layer || SVG('rp-obstacle-layer');
     switch (shape.kind) {
+        case 'grass':
+        case 'private_garden': {
+            const p = svgEl('polygon');
+            p.setAttribute('points', shape.polygon.map(v => `${v.x},${v.y}`).join(' '));
+            p.setAttribute('fill', shape.color);
+            p.setAttribute('stroke', shape.kind === 'private_garden' ? IOF.fence : 'none');
+            p.setAttribute('stroke-width', shape.kind === 'private_garden' ? '1.2' : '0');
+            p.setAttribute('opacity', '0.96');
+            layer.appendChild(p);
+            break;
+        }
         case 'open':
         case 'paved_area':
         case 'canopy':

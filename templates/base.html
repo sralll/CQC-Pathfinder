@@ -21,7 +21,7 @@
         {% if user.is_authenticated %}
         <div class="nav-user-section nav-user-section-inline">
             {% if request.path == '/' %}
-            {# Home page only — show active team / team switcher #}
+            {# Home page only — team switcher + language switcher #}
             {% if user_teams|length > 1 %}
             <div class="nav-team-switcher" id="nav-team-switcher">
                 {{ active_team.name|default:"—" }}
@@ -35,19 +35,21 @@
             {% elif active_team %}
             <span class="nav-team-static">{{ active_team.name }}</span>
             {% endif %}
+
+            {# Language switcher — mirrors the team switcher; POSTs to set_language via JS #}
+            {% get_available_languages as LANGS %}
+            <div class="nav-lang-switcher" id="nav-lang-switcher"
+                 data-setlang-url="{% url 'set_language' %}" aria-label="{% trans 'Language' %}">
+                {{ LANGUAGE_CODE|upper }}
+                <div class="nav-lang-dropdown">
+                    {% for code, name in LANGS %}
+                    <a class="nav-lang-option{% if code == LANGUAGE_CODE %} active{% endif %}"
+                       href="#" data-lang="{{ code }}">{{ code|upper }}</a>
+                    {% endfor %}
+                </div>
+            </div>
             {% endif %}
             <span class="nav-username">{{ user.first_name|default:user.username }}</span>
-            <form action="{% url 'set_language' %}" method="post" class="nav-lang-switcher">
-                {% csrf_token %}
-                <input name="next" type="hidden" value="{{ request.get_full_path }}">
-                {% get_current_language as CUR_LANG %}
-                {% get_available_languages as LANGS %}
-                <select name="language" onchange="this.form.submit()" aria-label="{% trans 'Language' %}">
-                    {% for code, name in LANGS %}
-                    <option value="{{ code }}"{% if code == CUR_LANG %} selected{% endif %}>{{ code|upper }}</option>
-                    {% endfor %}
-                </select>
-            </form>
             <a href="{% url 'home' %}" class="nav-home-btn" title="{% trans 'Home' %}">
                 <x-icon name="home" size="13px"></x-icon>
             </a>
@@ -57,11 +59,41 @@
     {% block content %}{% endblock %}
     <script>
     document.addEventListener('DOMContentLoaded', function () {
-        const switcher = document.getElementById('nav-team-switcher');
-        if (switcher) {
-            switcher.addEventListener('click', function (e) {
+        // Click-to-toggle dropdown switchers (team + language)
+        const switchers = ['nav-team-switcher', 'nav-lang-switcher']
+            .map(function (id) { return document.getElementById(id); })
+            .filter(Boolean);
+        switchers.forEach(function (sw) {
+            sw.addEventListener('click', function (e) {
                 e.stopPropagation();
-                switcher.classList.toggle('open');
+                const wasOpen = sw.classList.contains('open');
+                switchers.forEach(function (s) { s.classList.remove('open'); });
+                if (!wasOpen) sw.classList.add('open');
+            });
+        });
+
+        // Language switcher — POST to set_language (CSRF from meta), then reload
+        const langSwitcher = document.getElementById('nav-lang-switcher');
+        if (langSwitcher) {
+            const csrf = document.querySelector('meta[name="csrf-token"]').content;
+            langSwitcher.querySelectorAll('.nav-lang-option').forEach(function (opt) {
+                opt.addEventListener('click', function (e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    if (opt.classList.contains('active')) return;
+                    fetch(langSwitcher.dataset.setlangUrl, {
+                        method: 'POST',
+                        headers: {
+                            'X-CSRFToken': csrf,
+                            'Content-Type': 'application/x-www-form-urlencoded',
+                        },
+                        body: new URLSearchParams({
+                            language: opt.dataset.lang,
+                            next: window.location.pathname,
+                        }).toString(),
+                        credentials: 'same-origin',
+                    }).then(function () { window.location.reload(); });
+                });
             });
         }
 
@@ -84,7 +116,7 @@
             document.querySelectorAll('.nav-ham-panel').forEach(function (p) {
                 p.classList.remove('open');
             });
-            if (switcher) switcher.classList.remove('open');
+            switchers.forEach(function (s) { s.classList.remove('open'); });
         }
         document.addEventListener('click', closeAllHam);
     });

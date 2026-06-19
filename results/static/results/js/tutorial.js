@@ -7,11 +7,11 @@
 
    The steps (German text verbatim):
      1. CP1 ready (complex)       → "Finde die schnellste Route …"
-     2. routes revealed (1st tap) → highlight TIME BAR, "0.67s …"
+     2. routes revealed (1st tap) → highlight TIME BAR, 5s …"
      3. selection made            → highlight BUTTON BAR, "detaillierte Auswertung"
      4. stats panel opened        → legend explaining the evaluation graph
      5. step 4 dismissed          → how to continue (swipe/double-tap | space/enter/dblclick)
-     6. CP2 ready (L/R)           → L/R posten explanation + 0.67s reminder
+     6. CP2 ready (L/R)           → L/R posten explanation + 0.5s reminder
 
    ┌──────────────────────────────────────────────────────────────────────┐
    │ EDIT THE TUTORIAL TEXT in the STEPS object below.                      │
@@ -56,7 +56,7 @@
                 + `um deine Entscheidung zu bestätigen.`
                 : `Tippe auf die aufgedeckte Route direkt auf der Karte oder auf die Knöpfe, `
                 + `um deine Entscheidung zu bestätigen.`,
-            warn: `Du hast 0.67s Zeit zu entscheiden, danach zählt jede zusätzliche Zeit 5-fach!`,
+            warn: `Du hast 0.5s Zeit zu entscheiden, danach zählt jede zusätzliche Zeit 5-fach!`,
         },
         3: {
             highlight: 'play-btn-bar',
@@ -92,7 +92,7 @@
                 + `Entscheidung auf die Karte klicken, um die Routen anzuzeigen.`
                 : `Bei L/R Posten entweder direkt die Knöpfe antippen oder die Route an der erwarteten Stelle auf der Karte anklicken, oder nach der  `
                 + `Entscheidung auf die Karte klicken, um die Routen anzuzeigen.`,
-            warn: `Danach hast du wieder 0.67s, bevor die Zeit 5-fach zählt.`,
+            warn: `Danach hast du wieder 0.5s, bevor die Zeit 5-fach zählt.`,
         },
     };
 

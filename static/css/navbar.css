@@ -135,8 +135,10 @@
     white-space: nowrap;
 }
 
-/* Team switcher — shown when user has multiple teams */
-.nav-team-switcher {
+/* Team switcher — shown when user has multiple teams.
+   The language switcher (.nav-lang-*) reuses the exact same styling. */
+.nav-team-switcher,
+.nav-lang-switcher {
     position: relative;
     font-size: var(--font-sm);
     color: var(--text-muted);
@@ -147,18 +149,21 @@
     white-space: nowrap;
     transition: color var(--t-med), background var(--t-med);
 }
-.nav-team-switcher:hover {
+.nav-team-switcher:hover,
+.nav-lang-switcher:hover {
     color: var(--text-soft);
     background: var(--bg-3);
 }
-.nav-team-switcher::after {
+.nav-team-switcher::after,
+.nav-lang-switcher::after {
     content: ' ▾';
     font-size: 9px;
     opacity: 0.6;
 }
 
 /* Dropdown panel */
-.nav-team-dropdown {
+.nav-team-dropdown,
+.nav-lang-dropdown {
     display: none;
     position: absolute;
     right: 0;
@@ -166,14 +171,16 @@
     background: var(--bg-2);
     border: 1px solid var(--border);
     border-radius: var(--radius);
-    min-width: 140px;
+    min-width: 25px;
     padding: 4px 0;
     z-index: 10001;
     box-shadow: var(--shadow-pop);
 }
-.nav-team-switcher.open .nav-team-dropdown { display: block; }
+.nav-team-switcher.open .nav-team-dropdown,
+.nav-lang-switcher.open .nav-lang-dropdown { display: block; }
 
-.nav-team-option {
+.nav-team-option,
+.nav-lang-option {
     display: block;
     padding: 8px 14px;
     font-size: var(--font-sm);
@@ -182,8 +189,10 @@
     white-space: nowrap;
     transition: background 0.1s, color 0.1s;
 }
-.nav-team-option:hover  { background: var(--bg-4); color: var(--text-strong); }
-.nav-team-option.active { color: var(--brand); font-weight: 600; }
+.nav-team-option:hover,
+.nav-lang-option:hover  { background: var(--bg-4); color: var(--text-strong); }
+.nav-team-option.active,
+.nav-lang-option.active { color: var(--brand); font-weight: 600; }
 
 /* Home icon button */
 .nav-home-btn {
@@ -198,7 +207,8 @@
 }
 .nav-home-btn:hover { color: var(--brand); background: var(--bg-3); }
 
-body.mobile .nav-team-option { padding: 12px 16px; font-size: var(--font-md); }
+body.mobile .nav-team-option,
+body.mobile .nav-lang-option { padding: 12px 16px; font-size: var(--font-md); }
 
 /* ── Mobile hamburger ─────────────────────────────────── */
 
@@ -277,7 +287,8 @@ body.mobile .nav-ham-panel { top: 56px; }
 body.mobile .nav-results-link,
 body.mobile .nav-username,
 body.mobile .nav-team-static,
-body.mobile .nav-team-switcher { font-size: var(--font-lg); }
+body.mobile .nav-team-switcher,
+body.mobile .nav-lang-switcher { font-size: var(--font-lg); }
 body.mobile .nav-home-btn svg { width: 20px; height: 20px; }
 body.mobile .fr-nav-title { font-size: var(--font-lg); }
 body.mobile .nav-ham-panel .nav-results-link,
@@ -293,7 +304,8 @@ body.mobile #play-wrap { --navbar-h: 56px; }
    in line on mobile too. */
 body.mobile .nav-user-section-inline .nav-username,
 body.mobile .nav-user-section-inline .nav-team-static,
-body.mobile .nav-user-section-inline .nav-team-switcher {
+body.mobile .nav-user-section-inline .nav-team-switcher,
+body.mobile .nav-user-section-inline .nav-lang-switcher {
     display: inline-flex;
     align-items: center;
     padding: 0 4px;

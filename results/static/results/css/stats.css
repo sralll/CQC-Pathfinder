@@ -248,8 +248,8 @@ body.mobile .stats-2way-thumb x-icon { font-size: 20px; }
 
 #stats-grid {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    grid-template-rows: repeat(2, minmax(260px, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-rows: repeat(2, minmax(240px, 1fr));
     gap: 12px;
     width: 100%;
     margin: 0;
@@ -280,7 +280,17 @@ body.desktop #stats-header { width: 100%; max-width: none; }
     display: flex;
     align-items: center;
     justify-content: space-between;
+    position: relative;
+    gap: 8px;
     margin: 0 0 8px;
+}
+
+.stats-card-title-wrap {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
 }
 
 .stats-card-title {
@@ -288,7 +298,54 @@ body.desktop #stats-header { width: 100%; max-width: none; }
     font-size: var(--font-md);
     font-weight: 600;
     color: var(--text);
+    min-width: 0;
 }
+
+.stats-info-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    width: 18px;
+    height: 18px;
+    border: 0.5px solid var(--border);
+    border-radius: 50%;
+    background: var(--bg-1);
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1;
+    padding: 0;
+    transition: background var(--t-med), border-color var(--t-med), color var(--t-med);
+}
+.stats-info-btn:hover,
+.stats-info-btn[aria-expanded="true"] {
+    background: var(--bg-3);
+    border-color: var(--border-strong);
+    color: var(--text);
+}
+
+.stats-info-popover {
+    display: none;
+    position: absolute;
+    top: calc(100% + 8px);
+    left: 0;
+    z-index: 40;
+    width: min(330px, calc(100vw - 48px));
+    max-height: min(220px, 55vh);
+    overflow: auto;
+    background: var(--bg-2);
+    border: 0.5px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    box-shadow: var(--shadow-card);
+    color: var(--text);
+    font-size: var(--font-xs);
+    font-weight: 400;
+    line-height: 1.45;
+    padding: 10px 12px;
+}
+.stats-info-popover.open { display: block; }
 
 .stats-card-expand {
     display: inline-flex;
@@ -404,6 +461,8 @@ body.desktop #stats-header { width: 100%; max-width: none; }
 .stats-donut-arc { transition: stroke-dashoffset 0.6s cubic-bezier(0.4, 0, 0.2, 1); }
 .stats-bar { transition: transform 0.45s cubic-bezier(0.4, 0, 0.2, 1); }
 .stats-activity-bar { transition: transform 0.4s cubic-bezier(0.4, 0, 0.2, 1); }
+.stats-accuracy-area { pointer-events: none; }
+.stats-scatter-point { transition: opacity 0.15s ease; }
 
 /* ── Facts card ──────────────────────────────────────── */
 

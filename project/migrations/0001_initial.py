@@ -255,6 +255,12 @@ class Migration(migrations.Migration):
             options={
                 "ordering": ["order"],
                 "unique_together": {("control_pair", "order")},
+                "indexes": [
+                    models.Index(
+                        fields=["control_pair", "run_time"],
+                        name="route_cp_runtime_idx",
+                    ),
+                ],
             },
         ),
     ]

@@ -76,7 +76,7 @@ function updateRouteStrokeWidths() {
 // anzeigen" or the map. choice_time runs at 1× before reveal and at 10× after
 // reveal (minus a short grace buffer so quick post-reveal clicks aren't punished).
 const COMPLEX_REVEAL_MULTIPLIER = 5;
-const COMPLEX_REVEAL_BUFFER     = 0.67;   // seconds at 1× after reveal
+const COMPLEX_REVEAL_BUFFER     = 0.5;   // seconds at 1× after reveal
 const ROUTE_HIT_WIDTH           = 25;    // transparent on-map click target width
 const MAX_CHOICE_TIME           = 30;    // s — cap stored choice_time so one slow
                                          //     control (5× penalty) can't ruin stats

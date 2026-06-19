@@ -1139,7 +1139,7 @@ const PX_TO_M  = 0.48;         // pixels to metres conversion factor
 const REFERENCE_MAP_SCALE = 4000;
 const PATHING_MASK_TRAIN_SCALE = 0.710;
 const CONTROL_POINT_PASSABLE_SNAP_M = 10;
-const ROUTE_STROKE_MULTIPLIER       = 2;
+const ROUTE_STROKE_MULTIPLIER       = 1.5;
 const ROUTE_STROKE_SCALE_EXPONENT   = 0.33;
 const ROUTE_STROKE_MIN_CAMERA_ZOOM  = 0.05;
 

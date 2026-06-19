@@ -75,6 +75,20 @@ class Migration(migrations.Migration):
                 ),
             ],
             options={
+                "indexes": [
+                    models.Index(
+                        fields=["team", "competition", "user"],
+                        name="choice_team_comp_user_idx",
+                    ),
+                    models.Index(
+                        fields=["user", "competition", "timestamp"],
+                        name="choice_user_comp_time_idx",
+                    ),
+                    models.Index(
+                        fields=["competition", "control_pair"],
+                        name="choice_comp_cp_idx",
+                    ),
+                ],
                 "constraints": [
                     models.UniqueConstraint(
                         fields=("user", "control_pair"),
@@ -123,6 +137,16 @@ class Migration(migrations.Migration):
             ],
             options={
                 "ordering": ["-timestamp"],
+                "indexes": [
+                    models.Index(
+                        fields=["team", "user"],
+                        name="infchoice_team_user_idx",
+                    ),
+                    models.Index(
+                        fields=["user", "timestamp"],
+                        name="infchoice_user_time_idx",
+                    ),
+                ],
             },
         ),
     ]
