@@ -267,7 +267,7 @@ body.desktop #fr-bottom {
 
 .fr-route-stats {
     font-size: 10px;
-    color: var(--text-dim);
+    color: var(--text-soft);
     display: block;
 }
 

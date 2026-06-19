@@ -80,7 +80,7 @@ class Migration(migrations.Migration):
                 ("teams", models.ManyToManyField(blank=True, to="account.team")),
                 ("first_play_desktop", models.BooleanField(default=True)),
                 ("first_play_mobile", models.BooleanField(default=True)),
-                ("language", models.CharField(blank=True, default="", max_length=10)),
+                ("language", models.CharField(blank=True, default="de", max_length=10)),
             ],
         ),
         migrations.CreateModel(
@@ -108,6 +108,92 @@ class Migration(migrations.Migration):
                     ),
                 ),
             ],
+        ),
+        migrations.CreateModel(
+            name="ForumThread",
+            fields=[
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("title", models.CharField(max_length=160)),
+                ("body", models.TextField(max_length=4000)),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                ("updated_at", models.DateTimeField(auto_now=True)),
+                ("edited_at", models.DateTimeField(blank=True, null=True)),
+                (
+                    "author",
+                    models.ForeignKey(
+                        blank=True,
+                        null=True,
+                        on_delete=django.db.models.deletion.SET_NULL,
+                        related_name="forum_threads",
+                        to=settings.AUTH_USER_MODEL,
+                    ),
+                ),
+                (
+                    "upvotes",
+                    models.ManyToManyField(
+                        blank=True,
+                        related_name="upvoted_threads",
+                        to=settings.AUTH_USER_MODEL,
+                    ),
+                ),
+            ],
+            options={
+                "ordering": ["-created_at"],
+            },
+        ),
+        migrations.CreateModel(
+            name="ForumComment",
+            fields=[
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("body", models.TextField(max_length=4000)),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                ("edited_at", models.DateTimeField(blank=True, null=True)),
+                (
+                    "author",
+                    models.ForeignKey(
+                        blank=True,
+                        null=True,
+                        on_delete=django.db.models.deletion.SET_NULL,
+                        related_name="forum_comments",
+                        to=settings.AUTH_USER_MODEL,
+                    ),
+                ),
+                (
+                    "thread",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="comments",
+                        to="account.forumthread",
+                    ),
+                ),
+                (
+                    "upvotes",
+                    models.ManyToManyField(
+                        blank=True,
+                        related_name="upvoted_comments",
+                        to=settings.AUTH_USER_MODEL,
+                    ),
+                ),
+            ],
+            options={
+                "ordering": ["created_at"],
+            },
         ),
         migrations.CreateModel(
             name="Device",

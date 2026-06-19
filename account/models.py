@@ -31,7 +31,7 @@ class Profile(models.Model):
     # language cookie / Accept-Language / settings.LANGUAGE_CODE. Validated
     # against settings.LANGUAGES in the switcher view (account.views.set_language)
     # and re-applied to the cookie on login (CQCPathfinder.views.LocaleLoginView).
-    language = models.CharField(max_length=10, blank=True, default='')
+    language = models.CharField(max_length=10, blank=True, default='de')
 
     def __str__(self):
         return self.user.username
