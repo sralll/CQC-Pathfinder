@@ -859,10 +859,17 @@ function renderRouteList(cp, colors) {
         header.style.borderLeftColor = color;
 
         const isFastest = route.run_time && route.run_time <= minRunTime;
-        const parts = [];
-        if (route.length)         parts.push(`${Math.round(route.length)}m`);
-        if (route.elevation != null) parts.push(`${Math.round(route.elevation)}Hm`);
-        if (route.run_time)       parts.push(formatTime(route.run_time));
+        const detailParts = [];
+        if (route.length) detailParts.push(`${Math.round(route.length)}m`);
+        if (route.elevation != null) {
+            detailParts.push(`<span class="fr-route-stat-icon">${icon('elevation', '10px')}</span>${Math.round(route.elevation)}Hm`);
+        }
+        const turnPenalty = Number.isFinite(Number(route.noA)) ? Number(route.noA) : 0;
+        const obstaclePenalty = Number.isFinite(Number(route.obstacle)) ? Number(route.obstacle) : 0;
+        const penaltyLine = [
+            `<span class="fr-route-stat-icon">${icon('angle', '10px')}</span>+${turnPenalty.toFixed(1)}s`,
+            `<span class="fr-route-stat-icon">${icon('obstacle', '10px')}</span>+${obstaclePenalty.toFixed(1)}s`,
+        ].join(', ');
         // Relative time loss vs. the fastest route, colour-coded with the same
         // thresholds the stats page / editor use:
         //   < 5%  → yellow (tier-warn), 5–10% → orange (tier-alert),
@@ -871,15 +878,17 @@ function renderRouteList(cp, colors) {
         //   route shows a green crown (tier-best) instead of a percentage.
         let lossHtml = '';
         if (isFastest) {
-            lossHtml = `, <span class="fr-route-loss tier-best">${icon('crown', '11px')}</span>`;
+            lossHtml = `<span class="fr-route-loss tier-best">${icon('crown', '11px')}</span>`;
         } else if (route.run_time && minRunTime > 0) {
             const pct = Math.round(((route.run_time / minRunTime) - 1) * 100);
             const tierCls = pct < 5 ? 'tier-warn' : pct < 10 ? 'tier-alert' : 'tier-danger';
-            lossHtml = `, <span class="fr-route-loss ${tierCls}">+${pct}%</span>`;
+            lossHtml = `<span class="fr-route-loss ${tierCls}">+${pct}%</span>`;
         }
         header.innerHTML = `<span class="fr-route-name" style="color:${color}">
-            ${gettext('Route')} ${i + 1}</span>
-            <span class="fr-route-stats">${parts.join(', ')}${lossHtml}</span>`;
+            ${gettext('Route')} ${i + 1}
+            <span class="fr-route-stats fr-route-runtime">${route.run_time ? formatTime(route.run_time) : '—'}${lossHtml}</span></span>
+            <span class="fr-route-stats">${detailParts.join(', ')}</span>
+            <span class="fr-route-stats">${penaltyLine}</span>`;
         panel.appendChild(header);
 
         // Athletes who chose this route
