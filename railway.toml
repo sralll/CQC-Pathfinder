@@ -4,4 +4,4 @@ buildCommand = "npm install --omit=dev && python manage.py collectstatic --clear
 
 [deploy]
 preDeployCommand = "sh -c 'if [ -n \"${PROD_DB_PUBLIC_URL:-${PROD_DATABASE_URL:-}}\" ] || [ -n \"${SYNC_DIRECTION:-}\" ]; then echo \"Skipping web pre-deploy migrations for cron service.\"; elif command -v python >/dev/null 2>&1 && [ -f manage.py ] && [ -n \"${DATABASE_URL:-}\" ]; then python manage.py migrate --noinput; else echo \"Skipping Django migrations in pre-deploy.\"; fi'"
-startCommand = "sh -c 'if [ -n \"${PROD_DB_PUBLIC_URL:-${PROD_DATABASE_URL:-}}\" ]; then exec bash scripts/mirror_prod_to_staging.sh; elif [ -n \"${SYNC_DIRECTION:-}\" ]; then exec bash scripts/sync_volume_r2.sh; else chmod +x start.sh && exec ./start.sh; fi'"
+startCommand = "sh -c 'if [ -n \"${PROD_DB_PUBLIC_URL:-${PROD_DATABASE_URL:-}}\" ]; then exec bash scripts/mirror_prod_to_staging.sh; elif [ -n \"${SYNC_DIRECTION:-}\" ]; then exec bash scripts/sync_volume_r2.sh; else exec bash scripts/start.sh; fi'"

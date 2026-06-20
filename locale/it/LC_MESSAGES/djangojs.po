@@ -6,5 +6,596 @@ msgstr ""
 "Language: it\n"
 "Plural-Forms: nplurals=2; plural=(n != 1);\n"
 
+msgid ""
+msgstr "MIME-Version: 1.0\nContent-Type: text/plain; charset=UTF-8\nContent-Transfer-Encoding: 8bit\nLanguage: it\nPlural-Forms: nplurals=2; plural=(n != 1);\n"
+
+msgid "+ automatic route"
+msgstr "+ percorso automatico"
+
+msgid "A project with this name already exists."
+msgstr "Esiste già un progetto con questo nome."
+
+msgid "Additionally"
+msgstr "In aggiunta"
+
+msgid "After that you again have 0.5s before time counts fivefold."
+msgstr "Dopodiché hai di nuovo 0,5 s prima che il tempo conti cinque volte."
+
+msgid "Align course"
+msgstr "Allinea percorso"
+
+msgid "All"
+msgstr "Tutti"
+
+msgid "Area"
+msgstr "Area"
+
+msgid "At Left/Right controls, either click the buttons directly or click the route at the expected spot on the map, or click the map after deciding to reveal the routes."
+msgstr "Ai punti Sinistra/Destra, clicca direttamente i pulsanti o il percorso nel punto previsto sulla mappa, oppure clicca sulla mappa dopo la decisione per mostrare i percorsi."
+
+msgid "At Left/Right controls, either tap the buttons directly or tap the route at the expected spot on the map, or tap the map after deciding to reveal the routes."
+msgstr "Ai punti Sinistra/Destra, tocca direttamente i pulsanti o il percorso nel punto previsto sulla mappa, oppure tocca la mappa dopo la decisione per mostrare i percorsi."
+
+msgid "Author"
+msgstr "Autore"
+
+msgid "Autosave is not finished yet. Please stay on the page."
+msgstr "L'autosave non è ancora finito. Rimani sulla pagina."
+
+msgid "Back one anchor"
+msgstr "Ancoraggio indietro"
+
+msgid "Block area added"
+msgstr "Area vietata aggiunta"
+
+msgid "Block element deleted"
+msgstr "Elemento di blocco eliminato"
+
+msgid "Block line added"
+msgstr "Linea di blocco aggiunta"
+
+msgid "Cancel"
+msgstr "Annulla"
+
+msgid "Choose color"
+msgstr "Scegli colore"
+
+msgid "Choose file…"
+msgstr "Scegli file…"
+
+msgid "Click the buttons to see a detailed evaluation."
+msgstr "Clicca i pulsanti per vedere una valutazione dettagliata."
+
+msgid "Click the first point on the map…"
+msgstr "Clicca il primo punto sulla mappa…"
+
+msgid "Click the second point…"
+msgstr "Clicca il secondo punto…"
+
+msgid "Click to restore"
+msgstr "Clicca per ripristinare"
+
+msgid "Competition"
+msgstr "Gara"
+
+msgid "Competition short"
+msgstr "G"
+
+msgid "Connection lost — changes are not being saved"
+msgstr "Connessione interrotta — le modifiche non vengono salvate"
+
+msgid "Continue with a double-tap or a left swipe on the map."
+msgstr "Continua con un doppio tocco o uno scorrimento verso sinistra sulla mappa."
+
+msgid "Continue with the space bar, Enter, or a double-click on the map."
+msgstr "Continua con la barra spaziatrice, Invio o un doppio clic sulla mappa."
+
+msgid "Continue?"
+msgstr "Continua?"
+
+msgid "Control"
+msgstr "Punto"
+
+msgid "Control created"
+msgstr "Punto creato"
+
+msgid "Control deleted"
+msgstr "Punto eliminato"
+
+msgid "Control moved"
+msgstr "Punto spostato"
+
+msgid "Control order changed"
+msgstr "Ordine dei punti modificato"
+
+msgid "Control redrawn"
+msgstr "Punto ridisegnato"
+
+msgid "Control type changed"
+msgstr "Tipo di punto modificato"
+
+msgid "Control types adjusted"
+msgstr "Tipi di punto adattati"
+
+msgid "Controls"
+msgstr "Punti"
+
+msgid "Controls completed"
+msgstr "Punti completati"
+
+msgid "Copy of"
+msgstr "Copia di"
+
+msgid "Created"
+msgstr "Creato"
+
+msgid "Date"
+msgstr "Data"
+
+msgid "Decision time"
+msgstr "Tempo di decisione"
+
+msgid "Decision time difference"
+msgstr "Differenza tempo di decisione"
+
+msgid "Delete"
+msgstr "Elimina"
+
+msgid "Delete control"
+msgstr "Elimina punto"
+
+msgid "Delete label"
+msgstr "Elimina label"
+
+msgid "Delete project — are you sure?"
+msgstr "Eliminare il progetto — sei sicuro?"
+
+msgid "Delete route"
+msgstr "Elimina percorso"
+
+msgid "Deleting failed."
+msgstr "Eliminazione non riuscita."
+
+msgid "Distance-based time"
+msgstr "Tempo basato sulla distanza"
+
+msgid "Done"
+msgstr "Fatto"
+
+msgid "Editor is not ready yet — please try again."
+msgstr "L'editor non è ancora pronto — riprova."
+
+msgid "Elevation changed"
+msgstr "Dislivello modificato"
+
+msgid "Enlarge"
+msgstr "Ingrandisci"
+
+msgid "Enter the real-world distance — drag the endpoints to adjust."
+msgstr "Inserisci la distanza reale — trascina gli estremi per regolare."
+
+msgid "Error"
+msgstr "Errore"
+
+msgid "Error loading data"
+msgstr "Errore durante il caricamento dei dati"
+
+msgid "Error potential"
+msgstr "Potenziale d'errore"
+
+msgid "Error:"
+msgstr "Errore:"
+
+msgid "Error: file has not been saved yet."
+msgstr "Errore: il file non è ancora stato salvato."
+
+msgid "Even though you may have picked a route directly, this is what happens if you miss it or click where two routes overlap:"
+msgstr "Anche se forse hai cliccato direttamente un percorso, ecco cosa succede se lo manchi o clicchi dove due percorsi si sovrappongono:"
+
+msgid "Even though you may have picked a route directly, this is what happens if you miss it or tap where two routes overlap:"
+msgstr "Anche se forse hai toccato direttamente un percorso, ecco cosa succede se lo manchi o tocchi dove due percorsi si sovrappongono:"
+
+msgid "Fastest"
+msgstr "Più veloce"
+
+msgid "File is currently being edited"
+msgstr "Il file è in fase di modifica"
+
+msgid "File too large (max. 15 MB)"
+msgstr "File troppo grande (max. 15 MB)"
+
+msgid "File too large (max. 50 MB)"
+msgstr "File troppo grande (max. 50 MB)"
+
+msgid "Find the fastest route on the empty map. Click directly where your route goes to select it immediately. If the selection is unambiguous at the clicked spot, the route is selected right away."
+msgstr "Trova il percorso più veloce sulla mappa vuota. Clicca direttamente nel punto in cui passa il tuo percorso per selezionarlo subito. Se la selezione è univoca nel punto cliccato, il percorso viene scelto immediatamente."
+
+msgid "Find the fastest route on the empty map. Tap directly where your route goes to select it immediately. If the selection is unambiguous at the tapped spot, the route is selected right away."
+msgstr "Trova il percorso più veloce sulla mappa vuota. Tocca direttamente nel punto in cui passa il tuo percorso per selezionarlo subito. Se la selezione è univoca nel punto toccato, il percorso viene scelto immediatamente."
+
+msgid "Generating mask…"
+msgstr "Generazione della maschera…"
+
+msgid "Hidden"
+msgstr "Nascosto"
+
+msgid "Home"
+msgstr "Pagina iniziale"
+
+msgid "If no or several routes are drawn at the chosen spot, they are revealed (or via the Show routes button). But then you only have a short time to make your decision."
+msgstr "Se nel punto scelto non è disegnato alcun percorso o ce ne sono diversi, vengono rivelati (oppure tramite il pulsante Mostra i percorsi). Ma allora hai solo poco tempo per prendere la tua decisione."
+
+msgid "Import"
+msgstr "Importa"
+
+msgid "Import routes"
+msgstr "Importa percorsi"
+
+msgid "Individual"
+msgstr "Individuale"
+
+msgid "Label"
+msgstr "Label"
+
+msgid "Label…"
+msgstr "Label…"
+
+msgid "Left"
+msgstr "Sinistra"
+
+msgid "Left/Right"
+msgstr "Sinistra/Destra"
+
+msgid "Line"
+msgstr "Linea"
+
+msgid "Loading athletes…"
+msgstr "Caricamento atleti…"
+
+msgid "Mask edited"
+msgstr "Maschera modificata"
+
+msgid "Mask ready"
+msgstr "Maschera pronta"
+
+msgid "Modified"
+msgstr "Modificato"
+
+msgid "Multi-route"
+msgstr "Multi-percorso"
+
+msgid "Name"
+msgstr "Nome"
+
+msgid "New control…"
+msgstr "Nuovo punto…"
+
+msgid "New label…"
+msgstr "Nuovo label…"
+
+msgid "New project"
+msgstr "Nuovo progetto"
+
+msgid "New route"
+msgstr "Nuovo percorso"
+
+msgid "Next point replaces anchor 1"
+msgstr "Il punto successivo sostituisce l'ancora 1"
+
+msgid "No OCAD course found in this file."
+msgstr "Nessun percorso OCAD trovato in questo file."
+
+msgid "No actions"
+msgstr "Nessuna azione"
+
+msgid "No activity yet"
+msgstr "Ancora nessuna attività"
+
+msgid "No athletes found"
+msgstr "Nessun atleta trovato"
+
+msgid "No competition results available."
+msgstr "Nessun risultato di gara disponibile."
+
+msgid "No data"
+msgstr "Nessun dato"
+
+msgid "No data available"
+msgstr "Nessun dato disponibile"
+
+msgid "No label"
+msgstr "Nessun label"
+
+msgid "No labels yet"
+msgstr "Ancora nessun label"
+
+msgid "No matching OCAD controls found in this file."
+msgstr "Nessun punto OCAD corrispondente trovato in questo file."
+
+msgid "No projects found."
+msgstr "Nessun progetto trovato."
+
+msgid "No results available."
+msgstr "Nessun risultato disponibile."
+
+msgid "No topics found for “%s”."
+msgstr "Nessun argomento trovato per «%s»."
+
+msgid "No versions"
+msgstr "Nessuna versione"
+
+msgid "OCAD analysis failed."
+msgstr "Analisi OCAD non riuscita."
+
+msgid "OCAD course aligned"
+msgstr "OCAD course import"
+
+msgid "OCAD course import"
+msgstr "OCAD course import"
+
+msgid "OCAD course import failed."
+msgstr "Importazione del percorso OCAD non riuscita."
+
+msgid "OCAD course imported"
+msgstr "OCAD course import"
+
+msgid "Obstacle changed"
+msgstr "Ostacolo modificato"
+
+msgid "Own stats"
+msgstr "Statistiche personali"
+
+msgid "Personal"
+msgstr "Personale"
+
+msgid "Please enter a project name."
+msgstr "Inserisci un nome per il progetto."
+
+msgid "Please open or upload a map first."
+msgstr "Prima apri o carica una mappa."
+
+msgid "Please select an OCD file."
+msgstr "Seleziona un file OCD."
+
+msgid "Potential"
+msgstr "Potenziale"
+
+msgid "Project"
+msgstr "Progetto"
+
+msgid "Publish"
+msgstr "Pubblica"
+
+msgid "Published"
+msgstr "Pubblicato"
+
+msgid "Publishing failed."
+msgstr "Pubblicazione non riuscita."
+
+msgid "Rasterizing map…"
+msgstr "Rasterizzazione della mappa…"
+
+msgid "Read-only:"
+msgstr "Sola lettura:"
+
+msgid "Ready?"
+msgstr "Pronto?"
+
+msgid "Reload"
+msgstr "Ricarica"
+
+msgid "Remove label"
+msgstr "Rimuovi label"
+
+msgid "Replace"
+msgstr "Sostituisci"
+
+msgid "Replace existing controls or additionally import the OCAD course?"
+msgstr "Sostituire i punti esistenti o importare in aggiunta il percorso OCAD?"
+
+msgid "Replay?"
+msgstr "Riproduci?"
+
+msgid "Reset"
+msgstr "Reimposta"
+
+msgid "Restore project JSON"
+msgstr "Ripristina JSON progetto"
+
 msgid "Results"
 msgstr "Risultati"
+
+msgid "Right"
+msgstr "Destra"
+
+msgid "Route"
+msgstr "Percorso"
+
+msgid "Route choice"
+msgstr "Scelta del percorso"
+
+msgid "Route created"
+msgstr "Percorso creato"
+
+msgid "Route deleted"
+msgstr "Percorso eliminato"
+
+msgid "Route edited"
+msgstr "Percorso modificato"
+
+msgid "Route search running — another route possible"
+msgstr "Ricerca del percorso in corso — è possibile un altro percorso"
+
+msgid "Route search running — no further route expected"
+msgstr "Ricerca del percorso in corso — nessun altro percorso previsto"
+
+msgid "Route-choice error"
+msgstr "Errore di scelta del percorso"
+
+msgid "Routes"
+msgstr "Percorsi"
+
+msgid "Saved"
+msgstr "Salvato"
+
+msgid "Select and drag point 1"
+msgstr "Seleziona e trascina il punto 1"
+
+msgid "Select and drag point 2"
+msgstr "Seleziona e trascina il punto 2"
+
+msgid "Select and drag point 3"
+msgstr "Seleziona e trascina il punto 3"
+
+msgid "Select people to see the progression"
+msgstr "Seleziona delle persone per vedere l'andamento"
+
+msgid "Select route"
+msgstr "Seleziona percorso"
+
+msgid "Sensitivity"
+msgstr "Sensibilità"
+
+msgid "Show all versions"
+msgstr "Mostra tutte le versioni"
+
+msgid "Show routes"
+msgstr "Mostra i percorsi"
+
+msgid "Shrink"
+msgstr "Riduci"
+
+msgid "Space"
+msgstr "Spazio"
+
+msgid "Statistics"
+msgstr "Statistiche"
+
+msgid "Status"
+msgstr "Stato"
+
+msgid "Tap the buttons to see a detailed evaluation."
+msgstr "Tocca i pulsanti per vedere una valutazione dettagliata."
+
+msgid "Team"
+msgstr "Squadra"
+
+msgid "Team average"
+msgstr "Media squadra"
+
+msgid "The file could not be read."
+msgstr "Impossibile leggere il file."
+
+msgid "The file is not valid JSON."
+msgstr "Il file non è un JSON valido."
+
+msgid "The routes are shown on the map, but"
+msgstr "I percorsi vengono mostrati sulla mappa, ma"
+
+msgid "This file is not a valid project."
+msgstr "Questo file non è un progetto valido."
+
+msgid "This file is published"
+msgstr "Questo file è pubblicato"
+
+msgid "Time"
+msgstr "Tempo"
+
+msgid "Time sensitivity"
+msgstr "Sensibilità temporale"
+
+msgid "Time vs Ø:"
+msgstr "Tempo vs Ø:"
+
+msgid "Total time of the route"
+msgstr "Tempo totale del percorso"
+
+msgid "Training"
+msgstr "Allenamento"
+
+msgid "Training short"
+msgstr "A"
+
+msgid "Tutorial completed"
+msgstr "Tutorial completato"
+
+msgid "Undo"
+msgstr "Annulla"
+
+msgid "Unpublish"
+msgstr "Annulla pubblicazione"
+
+msgid "Upload failed."
+msgstr "Upload non riuscito."
+
+msgid "You"
+msgstr "Tu"
+
+msgid "You can zoom in with pinch-zoom (two fingers)."
+msgstr "Puoi ingrandire con il pinch-zoom a due dita."
+
+msgid "You can zoom in with the scroll wheel or trackpad."
+msgstr "Puoi ingrandire con la rotellina del mouse o il trackpad."
+
+msgid "You have 0.5s to decide; after that every extra second counts fivefold!"
+msgstr "Hai 0,5 s per decidere; dopodiché ogni secondo in più conta cinque volte!"
+
+msgid "automatic route"
+msgstr "percorso automatico"
+
+msgid "current streak"
+msgstr "serie attuale"
+
+msgid "done"
+msgstr "completato"
+
+msgid "extra time due to additional elevation"
+msgstr "tempo aggiuntivo dovuto al dislivello extra"
+
+msgid "extra time due to sharp corners"
+msgstr "tempo aggiuntivo dovuto agli angoli stretti"
+
+msgid "extra time due to stairs or other obstacles"
+msgstr "tempo aggiuntivo dovuto a scale o altri ostacoli"
+
+msgid "fastest route chosen"
+msgstr "percorso più veloce scelto"
+
+msgid "including a fivefold penalty for choosing the route too late"
+msgstr "inclusa una penalità quintupla per la scelta troppo tardiva del percorso"
+
+msgid "is editing"
+msgstr "sta modificando"
+
+msgid "is editing this file"
+msgstr "sta modificando questo file"
+
+msgid "longest streak of fastest routes"
+msgstr "serie più lunga di percorsi più veloci"
+
+msgid "new"
+msgstr "nuovo"
+
+msgid "not enough results"
+msgstr "risultati insufficienti"
+
+msgid "result"
+msgstr "risultato"
+
+msgid "results"
+msgstr "risultati"
+
+msgid "someone else"
+msgstr "qualcun altro"
+
+msgid "started"
+msgstr "iniziato"
+
+msgid "topic"
+msgstr "argomento"
+
+msgid "topics"
+msgstr "argomenti"
+
+msgid "Ø Time"
+msgstr "Ø Tempo"

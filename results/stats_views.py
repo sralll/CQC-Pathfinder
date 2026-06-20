@@ -32,7 +32,7 @@ def _team_random_cache_key(team_id):
 
 
 def _stats_table_cache_key(team_id, mode):
-    return f"stats:table:v4:{team_id}:{mode}"
+    return f"stats:table:v5:{team_id}:{mode}"
 
 
 def _team_progress_cache_key(team_id):
@@ -791,7 +791,7 @@ def _cached_team_progress(active_team):
 def get_stats_table(request):
     """Per-athlete trainer table — competition / training / random.
 
-    Returns a JSON array starting with a 'Kaderdurchschnitt' summary row,
+    Returns a JSON array starting with a team-average summary row,
     followed by one row per athlete in the requester's active team who has
     data in the chosen mode. Each row has the same keys regardless of mode
     so the existing renderer doesn't need to branch.
@@ -926,7 +926,7 @@ def get_stats_table(request):
         # the same point helpers as the per-athlete graph view. This replaces four
         # correlated-subquery aggregates (per-user + summary, ×2 metrics) with two
         # plain GROUP BY queries. Because a least-squares line's component sums are
-        # additive, the Kaderdurchschnitt fit is just the element-wise sum of the
+        # additive, the team-average fit is just the element-wise sum of the
         # per-athlete sums — no separate query needed.
         runtime_stats   = _route_runtime_stats_for_cp(cp_ids)
         time_benchmarks = _choice_time_benchmarks_per_cp(choices_qs, cp_ids)
@@ -1009,7 +1009,8 @@ def get_stats_table(request):
             }
         show_summary_sensitivity = summary['posten'] > 100
         data.append({
-            'athlete':      'Kaderdurchschnitt',
+            'athlete':      'Team average',
+            'is_summary':   True,
             'user_id':      None,
             'error_potential_sensitivity': summary_error_sensitivity if show_summary_sensitivity else None,
             'time_sensitivity':            summary_time_sensitivity if show_summary_sensitivity else None,

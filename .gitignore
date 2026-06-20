@@ -2,13 +2,13 @@
 __pycache__/
 *.py[cod]
 *.sqlite3
-*.env
 
 # Django
 db.sqlite3
 *.log
-staticfiles/
+*.pid
 media/
+staticfiles/
 
 # Virtual environments
 venv/
@@ -23,18 +23,9 @@ uvicorn.log
 # VS Code / IDE
 .vscode/
 .idea/
-
-upload.py
-
-svg_icons/
-
 .claude/
-
-desktop.ini
+.agents/
 
 changes.txt
 
 *.ocd
-
-Base SVGs/
-Base Maps/

@@ -1,0 +1,583 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block styles %}
+<link rel="stylesheet" href="{% static 'css/guide.css' %}">
+{% endblock %}
+
+{% block nav_content %}
+<div class="guide-nav-left">
+    <button class="guide-theme-toggle" type="button" aria-label="Darstellung wechseln" title="Darstellung wechseln">
+        <x-icon name="palette" size="13px"></x-icon>
+    </button>
+    <a class="guide-nav-title" href="{% url 'guide' %}">
+        <x-icon name="book-open" size="14px"></x-icon>
+        <span>Guide</span>
+    </a>
+    <a class="guide-nav-link" href="#editor">Editor</a>
+    <a class="guide-nav-link" href="#play">Play</a>
+    <a class="guide-nav-link" href="#resultate">Resultate</a>
+    <a class="guide-nav-link" href="#statistik">Statistik</a>
+    <a class="guide-nav-link" href="#forum">Forum</a>
+    <a class="guide-nav-link" href="#version">Version</a>
+</div>
+{% endblock nav_content %}
+
+{% block content %}
+<svg class="guide-svg-filters" width="0" height="0" aria-hidden="true" focusable="false">
+    <filter id="guide-logo-light-filter" color-interpolation-filters="sRGB">
+        <feColorMatrix type="matrix" values="
+            1 -1 0 0 0
+            0 0 0 0 0
+            0 -1 1 0 0
+            0 0 0 1 0
+        " />
+    </filter>
+</svg>
+
+<main class="guide-page" id="guide-page" data-theme="dark">
+    <aside class="guide-sidebar" aria-label="Kapitel">
+        <div class="guide-sidebar-inner">
+            <a class="guide-logo" href="{% url 'home' %}">
+                <img src="{% static 'img/logo.svg' %}" alt="CQC Pathfinder">
+            </a>
+            <nav class="guide-chapters">
+                <a href="#editor"><x-icon name="pencil" size="15px"></x-icon><span>Editor</span></a>
+                <a href="#play"><x-icon name="trophy" size="15px"></x-icon><span>Play</span></a>
+                <a href="#resultate"><x-icon name="list" size="15px"></x-icon><span>Resultate</span></a>
+                <a href="#statistik"><x-icon name="chart-simple" size="15px"></x-icon><span>Statistik</span></a>
+                <a href="#forum"><x-icon name="comment" size="15px"></x-icon><span>Forum</span></a>
+                <a href="#version"><x-icon name="book-open" size="15px"></x-icon><span>Version</span></a>
+            </nav>
+        </div>
+    </aside>
+
+    <article class="guide-article">
+        <header class="guide-header">
+            <p class="guide-kicker">CQC Pathfinder</p>
+            <h1>Anleitung</h1>
+            <p class="guide-lead">
+                Diese Seite beschreibt die wichtigsten Arbeitsabläufe im Tool. Der Schwerpunkt liegt
+                auf dem Editor, weil dort Projekte erstellt, vorbereitet und veröffentlicht werden.
+            </p>
+            <div class="guide-search" role="search">
+                <x-icon name="search" class="guide-search-icon"></x-icon>
+                <input type="text" id="guide-search-input" placeholder="Anleitung durchsuchen…"
+                       autocomplete="off" aria-label="Anleitung durchsuchen">
+                <button type="button" id="guide-search-clear" aria-label="Suche leeren">
+                    <x-icon name="xmark" size="1.1rem"></x-icon>
+                </button>
+            </div>
+        </header>
+
+        <p class="guide-no-results" id="guide-no-results" hidden>Keine Treffer.</p>
+
+        <section class="guide-section guide-section-general" id="allgemein">
+            <div class="guide-section-heading">
+                <x-icon name="home" size="22px"></x-icon>
+                <div>
+                    <p class="guide-section-number">Allgemein</p>
+                    <h2>Startseite</h2>
+                </div>
+            </div>
+            <p>
+                Auf der Startseite können Team und Sprache gewechselt werden. Die Team-Auswahl ist
+                sichtbar, wenn dein Account Zugriff auf mehrere Teams hat. Der Sprachwechsel passt die
+                Oberfläche an die gewählte Sprache an.
+            </p>
+            <p>
+                Die Übersetzungen werden mit KI unterstützt. Falls eine Formulierung unklar oder falsch
+                wirkt, bitte im Forum melden.
+            </p>
+        </section>
+
+        <section class="guide-section" id="editor">
+            <div class="guide-section-heading">
+                <x-icon name="pencil" size="22px"></x-icon>
+                <div>
+                    <p class="guide-section-number">1</p>
+                    <h2>Editor</h2>
+                </div>
+            </div>
+
+            <h3>Überblick</h3>
+            <p>
+                Der Editor ist der Arbeitsbereich für TrainerInnen. Er wurde modernisiert und speichert
+                Änderungen laufend: Aktionen im Editor werden direkt auf den Server geschrieben, sobald
+                eine Internetverbindung besteht. Zusätzlich werden alte Projektstände abgelegt. Über den
+                Verlauf der Dateiversionen mit dem <x-icon name="angles-down" size="0.9em"></x-icon>
+                Knopf können frühere Versionen geöffnet und wiederhergestellt werden.
+            </p>
+            <p>
+                Manuelles Speichern ist im
+                Normalfall nicht mehr nötig. Die Funktion ist weiterhin da, um nach einem kurzen
+                Verbindungsunterbruch aufzuholen oder bewusst eine wiederherstellbare Projektversion
+                zu schreiben. Ohne manuelles Speichern wird automatisch spätestens alle 10 Aktionen
+                ein solcher Projektstand geschrieben. Der Verlauf
+                <x-icon name="history" size="0.9em"></x-icon> listet diese gespeicherten Stände auf;
+                von dort kann eine frühere Version geöffnet und wiederhergestellt werden.
+            </p>
+
+            <h3>Tastenkombinationen</h3>
+            <p>
+                Tastenkombinationen funktionieren nicht, während ein Eingabefeld aktiv ist. In Fenstern
+                hat <kbd>Enter</kbd> meistens die Bedeutung der aktuellen Bestätigung.
+            </p>
+            <div class="guide-shortcut-table">
+                <div><kbd>P</kbd><span>Öffnet die Projekttabelle.</span></div>
+                <div><kbd>Ctrl</kbd><span>+ <kbd>Z</kbd>: Rückgängig. Beim Skalieren wird der zuletzt gesetzte Messpunkt entfernt.</span></div>
+                <div><kbd>Ctrl</kbd><span>+ <kbd>Y</kbd> oder <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>Z</kbd>: Wiederholen.</span></div>
+                <div><kbd>Ctrl</kbd><span>+ <kbd>S</kbd>: manuell speichern.</span></div>
+                <div><kbd>Ctrl</kbd><span>+ <kbd>N</kbd>: neues Projekt erstellen.</span></div>
+                <div><kbd>Ctrl</kbd><span>+ <kbd>D</kbd>: aktuelles Projekt duplizieren.</span></div>
+                <div><kbd>D</kbd><span>Entfernt das letzte Objekt, das zum aktuellen Modus passt.</span></div>
+                <div><kbd>Enter</kbd><span>Bestätigt Projektnamen, neue Projekte, Labels, OCAD-Importe oder die Skalierung, wenn alle nötigen Angaben vorhanden sind.</span></div>
+                <div><kbd>Esc</kbd><span>Bricht laufendes Routenzeichnen, Routeneditieren, Postensetzen, Sperrgebietzeichnen oder das rechte Werkzeugmenü ab.</span></div>
+                <div><kbd>Rechtsklick</kbd><span>Gehalten und bewegt öffnet das Werkzeugrad an der Cursorposition.</span></div>
+            </div>
+
+            <h3>Projekttabelle</h3>
+            <p>
+                Die Projekttabelle ist die zentrale Übersicht über bestehende Projekte. Labels
+                <x-icon name="tags" size="0.9em"></x-icon> können von TrainerInnen erstellt und per
+                Drag and Drop auf Dateien zugewiesen werden.
+            </p>
+            <p>
+                Die Suche <x-icon name="search" size="0.9em"></x-icon> filtert die Tabelle nach passenden
+                Projekten. Sobald eine Suche oder ein Filter aktiv ist, erscheint ein Button
+                <x-icon name="xmark" size="0.9em"></x-icon> zum Zurücksetzen von Suche, Filter und Sortierung.
+            </p>
+
+            <h3>Neues Projekt <x-icon name="file-circle-plus" size="0.9em"></x-icon></h3>
+            <p>
+                Ein neues Projekt wird über die Projekttabelle erstellt. Gib zuerst einen Namen ein.
+                Der Name darf nicht gleich heissen wie ein bereits vorhandenes Projekt. Danach öffnet
+                sich das Kartenfenster: Dort kann eine Karte per Drag and Drop abgelegt oder über den
+                Dateidialog ausgewählt werden. Möglich sind Bilddateien und OCAD-Dateien.
+            </p>
+
+            <h4>Bild</h4>
+            <p>
+                Ein Bild muss von Pixeln auf reale Distanzen skaliert werden. Setze dafür das Lineal
+                auf der Karte, wenn möglich über eine grosse Distanz oder sogar über die ganze Karte.
+                Danach gibst du eine real gemessene Distanz ein oder zwei Koordinatenpunkte.
+            </p>
+            <p>
+                Praktisch geht das mit Google Maps: Rechtsklick auf einen Punkt und <strong>Distanz
+                messen</strong> wählen, oder Koordinaten kopieren und im Skalierungsdialog einfügen.
+            </p>
+
+            <h4>OCAD</h4>
+            <p>
+                Bei OCAD-Dateien passiert die Skalierung automatisch. Je nach OCAD-Version und
+                Exporteinstellungen werden aber nicht immer alle Objekte korrekt gerendert. Wenn dir
+                solche Fehler auffallen, schreib bitte im Forum, was du importiert hast, welche
+                OCAD-Version du verwendest und was falsch dargestellt wurde.
+            </p>
+            <p>
+                Je nach OCAD-Export können auch Posten und Routen direkt importiert werden.
+            </p>
+
+            <h3>Obere Leiste</h3>
+            <h4>Projekt kopieren</h4>
+            <p>
+                Projekte werden über eine interne ID identifiziert, nicht mehr nur über den
+                Namen. Wenn du eine separate, bearbeitbare Kopie eines Projekts willst, muss sie deshalb
+                explizit über <strong>Duplizieren</strong> erstellt werden. Nur Umbenennen erzeugt keine Kopie.
+            </p>
+
+            <h4>Bahn importieren</h4>
+            <p>
+                <strong>Import course</strong> erlaubt den Import einer OCAD-Bahn, inklusive Routen,
+                falls diese im Export vorhanden sind. Dadurch können auch Waldkarten vorbereitet werden,
+                ohne jede Route manuell nachzeichnen zu müssen.
+            </p>
+
+            <h4>Alle bearbeiten <x-icon name="industry" size="1em"></x-icon></h4>
+            <p>
+                Mit <strong>Alle bearbeiten</strong> können alle Postenpaare gemeinsam auf L/R
+                <span class="guide-icon-rotate-180"><x-icon name="arrows-split" size="0.9em"></x-icon></span>
+                umgestellt oder mit Auto-Pathfinding
+                <x-icon name="wand-magic-sparkles" size="0.9em"></x-icon> abgefertigt werden. Pathfinding
+                ist genügend schnell, um das direkt im Editor zu machen.
+            </p>
+
+            <h4>Einstellungen</h4>
+            <ul class="guide-detail-list">
+                <li>
+                    <strong>Auto-Pathfind</strong> bestimmt, wie viele Routen beim Platzieren eines
+                    Postenpaars automatisch generiert werden. Der Wert ist ein Maximum: Routen werden
+                    nicht hinzugefügt, wenn sie als nutzlos gelten, zum Beispiel weil sie mehr als 50 %
+                    langsamer sind oder sich zu wenig von einer bestehenden Route unterscheiden. Weitere
+                    automatische Routen können trotzdem mit dem <x-icon name="wand-magic-sparkles" size="0.9em"></x-icon>
+                    Knopf neben der Route erzwungen werden. Empfehlung: Auto-Pathfind auf 2 oder 3
+                    lassen. Wenn die Karte schlecht analysiert wurde oder keine Sprint-OL-Karte ist,
+                    auf 0 stellen.
+                </li>
+                <li>
+                    <strong>Auto-Jump</strong> schaltet um, ob die Kamera beim Auswählen eines
+                    Postenpaars direkt zum Posten springt. Wenn dir davon schnell seekrank wird, besser
+                    ausschalten.
+                </li>
+                <li>
+                    <strong>Auto-Obstacle</strong> berechnet automatisch Zusatzzeit für erkannte
+                    Hindernisse auf der Route. Da Treppen oft nur 1 px breite Linien sind, ist diese
+                    Erkennung nicht immer stabil.
+                </li>
+            </ul>
+
+            <h4>Mitte der oberen Leiste</h4>
+            <p>
+                Der <x-icon name="globe" size="0.9em"></x-icon> Knopf publiziert ein Projekt. Während
+                ein Projekt publiziert ist, kann es nicht bearbeitet werden. Die alte Regel gilt weiter:
+                Sobald Resultate von AthletInnen vorhanden sind, sollte das Projekt nicht mehr verändert
+                werden.
+            </p>
+            <p>
+                Der Projektname kann direkt in der Mitte der oberen Leiste editiert werden. Daneben kann
+                über das Label-Dropdown ein Label zugewiesen werden.
+            </p>
+
+            <h3>Werkzeuge</h3>
+            <p>
+                Werkzeuge werden im Werkzeugrad unten links ausgewählt. Alternativ kann auf der Karte
+                die rechte Maustaste gehalten und die Maus bewegt werden, um das Werkzeugrad direkt an
+                der Cursorposition zu öffnen. Für Trackpad-Nutzung kann ein doppelter Rechtsklick das
+                Werkzeugrad fixieren, bis eine Auswahl getroffen wurde.
+            </p>
+
+            <h4>Ansehen <x-icon name="lock" size="1em"></x-icon></h4>
+            <p>
+                Ansehen ist der Modus ohne Bearbeitung. Publizierte Dateien werden automatisch in
+                diesem Modus geöffnet.
+            </p>
+
+            <h3>Posten <x-icon name="control_pair" size="0.9em"></x-icon></h3>
+            <h4>Neuen Posten setzen <span class="guide-icon-rotate-45"><x-icon name="circle-xmark-r" size="1em"></x-icon></span></h4>
+            <p>
+                Ein neues Postenpaar wird zuerst mit dem Start, dann mit dem Ziel platziert.
+                Postenpaare können unabhängig voneinander im Projekt
+                existieren; es muss keine zusammenhängende Bahn gezeichnet werden.
+            </p>
+
+            <h4>Posten verschieben <x-icon name="drag-fist" size="1em"></x-icon></h4>
+            <p>
+                Mit dem Drag-Werkzeug wird der Start oder das Ziel eines Postenpaars verschoben. Bei
+                kleinen Korrekturen werden bestehende Routen an die neuen Koordinaten angepasst. Wird
+                der Posten zu weit verschoben, werden die alten Routen gelöscht und je nach
+                Auto-Pathfind-Einstellung neu berechnet.
+            </p>
+
+            <h4>Postenliste</h4>
+            <p>
+                Im Seitenpanel sind alle Posten als <strong>Posten 1, Posten 2 …</strong> aufgelistet,
+                mit der Anzahl Routen. Per Drag and Drop am Griff lässt sich die Reihenfolge ändern. Pro
+                Posten kann der Typ umgeschaltet werden:
+            </p>
+            <ul class="guide-detail-list">
+                <li><strong>Multi-Route <x-icon name="m" size="0.9em"></x-icon>:</strong> beliebig viele Routen pro Postenpaar (Standard).</li>
+                <li><strong>L/R <span class="guide-icon-rotate-180"><x-icon name="arrows-split" size="0.9em"></x-icon></span>:</strong> genau zwei Routen (links/rechts). Umschalten ist nur möglich, wenn das Postenpaar exakt zwei Routen hat.</li>
+                <li><strong>Posten löschen <x-icon name="trash" size="0.9em"></x-icon>:</strong> entfernt das Postenpaar samt Routen.</li>
+            </ul>
+
+            <h3>Routen <x-icon name="route" size="0.9em"></x-icon></h3>
+            <h4>Route hinzufügen <x-icon name="plus" size="1em"></x-icon></h4>
+            <p>
+                Eine manuelle Route wird zum aktiven Postenpaar gezeichnet.
+            </p>
+
+            <h4>Route editieren <x-icon name="pencil" size="1em"></x-icon></h4>
+            <p>
+                Eine Route wird abschnittweise angepasst: Klicke irgendwo auf die Route und zeichne
+                danach in Richtung Ziel weiter. Sobald die alte Route wieder angeklickt wird, wird der
+                ursprüngliche Rest der Route weiterverwendet.
+            </p>
+
+            <h4>Automatische Route <x-icon name="wand-magic-sparkles" size="1em"></x-icon></h4>
+            <p>
+                Neben dem aktiven Postenpaar erzeugt der <x-icon name="wand-magic-sparkles" size="0.9em"></x-icon>
+                Knopf eine zusätzliche Auto-Pathfinding-Route, auch über das Limit der
+                Auto-Pathfind-Einstellung hinaus. Solange das Spinner-Symbol
+                <x-icon name="spinner" size="0.9em"></x-icon> dreht, rechnet der Pathfinder noch: Die
+                Route wird im Hintergrund gesucht und erscheint, sobald die Berechnung fertig ist. Warte,
+                bis der Spinner verschwindet, statt den Knopf erneut zu drücken.
+            </p>
+
+            <h4>Routenliste und Laufzeiten</h4>
+            <p>
+                Zu jedem Posten werden die Routen mit Länge und berechneter Laufzeit angezeigt. Die
+                schnellste Route ist hervorgehoben; die übrigen zeigen den Zeitverlust relativ dazu.
+                Dieselbe Farbskala wird auch in Play, in den Resultaten und in der Statistik verwendet:
+            </p>
+            <ul class="guide-detail-list">
+                <li><strong><x-icon name="crown" size="0.9em"></x-icon> Schnellste Route:</strong> Referenz, kein Zeitverlust.</li>
+                <li><strong>+ unter 5 %:</strong> minimaler Verlust (gelb).</li>
+                <li><strong>+ 5–10 %:</strong> spürbarer Verlust (orange).</li>
+                <li><strong>+ über 10 %:</strong> grosser Verlust (rot).</li>
+            </ul>
+            <p>
+                Pro Route lassen sich zwei Werte von Hand setzen, die direkt in die Laufzeit einfliessen:
+            </p>
+            <ul class="guide-detail-list">
+                <li><strong>Höhenmeter <x-icon name="elevation" size="0.9em"></x-icon> (Hm):</strong> Steigung entlang der Route. Jeder Höhenmeter wird in eine flache Zusatzdistanz umgerechnet.</li>
+                <li><strong>Hindernis-Zeit <x-icon name="obstacle" size="0.9em"></x-icon> (s):</strong> fixe Zusatzsekunden, z. B. für Zäune oder Treppen. Wird auch von Auto-Obstacle befüllt.</li>
+                <li><strong>Route löschen <x-icon name="trash" size="0.9em"></x-icon>:</strong> entfernt die einzelne Route.</li>
+            </ul>
+
+            <h3>Maske</h3>
+            <p>
+                Die Maske wird automatisch generiert, wenn eine Karte geladen wird. Sie beschreibt,
+                welche Bereiche für Auto-Pathfinding passierbar oder unpassierbar sind.
+            </p>
+
+            <h4>Ansehen <x-icon name="lock" size="1em"></x-icon></h4>
+            <p>
+                Ansehen ist der Modus für die Maske, in dem nichts verändert wird.
+            </p>
+
+            <h4>Editieren <x-icon name="pencil" size="1em"></x-icon> <x-icon name="eraser" size="1em"></x-icon></h4>
+            <p>
+                Im Maskeneditor können unpassierbare Bereiche hinzugefügt oder entfernt werden. Die
+                Werkzeuggrösse wird im Seitenpanel geändert. Alternativ kann mit dem Mausrad gescrollt
+                werden, während der Mauszeiger über dem Werkzeugknopf liegt; das funktioniert auch im
+                Werkzeugmenü auf der Karte, solange die rechte Maustaste gehalten wird.
+            </p>
+
+            <h3>Sperrgebiete <x-icon name="block" size="0.9em"></x-icon></h3>
+            <p>
+                Sperrgebiete werden vom Auto-Pathfinding respektiert.
+            </p>
+            <ul class="guide-detail-list">
+                <li><strong>Linie hinzufügen <x-icon name="slash" size="0.9em"></x-icon>:</strong> einmal für den Start der Sperrlinie klicken, dann ein zweites Mal für das Ende.</li>
+                <li><strong>Fläche hinzufügen <x-icon name="draw-polygon" size="0.9em"></x-icon>:</strong> einmal klicken, um das Polygon zu starten, danach beliebig viele Punkte setzen und mit einem Klick auf den ersten Punkt abschliessen.</li>
+                <li><strong>Entfernen <x-icon name="eraser" size="0.9em"></x-icon>:</strong> in diesem Modus auf bestehende Sperrobjekte klicken, um sie zu löschen.</li>
+            </ul>
+        </section>
+
+        <section class="guide-section" id="play">
+            <div class="guide-section-heading">
+                <x-icon name="trophy" size="22px"></x-icon>
+                <div>
+                    <p class="guide-section-number">2</p>
+                    <h2>Play</h2>
+                </div>
+            </div>
+            <h3>Tutorial</h3>
+            <p>
+                Beim ersten Spielen wird auf Desktop und Mobile zuerst ein Tutorial mit 4 Posten
+                gespielt. Der Play-Modus hat inzwischen weniger Buttons, damit mehr Platz für die Karte
+                bleibt. Dadurch ist die Navigation nicht mehr rein intuitiv, und das Tutorial zeigt den
+                Ablauf einmal ohne Druck.
+            </p>
+
+            <h3>Routenauswahl</h3>
+            <p>
+                Die Karte kann direkt angeklickt werden, um eine Route zu wählen. Wenn die Auswahl
+                eindeutig ist, also an der angeklickten Stelle nur eine Route liegt, wird diese Route
+                sofort registriert.
+            </p>
+            <p>
+                Wenn dort keine Route oder mehrere Routen liegen, werden die Routen eingeblendet. Die
+                AthletInnen haben dann 0.5 Sekunden Zeit, ihre Route zu wählen. Das ist genug, wenn sie
+                die Karte vorher wirklich studiert und ihre Route vorbereitet haben.
+            </p>
+            <p>
+                Nach diesen 0.5 Sekunden zählt zusätzliche Zeit fünffach. Das soll verhindern, dass
+                AthletInnen sofort die Routen anzeigen lassen und danach nur noch Linienlängen
+                vergleichen, statt eine OL-Entscheidung zu treffen.
+            </p>
+            <p>
+                Bei L/R-Posten funktioniert die Auswahl gleich, damit der Spielfluss nicht gestört wird.
+                Dieser Modus ist dadurch etwas redundanter geworden.
+            </p>
+
+            <h3>Routen-Statistik</h3>
+            <p>
+                Nach jeder Routenwahl erscheint ein Panel mit den Kennzahlen der gewählten Route. Oben
+                stehen die Entscheidungszeit <x-icon name="clock" size="0.9em"></x-icon> und die
+                Strafzeit <x-icon name="hourglass" size="0.9em"></x-icon> (die fünffach gezählte Zeit
+                nach den ersten 0.5 Sekunden). Pro Route werden die Bestandteile der Laufzeit aufgeschlüsselt:
+            </p>
+            <ul class="guide-detail-list">
+                <li><strong>Länge:</strong> reine Laufdistanz und die daraus berechnete Zeit.</li>
+                <li><strong>Höhenmeter <x-icon name="elevation" size="0.9em"></x-icon>:</strong> Zusatzzeit aus der Steigung.</li>
+                <li><strong>Hindernis <x-icon name="obstacle" size="0.9em"></x-icon>:</strong> Zusatzzeit aus Hindernissen.</li>
+                <li><strong>Richtungswechsel <x-icon name="angle" size="0.9em"></x-icon>:</strong> Zusatzzeit für scharfe Ecken im Laufweg.</li>
+            </ul>
+
+            <h3>Navigation</h3>
+            <p>
+                Sobald eine Route gewählt ist, geht es zum nächsten Posten. Beim letzten Posten erscheint
+                stattdessen der Abschluss-Dialog.
+            </p>
+            <h4>Desktop</h4>
+            <ul class="guide-detail-list">
+                <li><strong><kbd>Leertaste</kbd> oder <kbd>Enter</kbd>:</strong> zum nächsten Posten. Sind die Routen noch verdeckt, werden sie damit zuerst eingeblendet.</li>
+                <li><strong>Doppelklick auf die Karte:</strong> ebenfalls zum nächsten Posten.</li>
+                <li><strong><kbd>←</kbd> / <kbd>→</kbd>:</strong> bei L/R-Posten die linke oder rechte Route wählen.</li>
+            </ul>
+            <h4>Mobile</h4>
+            <ul class="guide-detail-list">
+                <li><strong>Doppeltipp <x-icon name="double-tap" size="1.1em"></x-icon>:</strong> zweimal auf die Karte tippen führt zum nächsten Posten.</li>
+                <li><strong>Wischen <x-icon name="swipe" size="1.1em"></x-icon>:</strong> von rechts nach links über die Karte wischen führt zum nächsten Posten.</li>
+            </ul>
+
+            <h3>Modus</h3>
+            <p>
+                Es gibt drei Modi, die getrennt ausgewertet werden, damit die Daten nicht vermischt werden:
+            </p>
+            <ul class="guide-detail-list">
+                <li><strong>Wettkampf <x-icon name="trophy" size="0.9em"></x-icon>:</strong> die Resultate, die in Rangliste und Statistik zählen.</li>
+                <li><strong>Training <x-icon name="book-open" size="0.9em"></x-icon>:</strong> funktioniert fast gleich, aber ohne Druck. Getrennt geführt, weil es bereits viele Trainingsresultate gibt.</li>
+                <li><strong>Infinity <x-icon name="infinity" size="0.9em"></x-icon>:</strong> Endlos-Modus mit L/R-Entscheidungen am Stück. Eine Serie richtiger Wahlen treibt den Streak <x-icon name="flame" size="0.9em"></x-icon> hoch; die richtige Route wird danach mit der Krone <x-icon name="crown" size="0.9em"></x-icon> markiert. Dieser Modus ist noch nicht zugänglich.</li>
+            </ul>
+
+            <h3>Wiederholung</h3>
+            <p>
+                Dateien können erneut gespielt werden. Wiederholungen zählen aber nicht mehr zu den
+                Resultaten.
+            </p>
+        </section>
+
+        <section class="guide-section" id="resultate">
+            <div class="guide-section-heading">
+                <x-icon name="list" size="22px"></x-icon>
+                <div>
+                    <p class="guide-section-number">3</p>
+                    <h2>Resultate</h2>
+                </div>
+            </div>
+            <p>
+                In den Resultaten sieht man pro Projekt, wer gespielt hat, welche Posten abgeschlossen
+                wurden und welche Routen gewählt wurden. Die Ansicht ist bewusst direkt gehalten: Sie
+                zeigt die Rangliste, Entscheidungszeiten, Routenwahlfehler und die Verteilung der
+                gewählten Routen.
+            </p>
+            <h3>Übersicht</h3>
+            <p>
+                Die Übersicht listet alle gespielten Dateien als Tabelle. Die Spalten lassen sich
+                sortieren und filtern <x-icon name="filter" size="0.9em"></x-icon>, dazu gibt es eine
+                Suche <x-icon name="search" size="0.9em"></x-icon>.
+            </p>
+
+            <h3>Datei-Resultate</h3>
+            <p>
+                Beim Öffnen einer Datei wird die Karte mit allen Posten gezeigt. Pro Posten erscheint
+                eine Routenliste: Die schnellste Route trägt die Krone
+                <x-icon name="crown" size="0.9em"></x-icon>, die übrigen den Zeitverlust in derselben
+                Farbskala wie im Editor (gelb &lt; 5 %, orange 5–10 %, rot &gt; 10 %). Unter jeder Route
+                stehen die AthletInnen, die sie gewählt haben, mit ihrer Entscheidungszeit. So sieht man
+                auf einen Blick, welche Variante wie oft gewählt wurde und wo Zeit verloren ging.
+            </p>
+            <p>
+                Mit der Wiederholung <x-icon name="replay" size="0.9em"></x-icon> lässt sich der Ablauf
+                der Routenwahlen als Animation erneut abspielen. Die Animation läuft mit überzeichneter
+                Laufgeschwindigkeit, ist also schneller als in echt.
+            </p>
+        </section>
+
+        <section class="guide-section" id="statistik">
+            <div class="guide-section-heading">
+                <x-icon name="chart-simple" size="22px"></x-icon>
+                <div>
+                    <p class="guide-section-number">4</p>
+                    <h2>Statistik</h2>
+                </div>
+            </div>
+            <p>
+                AthletInnen sehen ihre eigenen Daten, TrainerInnen sehen immer die Resultate ihres
+                Teams. TrainerInnen haben zusätzlich eine Tabellenübersicht, um AthletInnen direkt
+                miteinander zu vergleichen.
+            </p>
+            <p>
+                Die Statistik eignet sich weniger für einzelne Routenentscheide, sondern für Muster:
+                Entscheidungszeiten, Fehlerquoten, Fortschritt, Aktivität und Entwicklung über Zeit.
+            </p>
+
+            <h3>Modus</h3>
+            <p>
+                Oben wird zwischen den drei Modi umgeschaltet, jeweils mit eigenen Auswertungen:
+                Wettkampf <x-icon name="trophy" size="0.9em"></x-icon>,
+                Training <x-icon name="book-open" size="0.9em"></x-icon> und
+                Infinity <x-icon name="infinity" size="0.9em"></x-icon>.
+            </p>
+
+            <h3>Fehlerpotential-Erkennung</h3>
+            <p>
+                Die Fehlerpotential-Erkennung zeigt, wie stark du reagierst, wenn ein Posten das
+                Potential für einen grossen Fehler hat.
+            </p>
+
+            <h3>Zeitsensitivität</h3>
+            <p>
+                Die Zeitsensitivität zeigt, wie deine Routenwahlfehler mit deinen Entscheidungszeiten
+                zusammenhängen. Sie zeigt die Abweichung deiner Entscheidungszeit vom Kaderdurchschnitt
+                pro Posten und wie sich das auf deine Fehlerquote auswirkt.
+            </p>
+            <ul class="guide-detail-list">
+                <li>Eine negative Sensitivität bedeutet, dass deine Routenentscheidungen genauer werden, wenn du länger als der Kaderdurchschnitt nachdenkst.</li>
+                <li>Eine positive Sensitivität bedeutet, dass du intuitiv die richtige Entscheidung triffst und längeres Nachdenken dir im Vergleich zu anderen AthletInnen nicht hilft.</li>
+                <li>Diese Analyse sollte vorsichtig interpretiert werden.</li>
+            </ul>
+        </section>
+
+        <section class="guide-section" id="forum">
+            <div class="guide-section-heading">
+                <x-icon name="comment" size="22px"></x-icon>
+                <div>
+                    <p class="guide-section-number">5</p>
+                    <h2>Forum</h2>
+                </div>
+            </div>
+            <p>
+                Das Forum ist der Rückkanal für Fragen, Fehlerberichte und Verbesserungsvorschläge. Es
+                ist übergreifend über alle Teams, nicht nur innerhalb des eigenen Kaders sichtbar.
+            </p>
+            <p>
+                Wenn ein Problem gemeldet wird, helfen ein kurzer Titel, eine Beschreibung des
+                erwarteten Verhaltens und der konkrete Projekt- oder Aufgabenbezug.
+            </p>
+            <div class="guide-action-row">
+                <a class="ui-btn-primary" href="{% url 'forum' %}">
+                    <x-icon name="comment" size="14px"></x-icon>
+                    Zum Forum
+                </a>
+                <a class="ui-btn" href="{% url 'home' %}">
+                    <x-icon name="home" size="14px"></x-icon>
+                    Zurück zur Startseite
+                </a>
+            </div>
+        </section>
+
+        <section class="guide-section" id="version">
+            <div class="guide-section-heading">
+                <x-icon name="book-open" size="22px"></x-icon>
+                <div>
+                    <p class="guide-section-number">6</p>
+                    <h2>Version</h2>
+                </div>
+            </div>
+            <h3>June 2026, CQC-Pathfinder 2.0</h3>
+            <ul class="guide-detail-list">
+                <li>Full Postgres class refactorization with deep dynamic FK linkage for direct SQL queries.</li>
+                <li>Full project file version control and granular autosave functionality, file lock and checkin calls.</li>
+                <li>SVG based, interactive map objects.</li>
+                <li>OCAD file support for maps and courses.</li>
+                <li>Accelerated front end JS pathfinding with corridored Theta* on cross-linked quadtree nav-grid.</li>
+                <li>Intelligent route culling.</li>
+                <li>Deeper NN object granularization.</li>
+                <li>Mask URL-encoded edits for undo stacking.</li>
+                <li>Additional route attributes for runtime calculation.</li>
+                <li>Hidden routes in play mode and tutorial.</li>
+                <li>Decision science integration in stats.</li>
+                <li>Public forum.</li>
+                <li>Multi language integration.</li>
+            </ul>
+        </section>
+    </article>
+</main>
+{% endblock %}
+
+{% block scripts %}
+<script defer src="{% static 'js/guide.js' %}"></script>
+{% endblock %}

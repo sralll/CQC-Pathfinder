@@ -245,6 +245,24 @@ body.mobile .stats-2way-thumb x-icon { font-size: 20px; }
     font-size: var(--font-xs);
     text-align: center;
 }
+.trainer-athlete-loading {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 12px;
+    color: var(--text-dim);
+    font-size: var(--font-xs);
+}
+.trainer-athlete-spinner {
+    width: 13px;
+    height: 13px;
+    border: 2px solid var(--border);
+    border-top-color: var(--brand);
+    border-radius: 50%;
+    animation: stats-spin 0.8s linear infinite;
+    flex: none;
+}
 
 #stats-grid {
     display: grid;

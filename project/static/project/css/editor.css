@@ -5,7 +5,6 @@
 
    ROOT CONTEXT
      10      #navbar
-   9 998     #modal-scale  (inline)
    9 999     #mask-brush-cursor, notification banners, drag ghost  (JS: 9 999)
   10 000     .modal                                               (JS: 10 000)
   10 001     .publish-wave, #nav-label-picker, #label-manage-drop  (JS: 10 001)
@@ -1703,17 +1702,14 @@ x-icon.spin svg { animation: spin 1s linear infinite; }
 }
 .dialog-btn-cancel:hover { color: #aaa; background: #252525; }
 
-/* Scale modal */
-.modal-scale-box {
-    width: min(460px, calc(100vw - 32px));
+/* Scale form (integrated in the side panel, below the explanatory text) */
+#scale-form {
     display: flex;
     flex-direction: column;
-    gap: 20px;
-    background: #1e1e1e;
-    border: 1px solid #333;
-    border-radius: 8px;
-    padding: 24px;
-    box-shadow: 0 8px 32px #000a;
+    gap: 16px;
+    margin-top: 2px;
+    padding-top: 14px;
+    border-top: 1px solid #2e2e2e;
 }
 .scale-modal-body {
     display: flex;
@@ -2020,9 +2016,10 @@ body.mobile .cp-grip { display: none; }
 .cp-route-row {
     height: 24px;
     padding: 0 8px 0 22px;
-    display: flex;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
     align-items: center;
-    gap: 6px;
+    column-gap: 5px;
     font-size: 11px;
     color: #888;
     cursor: pointer;
@@ -2033,6 +2030,11 @@ body.mobile .cp-grip { display: none; }
 
 .cp-route-row:hover { background: #242424; color: #ccc; }
 .cp-route-row:hover .cp-delete-btn { opacity: 1; }
+.cp-route-row .cp-delete-btn {
+    width: 16px;
+    height: 18px;
+    margin-left: -2px;
+}
 
 .cp-route-row.selected {
     color: #eee;
@@ -2120,28 +2122,6 @@ body.auto-pathfind-busy .cp-route-theta-btn[aria-busy="true"] {
     opacity: 1;
 }
 
-.cp-route-debug-links {
-    margin-left: auto;
-    display: inline-flex;
-    align-items: center;
-    justify-content: flex-end;
-    flex-wrap: wrap;
-    gap: 2px;
-}
-
-.cp-route-debug-link {
-    color: #777;
-    font-size: 0.78em;
-    text-decoration: none;
-    padding: 2px 6px;
-    border-radius: 4px;
-    white-space: nowrap;
-    display: inline-flex;
-    align-items: center;
-    line-height: 0;
-}
-.cp-route-debug-link:hover { color: #ffb74d; background: #1a1a1a; }
-
 .route-pathfind-status {
     margin-left: auto;
     font-size: 10px;
@@ -2151,22 +2131,41 @@ body.auto-pathfind-busy .cp-route-theta-btn[aria-busy="true"] {
 }
 .route-pathfind-status.expecting { color: #ffb74d; }
 .route-pathfind-status.complete { color: #777; }
-.route-pathfind-status + .cp-route-debug-links,
-.route-pathfind-status + .cp-route-theta-btn,
-.cp-route-debug-links + .cp-route-theta-btn {
+.route-pathfind-status + .cp-route-theta-btn {
     margin-left: 0;
 }
 
 .route-name {
+    min-width: 0;
     flex-shrink: 0;
     font-weight: 600;
     color: inherit;
+    white-space: nowrap;
 }
 
 .route-stats {
-    flex: 1;
+    min-width: 0;
     display: flex;
-    gap: 8px;
+    gap: 6px;
+    overflow: hidden;
+    white-space: nowrap;
+}
+
+.route-stats .route-stat {
+    overflow: hidden;
+    text-overflow: clip;
+}
+
+.route-controls {
+    position: relative;
+    z-index: 2;
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 2px;
+    justify-self: end;
+    min-width: max-content;
+    background: inherit;
 }
 
 .route-stat {
@@ -2201,6 +2200,12 @@ body.auto-pathfind-busy .cp-route-theta-btn[aria-busy="true"] {
 
 .cp-route-row.selected .route-elevation-label { color: #777; }
 
+.route-field-separator {
+    color: #444;
+    font-size: 10px;
+    line-height: 1;
+}
+
 .route-obstacle-icon {
     display: inline-flex;
     align-items: center;
@@ -2208,12 +2213,12 @@ body.auto-pathfind-busy .cp-route-theta-btn[aria-busy="true"] {
 }
 
 .route-elevation-input {
-    width: 25px;
+    width: 18px;
     height: 18px;
-    padding: 0 3px;
-    background: #1e1e1e;
-    border: 1px solid #333;
-    border-radius: 3px;
+    padding: 0 4px 0 1px;
+    background: transparent;
+    border: none;
+    border-radius: 0;
     color: #bbb;
     font-size: 10px;
     text-align: right;
@@ -2225,11 +2230,12 @@ body.auto-pathfind-busy .cp-route-theta-btn[aria-busy="true"] {
 .route-elevation-input::-webkit-outer-spin-button,
 .route-elevation-input::-webkit-inner-spin-button { -webkit-appearance: none; }
 
-.route-elevation-input:focus { border-color: #555; background: #252525; }
+.route-elevation-input:hover { color: #ddd; }
 
 .route-elevation-input:focus {
-    border-color: #555;
-    background: #2d2d2d;
+    color: #fff;
+    background: #252525;
+    box-shadow: inset 0 -1px 0 #555;
 }
 
 #radial-toolbar-wrap {

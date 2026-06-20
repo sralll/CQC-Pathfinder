@@ -226,7 +226,7 @@ function renderTable(rows) {
     if (rows.length === 0) {
         const tr = document.createElement('tr');
         tr.innerHTML = `<td colspan="6" style="text-align:center;color:#666;padding:24px;">
-            Keine ${includeTraining ? '' : 'Wettkampf-'}Resultate vorhanden.</td>`;
+            ${includeTraining ? gettext('No results available.') : gettext('No competition results available.')}</td>`;
         tbody.appendChild(tr);
         return;
     }
@@ -300,7 +300,7 @@ function drawChart() {
         t.setAttribute('x', W/2); t.setAttribute('y', H/2);
         t.setAttribute('text-anchor', 'middle');
         t.setAttribute('fill', '#444'); t.setAttribute('font-size', '12');
-        t.textContent = 'Personen anwählen, um den Verlauf zu sehen';
+        t.textContent = gettext('Select people to see the progression');
         svg.appendChild(t); return;
     }
 
@@ -612,7 +612,7 @@ function showCp(idx) {
 
     document.getElementById('fr-prev-btn').disabled = idx === 0;
     document.getElementById('fr-next-btn').disabled = idx === project.control_pairs.length - 1;
-    document.getElementById('fr-cp-label').textContent = `Posten ${idx + 1} / ${project.control_pairs.length}`;
+    document.getElementById('fr-cp-label').textContent = `${gettext('Control')} ${idx + 1} / ${project.control_pairs.length}`;
 
     if (_mapRouteAnim) { cancelAnimationFrame(_mapRouteAnim); _mapRouteAnim = null; }
 
@@ -878,7 +878,7 @@ function renderRouteList(cp, colors) {
             lossHtml = `, <span class="fr-route-loss ${tierCls}">+${pct}%</span>`;
         }
         header.innerHTML = `<span class="fr-route-name" style="color:${color}">
-            Route ${i + 1}</span>
+            ${gettext('Route')} ${i + 1}</span>
             <span class="fr-route-stats">${parts.join(', ')}${lossHtml}</span>`;
         panel.appendChild(header);
 

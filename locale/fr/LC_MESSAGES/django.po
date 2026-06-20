@@ -6,29 +6,497 @@ msgstr ""
 "Language: fr\n"
 "Plural-Forms: nplurals=2; plural=(n > 1);\n"
 
-msgid "Language"
-msgstr "Langue"
+msgid ""
+msgstr "MIME-Version: 1.0\nContent-Type: text/plain; charset=UTF-8\nContent-Transfer-Encoding: 8bit\nLanguage: fr\nPlural-Forms: nplurals=2; plural=(n > 1);\n"
 
-msgid "Home"
-msgstr "Accueil"
+msgid "%(name)s is currently editing this file."
+msgstr "%(name)s modifie ce fichier en ce moment."
+
+msgid "A negative sensitivity means your route decisions become more accurate when you think longer than the team average."
+msgstr "Une sensibilité négative signifie que tes choix d'itinéraire deviennent plus précis lorsque tu réfléchis plus longtemps que la moyenne du cadre."
+
+msgid "A positive sensitivity means you intuitively make the right decision and thinking longer does not help you compared to other athletes."
+msgstr "Une sensibilité positive signifie que tu prends intuitivement la bonne décision et que réfléchir plus longtemps ne t'aide pas par rapport aux autres athlètes."
+
+msgid "Activity"
+msgstr "Activité"
+
+msgid "Added:"
+msgstr "Ajouté :"
+
+msgid "All controls"
+msgstr "Tous les postes"
+
+msgid "Analyzing file…"
+msgstr "Analyse du fichier…"
+
+msgid "At a glance"
+msgstr "En un coup d'œil"
+
+msgid "Athlete"
+msgstr "Athlète"
+
+msgid "Auto-Jump"
+msgstr "Auto-Jump"
+
+msgid "Auto-Obstacle"
+msgstr "Auto-Obstacle"
+
+msgid "Auto-Pathfind"
+msgstr "Auto-Pathfind"
+
+msgid "Auto-Pathfind routes"
+msgstr "Itinéraires Auto-Pathfind"
+
+msgid "Average decision time"
+msgstr "Temps de décision moyen"
+
+msgid "Average route-choice error"
+msgstr "Erreur moyenne de choix d'itinéraire"
+
+msgid "Back to forum"
+msgstr "Retour au forum"
+
+msgid "Back to overview"
+msgstr "Retour à l'aperçu"
+
+msgid "Browse"
+msgstr "Parcourir"
+
+msgid "Cancel"
+msgstr "Annuler"
+
+msgid "Change password"
+msgstr "Changer le mot de passe"
+
+msgid "Changed:"
+msgstr "Modifié :"
+
+msgid "Chart"
+msgstr "Graphique"
+
+msgid "Clear search"
+msgstr "Effacer la recherche"
+
+msgid "Click the first point on the map…"
+msgstr "Clique le premier point sur la carte…"
+
+msgid "Click the points on the map and enter the distance."
+msgstr "Clique les points sur la carte et saisis la distance."
+
+msgid "Close"
+msgstr "Fermer"
+
+msgid "Competition"
+msgstr "Compétition"
+
+msgid "Competition mode"
+msgstr "Mode compétition"
+
+msgid "Confirm new password"
+msgstr "Confirmer le nouveau mot de passe"
+
+msgid "Control"
+msgstr "Poste"
+
+msgid "Controls"
+msgstr "Postes"
+
+msgid "Controls without routes"
+msgstr "Postes sans itinéraires"
+
+msgid "Create new project (Ctrl+N)"
+msgstr "Créer un nouveau projet (Ctrl+N)"
+
+msgid "Create new topic"
+msgstr "Créer un nouveau sujet"
+
+msgid "Current password"
+msgstr "Mot de passe actuel"
+
+msgid "Deleted:"
+msgstr "Supprimé :"
+
+msgid "Describe your topic…"
+msgstr "Décris ta demande…"
+
+msgid "Deutsch"
+msgstr "Allemand"
+
+msgid "Distance"
+msgstr "Distance"
+
+msgid "Drop map here"
+msgstr "Dépose la carte ici"
+
+msgid "Duplicate"
+msgstr "Dupliquer"
+
+msgid "Edit"
+msgstr "Modifier"
 
 msgid "Editor"
 msgstr "Éditeur"
 
-msgid "Play"
-msgstr "Play"
+msgid "English"
+msgstr "Anglais"
 
-msgid "Results"
-msgstr "Résultats"
+msgid "Enlarge"
+msgstr "Agrandir"
 
-msgid "Statistics"
-msgstr "Statistiques"
+msgid "Error potential detection"
+msgstr "Détection du potentiel d'erreur"
+
+msgid "Error potential detection in ms/s"
+msgstr "Détection du potentiel d'erreur en ms/s"
+
+msgid "File too large (max. 15 MB)"
+msgstr "Fichier trop volumineux (max. 15 Mo)"
+
+msgid "File too large (max. 50 MB)"
+msgstr "Fichier trop volumineux (max. 50 Mo)"
+
+msgid "Fill"
+msgstr "Remplissage"
 
 msgid "Forum"
 msgstr "Forum"
 
+msgid "Français"
+msgstr "Français"
+
+msgid "Generating mask…"
+msgstr "Génération du masque…"
+
+msgid "History"
+msgstr "Historique"
+
+msgid "Home"
+msgstr "Accueil"
+
+msgid "Image dimensions are too large"
+msgstr "Les dimensions de l'image sont trop grandes"
+
+msgid "Import"
+msgstr "Importer"
+
+msgid "Import course"
+msgstr "Importer un parcours"
+
+msgid "Include training results"
+msgstr "Inclure les résultats d'entraînement"
+
+msgid "Infinity"
+msgstr "Infinity"
+
+msgid "Information about error potential detection"
+msgstr "Informations sur la détection du potentiel d'erreur"
+
+msgid "Information about time sensitivity"
+msgstr "Informations sur la sensibilité temporelle"
+
+msgid "Invalid color"
+msgstr "Couleur non valide"
+
+msgid "Invalid credentials"
+msgstr "Identifiants incorrects"
+
+msgid "Italiano"
+msgstr "Italien"
+
+msgid "June 2026: Version 2.0"
+msgstr "Juin 2026 : version 2.0"
+
+msgid "Label already exists"
+msgstr "Ce label existe déjà"
+
+msgid "Labels"
+msgstr "Labels"
+
+msgid "Language"
+msgstr "Langue"
+
+msgid "List"
+msgstr "Liste"
+
+msgid "Loading…"
+msgstr "Chargement…"
+
+msgid "Log in"
+msgstr "Se connecter"
+
 msgid "Log out"
 msgstr "Déconnexion"
 
-msgid "Change password"
-msgstr "Changer le mot de passe"
+msgid "Map"
+msgstr "Carte"
+
+msgid "Map too large for the neural network. Check the scale."
+msgstr "La carte est trop grande pour le réseau neuronal. Vérifie l'échelle."
+
+msgid "Measure the distance"
+msgstr "Mesurer la distance"
+
+msgid "Menu"
+msgstr "Menu"
+
+msgid "Mode"
+msgstr "Mode"
+
+msgid "My actions"
+msgstr "Mes actions"
+
+msgid "Name"
+msgstr "Nom"
+
+msgid "Name is required"
+msgstr "Nom requis"
+
+msgid "New"
+msgstr "Nouveau"
+
+msgid "New label..."
+msgstr "Nouveau label..."
+
+msgid "New password"
+msgstr "Nouveau mot de passe"
+
+msgid "New project"
+msgstr "Nouveau projet"
+
+msgid "New topic"
+msgstr "Nouveau sujet"
+
+msgid "Next"
+msgstr "Suivant"
+
+msgid "No active team"
+msgstr "Aucun cadre actif"
+
+msgid "No answers yet. Be the first to reply!"
+msgstr "Pas encore de réponses. Sois le premier à répondre !"
+
+msgid "No topics yet. Create the first one!"
+msgstr "Aucun sujet pour l'instant. Crée le premier !"
+
+msgid "None available"
+msgstr "Aucune disponible"
+
+msgid "OCAD analysis failed: %(error)s"
+msgstr "L'analyse OCAD a échoué : %(error)s"
+
+msgid "OCAD conversion failed: %(error)s"
+msgstr "La conversion OCAD a échoué : %(error)s"
+
+msgid "OCAD course import failed: %(error)s"
+msgstr "L'import du parcours OCAD a échoué : %(error)s"
+
+msgid "Only OCAD allowed"
+msgstr "Seul OCAD est autorisé"
+
+msgid "Only OCD allowed"
+msgstr "Seul OCD est autorisé"
+
+msgid "Only PNG, JPEG or OCAD allowed"
+msgstr "Seuls PNG, JPEG ou OCAD sont autorisés"
+
+msgid "PNG, JPEG or OCAD • max. 15 MB"
+msgstr "PNG, JPEG ou OCAD • max. 15 Mo"
+
+msgid "Password"
+msgstr "Mot de passe"
+
+msgid "Pick two points on the map."
+msgstr "Choisis deux points sur la carte."
+
+msgid "Play"
+msgstr "Play"
+
+msgid "Point 1"
+msgstr "Point 1"
+
+msgid "Point 2"
+msgstr "Point 2"
+
+msgid "Progress"
+msgstr "Progression"
+
+msgid "Project menu"
+msgstr "Menu du projet"
+
+msgid "Project name…"
+msgstr "Nom du projet…"
+
+msgid "Projects..."
+msgstr "Projets..."
+
+msgid "Publish"
+msgstr "Publier"
+
+msgid "Recent actions"
+msgstr "Actions récentes"
+
+msgid "Reply"
+msgstr "Répondre"
+
+msgid "Reset"
+msgstr "Réinitialiser"
+
+msgid "Results"
+msgstr "Résultats"
+
+msgid "Results are listed as training — no pressure and no late decision penalty."
+msgstr "Les résultats sont listés comme entraînement – aucune pression ni pénalité de temps pour les décisions tardives."
+
+msgid "Route choice"
+msgstr "Choix d'itinéraire"
+
+msgid "Routes"
+msgstr "Itinéraires"
+
+msgid "Save"
+msgstr "Enregistrer"
+
+msgid "Scale"
+msgstr "Échelle"
+
+msgid "Search"
+msgstr "Recherche"
+
+msgid "Search topics…"
+msgstr "Rechercher des sujets…"
+
+msgid "Search..."
+msgstr "Rechercher..."
+
+msgid "Search…"
+msgstr "Rechercher…"
+
+msgid "Select athlete…"
+msgstr "Choisir un athlète…"
+
+msgid "Select label"
+msgstr "Choisir un label"
+
+msgid "Settings"
+msgstr "Réglages"
+
+msgid "Share of completed controls out of all available map material (training + competition)"
+msgstr "Part des postes réalisés sur l'ensemble du matériel cartographique disponible (entraînement + compétition)"
+
+msgid "Sorting"
+msgstr "Tri"
+
+msgid "Statistics"
+msgstr "Statistiques"
+
+msgid "Sum of decision times"
+msgstr "Somme des temps de décision"
+
+msgid "Switch off → only competition runs are shown."
+msgstr "Interrupteur désactivé → seules les courses de compétition sont affichées."
+
+msgid "Table"
+msgstr "Tableau"
+
+msgid "The error potential detection shows how strongly you react when a control has the potential for a big mistake."
+msgstr "La détection du potentiel d'erreur montre à quel point tu réagis lorsqu'un poste présente un risque d'erreur important."
+
+msgid "The first attempt of a project in competition mode is listed in the ranking. The decision time and the extra time for non-ideal routes are measured."
+msgstr "La première tentative d'un projet en mode compétition apparaît dans le classement. Le temps de décision et le temps supplémentaire pour les itinéraires non optimaux sont mesurés."
+
+msgid "This analysis should be taken with caution."
+msgstr "Cette analyse est à prendre avec précaution."
+
+msgid "Time"
+msgstr "Temps"
+
+msgid "Time sensitivity"
+msgstr "Sensibilité temporelle"
+
+msgid "Time sensitivity in ms/s"
+msgstr "Sensibilité temporelle en ms/s"
+
+msgid "Time sensitivity shows how your route-choice errors relate to your decision times. It shows the deviation of your decision time from the team average per control, and how that affects your error rate."
+msgstr "La sensibilité temporelle montre comment tes erreurs de choix d'itinéraire sont liées à tes temps de décision. Elle indique l'écart de ton temps de décision par rapport à la moyenne du cadre par poste, et comment cela influence ton taux d'erreur."
+
+msgid "Title"
+msgstr "Titre"
+
+msgid "Title and text must not be empty."
+msgstr "Le titre et le texte ne doivent pas être vides."
+
+msgid "Tool size"
+msgstr "Taille de l'outil"
+
+msgid "Top"
+msgstr "Top"
+
+msgid "Total"
+msgstr "Total"
+
+msgid "Total time lost vs. the fastest route"
+msgstr "Temps total perdu par rapport à l'itinéraire le plus rapide"
+
+msgid "Training"
+msgstr "Entraînement"
+
+msgid "Training mode"
+msgstr "Mode entraînement"
+
+msgid "Unknown"
+msgstr "Inconnu"
+
+msgid "Unknown content"
+msgstr "Contenu inconnu"
+
+msgid "Upload map"
+msgstr "Téléverser une carte"
+
+msgid "Upvote"
+msgstr "Upvote"
+
+msgid "Username"
+msgstr "Nom d'utilisateur"
+
+msgid "View"
+msgstr "Vue"
+
+msgid "Write a reply…"
+msgstr "Écrire une réponse…"
+
+msgid "You can only edit your own replies."
+msgstr "Tu ne peux modifier que tes propres réponses."
+
+msgid "You can only edit your own topics."
+msgstr "Tu ne peux modifier que tes propres sujets."
+
+msgid "answer"
+msgstr "réponse"
+
+msgid "answers"
+msgstr "réponses"
+
+msgid "e.g. 1234 m"
+msgstr "p. ex. 1234 m"
+
+msgid "edited"
+msgstr "modifié"
+
+msgid "or coordinates"
+msgstr "ou coordonnées"
+
+msgid "topic"
+msgstr "sujet"
+
+msgid "topics"
+msgstr "sujets"
+
+msgid "Ø Dec."
+msgstr "Ø Déc."
+
+msgid "Ø Error"
+msgstr "Ø Erreur"
+
+msgid "Ø Times per control"
+msgstr "Ø Temps par poste"

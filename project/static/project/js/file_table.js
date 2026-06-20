@@ -73,7 +73,7 @@ export class FileTable {
         });
         const data = await res.json();
         if (!res.ok) {
-            await showModal({ message: data.message || 'Fehler beim Veröffentlichen.' });
+            await showModal({ message: data.message || gettext('Publishing failed.') });
             return;
         }
         row.updatePublishState(data.published);
@@ -100,13 +100,13 @@ export class FileTable {
             if (!res.ok) {
                 const d = await res.json().catch(() => ({}));
                 window.hideTableLoading?.();
-                await showModal({ message: d.error || 'Löschen fehlgeschlagen.' });
+                await showModal({ message: d.error || gettext('Deleting failed.') });
                 return;
             }
             await window.refreshFileTable?.();
         } catch (e) {
             console.error('deleteFile failed:', e);
-            await showModal({ message: 'Löschen fehlgeschlagen.' });
+            await showModal({ message: gettext('Deleting failed.') });
         } finally {
             window.hideTableLoading?.();
         }

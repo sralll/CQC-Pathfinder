@@ -2,10 +2,23 @@ from django.conf import settings
 from django.contrib.auth import logout
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.views import LoginView
+from django.core.cache import cache
 from django.shortcuts import redirect, render
 from django.utils import translation
 
 from CQCPathfinder.forms import StyledLoginForm
+
+
+def _client_ip(request):
+    forwarded_for = request.META.get("HTTP_X_FORWARDED_FOR", "")
+    if forwarded_for:
+        return forwarded_for.split(",")[0].strip()
+    return request.META.get("REMOTE_ADDR", "unknown")
+
+
+def _login_rate_key(request):
+    username = (request.POST.get("username") or "").strip().lower()[:150]
+    return f"login-fail:{_client_ip(request)}:{username or '-'}"
 
 
 class LocaleLoginView(LoginView):
@@ -18,7 +31,27 @@ class LocaleLoginView(LoginView):
     """
     authentication_form = StyledLoginForm
 
+    def dispatch(self, request, *args, **kwargs):
+        if request.method == "POST":
+            key = _login_rate_key(request)
+            if cache.get(key, 0) >= settings.LOGIN_RATE_LIMIT_ATTEMPTS:
+                form = self.get_form()
+                form.add_error(None, "Too many login attempts. Please try again later.")
+                return self.render_to_response(self.get_context_data(form=form), status=429)
+        return super().dispatch(request, *args, **kwargs)
+
+    def form_invalid(self, form):
+        key = _login_rate_key(self.request)
+        timeout = settings.LOGIN_RATE_LIMIT_WINDOW
+        if not cache.add(key, 1, timeout=timeout):
+            try:
+                cache.incr(key)
+            except ValueError:
+                cache.set(key, 1, timeout=timeout)
+        return super().form_invalid(form)
+
     def form_valid(self, form):
+        cache.delete(_login_rate_key(self.request))
         response = super().form_valid(form)
         try:
             lang = self.request.user.profile.language

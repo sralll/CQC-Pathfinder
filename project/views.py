@@ -1,15 +1,26 @@
 from django.shortcuts import get_object_or_404, render
-from django.http import JsonResponse, FileResponse, HttpResponseNotFound
+from django.http import JsonResponse, HttpResponseNotFound
 from django.views.decorators.http import require_GET, require_POST
 from django.db.models import Count, Q
 from .models import File, Label, ControlPair, Route
 from account.decorators import role_required
 from django.db.models import Prefetch
 import traceback
+import logging
 from django.conf import settings
+from django.utils.translation import gettext as _
 import os
-import mimetypes
 import tempfile
+
+from .media_access import (
+    safe_media_filename,
+    serve_map_file,
+    serve_mask_file,
+    user_can_access_file,
+    user_can_access_map_file,
+)
+
+logger = logging.getLogger(__name__)
 
 
 def _normalize_order_payload(control_pairs):
@@ -38,6 +49,46 @@ def _map_scale_value(raw, default=4000):
     except (TypeError, ValueError):
         return default
     return value if value > 0 else default
+
+
+MAX_MAP_IMAGE_PIXELS = 100_000_000
+
+
+def _validate_uploaded_map_image(uploaded):
+    """Return (error_message, normalized_ext) for raster map uploads."""
+    try:
+        from PIL import Image, UnidentifiedImageError
+        import warnings
+        uploaded.seek(0)
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            with Image.open(uploaded) as img:
+                image_format = img.format
+                width, height = img.size
+                img.verify()
+    except (UnidentifiedImageError, OSError, ValueError):
+        try:
+            uploaded.seek(0)
+        except Exception:
+            pass
+        return _('Only PNG, JPEG or OCAD allowed'), None
+    except Image.DecompressionBombWarning:
+        try:
+            uploaded.seek(0)
+        except Exception:
+            pass
+        return _('Image dimensions are too large'), None
+    finally:
+        try:
+            uploaded.seek(0)
+        except Exception:
+            pass
+
+    if image_format not in ("PNG", "JPEG"):
+        return _('Only PNG, JPEG or OCAD allowed'), None
+    if width <= 0 or height <= 0 or width * height > MAX_MAP_IMAGE_PIXELS:
+        return _('Image dimensions are too large'), None
+    return None, ".jpg" if image_format == "JPEG" else ".png"
 
 
 def _create_db_snapshot(file, user, trigger):
@@ -272,12 +323,18 @@ def open_file(request, file_id):
 @role_required('Trainer')
 @require_GET
 def get_map(request, filename):
-    filepath = os.path.join(settings.MEDIA_ROOT, 'maps', filename)
-    if not os.path.exists(filepath):
-        return HttpResponseNotFound(f"Map '{filename}' not found.")
-    content_type, _ = mimetypes.guess_type(filepath)
-    content_type = content_type or 'application/octet-stream'
-    return FileResponse(open(filepath, 'rb'), content_type=content_type)
+    if not user_can_access_map_file(request, filename):
+        return HttpResponseNotFound("Map not found.")
+    return serve_map_file(filename)
+
+
+@role_required('Trainer')
+@require_GET
+def get_mask(request, file_id):
+    file = get_object_or_404(File, id=file_id, deleted=False)
+    if not user_can_access_file(request, file):
+        return HttpResponseNotFound("Mask not found.")
+    return serve_mask_file(file)
 
 
 @role_required('Trainer')
@@ -302,7 +359,7 @@ def toggle_publish(request, file_id):
             )
             if has_unrouted:
                 return JsonResponse(
-                    {'error': 'unrouted', 'message': 'Posten ohne Routen'},
+                    {'error': 'unrouted', 'message': _('Controls without routes')},
                     status=400,
                 )
 
@@ -310,7 +367,7 @@ def toggle_publish(request, file_id):
         file.save(update_fields=['published'])
 
         # Return immediately — snapshot is expensive, run it in a background thread
-        trigger   = 'Veröffentlicht' if file.published else 'Verborgen'
+        trigger   = 'Published' if file.published else 'Unpublished'
         file_id_  = file.id
         user_id_  = request.user.id
 
@@ -471,7 +528,7 @@ def save_file(request):
                         locker = existing.locked_by.first_name or existing.locked_by.username
                         return JsonResponse({
                             'error': 'conflict',
-                            'message': f'Diese Datei wird gerade von {locker} bearbeitet.',
+                            'message': _('%(name)s is currently editing this file.') % {'name': locker},
                         }, status=409)
                     file = existing          # same team → overwrite
                 # else: different team → fall through and create new
@@ -482,7 +539,7 @@ def save_file(request):
             file = File(team=active_team,
                         author=request.user.first_name or request.user.username)
 
-        file.name            = data.get('name', 'Neues Projekt')
+        file.name            = data.get('name', _('New project'))
         file.scale           = data.get('scale')
         file.map_scale       = _map_scale_value(data.get('map_scale'))
         file.scaled          = data.get('scaled', False)
@@ -532,13 +589,13 @@ def save_file(request):
         r_index = 0
         for cp_d, cp in zip(cp_data_list, created_cps):
             route_ids = []
-            for _ in cp_d.get('routes', []):
+            for _route_payload in cp_d.get('routes', []):
                 r = created_routes[r_index]; r_index += 1
                 route_ids.append({'order': r.order, 'id': r.id})
             id_map.append({'order': cp.order, 'id': cp.id, 'routes': route_ids})
 
         if client_trigger == 'rename':
-            _create_db_snapshot(file, request.user, 'Name geändert')
+            _create_db_snapshot(file, request.user, 'Name changed')
 
         return JsonResponse({
             'status': 'ok',
@@ -734,7 +791,12 @@ def save_snapshot(request):
         trigger = data.get('trigger', 'autosave')
         cps     = data.get('control_pairs', [])
 
-        file = get_object_or_404(File, id=file_id, team=request.user.profile.active_team)
+        if not file_id:
+            return JsonResponse({'error': 'Missing file id'}, status=400)
+
+        file = File.objects.filter(id=file_id, team=request.user.profile.active_team).first()
+        if not file:
+            return JsonResponse({'error': 'File not found'}, status=404)
 
         n_control_pairs = data.get('n_control_pairs', len(cps))
         n_routes        = data.get('n_routes', sum(len(cp.get('routes', [])) for cp in cps))
@@ -796,17 +858,26 @@ def save_mask(request):
     """Receive a PNG blob and save it as the mask for the given map file."""
     from django.utils import timezone as tz
     filename = request.POST.get('filename')
+    file_id = request.POST.get('file_id')
     file_obj = request.FILES.get('file')
-    if not filename or not file_obj:
-        return JsonResponse({'error': 'Missing filename or file'}, status=400)
-    basename, _ = os.path.splitext(filename)
+    if not filename or not file_id or not file_obj:
+        return JsonResponse({'error': 'Missing filename, file_id, or file'}, status=400)
+    filename = safe_media_filename(filename)
+    if not filename:
+        return JsonResponse({'error': 'Invalid filename'}, status=400)
+    file = get_object_or_404(File, id=file_id, deleted=False)
+    if not request.user.is_superuser and file.team != request.user.profile.active_team:
+        return JsonResponse({'error': 'Permission denied'}, status=403)
+    if file.map_file != filename:
+        return JsonResponse({'error': 'file_id does not match filename'}, status=409)
+    basename, _ = os.path.splitext(file.map_file)
     mask_path   = os.path.join(settings.MEDIA_ROOT, 'masks', f'mask_{basename}.png')
     os.makedirs(os.path.dirname(mask_path), exist_ok=True)
     with open(mask_path, 'wb') as f:
         for chunk in file_obj.chunks():
             f.write(chunk)
     # Update last_edited on the owning file
-    File.objects.filter(map_file=filename, deleted=False).update(last_edited=tz.now())
+    File.objects.filter(id=file.id, deleted=False).update(last_edited=tz.now())
     return JsonResponse({'status': 'ok'})
 
 
@@ -845,13 +916,13 @@ def create_label(request):
         name        = data.get('name', '').strip()[:25]
         active_team = request.user.profile.active_team
         if not name:
-            return JsonResponse({'error': 'Name erforderlich'}, status=400)
+            return JsonResponse({'error': _('Name is required')}, status=400)
         if not active_team:
-            return JsonResponse({'error': 'Kein aktives Team'}, status=403)
+            return JsonResponse({'error': _('No active team')}, status=403)
         label, created = Label.objects.get_or_create(name=name, team=active_team,
                                                      defaults={'color': '#5b8db8'})
         if not created:
-            return JsonResponse({'error': 'Label existiert bereits'}, status=400)
+            return JsonResponse({'error': _('Label already exists')}, status=400)
         return JsonResponse({'id': label.id, 'name': label.name, 'color': label.color})
     except Exception as e:
         traceback.print_exc()
@@ -882,7 +953,7 @@ def update_label_color(request, label_id):
         color       = data.get('color', '')
         active_team = request.user.profile.active_team
         if color not in ALLOWED:
-            return JsonResponse({'error': 'Ungültige Farbe'}, status=400)
+            return JsonResponse({'error': _('Invalid color')}, status=400)
         label = get_object_or_404(Label, id=label_id, team=active_team)
         label.color = color
         label.save(update_fields=['color'])
@@ -923,12 +994,13 @@ def upload_map(request):
     is_ocad = ext in ('.ocd', '.ocad')
     if is_ocad:
         if uploaded.size > 50 * 1024 * 1024:
-            return JsonResponse({'error': 'Datei zu gross (max. 50 MB)'}, status=400)
+            return JsonResponse({'error': _('File too large (max. 50 MB)')}, status=400)
     else:
-        if uploaded.content_type not in ('image/png', 'image/jpeg', 'image/jpg'):
-            return JsonResponse({'error': 'Nur PNG, JPEG oder OCAD erlaubt'}, status=400)
         if uploaded.size > 15 * 1024 * 1024:
-            return JsonResponse({'error': 'Datei zu gross (max. 15 MB)'}, status=400)
+            return JsonResponse({'error': _('File too large (max. 15 MB)')}, status=400)
+        error, image_ext = _validate_uploaded_map_image(uploaded)
+        if error:
+            return JsonResponse({'error': error}, status=400)
     try:
         from django.utils.timezone import now
         stamp = now().strftime('%Y%m%d_%H%M%S')
@@ -947,7 +1019,8 @@ def upload_map(request):
             try:
                 conversion = convert_ocad_map_to_editor_assets(source_path, map_filename)
             except OcadConversionError as exc:
-                return JsonResponse({'error': f'OCAD-Konvertierung fehlgeschlagen: {exc}'}, status=400)
+                logger.warning("OCAD map upload conversion failed for %s: %s", uploaded.name, exc)
+                return JsonResponse({'error': _('OCAD conversion failed: %(error)s') % {'error': exc}}, status=400)
             finally:
                 try:
                     os.unlink(source_path)
@@ -976,7 +1049,7 @@ def upload_map(request):
                 },
             })
 
-        ext      = ext or '.png'
+        ext      = ext or image_ext or '.png'
         filename = f"{stamp}{ext}"
         dest     = os.path.join(settings.MEDIA_ROOT, 'maps', filename)
         os.makedirs(os.path.dirname(dest), exist_ok=True)
@@ -998,9 +1071,9 @@ def analyze_ocad(request):
 
     ext = os.path.splitext(uploaded.name)[1].lower()
     if ext not in ('.ocd', '.ocad'):
-        return JsonResponse({'error': 'Nur OCAD erlaubt'}, status=400)
+        return JsonResponse({'error': _('Only OCAD allowed')}, status=400)
     if uploaded.size > 50 * 1024 * 1024:
-        return JsonResponse({'error': 'Datei zu gross (max. 50 MB)'}, status=400)
+        return JsonResponse({'error': _('File too large (max. 50 MB)')}, status=400)
 
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=ext or '.ocd')
     source_path = tmp.name
@@ -1013,7 +1086,7 @@ def analyze_ocad(request):
         try:
             conversion = extract_ocad_courses(source_path)
         except OcadConversionError as exc:
-            return JsonResponse({'error': f'OCAD-Analyse fehlgeschlagen: {exc}'}, status=400)
+            return JsonResponse({'error': _('OCAD analysis failed: %(error)s') % {'error': exc}}, status=400)
 
         control_pairs = conversion.get('control_pairs') or []
         n_routes = sum(len(cp.get('routes', [])) for cp in control_pairs if isinstance(cp, dict))
@@ -1051,9 +1124,9 @@ def import_courses(request):
 
     ext = os.path.splitext(uploaded.name)[1].lower()
     if ext != '.ocd':
-        return JsonResponse({'error': 'Nur OCD erlaubt'}, status=400)
+        return JsonResponse({'error': _('Only OCD allowed')}, status=400)
     if uploaded.size > 50 * 1024 * 1024:
-        return JsonResponse({'error': 'Datei zu gross (max. 50 MB)'}, status=400)
+        return JsonResponse({'error': _('File too large (max. 50 MB)')}, status=400)
 
     def _positive_float(raw):
         try:
@@ -1078,7 +1151,7 @@ def import_courses(request):
         try:
             conversion = extract_ocad_courses(source_path)
         except OcadConversionError as exc:
-            return JsonResponse({'error': f'OCAD-Bahn-Import fehlgeschlagen: {exc}'}, status=400)
+            return JsonResponse({'error': _('OCAD course import failed: %(error)s') % {'error': exc}}, status=400)
         control_pairs = scale_ocad_import_to_target(
             conversion, target_width, target_height, map_scale=map_scale,
         )

@@ -244,7 +244,7 @@ class Migration(migrations.Migration):
                 ("length", models.IntegerField(blank=True, null=True)),
                 ("run_time", models.FloatField(blank=True, null=True)),
                 ("elevation", models.IntegerField(blank=True, null=True)),
-                ("obstacle", models.IntegerField(blank=True, null=True)),
+                ("obstacle", models.FloatField(blank=True, null=True)),
                 (
                     "control_pair",
                     models.ForeignKey(

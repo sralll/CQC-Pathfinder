@@ -5,9 +5,12 @@ import traceback
 from asgiref.sync import sync_to_async
 from django.conf import settings
 from django.http import HttpResponse, HttpResponseNotFound, JsonResponse, StreamingHttpResponse
+from django.utils import translation
+from django.utils.translation import gettext as _
 from django.views.decorators.http import require_POST
 
 from account.decorators import role_required
+from .media_access import safe_media_filename, user_can_access_file
 from .models import File
 
 
@@ -68,7 +71,7 @@ class _MaskGenerationJob:
 
 
 def _run_mask_generation(*, job, job_key, map_path, scale, mask_filename,
-                         filename, file_id):
+                         filename, file_id, language=None):
     """Heavy UNet mask generation, run in a non-daemon background thread."""
     import gc
     import math
@@ -83,6 +86,8 @@ def _run_mask_generation(*, job, job_key, map_path, scale, mask_filename,
     t0 = time.time()
     img = output_img = ort_session = None
     close_old_connections()
+    if language:
+        translation.activate(language)
     try:
         import onnxruntime as ort
 
@@ -94,7 +99,7 @@ def _run_mask_generation(*, job, job_key, map_path, scale, mask_filename,
             img = img.convert("RGB")
         new_size = (int(img.width * scale_factor), int(img.height * scale_factor))
         if new_size[0] > 16000 or new_size[1] > 16000:
-            raise ValueError("Karte zu gross für das neuronale Netz. Skalierung prüfen.")
+            raise ValueError(_("Map too large for the neural network. Check the scale."))
         img = img.resize(new_size, resample=Image.BICUBIC)
         ort_session = ort.InferenceSession("best_model_300dpi.onnx")
 
@@ -135,7 +140,7 @@ def _run_mask_generation(*, job, job_key, map_path, scale, mask_filename,
                 print(f"[MASK] tile {processed}/{total_tiles} ({time.time() - t0:.1f}s)", flush=True)
                 job.publish({'current': processed, 'total': total_tiles})
 
-        mo = SimpleNamespace(impassable=0, outline=135, very_slow=135, slow=231, cross=241, stairs=242, fast=243)
+        mo = SimpleNamespace(impassable=0, outline=200, very_slow=135, slow=231, cross=241, stairs=242, fast=243)
         vis = 255 * np.ones((img_h, img_w, 1), dtype=np.uint8)
         vis[output_img < 10] = mo.impassable
         vis[(output_img >= 10) & (output_img < 22)] = mo.very_slow
@@ -184,6 +189,8 @@ def _run_mask_generation(*, job, job_key, map_path, scale, mask_filename,
         img = None
         output_img = None
         ort_session = None
+        if language:
+            translation.deactivate()
         gc.collect()
         connection.close()
 
@@ -212,8 +219,11 @@ async def generate_mask(request):
     filename = body.get('filename')
     cqc_scale = body.get('scale')
     file_id = body.get('file_id')
-    if not filename or not cqc_scale:
-        return HttpResponse("Missing filename or scale", status=400)
+    if not filename or not cqc_scale or file_id is None:
+        return HttpResponse("Missing filename, file_id, or scale", status=400)
+    filename = safe_media_filename(filename)
+    if not filename:
+        return HttpResponse("Invalid filename", status=400)
     try:
         scale = float(cqc_scale)
         if scale <= 0:
@@ -227,31 +237,34 @@ async def generate_mask(request):
     if not os.path.exists(map_path):
         return HttpResponseNotFound(f"Map '{filename}' not found.")
 
-    if file_id is not None:
-        try:
-            file_id = int(file_id)
-        except (TypeError, ValueError):
-            return HttpResponse("Invalid file_id", status=400)
+    try:
+        file_id = int(file_id)
+    except (TypeError, ValueError):
+        return HttpResponse("Invalid file_id", status=400)
 
-        def _check_file():
-            return File.objects.filter(
-                id=file_id,
-                deleted=False,
-                team=request.user.profile.active_team,
-                map_file=filename,
-            ).exists()
+    def _get_accessible_file():
+        file = File.objects.select_related('team').filter(
+            id=file_id,
+            deleted=False,
+            map_file=filename,
+        ).first()
+        if not user_can_access_file(request, file):
+            return None
+        return file
 
-        if not await sync_to_async(_check_file)():
-            return HttpResponse("file_id does not match the requested map file", status=409)
+    file = await sync_to_async(_get_accessible_file)()
+    if not file:
+        return HttpResponse("file_id does not match the requested map file", status=409)
 
-    active_team_id = await sync_to_async(lambda: request.user.profile.active_team_id)()
+    owner_team_id = file.team_id
+    language = translation.get_language()
     event_base = {
         'file_id': file_id,
         'filename': filename,
         'map_file': filename,
         'mask_file': mask_filename,
     }
-    job_key = (active_team_id, file_id if file_id is not None else filename)
+    job_key = (owner_team_id, file_id if file_id is not None else filename)
     with _mask_generation_jobs_lock:
         existing_job = _mask_generation_jobs.get(job_key)
         if existing_job and existing_job.done:
@@ -279,6 +292,7 @@ async def generate_mask(request):
         kwargs=dict(
             job=job, job_key=job_key, map_path=map_path, scale=scale,
             mask_filename=mask_filename, filename=filename, file_id=file_id,
+            language=language,
         ),
         daemon=False,
     ).start()

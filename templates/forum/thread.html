@@ -83,15 +83,15 @@
                             <textarea name="body" maxlength="4000" required>{{ comment.body }}</textarea>
                         </div>
                         <div class="forum-compose-actions">
-                            <button type="submit" class="forum-submit">Speichern</button>
-                            <button type="button" class="forum-cancel fe-cancel">Abbrechen</button>
+                            <button type="submit" class="forum-submit">{% trans "Save" %}</button>
+                            <button type="button" class="forum-cancel fe-cancel">{% trans "Cancel" %}</button>
                         </div>
                     </form>
                     {% endif %}
                 </div>
             </div>
             {% empty %}
-            <div class="forum-empty">Noch keine Antworten. Schreib die erste!</div>
+            <div class="forum-empty">{% trans "No answers yet. Be the first to reply!" %}</div>
             {% endfor %}
         </div>
 

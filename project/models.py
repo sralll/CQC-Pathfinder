@@ -92,7 +92,7 @@ class Route(models.Model):
     length = models.IntegerField(null=True, blank=True)
     run_time = models.FloatField(null=True, blank=True)
     elevation = models.IntegerField(null=True, blank=True)
-    obstacle = models.IntegerField(null=True, blank=True)
+    obstacle = models.FloatField(null=True, blank=True)
 
     class Meta:
         ordering = ['order']

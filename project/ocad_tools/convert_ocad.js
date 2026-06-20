@@ -14,6 +14,7 @@ const REFERENCE_MAP_SCALE = 4000;
 const REFERENCE_METERS_PER_PIXEL = 0.48;
 const OCAD_UNITS_PER_METER_ON_PAPER = 100 * 1000;
 const RUN_SPEED = 4.75;
+const ALT_FLAT_EQUIV_M = 4;   // 1 m of elevation ≈ 4 m of flat running
 const PX_TO_M = 0.48;
 const NOA_CLUSTER_WINDOW_M = 20;
 const NOA_COUNTER_TURN_WINDOW_M = 10;
@@ -351,15 +352,10 @@ function calcRouteRunTime(route) {
   }
   const noAPenalty = route.noA || 0;
   const obstaclePenalty = Number.isFinite(Number(obstacle)) ? Number(obstacle) : 0;
-  if (!elevation) {
-    route.run_time = length / RUN_SPEED + noAPenalty + obstaclePenalty;
-    return;
-  }
-  const gradient = (elevation / length) * 100;
-  const gapUp = 0.0017 * gradient ** 2 + 0.02901 * gradient + 0.99387;
-  const gapDown = 0.0017 * gradient ** 2 - 0.02901 * gradient + 0.99387;
-  const adjSpeed = RUN_SPEED / ((gapUp + gapDown) / 2);
-  route.run_time = length / adjSpeed + noAPenalty + obstaclePenalty;
+  // Each metre of climb counts as ALT_FLAT_EQUIV_M metres of flat running.
+  const elev = Number.isFinite(Number(elevation)) ? Number(elevation) : 0;
+  const flatEquiv = length + ALT_FLAT_EQUIV_M * elev;
+  route.run_time = flatEquiv / RUN_SPEED + noAPenalty + obstaclePenalty;
 }
 
 function calcRouteSide(cp, route) {

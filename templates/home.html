@@ -42,14 +42,11 @@
         <div class="home-links">
             <a href="/logout/">{% trans "Log out" %}</a>
             <a href="/password_change/">{% trans "Change password" %}</a>
-            {% if is_trainer %}
-            <a href="{% static 'docs/Anleitung für Trainer_4.pdf' %}" target="_blank">Guide (PDF)</a>
-            <a href="https://youtu.be/YS3Q4i0wBB8" target="_blank">Guide (Video)</a>
-            {% endif %}
+            <a href="{% url 'guide' %}">Guide (DE)</a>
         </div>
 
         {% if is_trainer %}
-        <div class="home-update-info">Juni 2026: Version 2.0</div>
+        <div class="home-update-info">{% trans "June 2026: Version 2.0" %}</div>
         {% endif %}
 
     </div>

@@ -28,6 +28,7 @@ const PAGE = {
     view:           'graph',         // 'graph' | 'table'
     selectedAthlete: null,           // { id, name } or null = own stats
     athletes:       [],
+    athletesLoading: false,          // true while /stats/get-athletes is in flight
     tableRows:      [],              // raw rows from /stats/get-table
     tableSort:      { key: null, dir: 1 }, // dir 1 = ascending, -1 = descending
 };
@@ -66,7 +67,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 function updateNavTitle() {
     const el = document.getElementById('stats-nav-title');
     if (!el) return;
-    el.textContent = `Statistik (${MODE_LABEL[PAGE.mode]})`;
+    el.textContent = `${gettext('Statistics')} (${MODE_LABEL[PAGE.mode]})`;
 }
 
 function initModeToggle() {
@@ -266,12 +267,22 @@ function applyView() {
 }
 
 async function loadAthletes() {
+    PAGE.athletesLoading = true;
     try {
         const res  = await fetch('/stats/get-athletes/');
         const data = await res.json();
         PAGE.athletes = data.athletes || [];
     } catch (e) {
         console.error('loadAthletes failed:', e);
+    } finally {
+        PAGE.athletesLoading = false;
+        // If the user already opened the dropdown while loading, refresh it in
+        // place so the freshly loaded athletes appear without re-clicking.
+        const dropdown = document.getElementById('trainer-athlete-dropdown');
+        const search   = document.getElementById('trainer-athlete-search');
+        if (dropdown && dropdown.classList.contains('open')) {
+            renderAthleteDropdown(search ? search.value : '', true);
+        }
     }
 }
 
@@ -288,7 +299,11 @@ function renderAthleteDropdown(query, open) {
     parts.push(
         `<div class="trainer-athlete-option trainer-own ${PAGE.selectedAthlete === null ? 'active' : ''}" data-id="">${gettext('Own stats')}</div>`
     );
-    if (filtered.length === 0 && q) {
+    if (PAGE.athletesLoading && PAGE.athletes.length === 0) {
+        parts.push(
+            `<div class="trainer-athlete-loading"><span class="trainer-athlete-spinner"></span>${gettext('Loading athletes…')}</div>`
+        );
+    } else if (filtered.length === 0 && q) {
         parts.push(`<div class="trainer-athlete-empty">${gettext('No athletes found')}</div>`);
     } else {
         filtered.forEach(a => {
@@ -373,50 +388,65 @@ function escapeHtml(s) {
    DATA LOADING
 ========================================================= */
 
+// Monotonic request token. Every loadStats() bumps it; an in-flight fetch only
+// applies its result if its token is still the latest one. This prevents an
+// earlier (slower) request from overwriting the data of a newer one when the
+// user switches modes/athletes quickly.
+let loadSeq = 0;
+
 async function loadStats() {
+    const token = ++loadSeq;
     try {
         if (PAGE.view === 'table' && PAGE.isTrainer) {
-            await loadTrainerTable();
+            await loadTrainerTable(token);
         } else {
-            await loadGraphStats();
+            await loadGraphStats(token);
         }
     } catch (e) {
         console.error('loadStats failed:', e);
     }
 }
 
-async function loadGraphStats() {
+async function loadGraphStats(token) {
     setCardsLoading(true);
     try {
         const params = new URLSearchParams({ mode: PAGE.mode });
         if (PAGE.selectedAthlete) params.set('user_id', String(PAGE.selectedAthlete.id));
         const res = await fetch('/stats/get-stats/?' + params.toString());
-        statsData = await res.json();
+        const data = await res.json();
+        // A newer request superseded this one — discard the stale response.
+        if (token !== loadSeq) return;
+        statsData = data;
         if (statsData.error) throw new Error(statsData.error);
         renderCharts();
         renderFacts(statsData.facts);
     } finally {
-        setCardsLoading(false);
+        // Only the latest request controls the spinner, otherwise a stale
+        // response clears it while a newer fetch is still in flight.
+        if (token === loadSeq) setCardsLoading(false);
     }
 }
 
-async function loadTrainerTable() {
+async function loadTrainerTable(token) {
     const wrap  = document.getElementById('stats-table-wrap');
     const tbody = document.querySelector('#stats-table tbody');
     if (wrap) wrap.classList.add('loading');
     try {
         const res = await fetch(`/stats/get-table/?mode=${PAGE.mode}`);
+        // A newer request superseded this one — discard the stale response.
+        if (token !== loadSeq) return;
         if (!res.ok) {
             if (tbody) {
-                tbody.innerHTML = '<tr><td colspan="11" style="text-align:center;color:#666;padding:24px;">Fehler beim Laden der Daten</td></tr>';
+                tbody.innerHTML = `<tr><td colspan="11" style="text-align:center;color:#666;padding:24px;">${gettext('Error loading data')}</td></tr>`;
             }
             return;
         }
         const data = await res.json();
+        if (token !== loadSeq) return;
         PAGE.tableRows = Array.isArray(data) ? data : [];
         renderTrainerTable(PAGE.tableRows);
     } finally {
-        if (wrap) wrap.classList.remove('loading');
+        if (token === loadSeq && wrap) wrap.classList.remove('loading');
     }
 }
 
@@ -452,8 +482,8 @@ function renderTrainerTable(rows) {
         return;
     }
 
-    // Always keep Kaderdurchschnitt as the top row
-    const summary = rows.find(r => String(r.athlete || '').includes('Kaderdurchschnitt'));
+    // Always keep the team-average summary as the top row.
+    const summary = rows.find(r => r.is_summary);
     let athletes  = rows.filter(r => r !== summary);
 
     // Apply athlete filter from picker (in table view only)
@@ -490,7 +520,8 @@ function renderTrainerTable(rows) {
         return `${ms >= 0 ? '+' : ''}${ms} ms/s`;
     };
     for (const row of ordered) {
-        const isSummary = String(row.athlete || '').includes('Kaderdurchschnitt');
+        const isSummary = !!row.is_summary;
+        const athleteName = isSummary ? gettext('Team average') : (row.athlete ?? '–');
         const tr = document.createElement('tr');
         if (isSummary) {
             tr.className = 'stats-table-summary';
@@ -500,7 +531,7 @@ function renderTrainerTable(rows) {
             tr.dataset.athleteName = row.athlete || '';
         }
         tr.innerHTML = `
-            <td>${escapeHtml(row.athlete ?? '–')}</td>
+            <td>${escapeHtml(athleteName)}</td>
             <td>${row.posten ?? '–'}</td>
             <td>${fmtSec(row.avg_choice_time)}</td>
             <td>${fmtSec(row.avg_error)}</td>
@@ -523,7 +554,7 @@ function fmtProgressBar(p) {
     const t   = Math.max(0, Math.min(100, Number(p.training_pct)    || 0));
     const c   = Math.max(0, Math.min(100, Number(p.competition_pct) || 0));
     const pct = Number(p.pct) || 0;
-    let tip = `${pct.toFixed(0)}% · W ${c.toFixed(0)}% · T ${t.toFixed(0)}%`;
+    let tip = `${pct.toFixed(0)}% · ${gettext('Competition short')} ${c.toFixed(0)}% · ${gettext('Training short')} ${t.toFixed(0)}%`;
     return `<span class="stats-prog-bar" title="${escapeHtml(tip)}">`
          + `<span class="stats-prog-seg stats-prog-comp" style="width:${c}%"></span>`
          + `<span class="stats-prog-seg stats-prog-training" style="width:${t}%"></span>`
@@ -607,8 +638,8 @@ function drawDonut() {
     const outerR  = halfMin - ringW / 2 - 3;
     const innerR  = outerR - ringW - 4;
 
-    drawRing(svg, cx, cy, outerR, ringW, statsData.team, TEAM_COLORS, 'Team');
-    drawRing(svg, cx, cy, innerR, ringW, statsData.user, USER_COLORS, 'Du');
+    drawRing(svg, cx, cy, outerR, ringW, statsData.team, TEAM_COLORS, gettext('Team'));
+    drawRing(svg, cx, cy, innerR, ringW, statsData.user, USER_COLORS, gettext('You'));
 
     const totalFs = Math.max(11, Math.min(22, outerR * 0.28));
     const subFs   = Math.max(8,  Math.min(12, outerR * 0.14));
@@ -747,8 +778,8 @@ function drawAvgChart() {
         const groupCx = ML + gi * groupW + groupW / 2;
         // Draw team bar behind (wider), then user bar in front (narrower) — both centered on groupCx
         [
-            { value: g.team, color: 'rgba(224,112,32,0.42)', who: 'Team', width: teamBarW },
-            { value: g.user, color: '#e07020',               who: 'Du',   width: userBarW },
+            { value: g.team, color: 'rgba(224,112,32,0.42)', who: gettext('Team'), width: teamBarW },
+            { value: g.user, color: '#e07020',               who: gettext('You'),   width: userBarW },
         ].forEach(bar => {
             const x = groupCx - bar.width / 2;
             const y = toY(bar.value);
@@ -799,8 +830,8 @@ function drawAvgChart() {
 function drawAvgLegend(svg, W) {
     // Render the legend in the top-right of the SVG
     const items = [
-        { label: 'Team',         color: 'rgba(224,112,32,0.42)', w: 14, h: 8 },
-        { label: 'Individuell',  color: '#e07020',               w: 6,  h: 10 },
+        { label: gettext('Team'),       color: 'rgba(224,112,32,0.42)', w: 14, h: 8 },
+        { label: gettext('Individual'), color: '#e07020',               w: 6,  h: 10 },
     ];
     let x = W - 12;
     const y = 4;
@@ -1107,7 +1138,7 @@ function drawErrorScatterChart() {
     const toY = v => MT + chartH - (yMax > 0 ? (v / yMax) * chartH : 0);
 
     drawGrid(svg, ML, MT, chartW, chartH, xMax, yMax, xStep, yStep, toX, toY);
-    drawAxisLabels(svg, W, H, ML, MT, chartH, 'Fehlerpotential', 'Entscheidungszeit');
+    drawAxisLabels(svg, W, H, ML, MT, chartH, gettext('Error potential'), gettext('Decision time'));
 
     const visiblePoints = points.filter(p => p.x <= xMax && p.y <= yMax);
     const sample = samplePoints(visiblePoints, 1800);
@@ -1126,7 +1157,7 @@ function drawErrorScatterChart() {
     const userFit = regressionFit(statsData?.error_potential?.user_fit);
     const teamFit = regressionFit(statsData?.error_potential?.team_fit);
     if (teamFit) {
-        drawTrendLine(svg, toX, toY, xMax, yMax, teamFit, TEAM_BLUE, `Team: ${formatMsSensitivity(teamFit)} ms/s`);
+        drawTrendLine(svg, toX, toY, xMax, yMax, teamFit, TEAM_BLUE, `${gettext('Team')}: ${formatMsSensitivity(teamFit)} ms/s`);
     }
     if (userFit) {
         drawTrendLine(svg, toX, toY, xMax, yMax, userFit, '#f3b27d', `${gettext('Personal')}: ${formatMsSensitivity(userFit)} ms/s`);
@@ -1206,7 +1237,7 @@ function drawErrorBinsChart() {
         svg.appendChild(lbl);
     });
 
-    drawAxisLabels(svg, W, H, ML, MT, chartH, 'Potential', 'Ø Zeit');
+    drawAxisLabels(svg, W, H, ML, MT, chartH, gettext('Potential'), gettext('Ø Time'));
 }
 
 function timeSensitivityPoints() {
@@ -1271,7 +1302,7 @@ function drawSequenceEffectChart() {
         c.setAttribute('class', 'stats-hover-target stats-scatter-point');
         const rel = `${p.x >= 0 ? '+' : ''}${p.x.toFixed(2)}s`;
         const avg = Number.isFinite(p.avg_choice_time) ? ` · Ø: ${p.avg_choice_time.toFixed(2)}s` : '';
-        bindTooltip(c, `Zeit vs Ø: ${rel} · Fehler: ${p.y.toFixed(2)}s · Zeit: ${p.choice_time.toFixed(2)}s${avg} · n=${p.result_count}`);
+        bindTooltip(c, `${gettext('Time vs Ø:')} ${rel} · ${gettext('Error')}: ${p.y.toFixed(2)}s · ${gettext('Time')}: ${p.choice_time.toFixed(2)}s${avg} · n=${p.result_count}`);
         svg.appendChild(c);
     });
 
@@ -1324,7 +1355,7 @@ function formatMsSensitivity(fit) {
 function drawSensitivityLabels(svg, W, MT, userFit, teamFit) {
     const rows = [];
     if (userFit) rows.push({ label: `Du: ${formatMsSensitivity(userFit)} ms/s`, color: '#f3b27d' });
-    if (teamFit) rows.push({ label: `Team: ${formatMsSensitivity(teamFit)} ms/s`, color: TEAM_BLUE });
+    if (teamFit) rows.push({ label: `${gettext('Team')}: ${formatMsSensitivity(teamFit)} ms/s`, color: TEAM_BLUE });
     rows.forEach((row, i) => {
         const t = svgEl('text');
         t.setAttribute('x', W - 14);

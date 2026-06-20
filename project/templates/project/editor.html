@@ -118,6 +118,36 @@
                     <div class="scale-step"><span class="scale-step-num">3</span><span class="scale-step-text">{% trans "Click the points on the map and enter the distance." %}</span></div>
                 </div>
                 <div id="scale-status" class="scale-status">{% trans "Click the first point on the map…" %}</div>
+
+                <div id="scale-form" class="scale-form" style="display:none;">
+                    <div class="scale-modal-body">
+                        <label class="scale-modal-label">
+                            {% trans "Distance" %}
+                            <input type="text" id="scale-distance-m" inputmode="decimal" autocomplete="off"
+                                   placeholder="{% trans 'e.g. 1234 m' %}">
+                        </label>
+                        <div class="scale-modal-or">{% trans "or coordinates" %}</div>
+                        <label class="scale-modal-label">
+                            {% trans "Point 1" %}
+                            <input type="text" id="scale-coord-1" autocomplete="off"
+                                   placeholder='46.907604, 7.165145'>
+                        </label>
+                        <label class="scale-modal-label">
+                            {% trans "Point 2" %}
+                            <input type="text" id="scale-coord-2" autocomplete="off"
+                                   placeholder='46.914287, 7.138275'>
+                        </label>
+                        <div class="scale-ratio-row">
+                            <span class="scale-ratio-text">{% trans "Scale" %}&nbsp;&nbsp;1 :</span>
+                            <input type="number" id="scale-ratio-input" class="scale-ratio-inline" value="4000" step="500" min="100" max="10000">
+                        </div>
+                    </div>
+                    <div class="scale-modal-footer">
+                        <button id="scale-submit-btn" class="scale-check-btn" disabled>
+                            <x-icon name="check" size="1.4rem"></x-icon>
+                        </button>
+                    </div>
+                </div>
             </div>
 
             <div id="cp-list"></div>
@@ -388,40 +418,6 @@
                 <div class="ocad-import-checking">{% trans "Analyzing file…" %}</div>
                 <button id="ocad-upload-btn" class="browse-btn ocad-upload-btn">{% trans "Import" %}</button>
             </div>
-        </div>
-    </div>
-</div>
-
-<!-- SCALE MODAL (mandatory — no click-outside close, centered) -->
-<div id="modal-scale" style="display:none; position:fixed; inset:0; z-index:9998;
-     align-items:center; justify-content:center; pointer-events:none;">
-    <div class="modal-scale-box" style="pointer-events:auto;">
-        <div class="scale-modal-body">
-            <label class="scale-modal-label">
-                {% trans "Distance" %}
-                <input type="text" id="scale-distance-m" inputmode="decimal" autocomplete="off"
-                       placeholder="{% trans 'e.g. 1234 m' %}">
-            </label>
-            <div class="scale-modal-or">{% trans "or coordinates" %}</div>
-            <label class="scale-modal-label">
-                {% trans "Point 1" %}
-                <input type="text" id="scale-coord-1" autocomplete="off"
-                       placeholder='46.907604, 7.165145'>
-            </label>
-            <label class="scale-modal-label">
-                {% trans "Point 2" %}
-                <input type="text" id="scale-coord-2" autocomplete="off"
-                       placeholder='46.914287, 7.138275'>
-            </label>
-            <div class="scale-ratio-row">
-                <span class="scale-ratio-text">{% trans "Scale" %}&nbsp;&nbsp;1 :</span>
-                <input type="number" id="scale-ratio-input" class="scale-ratio-inline" value="4000" step="500" min="100" max="10000">
-            </div>
-        </div>
-        <div class="scale-modal-footer">
-            <button id="scale-submit-btn" class="scale-check-btn" disabled>
-                <x-icon name="check" size="1.4rem"></x-icon>
-            </button>
         </div>
     </div>
 </div>

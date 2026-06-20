@@ -1,9 +1,6 @@
 from django.contrib import admin
 from django.urls import path, include
 
-from django.conf import settings
-from django.conf.urls.static import static
-
 from django.contrib.auth import views as auth_views
 from django.contrib.auth.decorators import login_not_required
 from CQCPathfinder.forms import StyledPasswordChangeForm
@@ -49,12 +46,5 @@ urlpatterns = [
         success_url='/',
     ), name='password_change'),
 
-    # password reset (via email) — must stay public so a locked-out user who
-    # forgot their password can actually get back in.
-    path('password_reset/', login_not_required(auth_views.PasswordResetView.as_view()), name='password_reset'),
-    path('password_reset/done/', login_not_required(auth_views.PasswordResetDoneView.as_view()), name='password_reset_done'),
-    path('reset/<uidb64>/<token>/', login_not_required(auth_views.PasswordResetConfirmView.as_view()), name='password_reset_confirm'),
-    path('reset/done/', login_not_required(auth_views.PasswordResetCompleteView.as_view()), name='password_reset_complete'),
-
     path('favicon.ico', login_not_required(RedirectView.as_view(url='/static/favicon.ico', permanent=True))),
-] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+]

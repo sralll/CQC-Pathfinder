@@ -115,7 +115,7 @@ function renderTableHeader() {
             </th>
             ${showTeamColumn ? `
             <th class="col-team">
-                <span class="filterable" id="team-filter-btn">${gettext("Squad")}
+                <span class="filterable" id="team-filter-btn">${gettext("Team")}
                     <span class="filter-indicator active-filter-icon">${icon("filter", "0.8em")}</span>
                 </span>
             </th>` : ''}
@@ -241,16 +241,16 @@ function renderPublishFilterDropdown() {
     const dropdown = document.getElementById("publish-filter-dropdown");
     dropdown.innerHTML = `
         <div class="filter-clear">
-            <div class="filter-clear-left" onclick="event.stopPropagation(); clearPublishFilter()"><b>Alle</b></div>
+            <div class="filter-clear-left" onclick="event.stopPropagation(); clearPublishFilter()"><b>${gettext('All')}</b></div>
             <button class="filter-close-btn" onclick="event.stopPropagation(); closeAllFilters()" type="button"><x-icon name="xmark" size="1em"></x-icon></button>
         </div>
         <div class="filter-options-list">
             <div class="filter-option" onclick="event.stopPropagation(); setPublishFilter(true)">
-                Veröffentlicht
+                ${gettext('Published')}
                 ${activePublishFilter === true ? icon("square-check") : icon("square")}
             </div>
             <div class="filter-option" onclick="event.stopPropagation(); setPublishFilter(false)">
-                Verborgen
+                ${gettext('Hidden')}
                 ${activePublishFilter === false ? icon("square-check") : icon("square")}
             </div>
         </div>
@@ -317,7 +317,7 @@ function renderAuthorFilterDropdown() {
     const dropdown = document.getElementById("author-filter-dropdown");
     dropdown.innerHTML = `
         <div class="filter-clear">
-            <div class="filter-clear-left" onclick="event.stopPropagation(); clearAuthorFilters()"><b>Alle</b></div>
+            <div class="filter-clear-left" onclick="event.stopPropagation(); clearAuthorFilters()"><b>${gettext('All')}</b></div>
             <button class="filter-close-btn" onclick="event.stopPropagation(); closeAllFilters()" type="button"><x-icon name="xmark" size="1em"></x-icon></button>
         </div>
         <div class="filter-options-list">
@@ -359,7 +359,7 @@ function renderTeamFilterDropdown() {
     const orderedTeams = userTeam ? [userTeam, ...allTeams.filter(t => t !== userTeam)] : allTeams;
     dropdown.innerHTML = `
         <div class="filter-clear">
-            <div class="filter-clear-left" onclick="event.stopPropagation(); clearTeamFilters()"><b>Alle</b></div>
+            <div class="filter-clear-left" onclick="event.stopPropagation(); clearTeamFilters()"><b>${gettext('All')}</b></div>
             <button class="filter-close-btn" onclick="event.stopPropagation(); closeAllFilters()" type="button"><x-icon name="xmark" size="1em"></x-icon></button>
         </div>
         <div class="filter-options-list">
@@ -552,7 +552,7 @@ function renderCards() {
             <div class="file-card-row1">
                 ${publishBtn}
                 <span class="file-card-name">${f.name}</span>
-                <span class="file-card-cp">${f.cp_count} Posten</span>
+                <span class="file-card-cp">${f.cp_count} ${f.cp_count === 1 ? gettext('Control') : gettext('Controls')}</span>
             </div>
             <div class="file-card-row2">
                 ${lockHtml}
@@ -572,7 +572,7 @@ function renderCards() {
                 });
                 const data = await res.json();
                 if (!res.ok) {
-                    await showModal({ message: data.message || 'Fehler beim Veröffentlichen.' });
+                    await showModal({ message: data.message || gettext('Publishing failed.') });
                     return;
                 }
                 f.published = data.published;
@@ -612,7 +612,7 @@ function renderMobileControls() {
     const sortFields = [
         { key: 'name',        label: gettext('Name')     },
         { key: 'cp_count',    label: gettext('Controls') },
-        { key: 'last_edited', label: 'Datum'  },
+        { key: 'last_edited', label: gettext('Date')  },
     ];
     sortFields.forEach(({ key, label }) => {
         const btn   = document.createElement('button');
@@ -639,7 +639,7 @@ function renderMobileControls() {
         { field: 'label',  label: gettext('Label'),  toggle: toggleLabelFilter  },
         { field: 'author', label: gettext('Author'), toggle: toggleAuthorFilter },
         ...(showTeamColumn
-            ? [{ field: 'team', label: gettext('Squad'), toggle: toggleTeamFilter }]
+            ? [{ field: 'team', label: gettext('Team'), toggle: toggleTeamFilter }]
             : []),
     ];
     filterFields.forEach(({ field, label, toggle }) => {

@@ -145,7 +145,6 @@ self.addEventListener('message', async (e) => {
             // eslint-disable-next-line no-console
             console.log(`[${LOG_PREFIX}] route distinct: ${distinct.distinct ? 'yes' : 'no'} (${distinct.reason}, ${Math.round(distinctMs)}ms)`);
         }
-        const debugBaseGridBuffer = result.debugBaseGrid ? result.debugBaseGrid.buffer : null;
         const message = {
             type: 'path',
             msgId,
@@ -155,16 +154,8 @@ self.addEventListener('message', async (e) => {
             distinctReason: distinct.reason,
             distinctStats: distinct,
             timings: result.timings,
-            debugBaseGridBuffer,
-            debugPaths: result.debugPaths || null,
-            debugOffsetX: result.debugOffsetX,
-            debugOffsetY: result.debugOffsetY,
-            debugWidth: result.debugWidth,
-            debugHeight: result.debugHeight,
         };
-        const transfer = [];
-        if (debugBaseGridBuffer) transfer.push(debugBaseGridBuffer);
-        self.postMessage(message, transfer);
+        self.postMessage(message);
         return;
     }
 });

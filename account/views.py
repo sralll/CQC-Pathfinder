@@ -6,6 +6,7 @@ from django.views.decorators.http import require_POST
 from django.views.i18n import set_language as django_set_language
 from django.db.models import Count
 from django.utils import timezone
+from django.utils.translation import gettext as _
 from .models import Profile, Team, ForumThread, ForumComment
 
 
@@ -55,7 +56,7 @@ def forum_index(request):
             )
             return redirect('forum_thread', pk=thread.pk)
         # invalid submit → fall through and re-render the list with the form open
-        form_error = "Titel und Text dürfen nicht leer sein."
+        form_error = _("Title and text must not be empty.")
     else:
         form_error = None
 
@@ -147,7 +148,7 @@ def forum_thread_edit(request, pk):
     """Edit a thread — only the author may do so."""
     thread = get_object_or_404(ForumThread, pk=pk)
     if thread.author_id != request.user.id:
-        return HttpResponseForbidden("Du kannst nur eigene Themen bearbeiten.")
+        return HttpResponseForbidden(_("You can only edit your own topics."))
     title = (request.POST.get('title') or '').strip()
     body = (request.POST.get('body') or '').strip()
     if title and body:
@@ -164,7 +165,7 @@ def forum_comment_edit(request, pk):
     """Edit a comment — only the author may do so."""
     comment = get_object_or_404(ForumComment, pk=pk)
     if comment.author_id != request.user.id:
-        return HttpResponseForbidden("Du kannst nur eigene Antworten bearbeiten.")
+        return HttpResponseForbidden(_("You can only edit your own replies."))
     body = (request.POST.get('body') or '').strip()
     if body:
         comment.body = body[:4000]

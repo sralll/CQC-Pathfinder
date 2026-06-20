@@ -1,15 +1,13 @@
-import mimetypes
-import os
 import traceback
 
-from django.conf import settings
 from django.contrib.auth.decorators import login_required
 from django.db.models import Count, Q, Prefetch
-from django.http import FileResponse, HttpResponseNotFound, JsonResponse
+from django.http import HttpResponseNotFound, JsonResponse
 from django.shortcuts import get_object_or_404, render
 from django.views.decorators.http import require_GET, require_POST
 
 from project.models import ControlPair, File, Route
+from project.media_access import serve_map_file, user_can_access_map_file
 
 from .stats_views import _clear_stats_cache_for_team
 
@@ -207,6 +205,7 @@ def get_file(request, file_id):
                             'length':    r.length,
                             'run_time':  r.run_time,
                             'elevation': r.elevation,
+                            'obstacle':  r.obstacle,
                         }
                         for r in cp.routes.all()
                     ],
@@ -223,12 +222,9 @@ def get_file(request, file_id):
 @login_required
 @require_GET
 def get_map(request, filename):  # noqa — kept before submit_result for logical grouping
-    filepath = os.path.join(settings.MEDIA_ROOT, 'maps', filename)
-    if not os.path.exists(filepath):
-        return HttpResponseNotFound(f"Map '{filename}' not found.")
-    content_type, _ = mimetypes.guess_type(filepath)
-    content_type = content_type or 'application/octet-stream'
-    return FileResponse(open(filepath, 'rb'), content_type=content_type)
+    if not user_can_access_map_file(request, filename, require_published=True):
+        return HttpResponseNotFound("Map not found.")
+    return serve_map_file(filename)
 
 
 @login_required

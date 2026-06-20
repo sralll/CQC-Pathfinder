@@ -157,7 +157,7 @@ async function toggleNavPublish() {
         method: 'POST', headers: { 'X-CSRFToken': csrf },
     });
     const data = await res.json();
-    if (!res.ok) { await window.showModal({ message: data.message || 'Fehler beim Veröffentlichen.' }); return; }
+    if (!res.ok) { await window.showModal({ message: data.message || gettext('Publishing failed.') }); return; }
     project.published = data.published;
     updateNavPublishBtn();
     if (data.published) {
@@ -212,7 +212,7 @@ function openNavLabelPicker(slotEl) {
             body: JSON.stringify({ label_id: label ? label.id : null }),
         });
         if (!res.ok) { project.label = prevLabel; updateNavLabel(); return; }
-        saveSnapshot(gettext("Label"));
+        saveSnapshot("Label");
         // Also update projectFiles so the file table stays in sync
         const f = (projectFiles || []).find(f => f.id === project.id);
         if (f) f.label = label;
@@ -364,7 +364,7 @@ function captureState(label = "") {
     };
 }
 
-function pushUndoState(label = "Geladen") {
+function pushUndoState(label = "Loaded") {
     undoStack.push(captureState(label));
     if (undoStack.length > UNDO_MAX) undoStack.shift();
     redoStack = [];
@@ -398,13 +398,13 @@ function undo() {
     if (!undoStack.length) return;
     cancelAllPathing();
     if (undoStack[undoStack.length - 1].isMaskUndo) {
-        redoStack.push({ label: gettext("Mask edited"), isMaskUndo: true });
+        redoStack.push({ label: "Mask edited", isMaskUndo: true });
         undoStack.pop();
         undoMask();
         updateUndoMenu();
         return;
     }
-    redoStack.push(captureState(gettext("Undo")));
+    redoStack.push(captureState("Undo"));
     restoreState(undoStack.pop());
     saveFile("undo");
     updateUndoMenu();
@@ -416,13 +416,13 @@ function redo() {
     if (!redoStack.length) return;
     cancelAllPathing();
     if (redoStack[redoStack.length - 1].isMaskUndo) {
-        undoStack.push({ label: gettext("Mask edited"), isMaskUndo: true });
+        undoStack.push({ label: "Mask edited", isMaskUndo: true });
         redoStack.pop();
         redoMask();
         updateUndoMenu();
         return;
     }
-    undoStack.push(captureState("Wiederholen"));
+    undoStack.push(captureState("Redo"));
     restoreState(redoStack.pop());
     saveFile("redo");
     updateUndoMenu();
@@ -432,7 +432,7 @@ function updateUndoMenu() {
     const el = document.getElementById("undo-dropdown");
     if (!el) return;
     if (!undoStack.length) {
-        el.innerHTML = `<div style="color:#555;font-style:italic;padding:7px 14px;">Keine Aktionen</div>`;
+        el.innerHTML = `<div style="color:#555;font-style:italic;padding:7px 14px;">${gettext('No actions')}</div>`;
         return;
     }
     el.innerHTML = [...undoStack].reverse().map((state, i) => `
@@ -568,7 +568,7 @@ window.addEventListener("beforeunload", e => {
     checkinCurrentFile();
     if (_pendingSaves > 0 || _hasDeferredAutoPathfindSave()) {
         e.preventDefault();
-        e.returnValue = "Autosave noch nicht abgeschlossen. Bitte auf der Seite bleiben.";
+        e.returnValue = gettext("Autosave is not finished yet. Please stay on the page.");
     }
 });
 
@@ -704,7 +704,7 @@ function applyUploadedProject(parsed) {
     const table = window._fileTable;
     if (!table || typeof table._applyProject !== "function") {
         console.warn("uploadProjectJson: file table not ready.");
-        window.showModal?.({ message: "Editor noch nicht bereit — bitte erneut versuchen." });
+        window.showModal?.({ message: gettext("Editor is not ready yet — please try again.") });
         return;
     }
 
@@ -736,7 +736,7 @@ function _readProjectFile(file) {
     };
     reader.onerror = () => {
         console.warn("uploadProjectJson: file read failed", reader.error);
-        window.showModal?.({ message: "Die Datei konnte nicht gelesen werden." });
+        window.showModal?.({ message: gettext("The file could not be read.") });
     };
     reader.readAsText(file);
 }
@@ -763,10 +763,10 @@ function uploadProjectJson() {
     overlay.className = "dialog-overlay";
     overlay.innerHTML = `
         <div class="dialog-box">
-            <p class="dialog-message">Projekt-JSON wiederherstellen</p>
+            <p class="dialog-message">${gettext('Restore project JSON')}</p>
             <div class="dialog-buttons">
-                <button class="dialog-btn dialog-btn-cancel" type="button">Abbrechen</button>
-                <button class="dialog-btn dialog-btn-confirm" type="button">Datei wählen…</button>
+                <button class="dialog-btn dialog-btn-cancel" type="button">${gettext('Cancel')}</button>
+                <button class="dialog-btn dialog-btn-confirm" type="button">${gettext('Choose file…')}</button>
             </div>
         </div>`;
     // Open the native picker synchronously inside the click handler so the user
@@ -856,7 +856,7 @@ function saveFile(trigger = "save") {
                         <button onclick="this.closest('#conflict-warning').remove();location.reload();"
                             style="background:#fff;color:#7a1010;border:none;border-radius:4px;
                                    padding:2px 8px;cursor:pointer;font-size:11px;">
-                            Neu laden
+                            ${gettext('Reload')}
                         </button>
                         <button onclick="this.closest('#conflict-warning').remove();"
                             style="background:transparent;color:#ccc;border:none;cursor:pointer;font-size:14px;"><x-icon name="xmark" size="1em"></x-icon></button>`;
@@ -885,7 +885,7 @@ function saveFile(trigger = "save") {
             }
             _clearSaveFailedWarning();
             if (trigger === "save" || trigger === "manual") {
-                saveSnapshot("Manuell gespeichert");
+                saveSnapshot("Manually saved");
                 if (document.getElementById("modal-project")?.classList.contains("open")) {
                     window.refreshFileTable?.();
                 }
@@ -912,7 +912,7 @@ function _showSaveFailedWarning() {
         background:#5a4000;color:#ffd;padding:8px 16px;border-radius:0 0 6px 6px;
         font-size:12px;z-index:9999;display:flex;align-items:center;gap:10px;
     `;
-    bar.innerHTML = `<x-icon name="warning" size="1em"></x-icon><span>Verbindung unterbrochen — Änderungen werden nicht gespeichert</span>`;
+    bar.innerHTML = `<x-icon name="warning" size="1em"></x-icon><span>${gettext('Connection lost — changes are not being saved')}</span>`;
     document.body.appendChild(bar);
 }
 
@@ -930,7 +930,7 @@ window.addEventListener("online", () => {
 
 window.saveSnapshot = saveSnapshot;
 function saveSnapshot(trigger = "autosave") {
-    if (readOnly) return;
+    if (readOnly || !project.id) return Promise.resolve(null);
     if (trigger === "autosave" && _shouldDeferAutoPathfindSaves()) {
         _markAutoPathfindBatchDirty();
         return Promise.resolve(null);
@@ -1080,6 +1080,69 @@ function deleteRoute(cp, route) {
     _deleteElement(() => (route.id && cp.id) ? { type: 'route', db_id: route.id, cp_db_id: cp.id } : null);
 }
 
+function deleteControlPairFromProject(cp) {
+    if (readOnly || !cp) return false;
+    pushUndoState("Control deleted");
+    deleteControlPair(cp);
+    project.control_pairs = project.control_pairs.filter(c => c !== cp);
+    project.control_pairs.forEach((c, i) => { c.order = i; });
+    if (selection.ncp >= project.control_pairs.length) {
+        selection.ncp = Math.max(0, project.control_pairs.length - 1);
+    }
+    drawCourse();
+    return true;
+}
+
+function deleteRouteFromProject(cp, route) {
+    if (readOnly || !cp || !route) return false;
+    pushUndoState("Route deleted");
+    deleteRoute(cp, route);
+    cp.routes = cp.routes.filter(r => r !== route);
+    cp.routes.forEach((r, i) => { r.order = i; });
+    if (selection.nr >= cp.routes.length) selection.nr = null;
+    drawRoutes();
+    updateRoutes();
+    updateCPList();
+    return true;
+}
+
+function isPlainDeleteShortcut(e) {
+    if (e.ctrlKey || e.metaKey || e.altKey || e.repeat) return false;
+    if ((e.key || "").toLowerCase() !== "d") return false;
+    if (document.querySelector(".modal.open")) return false;
+    if (_scaleFormOpen) return false;
+    const target = e.target;
+    if (target?.isContentEditable) return false;
+    if (target?.closest?.("input, textarea, select, [contenteditable='true']")) return false;
+    return true;
+}
+
+function deleteSelectedEditorObject() {
+    if (readOnly) return false;
+    if (currentToolMode === ToolMode.ROUTE || activeTool === RouteTool) {
+        const cp = project.control_pairs.find(c => c.order === selection.ncp);
+        const route = cp?.routes?.find(r => r.order === selection.nr);
+        return deleteRouteFromProject(cp, route);
+    }
+    if (currentToolMode === ToolMode.CONTROL_PAIR || activeTool === ControlPairTool) {
+        const cp = project.control_pairs.find(c => c.order === selection.ncp);
+        return deleteControlPairFromProject(cp);
+    }
+    if (currentToolMode === ToolMode.BLOCK || activeTool === BlockTool) {
+        return BlockTool.deleteHoveredElement?.() ?? false;
+    }
+    return false;
+}
+
+function handleEditorDeleteShortcut(e) {
+    if (!isPlainDeleteShortcut(e)) return false;
+    const handled = activeTool.handleDeleteKey?.() || deleteSelectedEditorObject();
+    if (!handled) return false;
+    e.preventDefault();
+    e.stopPropagation();
+    return true;
+}
+
 // Keyboard shortcuts for undo/redo
 async function duplicateFile() {
     if (!project.id) return;
@@ -1127,7 +1190,7 @@ window.addEventListener("keydown", e => {
     if (!(e.ctrlKey || e.metaKey)) return;
     if (e.key === "z" && !e.shiftKey) {
         e.preventDefault();
-        if (_scalingActive || _scaleP1 || document.getElementById("modal-scale")?.style.display === "flex") {
+        if (_scalingActive || _scaleP1 || _scaleFormOpen) {
             _undoScalePoint();
         } else {
             undo();
@@ -1150,16 +1213,14 @@ const SNAP_DISTANCE_ROUTE_EDIT   = 5;
 const R_CONTROL = 25;
 const GAP = 8;
 const RUN_SPEED = 4.75;         // average running speed in m/s
-const DOWNHILL_CREDIT = 0.0;   // how much a downhill pays back the matching uphill
-                               // 0.0 = neutral (sprint: you can't bank the descent)
-                               // 1.0 = full Strava GAP credit (symmetric model)
+const ALT_FLAT_EQUIV_M = 4;    // 1 m of elevation ≈ 4 m of flat running (≈ 0.84 s/m at RUN_SPEED)
 const PX_TO_M  = 0.48;         // pixels to metres conversion factor
 const REFERENCE_MAP_SCALE = 4000;
 const PATHING_MASK_TRAIN_SCALE = 0.710;
 const ROUTE_OBSTACLE_THRESHOLD = 200;
-const ROUTE_OBSTACLE_SECONDS_PER_ENTRY = 2;
+const ROUTE_OBSTACLE_SECONDS_PER_ENTRY = 1;
 const ROUTE_STAIR_VALUE = 242;
-const ROUTE_STAIR_SECONDS_PER_ENTRY = 1;
+const ROUTE_STAIR_SECONDS_PER_ENTRY = 0.25;
 const CONTROL_POINT_PASSABLE_SNAP_M = 10;
 const ROUTE_STROKE_MULTIPLIER       = 1.5;
 const ROUTE_STROKE_SCALE_EXPONENT   = 0.33;
@@ -1306,7 +1367,7 @@ const ControlPairTool = (() => {
             originX: point.x,
             originY: point.y,
         };
-        pushUndoState(gettext("Control moved"));
+        pushUndoState("Control moved");
         setRouteDeletePreview(null);
         mapContainer.classList.add("dragging");
         mapContainer.style.cursor = "grabbing";
@@ -1439,6 +1500,7 @@ const RouteEditTool = (() => {
     let continuation = null;
     let originalPts  = null;
     let previewPt    = null;
+    let editBasePointCount = 0;
 
     function reset() {
         route = null;
@@ -1446,6 +1508,7 @@ const RouteEditTool = (() => {
         continuation = null;
         originalPts  = null;
         previewPt    = null;
+        editBasePointCount = 0;
     }
 
     // PERF: persistent preview nodes — original-route polyline + line to cursor.
@@ -1523,6 +1586,19 @@ const RouteEditTool = (() => {
             updateCPList();
         }
 
+    function deleteLastEditPoint() {
+        if (!route) return true;
+        if (route.rP.length > editBasePointCount) {
+            route.rP.pop();
+            calcRouteLength(route);
+            drawRoutes();
+            drawPreview();
+            updateRoutes();
+            updateCPList();
+        }
+        return true;
+    }
+
     const gesture = makePendingGesture({
         onDrag(downEvent) {
             pan.start(downEvent.clientX, downEvent.clientY);
@@ -1546,11 +1622,12 @@ const RouteEditTool = (() => {
             route       = r;
             cpRef       = cp;
             originalPts = structuredClone(r.rP);
-            pushUndoState(gettext("Route edited"));
+            pushUndoState("Route edited");
 
             r.rP.splice(segmentIndex + 1, 0, { x: insertPoint.x, y: insertPoint.y });
             continuation = r.rP.slice(segmentIndex + 1);
             r.rP         = r.rP.slice(0, segmentIndex + 2);
+            editBasePointCount = r.rP.length;
 
             return this;
         },
@@ -1598,6 +1675,8 @@ const RouteEditTool = (() => {
         onKeyDown(e) {
             if (e.key === "Escape") activateTool(RouteTool);
         },
+
+        handleDeleteKey() { return deleteLastEditPoint(); },
     };
 })();
 
@@ -1675,7 +1754,7 @@ const NewRouteTool = (() => {
     const scheduleDraw = makeRafScheduler(drawPreview);   // PERF-FIX #2
 
     function completeRoute() {
-        pushUndoState(gettext("Route created"));
+        pushUndoState("Route created");
         calcRouteLength(route);
         route.elevation = 0;
         calcRouteNoA(route);
@@ -1697,6 +1776,17 @@ const NewRouteTool = (() => {
             document.querySelector(".cp-route-row.selected")
                 ?.scrollIntoView({ block: "center", behavior: "smooth" });
         });
+    }
+
+    function deleteLastRoutePoint() {
+        if (!route?.rP?.length) return false;
+        if (route.rP.length) {
+            route.rP.pop();
+            calcRouteLength(route);
+            drawPreview();
+            updateCPList();
+        }
+        return true;
     }
 
     const gesture = makePendingGesture({
@@ -1779,6 +1869,8 @@ const NewRouteTool = (() => {
         onKeyDown(e) {
             if (e.key === "Escape") activateTool(RouteTool);
         },
+
+        handleDeleteKey() { return deleteLastRoutePoint(); },
 
         isActive() { return activeTool === this; },
 
@@ -1928,7 +2020,6 @@ const MaskLayer = (() => {
         // Clear stale diffs — they were computed for a different canvas
         if (typeof clearMaskUndoStacks === "function") clearMaskUndoStacks();
         loaded = false;
-        const stem = mapFile.replace(/\.[^.]+$/, "");
         const img  = new Image();
         img.crossOrigin = "anonymous";
         img.onload = () => {
@@ -1948,7 +2039,11 @@ const MaskLayer = (() => {
             try { sendMaskToPathingWorker(mapFile, maskData); } catch (e) { console.warn("pathing worker: send mask failed", e); }
         };
         img.onerror = () => { loaded = false; };
-        img.src = `/media/masks/mask_${stem}.png`;
+        if (!project.id) {
+            loaded = false;
+            return;
+        }
+        img.src = `/editor/mask/${project.id}/`;
     }
 
     function screenToMaskPx(clientX, clientY) {
@@ -2271,6 +2366,7 @@ const MaskLayer = (() => {
                     }
                     const form = new FormData();
                     form.append("filename", filename);
+                    form.append("file_id", project.id || "");
                     const stem = filename.replace(/\.[^.]+$/, "");
                     form.append("file", blob, `mask_${stem}.png`);
                     fetch("/editor/save-mask/", {
@@ -2312,7 +2408,7 @@ function pushMaskDiff(diff) {
     if (maskUndoStack.length > MASK_UNDO_MAX) maskUndoStack.shift();
     maskRedoStack = [];
     // Mirror into main undo stack so it appears in the dropdown
-    undoStack.push({ label: gettext("Mask edited"), isMaskUndo: true });
+    undoStack.push({ label: "Mask edited", isMaskUndo: true });
     if (undoStack.length > UNDO_MAX) undoStack.shift();
     redoStack = [];
     updateUndoMenu();
@@ -2497,7 +2593,7 @@ function updateBlockList() {
         row.style.cssText = "cursor:pointer;";
         row.innerHTML = `
             <span class="cp-row-label" style="color:#a050e8;font-style:italic;">${label}</span>
-            <button class="cp-delete-btn" title="Löschen">${icon("trash", "11px")}</button>
+            <button class="cp-delete-btn" title="${gettext('Delete')}">${icon("trash", "11px")}</button>
         `;
         row.addEventListener("click", e => {
             if (e.target.closest(".cp-delete-btn")) return;
@@ -2513,11 +2609,11 @@ function updateBlockList() {
     };
 
     bt.lines.forEach((seg, idx) => {
-        makeRow("Linie", [seg.start, seg.end], () => bt.lines.splice(idx, 1));
+        makeRow(gettext("Line"), [seg.start, seg.end], () => bt.lines.splice(idx, 1));
     });
 
     bt.areas.forEach((area, idx) => {
-        makeRow("Fl\u00e4che", area.points, () => bt.areas.splice(idx, 1));
+        makeRow(gettext("Area"), area.points, () => bt.areas.splice(idx, 1));
     });
 }
 
@@ -2580,7 +2676,31 @@ const BlockTool = (() => {
     let polyPoints = [];     // [{x,y}] world — polygon points so far
     let previewPt  = null;   // current cursor in world coords
 
+    let hoverBlockTarget = null;
+
     function sub() { return getSubtool(ToolMode.BLOCK); }
+
+    function blockTargetFromElement(target) {
+        const hit = target?.closest?.(".block-hit");
+        if (!hit) return null;
+        const idx = Number(hit.dataset.blockIdx);
+        const type = hit.dataset.blockType;
+        if (!Number.isFinite(idx) || (type !== "line" && type !== "area")) return null;
+        return { idx, type };
+    }
+
+    function deleteBlockTarget(target) {
+        if (readOnly || !target) return false;
+        ensureBlockedTerrain();
+        const list = target.type === "line" ? project.blocked_terrain.lines : project.blocked_terrain.areas;
+        if (!list?.[target.idx]) return false;
+        pushUndoState("Block element deleted");
+        list.splice(target.idx, 1);
+        hoverBlockTarget = null;
+        drawBlockedTerrain();
+        saveBlockedTerrain();
+        return true;
+    }
 
     function snapToBlockSnap(pt) {
         ensureBlockedTerrain();
@@ -2683,7 +2803,7 @@ const BlockTool = (() => {
             if (!lineStart) {
                 lineStart = { x: pt.x, y: pt.y };
             } else {
-                pushUndoState(gettext("Block line added"));
+                pushUndoState("Block line added");
                 project.blocked_terrain.lines.push({ start: lineStart, end: { x: pt.x, y: pt.y } });
                 lineStart = null;
                 clearEditLayer();
@@ -2694,7 +2814,7 @@ const BlockTool = (() => {
 
         if (S === "polygon") {
             if (polyPoints.length >= 3 && pt === polyPoints[0]) {
-                pushUndoState(gettext("Block area added"));
+                pushUndoState("Block area added");
                 project.blocked_terrain.areas.push({ points: [...polyPoints] });
                 polyPoints = [];
                 clearEditLayer();
@@ -2706,16 +2826,7 @@ const BlockTool = (() => {
         }
 
         if (S === "erase") {
-            const hit = evtTarget?.closest?.(".block-hit");
-            if (hit) {
-                const idx  = Number(hit.dataset.blockIdx);
-                const type = hit.dataset.blockType;
-                pushUndoState(gettext("Block element deleted"));
-                if (type === "line")  project.blocked_terrain.lines.splice(idx, 1);
-                if (type === "area")  project.blocked_terrain.areas.splice(idx, 1);
-                drawBlockedTerrain();
-                saveBlockedTerrain();
-            }
+            deleteBlockTarget(blockTargetFromElement(evtTarget));
         }
     }
 
@@ -2747,7 +2858,7 @@ const BlockTool = (() => {
             gesture.cancel();
             clearEditLayer();
             hideCrosshair();
-            lineStart = null; polyPoints = []; previewPt = null;
+            lineStart = null; polyPoints = []; previewPt = null; hoverBlockTarget = null;
         },
 
         onMouseDown(e, pt) { if (e.button !== 0) return; gesture.down(e, pt); },
@@ -2756,10 +2867,10 @@ const BlockTool = (() => {
         onMouseMove(e, pt) {
             if (gesture.move(pt)) return;
             const S = sub();
+            hoverBlockTarget = blockTargetFromElement(e.target);
             if (S === "erase") {
                 hideCrosshair();
-                const hit = e.target?.closest?.(".block-hit");
-                mapContainer.style.cursor = hit ? _blockEraserCursor : "default";
+                mapContainer.style.cursor = hoverBlockTarget ? _blockEraserCursor : "default";
                 return;
             }
             if (S === "line" || S === "polygon") {
@@ -2783,6 +2894,24 @@ const BlockTool = (() => {
                 clearEditLayer();
             }
         },
+
+        handleDeleteKey() {
+            const S = sub();
+            if (S === "line" && lineStart) {
+                lineStart = null;
+                clearEditLayer();
+                return true;
+            }
+            if (S === "polygon" && polyPoints.length) {
+                polyPoints.pop();
+                if (polyPoints.length) scheduleDraw();
+                else clearEditLayer();
+                return true;
+            }
+            return false;
+        },
+
+        deleteHoveredElement() { return deleteBlockTarget(hoverBlockTarget); },
     };
 })();
 
@@ -2939,6 +3068,18 @@ const PlaceControlTool = (() => {
         updateCPList();
     }
 
+    function deleteTempStart() {
+        if (!cp) return true;
+        if (placing === "ziel" && tempStart) {
+            tempStart = null;
+            placing = "start";
+            _previewSnapped = null;
+            clearEditLayer();
+            updateCPList();
+        }
+        return true;
+    }
+
     const gesture = makePendingGesture({
         onDrag(downEvent) { pan.start(downEvent.clientX, downEvent.clientY); },
         onClick(e, pt) {
@@ -2949,7 +3090,7 @@ const PlaceControlTool = (() => {
                 updateCPList();
             } else {
                 const snapped = _movePointToNearestPassableIfImpassable(snapToControlPoints(pt));
-                pushUndoState(isOverwrite ? gettext("Control redrawn") : gettext("Control created"));
+                pushUndoState(isOverwrite ? "Control redrawn" : "Control created");
                 cp.start = tempStart;
                 cp.ziel  = { x: snapped.x, y: snapped.y };
                 if (!isOverwrite) {
@@ -3060,6 +3201,8 @@ const PlaceControlTool = (() => {
         },
 
         isPlacingZiel() { return placing === "ziel"; },
+
+        handleDeleteKey() { return deleteTempStart(); },
     };
 })();
 
@@ -3565,9 +3708,12 @@ function onMouseDown(e) {
     // the user drags out of the map container during a pan or placement gesture.
     e.preventDefault();
     // Scaling mode owns the mouse entirely — no tool sees these events
-    if (_scalingActive) {
+    if (_scalingActive || _scaleFormOpen) {
         _scaleDownPos    = { x: e.clientX, y: e.clientY };
         _scalePanStarted = false;
+        // With both points placed, a press near an endpoint starts a drag.
+        _scaleDragIdx    = _scaleFormOpen ? _scaleEndpointAt(e.clientX, e.clientY) : null;
+        if (_scaleDragIdx) mapContainer.style.cursor = "grabbing";
         return;
     }
     if (CourseAlignMode.isActive() && CourseAlignMode.onMouseDown(e, screenToWorld(e.clientX, e.clientY))) return;
@@ -3576,7 +3722,9 @@ function onMouseDown(e) {
 
 function onMouseMove(e) {
     RCM.onMove(e);
-    if (_scalingActive) {
+    if (_scalingActive || _scaleFormOpen) {
+        // Dragging an endpoint takes priority over panning.
+        if (_scaleDragIdx) { _scaleDragMove(e); return; }
         // Click-vs-pan decision based on screen-pixel movement
         if (_scaleDownPos && !_scalePanStarted) {
             const moved = Math.hypot(e.clientX - _scaleDownPos.x, e.clientY - _scaleDownPos.y);
@@ -3586,7 +3734,8 @@ function onMouseMove(e) {
             }
         }
         if (pan.update(e)) return;   // pan in progress; freeze ruler
-        _scaleHandleMove(e);
+        if (_scalingActive) _scaleHandleMove(e);
+        else _updateScaleHoverCursor(e);   // form open: grab-hand feedback on hover
         return;
     }
 
@@ -3599,12 +3748,16 @@ function onMouseUp(e) {
     if (e.button === 2) { RCM.onUp(e); return; }
     if (e.button !== 0) return;
 
-    if (_scalingActive) {
-        if (_scalePanStarted) {
+    if (_scalingActive || _scaleFormOpen) {
+        if (_scaleDragIdx) {
+            // Finished dragging an endpoint
+            _scaleDragIdx = null;
+            _updateScaleHoverCursor(e);
+        } else if (_scalePanStarted) {
             pan.stop();
-            // pan.stop sets cursor to activeTool.defaultCursor — restore default
-            mapContainer.style.cursor = "default";
-        } else if (_scaleDownPos && mapContainer.contains(e.target)) {
+            // pan.stop sets cursor to activeTool.defaultCursor — restore appropriate one
+            mapContainer.style.cursor = _scalingActive ? "default" : "";
+        } else if (_scaleDownPos && mapContainer.contains(e.target) && _scalingActive) {
             _scaleHandleUp(e);
         }
         _scaleDownPos    = null;
@@ -3618,6 +3771,7 @@ function onMouseUp(e) {
 }
 
 function onKeyDown(e) {
+    if (handleEditorDeleteShortcut(e)) return;
     activeTool.onKeyDown?.(e);
 }
 
@@ -4354,7 +4508,7 @@ async function startMaskGeneration(mapFile, scale, fileId = null) {
     const prog = document.getElementById("mask-gen-progress");
     maskGenInProgress = true;
     if (currentToolMode === ToolMode.MASK || editorSettings.auto_pathfind) bar.style.display = "flex";
-    text.textContent  = "Maske wird generiert…";
+    text.textContent  = gettext("Generating mask…");
     if (prog) prog.value = 0;
 
     if (!fileId) {
@@ -4366,7 +4520,7 @@ async function startMaskGeneration(mapFile, scale, fileId = null) {
     if (!Number.isFinite(fileId)) {
         if (seq === maskGenSessionSeq) {
             maskGenInProgress = false;
-            text.innerHTML = `<span style="color:#ff6666">Fehler: Datei wurde noch nicht gespeichert.</span>`;
+            text.innerHTML = `<span style="color:#ff6666">${gettext('Error: file has not been saved yet.')}</span>`;
         }
         return;
     }
@@ -4420,7 +4574,7 @@ async function startMaskGeneration(mapFile, scale, fileId = null) {
                             }
                             if (d.current !== undefined) {
                                 const pct = Math.round((d.current / d.total) * 100);
-                                text.textContent = `Generiere Maske… ${pct}%`;
+                                text.textContent = `${gettext('Generating mask…')} ${pct}%`;
                                 if (prog) prog.value = pct;
                             } else if (d.done) {
                                 // Mask PNG is written. Load preview & mark
@@ -4438,7 +4592,7 @@ async function startMaskGeneration(mapFile, scale, fileId = null) {
                                         }).catch(e => console.warn("mark_has_mask failed:", e));
                                     }
                                     if (prog) prog.value = 100;
-                                    text.textContent = "Maske fertig";
+                                    text.textContent = gettext("Mask ready");
                                     MaskLayer.loadMask(requestedMapFile);
                                     MaskLayer.applyMapDimensions();
                                     drainPendingAutoPathfindQueue();
@@ -4447,7 +4601,7 @@ async function startMaskGeneration(mapFile, scale, fileId = null) {
                             } else if (d.error) {
                                 maskGenInProgress = false;
                                 activeMaskGenSession = null;
-                                text.innerHTML = `<span style="color:#ff6666">Fehler: ${d.error}</span>`;
+                                text.innerHTML = `<span style="color:#ff6666">${gettext('Error:')} ${d.error}</span>`;
                                 const spinnerEl = bar.querySelector('x-icon[name="spinner"]');
                                 if (spinnerEl) spinnerEl.style.display = "none";
                             }
@@ -4460,7 +4614,7 @@ async function startMaskGeneration(mapFile, scale, fileId = null) {
         })
         .catch(err => {
             if (err.name !== "AbortError" && activeMaskGenSession?.seq === seq) {
-                text.innerHTML = `<span style="color:#ff6666">Fehler: ${err.message}</span>`;
+                text.innerHTML = `<span style="color:#ff6666">${gettext('Error:')} ${err.message}</span>`;
                 const spinnerEl = bar.querySelector('x-icon[name="spinner"]');
                 if (spinnerEl) spinnerEl.style.display = "none";
             }
@@ -4492,7 +4646,7 @@ function showRasterizingBar() {
     const prog   = document.getElementById("mask-gen-progress");
     const cancel = document.getElementById("mask-gen-cancel");
     if (!bar) return;
-    if (text) text.textContent = "Karte wird rasterisiert…";
+    if (text) text.textContent = gettext("Rasterizing map…");
     if (prog) prog.style.display = "none";
     if (cancel) cancel.style.display = "none";
     bar.style.display = "flex";
@@ -4567,12 +4721,12 @@ function importedCourseRoute(route, cp, order) {
 function applyImportedCourses(controlPairs, mode = "append") {
     const incoming = Array.isArray(controlPairs) ? controlPairs : [];
     if (!incoming.length) {
-        alert("Keine OCAD-Bahn in dieser Datei gefunden.");
+        alert(gettext("No OCAD course found in this file."));
         return false;
     }
 
     cancelAllPathing();
-    pushUndoState("OCAD-Bahn importiert");
+    pushUndoState("OCAD course import");
     if (mode === "replace") {
         project.control_pairs = [];
         selection.ncp = 0;
@@ -4598,7 +4752,7 @@ function applyImportedCourses(controlPairs, mode = "append") {
     }).filter(cp => cp.start && cp.ziel);
 
     if (!imported.length) {
-        alert("Keine passenden OCAD-Posten in dieser Datei gefunden.");
+        alert(gettext("No matching OCAD controls found in this file."));
         return false;
     }
 
@@ -4834,15 +4988,15 @@ const CourseAlignMode = (() => {
 
     function stepLabel() {
         if (!state) return "";
-        return "Bahn ausrichten";
+        return gettext("Align course");
     }
 
     function stageText() {
         if (!state) return "";
-        if (!state.anchor1) return "1. Punkt waehlen und ziehen";
-        if (!state.anchor2) return "2. Punkt waehlen und ziehen";
-        if (!state.anchor3) return "3. Punkt waehlen und ziehen";
-        return "Naechster Punkt ersetzt Anker 1";
+        if (!state.anchor1) return gettext("Select and drag point 1");
+        if (!state.anchor2) return gettext("Select and drag point 2");
+        if (!state.anchor3) return gettext("Select and drag point 3");
+        return gettext("Next point replaces anchor 1");
     }
 
     function setRouteImport(enabled) {
@@ -4880,12 +5034,12 @@ const CourseAlignMode = (() => {
             <div class="course-align-status">${stageText()}</div>
             <label class="course-align-option">
                 <input type="checkbox" id="course-align-routes" ${state.includeRoutes ? "checked" : ""}>
-                <span>Routen importieren</span>
+                <span>${gettext('Import routes')}</span>
             </label>
             <div class="course-align-actions">
-                <button type="button" id="course-align-reset">Reset</button>
-                <button type="button" id="course-align-remove-anchor" ${state.anchors.length ? "" : "disabled"}>Anker zurück</button>
-                <button type="button" id="course-align-confirm">Importieren</button>
+                <button type="button" id="course-align-reset">${gettext('Reset')}</button>
+                <button type="button" id="course-align-remove-anchor" ${state.anchors.length ? "" : "disabled"}>${gettext('Back one anchor')}</button>
+                <button type="button" id="course-align-confirm">${gettext('Import')}</button>
             </div>
         `;
         el.querySelector("#course-align-routes")?.addEventListener("change", e => setRouteImport(e.target.checked));
@@ -4919,7 +5073,7 @@ const CourseAlignMode = (() => {
         setRouteImport(state.includeRoutes);
         for (const cp of state.cps || []) delete cp._ocadBahnImported;
         saveFile(trigger);
-        saveSnapshot("OCAD-Bahn ausgerichtet");
+        saveSnapshot("OCAD course import");
         state = null;
         drag = null;
         document.body.classList.remove("course-align-active");
@@ -5061,7 +5215,7 @@ const CourseAlignMode = (() => {
             const valid = (cps || []).filter(cp => cp?.start && cp?.ziel);
             if (!valid.length) {
                 saveFile("ocad_bahn_import");
-                saveSnapshot("OCAD-Bahn importiert");
+                saveSnapshot("OCAD course import");
                 return;
             }
             state = {
@@ -5106,16 +5260,16 @@ const CourseAlignMode = (() => {
 async function importCourseFile(file) {
     if (readOnly) return;
     if (!/\.ocd$/i.test(file.name)) {
-        alert("Bitte eine OCD-Datei auswaehlen.");
+        alert(gettext("Please select an OCD file."));
         return;
     }
     if (file.size > 50 * 1024 * 1024) {
-        alert("Datei zu gross (max. 50 MB)");
+        alert(gettext("File too large (max. 50 MB)"));
         return;
     }
     const targetSize = getCourseImportTargetSize();
     if (!targetSize) {
-        alert("Bitte zuerst eine Karte oeffnen oder hochladen.");
+        alert(gettext("Please open or upload a map first."));
         return;
     }
 
@@ -5139,13 +5293,13 @@ async function importCourseFile(file) {
         });
         const data = await res.json();
         if (!res.ok) {
-            alert(data.error || "OCAD-Bahn-Import fehlgeschlagen.");
+            alert(data.error || gettext("OCAD course import failed."));
             return;
         }
         applyImportedCourses(data.control_pairs, mode);
     } catch (e) {
         console.warn("importCourseFile:", e);
-        alert("OCAD-Bahn-Import fehlgeschlagen.");
+        alert(gettext("OCAD course import failed."));
     } finally {
         if (menuItem) {
             menuItem.style.opacity = "";
@@ -5190,9 +5344,6 @@ function resetProjectForOcadUpload() {
     setReadOnly(false);
     checkinCurrentFile();
     if (activeTool !== ControlPairTool) activateTool(ControlPairTool);
-    // Drop pathing worker debug PNGs from the previous project.
-    try { _clearDebugCorridors(); } catch (e) {}
-
     project = {
         id: null,
         name: keepName,
@@ -5265,7 +5416,7 @@ async function uploadSelectedMap() {
             hideMapSpinner();
             if (isOcad) hideRasterizingBar();
             if (!isOcad) revertLocalImagePreview(uploadGeneration);
-            alert(data.error || "Upload fehlgeschlagen.");
+            alert(data.error || gettext("Upload failed."));
             if (ocadBtn) ocadBtn.disabled = false;
             return;
         }
@@ -5314,16 +5465,15 @@ async function uploadSelectedMap() {
         if (isOcad) {
             // OCAD: keep the spinner visible until the server-rendered raster is available,
             // then kick off the normal UNet mask pipeline.
-            _loadMapInEditor(() => {
-                hideRasterizingBar();
-                if (data.auto_generate_mask && project.map_file === data.map_file && project.scale) {
-                    Promise.resolve(mapUploadSave).then(() => {
-                        if (project.map_file === data.map_file && project.scale && project.id) {
-                            startMaskGeneration(project.map_file, project.scale, project.id);
-                        }
-                    });
-                }
-            }, { preserveLayers: true, silentLoad: true });
+            Promise.resolve(mapUploadSave).then(() => {
+                if (project.map_file !== data.map_file) return;
+                _loadMapInEditor(() => {
+                    hideRasterizingBar();
+                    if (data.auto_generate_mask && project.map_file === data.map_file && project.scale && project.id) {
+                        startMaskGeneration(project.map_file, project.scale, project.id);
+                    }
+                }, { preserveLayers: true, silentLoad: true });
+            });
         }
         // For PNG/JPEG the blob URL is already on screen — no second download needed.
 
@@ -5332,7 +5482,7 @@ async function uploadSelectedMap() {
         hideMapSpinner();
         if (isOcad) hideRasterizingBar();
         if (!isOcad) revertLocalImagePreview(uploadGeneration);
-        alert("Upload fehlgeschlagen.");
+        alert(gettext("Upload failed."));
         if (ocadBtn) ocadBtn.disabled = false;
     }
 }
@@ -5434,9 +5584,13 @@ function _loadMapInEditor(afterLoad = null, options = {}) {
     SCALE / RULER TOOL
 ========================================================= */
 
-let _scalingActive   = false;
+let _scalingActive   = false;   // true while waiting for point clicks
 let _scaleP1         = null;
+let _scaleP2         = null;
 let _scalePixelDist  = 0;
+let _scaleFormOpen   = false;   // true once both points are placed and the form is shown
+let _scaleDragIdx    = null;    // 1 | 2 while dragging an endpoint, else null
+const SCALE_ENDPOINT_TOL_PX = 14;   // grab tolerance around endpoints, in screen pixels
 
 window._updateScalePanel = _updateScalePanel;
 function _updateScalePanel() {
@@ -5464,17 +5618,29 @@ function _updateScalePanel() {
 function _startScaleDrawing() {
     _scalingActive = true;
     _scaleP1       = null;
+    _scaleP2       = null;
+    _scaleDragIdx  = null;
+    _hideScaleForm();
     _clearRuler();
     mapContainer.style.cursor = "default";
-    _setScaleStatus("Klicke ersten Punkt auf der Karte…");
+    _setScaleStatus(gettext("Click the first point on the map…"));
 }
 
 function _cancelScaleDrawing() {
     _scalingActive = false;
     _scaleP1       = null;
+    _scaleP2       = null;
+    _scaleDragIdx  = null;
+    _hideScaleForm();
     _clearRuler();
     hideCrosshair();
     mapContainer.style.cursor = "";
+}
+
+function _hideScaleForm() {
+    _scaleFormOpen = false;
+    const form = document.getElementById("scale-form");
+    if (form) form.style.display = "none";
 }
 
 function _setScaleStatus(msg) {
@@ -5485,22 +5651,23 @@ function _setScaleStatus(msg) {
 // ── Ctrl+Z undo for scaling points ────────────────────────
 
 function _undoScalePoint() {
-    const modal = document.getElementById("modal-scale");
-    if (modal?.style.display === "flex") {
-        // Close modal, go back to waiting for second point
-        modal.style.display = "none";
+    if (_scaleFormOpen) {
+        // Hide form, go back to waiting for second point
+        _hideScaleForm();
+        _scaleP2      = null;
+        _scaleDragIdx = null;
         _scalingActive = true;
         mapContainer.style.cursor = "default";
         if (_scaleP1) {
             _drawRuler(_scaleP1, _scaleP1);
-            _setScaleStatus("Klicke zweiten Punkt…");
+            _setScaleStatus(gettext("Click the second point…"));
         }
     } else if (_scaleP1) {
         // Undo first point
         _scaleP1 = null;
         _clearRuler();
         _scalingActive = true;
-        _setScaleStatus("Klicke ersten Punkt auf der Karte…");
+        _setScaleStatus(gettext("Click the first point on the map…"));
     }
 }
 
@@ -5510,7 +5677,7 @@ function _clearRuler() {
     document.getElementById("scale-ruler")?.remove();
 }
 
-function _drawRuler(p1, p2) {
+function _drawRuler(p1, p2, withHandles = false) {
     _clearRuler();
     const ns  = "http://www.w3.org/2000/svg";
     const uiL = document.getElementById("ui-layer");
@@ -5533,16 +5700,29 @@ function _drawRuler(p1, p2) {
     g.appendChild(line(p1.x,p1.y,p2.x,p2.y,{
         stroke:"#000", "stroke-width":"15", "stroke-dasharray":"3 27" }));
 
+    // Endpoint handles — only once both points are placed (not while drawing).
+    // Constant screen size so they stay grabbable at any zoom.
+    if (withHandles) {
+        const r = SCALE_ENDPOINT_TOL_PX / 2 / Math.max(camera.zoom, 1e-6);
+        const dot = (cx, cy) => attrs(document.createElementNS(ns, "circle"),
+            { cx, cy, r, fill:"#fff", "fill-opacity":"0.9", stroke:"#000",
+              "stroke-width":"2", "vector-effect":"non-scaling-stroke" });
+        g.appendChild(dot(p1.x, p1.y));
+        g.appendChild(dot(p2.x, p2.y));
+    }
+
     uiL.appendChild(g);
 }
 
-// ── Scale modal ────────────────────────────────────────────
+// ── Scale form (integrated in the side panel) ──────────────
 
-function _openScaleModal() {
-    const modal = document.getElementById("modal-scale");
-    if (!modal) return;
-    modal.style.display = "flex";
+function _showScaleForm() {
+    const form = document.getElementById("scale-form");
+    if (!form) return;
+    _scaleFormOpen = true;
+    form.style.display = "flex";
     hideCrosshair();
+    _setScaleStatus(gettext("Enter the real-world distance — drag the endpoints to adjust."));
 
     const distInp   = document.getElementById("scale-distance-m");
     const c1Inp     = document.getElementById("scale-coord-1");
@@ -5583,7 +5763,7 @@ function _openScaleModal() {
         project.scaled   = true;
         recalculateProjectRoutes();
 
-        modal.style.display = "none";
+        _hideScaleForm();
         _clearRuler();
         _cancelScaleDrawing();
         applyProjectScale();
@@ -5664,14 +5844,15 @@ function _scaleHandleUp(e) {
         // First point
         _scaleP1 = pt;
         _drawRuler(pt, pt);
-        _setScaleStatus("Klicke zweiten Punkt…");
+        _setScaleStatus(gettext("Click the second point…"));
     } else {
         // Second point
+        _scaleP2 = pt;
         _scalePixelDist = Math.hypot(pt.x - _scaleP1.x, pt.y - _scaleP1.y);
-        _drawRuler(_scaleP1, pt);
+        _drawRuler(_scaleP1, _scaleP2, true);
         _scalingActive = false;
-        mapContainer.style.cursor = "";
-        _openScaleModal();
+        mapContainer.style.cursor = "grab";   // pointer rests on the endpoint
+        _showScaleForm();
     }
 }
 
@@ -5680,6 +5861,32 @@ function _scaleHandleMove(e) {
     const pt = screenToWorld(e.clientX, e.clientY);
     updateCrosshair(pt.x, pt.y);
     if (_scaleP1) _drawRuler(_scaleP1, pt);
+}
+
+// Return 1 / 2 if the screen point is within grab tolerance of an endpoint,
+// preferring the nearer endpoint; otherwise null.
+function _scaleEndpointAt(clientX, clientY) {
+    if (!_scaleP1 || !_scaleP2) return null;
+    const pt  = screenToWorld(clientX, clientY);
+    const tol = SCALE_ENDPOINT_TOL_PX / Math.max(camera.zoom, 1e-6);
+    const d1  = Math.hypot(pt.x - _scaleP1.x, pt.y - _scaleP1.y);
+    const d2  = Math.hypot(pt.x - _scaleP2.x, pt.y - _scaleP2.y);
+    if (d1 <= tol && d1 <= d2) return 1;
+    if (d2 <= tol) return 2;
+    return null;
+}
+
+// Grab-hand cursor while hovering an endpoint (form open, not dragging/panning).
+function _updateScaleHoverCursor(e) {
+    mapContainer.style.cursor = _scaleEndpointAt(e.clientX, e.clientY) ? "grab" : "";
+}
+
+// Live drag of an endpoint: move it, redraw the ruler, refresh the pixel distance.
+function _scaleDragMove(e) {
+    const pt = screenToWorld(e.clientX, e.clientY);
+    if (_scaleDragIdx === 1) _scaleP1 = pt; else _scaleP2 = pt;
+    _scalePixelDist = Math.hypot(_scaleP2.x - _scaleP1.x, _scaleP2.y - _scaleP1.y);
+    _drawRuler(_scaleP1, _scaleP2, true);
 }
 
 /* =========================================================
@@ -5735,7 +5942,7 @@ function handleMapFile(file) {
     const isOcad = /\.(ocd|ocad)$/i.test(file.name);
     const maxSize = (isOcad ? 50 : 15) * 1024 * 1024;
     if (file.size > maxSize) {
-        alert(isOcad ? "Datei zu gross (max. 50 MB)" : "Datei zu gross (max. 15 MB)");
+        alert(isOcad ? gettext("File too large (max. 50 MB)") : gettext("File too large (max. 15 MB)"));
         return;
     }
     _droppedMapFile = file;
@@ -5778,7 +5985,7 @@ async function _showOcadImportOptions(file) {
             body: fd,
         });
         const data = await res.json();
-        if (!res.ok) throw new Error(data.error || "OCAD-Analyse fehlgeschlagen.");
+        if (!res.ok) throw new Error(data.error || gettext("OCAD analysis failed."));
         hasControls = !!data.has_controls;
         hasRoutes = hasControls && !!data.has_routes;
     } catch (e) {
@@ -5906,7 +6113,7 @@ function initMenus() {
 
     document.getElementById("batch-switch-lr")?.addEventListener("click", () => {
         if (readOnly || !project?.control_pairs?.length) return;
-        pushUndoState(gettext("Control types adjusted"));
+        pushUndoState("Control types adjusted");
         let changed = 0;
         project.control_pairs.forEach(cp => {
             if (cp.complex && cp.routes.length == 2) {
@@ -5924,7 +6131,7 @@ function initMenus() {
 
     document.getElementById("batch-auto-pathfind")?.addEventListener("click", () => {
         if (readOnly || !project?.control_pairs?.length) return;
-        pushUndoState("Batch Pathing");
+        pushUndoState("Batch pathing");
         const batchTargets = project.control_pairs.filter(cp => (
             cp.start && cp.ziel && project.map_file && _canAutoPathfindCP(cp)
         ));
@@ -6546,7 +6753,7 @@ async function thetaCPClient(cp, source = "editor_auto", options = {}) {
     }
 
     //   2) Î¸* with the standard simplify_theta_path post-processing.
-    // Append only the final theta* polyline; raw A* stays in the debug PNG.
+    // Append only the final theta* polyline.
     const existingRouteCount = cp.routes?.length || 0;
     if (isAuto && existingRouteCount > 0 && reply.distinct === false) {
         console.log(`[theta-client] candidate route rejected: ${reply.distinctReason || "not distinct"}`);
@@ -6595,116 +6802,14 @@ async function thetaCPClient(cp, source = "editor_auto", options = {}) {
 
     if (gen !== _pathfindGeneration) return { error: "cancelled" };
 
-    pushUndoState(gettext("automatic route"));
+    pushUndoState("Automatic route");
     _appendRouteObject(cp, candidateRoute, { animate: true });
     selection.nr = cp.routes.length - 1;
     drawRoutes();
     updateRoutes();
     updateCPList();
 
-    const debugEntries = await buildPathDebugDownloads(cp, reply);
-    if (debugEntries.length) {
-        _setDebugCorridors(cp.order, debugEntries, {
-            offsetX: reply.debugOffsetX, offsetY: reply.debugOffsetY,
-            width:   reply.debugWidth,   height:  reply.debugHeight,
-        });
-        updateCPList();
-    }
-
     return { path, timings: reply.timings, distinct: true, error: reply.error || null };
-}
-
-// Latest corridor-constrained debug grid per CP — object URLs are revoked
-// when replaced or when the editor closes the map. updateCPList renders a
-// small "Korridor ⬇" link on the CP that owns the freshest blob.
-const _debugCorridors = new Map();   // cp.order → {url, filename, meta}
-
-function renderPathDebugBlobFromGrid(buffer, width, height, path = null, color = [255, 64, 64]) {
-    if (!buffer || !(width > 0) || !(height > 0)) return Promise.resolve(null);
-    const grid = new Uint8Array(buffer);
-    const canvas = document.createElement("canvas");
-    canvas.width = width;
-    canvas.height = height;
-    const ctx = canvas.getContext("2d");
-    const img = ctx.createImageData(width, height);
-    const d = img.data;
-    for (let i = 0, j = 0; i < grid.length; i++, j += 4) {
-        const v = grid[i];
-        d[j] = v; d[j + 1] = v; d[j + 2] = v; d[j + 3] = 255;
-    }
-    ctx.putImageData(img, 0, 0);
-    if (path && path.length >= 4) {
-        const lineWidth = Math.max(2, Math.round(Math.min(width, height) / 220));
-        ctx.save();
-        ctx.strokeStyle = `rgb(${color[0]}, ${color[1]}, ${color[2]})`;
-        ctx.lineWidth = lineWidth;
-        ctx.lineJoin = "round";
-        ctx.lineCap = "round";
-        ctx.beginPath();
-        ctx.moveTo(path[0], path[1]);
-        for (let i = 2; i + 1 < path.length; i += 2) ctx.lineTo(path[i], path[i + 1]);
-        ctx.stroke();
-        ctx.fillStyle = "#00ff80";
-        ctx.beginPath();
-        ctx.arc(path[0], path[1], lineWidth * 1.8, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.fillStyle = "#ffcc00";
-        ctx.beginPath();
-        ctx.arc(path[path.length - 2], path[path.length - 1], lineWidth * 1.8, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.restore();
-    }
-    return new Promise(resolve => canvas.toBlob(resolve, "image/png"));
-}
-
-async function buildPathDebugDownloads(cp, reply) {
-    const W = reply.debugWidth;
-    const H = reply.debugHeight;
-    const base = `cp${cp.order}_${Math.round(cp.start.x)}-${Math.round(cp.start.y)}_to_${Math.round(cp.ziel.x)}-${Math.round(cp.ziel.y)}`;
-    const specs = [
-        ["A* raw", "astar_raw", reply.debugBaseGridBuffer, reply.debugPaths?.astar_raw, [255, 64, 64]],
-    ];
-    const links = [];
-    for (const [label, slug, buffer, path, color] of specs) {
-        let blob = null;
-        blob = await renderPathDebugBlobFromGrid(buffer, W, H, path, color);
-        if (!blob) continue;
-        links.push({
-            label,
-            url: URL.createObjectURL(blob),
-            filename: `${slug}_${base}.png`,
-        });
-    }
-    return links;
-}
-
-function _setDebugCorridors(cpOrder, links, meta) {
-    const old = _debugCorridors.get(cpOrder);
-    if (old) {
-        for (const link of old.links || []) {
-            try { URL.revokeObjectURL(link.url); } catch (e) {}
-        }
-    }
-    _debugCorridors.set(cpOrder, { links, meta });
-}
-
-function _clearDebugCorridors() {
-    for (const entry of _debugCorridors.values()) {
-        for (const link of entry.links || []) {
-            try { URL.revokeObjectURL(link.url); } catch (e) {}
-        }
-    }
-    _debugCorridors.clear();
-}
-
-function routeListDebugLink(cpOrder) {
-    const entry = _debugCorridors.get(cpOrder);
-    if (!entry?.links?.length) return "";
-    const { links, meta } = entry;
-    const title = `Debug grid: ${meta.width}x${meta.height}px @ (${meta.offsetX},${meta.offsetY})`;
-    return `<span class="cp-route-debug-links" title="${title}">
-        ${links.map(link => `<a class="cp-route-debug-link" href="${link.url}" download="${link.filename}" title="${link.label}" aria-label="${link.label}" onclick="event.stopPropagation()">${icon("mask", "0.9em")}</a>`).join("")}
-    </span>`;
 }
 
 function addAndPlaceControlPair() {
@@ -6757,7 +6862,7 @@ function updateCPList() {
                 ${cpBusy ? `<x-icon name="spinner" class="spin cp-busy-spinner" size="1em"></x-icon>` : ''}
             </span>
             <div class="cp-row-btns">
-                <button class="cp-mode-btn ${cp.complex ? "active" : ""}" data-mode="multi" title="Multi-Route"
+                <button class="cp-mode-btn ${cp.complex ? "active" : ""}" data-mode="multi" title="${gettext('Multi-route')}"
                     ${readOnly ? 'disabled' : ''}>
                     ${icon("m")}
                 </button>
@@ -6790,14 +6895,7 @@ function updateCPList() {
 
         row.querySelector(".cp-delete-btn")?.addEventListener("click", e => {
             e.stopPropagation();
-            pushUndoState(gettext("Control deleted"));
-            deleteControlPair(cp);
-            project.control_pairs = project.control_pairs.filter(c => c !== cp);
-            project.control_pairs.forEach((c, i) => { c.order = i; });
-            if (selection.ncp >= project.control_pairs.length) {
-                selection.ncp = Math.max(0, project.control_pairs.length - 1);
-            }
-            drawCourse();
+            deleteControlPairFromProject(cp);
         });
 
         row.querySelectorAll(".cp-mode-btn").forEach(btn => {
@@ -6814,7 +6912,7 @@ function updateCPList() {
                     }
                     return;
                 }
-                pushUndoState(gettext("Control type changed"));
+                pushUndoState("Control type changed");
                 cp.complex = complex;
                 saveControlPair(cp);
                 updateCPList();
@@ -6853,37 +6951,34 @@ function updateCPList() {
                 }
 
                 rRow.innerHTML = `
-                    <span class="route-name">Route ${route.order + 1}</span>
+                    <span class="route-name">${gettext('Route')} ${route.order + 1}</span>
                     <span class="route-stats">
                         <span class="route-stat route-length">${length}</span>
                         ${runtimeHtml}
                     </span>
-                    ${routeListDebugLink(cp.order)}
-                    <label class="route-elevation-label">
-                        <input class="route-elevation-input" type="number" min="0" step="1"
-                            value="${route.elevation ?? ""}" placeholder="—"
-                            ${readOnly ? 'disabled' : ''}>
-                        <span>Hm</span>
-                    </label>
-                    <label class="route-elevation-label route-obstacle-label">
-                        <span class="route-obstacle-icon">${icon("obstacle", "11px")}</span>
-                        <input class="route-elevation-input route-obstacle-input" type="number" min="0" step="1"
-                            value="${route.obstacle ?? ""}" placeholder="—"
-                            ${readOnly ? 'disabled' : ''}>
-                    </label>
-                    ${readOnly ? '' : `<button class="cp-delete-btn" title="${gettext('Delete route')}">${icon("trash", "11px")}</button>`}
+                    <span class="route-controls">
+                        <label class="route-elevation-label">
+                            <span class="route-elevation-icon">${icon("elevation", "11px")}</span>
+                            <input class="route-elevation-input" type="number" min="0" step="1"
+                                value="${route.elevation ?? ""}" placeholder="—"
+                                ${readOnly ? 'disabled' : ''}>
+                            <span>Hm</span>
+                        </label>
+                        <span class="route-field-separator">|</span>
+                        <label class="route-elevation-label route-obstacle-label">
+                            <span class="route-obstacle-icon">${icon("obstacle", "11px")}</span>
+                            <input class="route-elevation-input route-obstacle-input" type="number" min="0" step="0.5"
+                                value="${route.obstacle ?? ""}" placeholder="—"
+                                ${readOnly ? 'disabled' : ''}>
+                            <span>s</span>
+                        </label>
+                        ${readOnly ? '' : `<button class="cp-delete-btn" title="${gettext('Delete route')}">${icon("trash", "11px")}</button>`}
+                    </span>
                 `;
 
                 rRow.querySelector(".cp-delete-btn")?.addEventListener("click", e => {
                     e.stopPropagation();
-                    pushUndoState(gettext("Route deleted"));
-                    deleteRoute(cp, route);
-                    cp.routes = cp.routes.filter(r => r !== route);
-                    cp.routes.forEach((r, i) => { r.order = i; });
-                    if (selection.nr >= cp.routes.length) selection.nr = null;
-                    drawRoutes();
-                    updateRoutes();
-                    updateCPList();
+                    deleteRouteFromProject(cp, route);
                 });
 
                 rRow.addEventListener("click", e => {
@@ -6906,7 +7001,7 @@ function updateCPList() {
                     const parsed = Number(val);
                     route.elevation = (val === "" || isNaN(parsed)) ? 0 : parsed;
                     calcRouteRunTime(route);
-                    pushUndoState(gettext("Elevation changed"));
+                    pushUndoState("Elevation changed");
                     saveRoute(cp, route);
                     updateCPList();
                 });
@@ -6917,7 +7012,7 @@ function updateCPList() {
                     const parsed = Number(val);
                     route.obstacle = (val === "" || isNaN(parsed)) ? 0 : parsed;
                     calcRouteRunTime(route);
-                    pushUndoState(gettext("Obstacle changed"));
+                    pushUndoState("Obstacle changed");
                     saveRoute(cp, route);
                     updateCPList();
                 });
@@ -7086,7 +7181,7 @@ function onCPDragEnd() {
     arr.splice(insertIndex, 0, cp);
     arr.forEach((c, i) => { c.order = i; });
 
-    if (fromIndex !== insertIndex) pushUndoState(gettext("Control order changed"));
+    if (fromIndex !== insertIndex) pushUndoState("Control order changed");
 
     // Bulk-reorder atomically (sequential saves would clash on the unique constraint)
     const orderPairs = arr.filter(c => c.id).map(c => ({ db_id: c.id, order: c.order }));
@@ -7423,7 +7518,7 @@ function updateRouteObstacle(route) {
         if (route.obstacle == null) route.obstacle = 0;
         return false;
     }
-    const next = Math.max(0, Math.round(Number(seconds) || 0));
+    const next = Math.max(0, Math.round((Number(seconds) || 0) * 10) / 10);
     const changed = route.obstacle !== next;
     route.obstacle = next;
     return changed;
@@ -7439,22 +7534,11 @@ function calcRouteRunTime(route) {
     }
     const noAPenalty = route.noA || 0;
     const obstaclePenalty = Number.isFinite(Number(obstacle)) ? Number(obstacle) : 0;
-    // elevation = 0 is the calibration point: no grade penalty, pure flat speed.
-    if (!elevation) {
-        route.run_time = length / RUN_SPEED + noAPenalty + obstaclePenalty;
-        return;
-    }
-    // No elevation profile, so assume the elevation is split half up / half down,
-    // both at the route's average gradient. Strava GAP polynomial, re-anchored so
-    // flat (grade 0) == 1.0. A symmetric split cancels the up/down asymmetry, so a
-    // downhill would otherwise refund the matching uphill — DOWNHILL_CREDIT caps that
-    // refund (0 = none, sprint reality). grade_factor stays >= 1: elevation never speeds up.
-    const gradient  = (elevation / length) * 100;
-    const gapUp     = 1 + 0.02901 * gradient + 0.0017 * gradient ** 2;
-    let   gapDown   = 1 - 0.02901 * gradient + 0.0017 * gradient ** 2;
-    if (gapDown < 1) gapDown = 1 - DOWNHILL_CREDIT * (1 - gapDown);
-    const gradeFactor = (gapUp + gapDown) / 2;
-    route.run_time  = length * gradeFactor / RUN_SPEED + noAPenalty + obstaclePenalty;
+    // Each metre of climb counts as ALT_FLAT_EQUIV_M metres of flat running, so
+    // elevation simply lengthens the effective distance (≈ 0.84 s per metre).
+    const elev = Number.isFinite(Number(elevation)) ? Number(elevation) : 0;
+    const flatEquiv = length + ALT_FLAT_EQUIV_M * elev;
+    route.run_time  = flatEquiv / RUN_SPEED + noAPenalty + obstaclePenalty;
 }
 
 function recalculateProjectRoutes(targetProject = project) {
@@ -7582,8 +7666,8 @@ const SUBTOOL_DEFS = {
         { id: "drag", icon: "drag-fist",      title: "Drag controls" },
     ],
     [ToolMode.ROUTE]: [
-        { id: "new",    icon: "plus",   title: "New route" },
-        { id: "select", icon: "pencil", title: "Select route" },
+        { id: "new",    icon: "plus",   title: gettext("New route") },
+        { id: "select", icon: "pencil", title: gettext("Select route") },
     ],
     [ToolMode.MASK]: [
         { id: "pan",   icon: "lock",      title: "Pan" },

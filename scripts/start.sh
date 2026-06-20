@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Runtime should only start the app. Node dependencies for OCAD import are
-# installed during the build phase in build.sh.
+# installed during the build phase.
 
 gunicorn CQCPathfinder.asgi:application \
   -k uvicorn.workers.UvicornWorker \

@@ -18,9 +18,9 @@ English text). Two domains:
 
 Commands
 --------
-    python manage_translations.py --check    # scan code, diff against the table
-    python manage_translations.py --build     # write locale/**/*.po and *.mo
-    python manage_translations.py             # same as --build
+    python scripts/manage_translations.py --check    # scan code, diff against the table
+    python scripts/manage_translations.py --build     # write locale/**/*.po and *.mo
+    python scripts/manage_translations.py             # same as --build
 
 Forward workflow (see docs/i18n.md):
   1. Mark a string in code with its English text:
@@ -36,7 +36,12 @@ import re
 import struct
 import sys
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+try:                       # console may be cp1252 on Windows; msgids are UTF-8
+    sys.stdout.reconfigure(encoding="utf-8")
+except Exception:
+    pass
+
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LOCALE_DIR = os.path.join(BASE_DIR, "locale")
 LANGS = ("de", "fr", "it")
 PLURAL = {
@@ -174,9 +179,19 @@ def cmd_build():
     table = _table()
     idx = {"django": 0, "djangojs": 1, "it": 2}
     for lang_i, lang in enumerate(LANGS):
+        # Metadata header (the "" entry). Critical: the charset line is how
+        # gettext knows the catalog is UTF-8 — without it Python decodes as ASCII.
+        header = (
+            "MIME-Version: 1.0\n"
+            "Content-Type: text/plain; charset=UTF-8\n"
+            "Content-Transfer-Encoding: 8bit\n"
+            f"Language: {lang}\n"
+            f"Plural-Forms: {PLURAL[lang]}\n"
+        )
         for domain in ("django", "djangojs"):
             rows = table[domain]
             catalog = {mid: rows[mid][lang_i] for mid in rows}
+            catalog[""] = header
             base = os.path.join(LOCALE_DIR, lang, "LC_MESSAGES", domain)
             _write_po(base + ".po", lang, catalog)
             with open(base + ".mo", "wb") as fh:

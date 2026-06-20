@@ -107,7 +107,7 @@
         const noResults = document.getElementById('forum-no-results');
 
         function germanCount(n) {
-            return n + ' Them' + (n === 1 ? 'a' : 'en');
+            return n + ' ' + (n === 1 ? gettext('topic') : gettext('topics'));
         }
 
         function applySearch() {
@@ -125,7 +125,7 @@
             if (countEl) countEl.textContent = germanCount(visible);
             if (noResults) {
                 if (cards.length && visible === 0) {
-                    noResults.textContent = 'Keine Themen für „' + raw.trim() + '“ gefunden.';
+                    noResults.textContent = interpolate(gettext('No topics found for “%s”.'), [raw.trim()]);
                     noResults.hidden = false;
                 } else {
                     noResults.hidden = true;

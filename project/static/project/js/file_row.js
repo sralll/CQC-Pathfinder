@@ -146,7 +146,7 @@ export class FileRow {
             if (!data.snapshots?.length) {
                 const emptyRow = document.createElement('tr');
                 emptyRow.className = 'version-row';
-                emptyRow.innerHTML = `<td colspan="${colCount}" class="version-empty">Keine Versionen</td>`;
+                emptyRow.innerHTML = `<td colspan="${colCount}" class="version-empty">${gettext('No versions')}</td>`;
                 tr.after(emptyRow);
                 return;
             }
@@ -161,17 +161,17 @@ export class FileRow {
             table.className = 'version-table';
             table.innerHTML = `
                 <thead><tr>
-                    <th>Name</th>
-                    <th>Label</th>
-                    <th style="text-align:center;">Posten</th>
-                    <th style="text-align:center;">Routen</th>
-                    <th>Autor</th>
-                    <th class="col-team">Kader</th>
+                    <th>${gettext('Name')}</th>
+                    <th>${gettext('Label')}</th>
+                    <th style="text-align:center;">${gettext('Controls')}</th>
+                    <th style="text-align:center;">${gettext('Routes')}</th>
+                    <th>${gettext('Author')}</th>
+                    <th class="col-team">${gettext('Team')}</th>
                     <th></th>
-                    <th>Gespeichert</th>
+                    <th>${gettext('Saved')}</th>
                 </tr></thead>
                 <tbody>${data.snapshots.filter((s, i) => i > 0 || s.trigger === 'autosave').map(s => `
-                    <tr class="snapshot-row" data-snapshot-id="${s.id}" style="cursor:pointer;" title="Klicken zum Wiederherstellen">
+                    <tr class="snapshot-row" data-snapshot-id="${s.id}" style="cursor:pointer;" title="${gettext('Click to restore')}">
                         <td>${s.name || this.file.name}</td>
                         <td>${s.label__name
                             ? `<span class="table-label-chip" style="background:${s.label__color}22;color:${s.label__color};border-color:${s.label__color}55;">${s.label__name}</span>`

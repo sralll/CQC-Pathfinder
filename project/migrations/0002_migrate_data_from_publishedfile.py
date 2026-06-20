@@ -69,7 +69,7 @@ def migrate_data(apps, schema_editor):
             for route_order, route_data in enumerate(cp_data.get('route', [])):
                 rP        = route_data.get('rP') or []
                 elevation = to_int(route_data.get('elevation'))
-                obstacle  = to_int(route_data.get('obstacle')) or 0
+                obstacle  = to_float(route_data.get('obstacle')) or 0
                 # Legacy PublishedFile data predates per-file map_scale, so it
                 # is migrated as the 1:4000 baseline.
                 new_length   = calc_route_length(rP, map_scale=4000)

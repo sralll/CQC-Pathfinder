@@ -47,6 +47,7 @@ const GAP        = 8;
 const MIN_ZOOM   = 0.2;
 const MAX_ZOOM   = 8;
 const RUN_SPEED  = 4.75;   // m/s — flat-terrain reference speed
+const ALT_FLAT_EQUIV_M = 4;   // 1 m of elevation ≈ 4 m of flat running (≈ 0.84 s/m)
 const routeColor = ['#DD0011', '#E36A00', '#00A6A6', '#0055FF', '#5500BB', '#007A2A'];
 const ROUTE_STROKE_MULTIPLIER       = 2.5;
 const ROUTE_STROKE_SCALE_EXPONENT   = 0.33;
@@ -78,8 +79,9 @@ function updateRouteStrokeWidths() {
 const COMPLEX_REVEAL_MULTIPLIER = 5;
 const COMPLEX_REVEAL_BUFFER     = 0.5;   // seconds at 1× after reveal
 const ROUTE_HIT_WIDTH           = 25;    // transparent on-map click target width
-const MAX_CHOICE_TIME           = 30;    // s — cap stored choice_time so one slow
-                                         //     control (5× penalty) can't ruin stats
+const MAX_CHOICE_TIME           = 30;    // s; cap stored choice_time for stats
+const PAN_CLICK_SUPPRESS_MOVE   = 6;     // px; above this, a click belongs to pan
+const PAN_CLICK_SUPPRESS_MS     = 350;   // covers the synthetic click after touchend
 
 let currentCpIndex    = -1;
 let camBounds         = null;   // { minRX, maxRX, minRY, maxRY, minScale } in rotated space; null during animation
@@ -92,6 +94,16 @@ let buttonsDisabled    = false; // true after first submission for this CP
 let currentBtnFontSize = '12px'; // kept in sync with renderAllButtons for stats panel
 let replayMode         = false; // true → all CPs already done, no DB writes
 let lastChoiceTimes    = null;  // { total, real, penalty } — set on selection, shown in stats panel
+let timerPausedAt      = null;  // performance.now() while a tutorial modal pauses the choice timer
+let suppressRouteChoiceUntil = 0;
+
+function suppressRouteChoiceForPan() {
+    suppressRouteChoiceUntil = performance.now() + PAN_CLICK_SUPPRESS_MS;
+}
+
+function routeChoiceSuppressedByPan() {
+    return performance.now() < suppressRouteChoiceUntil;
+}
 
 /* =========================================================
    INIT
@@ -148,15 +160,16 @@ function showEndOfFileModal() {
             ? ''
             : `<a class="play-end-btn" href="/results/${fileId}/">${gettext('Results')}</a>`;
         const playClass = TUTORIAL ? 'play-end-btn' : 'play-end-btn secondary';
+        const endTitle  = TUTORIAL ? gettext('Tutorial completed') : gettext('Done');
         modal = document.createElement('div');
         modal.id = 'play-end-modal';
         modal.innerHTML = `
             <div class="play-end-card">
-                <h3 class="play-end-title">Fertig</h3>
+                <h3 class="play-end-title">${endTitle}</h3>
                 <div class="play-end-actions">
                     ${resultsBtn}
                     <a class="${playClass}" href="/play/">Play</a>
-                    <a class="play-end-btn secondary play-end-btn-icon" href="/" aria-label="Startseite">${homeIcon}</a>
+                    <a class="play-end-btn secondary play-end-btn-icon" href="/" aria-label="${gettext('Home')}">${homeIcon}</a>
                 </div>
             </div>`;
         document.body.appendChild(modal);
@@ -173,6 +186,10 @@ function initKeyNav() {
 
     // ── Desktop: spacebar / enter ────────────────────────────
     document.addEventListener('keydown', e => {
+        if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+            if (chooseRouteWithArrow(e.key)) e.preventDefault();
+            return;
+        }
         if (e.key === ' ' || e.key === 'Enter') {
             e.preventDefault();
             if (pendingReveal) revealRoutes(pendingReveal);
@@ -259,6 +276,27 @@ function initKeyNav() {
             tryAdvance();
         }
     }, { passive: true });
+}
+
+function chooseRouteWithArrow(key) {
+    if (document.getElementById('tutorial-overlay')?.classList.contains('open')) return false;
+    if (buttonsDisabled || currentCpIndex < 0) return false;
+    const cp = project.control_pairs[currentCpIndex];
+    if (!cp?.routes?.length) return false;
+    if (cp.complex && revealTime === null) return false;
+
+    const sorted = cp.routes
+        .map((route, i) => ({ route, i }))
+        .sort((a, b) => {
+            const posDiff = (a.route.pos ?? Infinity) - (b.route.pos ?? Infinity);
+            return posDiff || a.i - b.i;
+        });
+    const routeIdx = key === 'ArrowLeft'
+        ? sorted[0].i
+        : sorted[sorted.length - 1].i;
+
+    selectRoute(cp, routeIdx);
+    return true;
 }
 
 async function loadFile() {
@@ -390,12 +428,22 @@ function initCamera() {
     // ── Mouse ────────────────────────────────────────────
     container.addEventListener('mousedown', e => {
         if (e.button !== 0) return;
-        drag = { startX: e.clientX - cam.x, startY: e.clientY - cam.y };
+        drag = {
+            startX: e.clientX - cam.x,
+            startY: e.clientY - cam.y,
+            downX: e.clientX,
+            downY: e.clientY,
+            moved: false,
+        };
         container.classList.add('panning');
     });
 
     window.addEventListener('mousemove', e => {
         if (!drag) return;
+        if (Math.abs(e.clientX - drag.downX) > PAN_CLICK_SUPPRESS_MOVE ||
+            Math.abs(e.clientY - drag.downY) > PAN_CLICK_SUPPRESS_MOVE) {
+            drag.moved = true;
+        }
         cam.x = e.clientX - drag.startX;
         cam.y = e.clientY - drag.startY;
         clampCam();
@@ -403,6 +451,7 @@ function initCamera() {
     });
 
     window.addEventListener('mouseup', () => {
+        if (drag?.moved) suppressRouteChoiceForPan();
         drag = null;
         container.classList.remove('panning');
     });
@@ -425,20 +474,32 @@ function initCamera() {
     // ── Touch ────────────────────────────────────────────
     container.addEventListener('touchstart', e => {
         if (e.touches.length === 1) {
-            drag = { startX: e.touches[0].clientX - cam.x, startY: e.touches[0].clientY - cam.y };
+            drag = {
+                startX: e.touches[0].clientX - cam.x,
+                startY: e.touches[0].clientY - cam.y,
+                downX: e.touches[0].clientX,
+                downY: e.touches[0].clientY,
+                moved: false,
+            };
             lastPinchDist = null;
         } else if (e.touches.length === 2) {
             drag = null;
             lastPinchDist = pinchDist(e.touches);
+            suppressRouteChoiceForPan();
         }
     }, { passive: true });
 
     container.addEventListener('touchmove', e => {
         e.preventDefault();
         if (e.touches.length === 1 && drag) {
+            if (Math.abs(e.touches[0].clientX - drag.downX) > PAN_CLICK_SUPPRESS_MOVE ||
+                Math.abs(e.touches[0].clientY - drag.downY) > PAN_CLICK_SUPPRESS_MOVE) {
+                drag.moved = true;
+            }
             cam.x = e.touches[0].clientX - drag.startX;
             cam.y = e.touches[0].clientY - drag.startY;
         } else if (e.touches.length === 2 && lastPinchDist !== null) {
+            suppressRouteChoiceForPan();
             const dist     = pinchDist(e.touches);
             const newScale = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, cam.scale * dist / lastPinchDist));
             const factor   = newScale / cam.scale;
@@ -458,7 +519,10 @@ function initCamera() {
 
     container.addEventListener('touchend', e => {
         if (e.touches.length < 2) lastPinchDist = null;
-        if (e.touches.length === 0) drag = null;
+        if (e.touches.length === 0) {
+            if (drag?.moved) suppressRouteChoiceForPan();
+            drag = null;
+        }
     }, { passive: true });
 }
 
@@ -610,14 +674,16 @@ function routesAtPoint(clientX, clientY) {
 // overlap we reveal them instead and let the athlete decide on the next tap.
 // Once revealed (the athlete can see what they're choosing) any tap commits.
 function handleRouteHit(cp, i, e) {
+    if (routeChoiceSuppressedByPan()) return;
     if (buttonsDisabled) return;
     if (revealTime !== null) {
         selectRoute(cp, i);
         return;
     }
-    // Tutorial, third control only: never commit a direct pick before reveal.
-    // Earlier controls allow direct picks when the hit is unambiguous.
-    if (TUTORIAL && cp.complex && currentCpIndex === 2) {
+    // Tutorial, second control only: never commit a direct pick before reveal,
+    // so the first map tap reveals and triggers the time-bar tip. The first
+    // (walkthrough) control still allows unambiguous direct picks.
+    if (TUTORIAL && cp.complex && currentCpIndex === 1) {
         revealRoutes(cp);
         return;
     }
@@ -652,6 +718,7 @@ function showControlPair(index) {
     revealTime         = null;
     pendingReveal      = null;
     lastChoiceTimes    = null;
+    timerPausedAt      = null;
     stopCountdown();
     document.getElementById('route-layer').innerHTML   = '';
     document.getElementById('control-layer').innerHTML = '';
@@ -758,7 +825,7 @@ function showControlPair(index) {
         drawRoutes(cp);
 
         // Lifecycle: camera has finished transforming and the CP is ready for
-        // the first tap. Drives tutorial steps 1 (complex CP) and 5 (L/R CP).
+        // the first tap. Drives tutorial step 1 (control 0) and step 6 (control 2, L/R).
         emitPlay('cp-ready', { index, complex: !!cp.complex });
     });
 
@@ -774,16 +841,19 @@ function revealRoutes(cp) {
     renderAllButtons(cp);
     startCountdown();
     // Lifecycle: routes revealed by the first map/screen tap. Drives tutorial
-    // step 2 (the 0.67s countdown explanation).
+    // step 2 (control 1: the 0.5s free-time / time-bar explanation).
     emitPlay('routes-revealed', { index: currentCpIndex });
 }
 
-let _countdownTimer = null;
+let _countdownTimer    = null;
+let _countdownEndAt    = null;   // performance.now() when the free-time buffer ends
+let _countdownRemainMs = null;   // frozen remaining buffer while a modal pauses it
 function startCountdown() {
     const bar  = document.getElementById('play-countdown');
     const fill = document.getElementById('play-countdown-fill');
     if (!bar || !fill) return;
     if (_countdownTimer) { clearTimeout(_countdownTimer); _countdownTimer = null; }
+    _countdownRemainMs = null;
 
     bar.classList.remove('pulsing');
     bar.classList.add('active');
@@ -793,6 +863,7 @@ function startCountdown() {
     fill.style.transition = `width ${COMPLEX_REVEAL_BUFFER}s linear`;
     fill.style.width = '0%';
 
+    _countdownEndAt = performance.now() + COMPLEX_REVEAL_BUFFER * 1000;
     _countdownTimer = setTimeout(() => {
         _countdownTimer = null;
         if (bar.classList.contains('active')) bar.classList.add('pulsing');
@@ -801,8 +872,77 @@ function startCountdown() {
 
 function stopCountdown() {
     if (_countdownTimer) { clearTimeout(_countdownTimer); _countdownTimer = null; }
+    _countdownEndAt    = null;
+    _countdownRemainMs = null;
     const bar = document.getElementById('play-countdown');
     if (bar) bar.classList.remove('active', 'pulsing');
+}
+
+// Freeze the free-time bar at its current width and remember how much buffer is
+// left, so a tutorial modal opening mid-countdown doesn't run the clock down.
+function pauseCountdown() {
+    const bar  = document.getElementById('play-countdown');
+    const fill = document.getElementById('play-countdown-fill');
+    if (!bar || !fill || !bar.classList.contains('active')) return;
+    if (_countdownTimer) { clearTimeout(_countdownTimer); _countdownTimer = null; }
+    if (_countdownEndAt !== null) {
+        _countdownRemainMs = Math.max(0, _countdownEndAt - performance.now());
+    }
+    const w = getComputedStyle(fill).width;   // current px width
+    fill.style.transition = 'none';
+    fill.style.width = w;
+    bar.classList.remove('pulsing');
+}
+
+// Resume the free-time bar from where it was frozen.
+function resumeCountdown() {
+    const bar  = document.getElementById('play-countdown');
+    const fill = document.getElementById('play-countdown-fill');
+    if (!bar || !fill || !bar.classList.contains('active')) return;
+    const remain = _countdownRemainMs;
+    _countdownRemainMs = null;
+    if (remain === null) return;
+    if (remain <= 0) {
+        fill.style.transition = 'none';
+        fill.style.width = '0%';
+        _countdownEndAt = performance.now();
+        bar.classList.add('pulsing');
+        return;
+    }
+    void fill.offsetWidth;
+    fill.style.transition = `width ${remain / 1000}s linear`;
+    fill.style.width = '0%';
+    _countdownEndAt = performance.now() + remain;
+    _countdownTimer = setTimeout(() => {
+        _countdownTimer = null;
+        if (bar.classList.contains('active')) bar.classList.add('pulsing');
+    }, remain);
+}
+
+// ── Tutorial: pause the choice timer while a modal is open ──────────────────
+// Athletes shouldn't be "on the clock" while reading a tip. We freeze the
+// running timer by shifting choiceStartTime / revealTime forward on resume, so
+// every elapsed computation (and the countdown bar) excludes the paused span.
+function pauseChoiceTimer() {
+    if (timerPausedAt !== null) return;     // already paused
+    if (buttonsDisabled) return;            // choice already made — nothing running
+    if (choiceStartTime === null) return;   // no CP timer active yet
+    timerPausedAt = performance.now();
+    pauseCountdown();
+}
+
+function resumeChoiceTimer() {
+    if (timerPausedAt === null) return;
+    const paused = performance.now() - timerPausedAt;
+    timerPausedAt = null;
+    if (choiceStartTime !== null) choiceStartTime += paused;
+    if (revealTime      !== null) revealTime      += paused;
+    resumeCountdown();
+}
+
+if (TUTORIAL) {
+    document.addEventListener('tutorial:pause-timer',  pauseChoiceTimer);
+    document.addEventListener('tutorial:resume-timer', resumeChoiceTimer);
 }
 
 function selectRoute(cp, i) {
@@ -860,18 +1000,18 @@ function updateProgressBar() {
 }
 
 function formatTimeDelta(diffSec) {
-    if (diffSec < 60) return `+${Math.round(diffSec)}s`;
+    if (diffSec < 60) return `+${diffSec.toFixed(1)}s`;
     const m = Math.floor(diffSec / 60);
-    const s = Math.round(diffSec % 60);
-    return `+${m}:${String(s).padStart(2, '0')}`;
+    const s = diffSec % 60;
+    return `+${m}:${String(s.toFixed(1)).padStart(2, '0')}`;
 }
 
 function formatTime(sec) {
     if (sec == null || isNaN(sec)) return '–';
-    if (sec < 60) return `${Math.round(sec)}s`;
+    if (sec < 60) return `${sec.toFixed(0)}s`;
     const m = Math.floor(sec / 60);
-    const s = Math.round(sec % 60);
-    return `${m}:${String(s).padStart(2, '0')}`;
+    const s = sec % 60;
+    return `${m}:${String(s.toFixed(0)).padStart(2, '0')}`;
 }
 
 /* =========================================================
@@ -932,32 +1072,36 @@ function renderStatsPanel(cp) {
         `<span class="stats-row"><span class="stats-label">${label}</span><span class="stats-value">${value}</span></span>`;
 
     sorted.forEach(({ route, i }) => {
-        const distTime = route.length ? route.length / RUN_SPEED : null;
-        const noATime  = route.noA || 0;
-        // Elevation contribution = total minus flat-distance time.
-        // noA is read directly from the stored JSON attribute — not recomputed —
-        // so we don't subtract it here (older files may not have it baked into run_time).
-        const elevTime = route.run_time != null && distTime != null
-            ? route.run_time - distTime : null;
+        const distTime = route.length ? (route.length / RUN_SPEED).toFixed(1) : null;
+        const noATime  = route.noA ? route.noA.toFixed(1) : '0';
+        const obstacleTime = Number(route.obstacle).toFixed(1) || '0';
+        // Elevation contribution is linear: each metre of climb = ALT_FLAT_EQUIV_M
+        // flat metres ≈ 0.84 s. Computed directly rather than as a residual of run_time.
+        const elevTime = route.elevation
+            ? (route.elevation * ALT_FLAT_EQUIV_M / RUN_SPEED).toFixed(1) : null;
 
         const showElev    = !!route.elevation && elevTime != null && elevTime > 0.5;
+        const showObstacle = obstacleTime > 0;
         const showCorners = noATime > 0;
 
-        const lengthStr = route.length    ? `${Math.round(route.length)}m`    : '–';
-        const elevStr   = route.elevation ? `${Math.round(route.elevation)}m` : '–';
+        const lengthStr = route.length    ? `${route.length.toFixed(0)}m`    : '–';
+        const elevStr   = route.elevation ? `${route.elevation.toFixed(0)}m` : '–';
         // Inline SVG icons for compactness; window.icon returns a ready-to-use SVG string
-        const ICON_ELEV  = window.icon ? window.icon('elevation', '0.9em') : '';
-        const ICON_ANGLE = window.icon ? window.icon('angle',     '1em')   : '';
-        const elevLabel  = `<span class="stats-icon">${ICON_ELEV}</span>${elevStr}:`;
-        const noALabel   = `<span class="stats-icon">${ICON_ANGLE}</span>${noATime}:`;
+        const ICON_ELEV     = window.icon ? window.icon('elevation', '0.9em') : '';
+        const ICON_OBSTACLE = window.icon ? window.icon('obstacle',  '0.9em') : '';
+        const ICON_ANGLE    = window.icon ? window.icon('angle',     '1em')   : '';
+        const elevLabel     = `<span class="stats-icon">${ICON_ELEV}</span>${elevStr}:`;
+        const obstacleLabel = `<span class="stats-icon">${ICON_OBSTACLE}</span>:`;
+        const noALabel      = `<span class="stats-icon">${ICON_ANGLE}</span>${noATime}:`;
 
         const col = document.createElement('div');
         col.className = 'stats-col';
         col.style.borderColor = currentRouteColors[i];
         col.innerHTML =
             `<span class="stats-total">${formatTime(route.run_time)}</span>` +
-            row(`${lengthStr}:`, `+${formatTime(distTime)}`) +
-            (showElev    ? row(elevLabel, `+${formatTime(elevTime)}`) : '') +
+            row(`${lengthStr}:`, `+${distTime}s`) +
+            (showElev    ? row(elevLabel, `+${elevTime}s`) : '') +
+            (showObstacle ? row(obstacleLabel, `+${obstacleTime}s`) : '') +
             (showCorners ? row(noALabel,  `+${noATime}s`)             : '');
         inner.appendChild(col);
     });
@@ -1381,11 +1525,16 @@ function submitResult(cp, route) {
         if (revealTime !== null) {
             // Complex CP — pre-reveal at 1×, first COMPLEX_REVEAL_BUFFER seconds
             // after reveal also at 1×, then time runs COMPLEX_REVEAL_MULTIPLIER×.
+            // Training mode carries no late-decision penalty, so the multiplier
+            // stays at 1× — the recorded choice time equals the real time. The
+            // tutorial always uses the full multiplier so athletes can see and
+            // learn how the penalty works.
+            const revealMultiplier = (competitionMode || TUTORIAL) ? COMPLEX_REVEAL_MULTIPLIER : 1;
             const preReveal      = (revealTime - choiceStartTime) / 1000;
             const postRealTime   = (now        - revealTime)      / 1000;
             const grace          = Math.min(postRealTime, COMPLEX_REVEAL_BUFFER);
             const punished       = Math.max(0, postRealTime - COMPLEX_REVEAL_BUFFER);
-            const postChoiceTime = grace + punished * COMPLEX_REVEAL_MULTIPLIER;
+            const postChoiceTime = grace + punished * revealMultiplier;
             choiceTime           = preReveal + postChoiceTime;
             penalty              = choiceTime - totalReal;
             console.log(

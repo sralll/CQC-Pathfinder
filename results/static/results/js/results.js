@@ -227,7 +227,7 @@ function renderHeader() {
     const thead = document.getElementById('play-thead');
     const kaderCol = multiTeam
         ? `<th class="col-kader">
-               <span class="filterable" id="kader-filter-btn">${gettext('Squad')}
+               <span class="filterable" id="kader-filter-btn">${gettext('Team')}
                    <span class="filter-indicator active-filter-icon">${window.icon('filter', '0.8em')}</span>
                </span>
            </th>`
@@ -403,7 +403,7 @@ function renderAuthorFilterDropdown() {
     const dropdown = document.getElementById('author-filter-dropdown');
     dropdown.innerHTML = `
         <div class="filter-clear">
-            <div class="filter-clear-left" onclick="event.stopPropagation(); clearAuthorFilters()"><b>Alle</b></div>
+            <div class="filter-clear-left" onclick="event.stopPropagation(); clearAuthorFilters()"><b>${gettext('All')}</b></div>
             <button class="filter-close-btn" onclick="event.stopPropagation(); closeAllFilters()" type="button"><x-icon name="xmark" size="1em"></x-icon></button>
         </div>
         <div class="filter-options-list">
@@ -615,7 +615,7 @@ function renderCards() {
         card.innerHTML = `
             <div class="play-card-row1">
                 <span class="play-card-name">${f.name}</span>
-                <span class="play-card-cp">${f.cp_count} Posten</span>
+                <span class="play-card-cp">${f.cp_count} ${f.cp_count === 1 ? gettext('Control') : gettext('Controls')}</span>
             </div>
             <div class="play-card-row2">
                 ${labelHtml}
@@ -665,7 +665,7 @@ function renderMobileControls() {
         { field: 'author', label: gettext('Author'), toggle: toggleAuthorFilter },
         { field: 'status', label: gettext('Status'), toggle: toggleStatusFilter },
         ...(multiTeam
-            ? [{ field: 'kader', label: gettext('Squad'), toggle: toggleKaderFilter }]
+            ? [{ field: 'kader', label: gettext('Team'), toggle: toggleKaderFilter }]
             : []),
     ];
     filterFields.forEach(({ field, label, toggle }) => {
