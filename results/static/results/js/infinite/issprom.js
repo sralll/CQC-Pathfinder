@@ -39,6 +39,8 @@ export const COLORS = {
   // water
   waterFill: 'rgb(74,189,255)',
   waterBank: 'rgb(13,179,255)',
+  // light seam between houses within a solid block (house-division lines)
+  seam: 'rgb(232,228,220)',
   // course overprint (later phases — kept here for completeness, unused now)
   overprint: 'rgb(255,0,255)',
 };
@@ -53,6 +55,8 @@ export const COLORS = {
 export const WEIGHTS = {
   // building/prism outline stroke
   buildingOutline: 0.4,
+  // light seam stroke around each house (drawn over the solid block)
+  buildingSeam: 1.0,
   // curtain wall stroke (meta.wallThickness overrides this when present)
   wallThickness: 7.6,
   // hedge band width (drawn alongside/instead of a wall ring)
@@ -363,6 +367,7 @@ export function renderTown(townModel, svgElement, opts = {}) {
   const gRoads = svgEl('g', { class: 'isom-roads' });
   const gWater = svgEl('g', { class: 'isom-water' });
   const gRivers = svgEl('g', { class: 'isom-rivers' });
+  const gBlocks = svgEl('g', { class: 'isom-blocks' });
   const gBuildings = svgEl('g', { class: 'isom-buildings' });
   const gWalls = svgEl('g', { class: 'isom-walls' });
   const gHedges = svgEl('g', { class: 'isom-hedges' });
@@ -378,6 +383,7 @@ export function renderTown(townModel, svgElement, opts = {}) {
   svgElement.appendChild(gRoads);
   svgElement.appendChild(gWater);
   svgElement.appendChild(gRivers);
+  svgElement.appendChild(gBlocks);
   svgElement.appendChild(gBuildings);
   svgElement.appendChild(gWalls);
   svgElement.appendChild(gHedges);
@@ -431,14 +437,34 @@ export function renderTown(townModel, svgElement, opts = {}) {
     widthPx: riverWidthM * pxPerMetre,
   });
 
-  // ---- 5. buildings + prisms (black fill, thin outline) -------------------
-  const buildingOpts = {
+  // ---- 4b. blocks — kept in the model as the pathfinding obstacle (the solid
+  //          mass a route goes around) but NOT filled here: the touching
+  //          individual buildings below already convey the block, and a solid
+  //          fill underneath produced featureless black blobs. Optional debug
+  //          outline only. ---------------------------------------------------
+  if (opts.showBlocks) {
+    renderPolygonLayer(gBlocks, layerOf(layers, 'blocks'), {
+      fill: 'none',
+      stroke: COLORS.overprint,
+      strokeWidthPx: 0.4 * pxPerMetre,
+      opacity: 0.5,
+    });
+  }
+
+  // ---- 5. buildings + prisms. Buildings are individual footprints that TOUCH
+  //          (share walls) within a block; the light SEAM stroke makes each
+  //          house read as a separate cell (the Watabou "blocks of houses"
+  //          look). Prisms (castle/cathedral landmarks) stay solid black. ----
+  renderPolygonLayer(gBuildings, layerOf(layers, 'buildings'), {
+    fill: COLORS.black,
+    stroke: COLORS.seam,
+    strokeWidthPx: Math.max(WEIGHTS.buildingSeam * pxPerMetre, 0.3),
+  });
+  renderPolygonLayer(gBuildings, layerOf(layers, 'prisms'), {
     fill: COLORS.black,
     stroke: COLORS.black,
     strokeWidthPx: WEIGHTS.buildingOutline * pxPerMetre,
-  };
-  renderPolygonLayer(gBuildings, layerOf(layers, 'buildings'), buildingOpts);
-  renderPolygonLayer(gBuildings, layerOf(layers, 'prisms'), buildingOpts);
+  });
 
   // ---- 6. walls (solid black stroke) / hedges (dark-green band) ----------
   const wallThicknessM = Number.isFinite(meta.wallThickness) && meta.wallThickness > 0
@@ -486,6 +512,14 @@ export function renderTown(townModel, svgElement, opts = {}) {
   renderPointLayer(gPoints, layerOf(layers, 'boulders'), {
     fill: COLORS.black,
     radiusPx: WEIGHTS.boulderRadius * pxPerMetre,
+  });
+  // Wall towers (bastions) — solid black circles on the curtain wall.
+  const towerRadiusM = Number.isFinite(meta.towerRadius) && meta.towerRadius > 0
+    ? meta.towerRadius
+    : WEIGHTS.boulderRadius;
+  renderPointLayer(gPoints, layerOf(layers, 'towers'), {
+    fill: COLORS.black,
+    radiusPx: towerRadiusM * pxPerMetre,
   });
 
   // ---- optional: faint district outline (debug aid) -----------------------

@@ -30,13 +30,20 @@ const DEFAULTS = {
   largeBuildingProb: 0.5,
   roadWidth: 8,
   wallThickness: 3,
-  towerRadius: 3,
+  towerRadius: 5,
   riverWidth: 18,
-  mainStreet: 10,
-  regularStreet: 5,
+  mainStreet: 22,
+  regularStreet: 12,
   alley: 3,
-  innerRadiusFrac: 0.55, // inner-city patches: centroid within this * sizeM/2 of center
+  innerFrac: 0.6, // fraction of (most-central) patches forming the town core; rest = countryside
 };
+
+// Ward types that form a solid building BLOCK (the impassable mass a route must
+// go around). Market = open plaza, Park = greens, Castle/Cathedral = a single
+// landmark building — none of those are residential blocks.
+const RESIDENTIAL_WARDS = new Set([
+  'Craftsmen', 'Slum', 'Merchant', 'Patriciate', 'Administration', 'Military', 'Generic',
+]);
 
 function randomSeed(rng) {
   // Generate a random-looking string seed without touching Math.random.
@@ -103,6 +110,86 @@ function convexHull(points) {
   // throughout the rest of this codebase.
   hull.reverse();
   return hull;
+}
+
+// Point-in-polygon (ray casting, even-odd rule). `ring` need not be closed
+// (dedupClosing-style open rings are fine — we wrap with modulo below).
+function pointInPolygon(pt, ring) {
+  const pts = dedupClosing(ring);
+  const n = pts.length;
+  if (n < 3) return false;
+  const [x, y] = pt;
+  let inside = false;
+  for (let i = 0, j = n - 1; i < n; j = i++) {
+    const [xi, yi] = pts[i];
+    const [xj, yj] = pts[j];
+    if (
+      yi !== yj &&
+      ((y >= yi && y < yj) || (y >= yj && y < yi)) &&
+      x < ((xj - xi) * (y - yi)) / (yj - yi) + xi
+    ) {
+      inside = !inside;
+    }
+  }
+  return inside;
+}
+
+// Distance from point p to the nearest point on segment a->b.
+function pointToSegmentDist(p, a, b) {
+  const [px, py] = p;
+  const [ax, ay] = a;
+  const [bx, by] = b;
+  const dx = bx - ax;
+  const dy = by - ay;
+  const lenSq = dx * dx + dy * dy;
+  if (lenSq < EPS_LOCAL) return Math.hypot(px - ax, py - ay);
+  let t = ((px - ax) * dx + (py - ay) * dy) / lenSq;
+  t = Math.max(0, Math.min(1, t));
+  const cx = ax + t * dx;
+  const cy = ay + t * dy;
+  return Math.hypot(px - cx, py - cy);
+}
+
+// Distance from point p to the nearest point on a polyline (chain of segments).
+function pointToPolylineDist(p, polyline) {
+  let best = Infinity;
+  for (let i = 0; i < polyline.length - 1; i++) {
+    const d = pointToSegmentDist(p, polyline[i], polyline[i + 1]);
+    if (d < best) best = d;
+  }
+  return best;
+}
+
+const EPS_LOCAL = 1e-9;
+
+// Build a ribbon (strip) polygon of constant half-width `halfWidth` around an
+// open polyline, by offsetting each side along each segment's normal and
+// capping the ends with the segment's own direction (simple "sausage" outline
+// — not mitred at joints, which is fine for a meandering river at this
+// width/scale; small overlaps at joints don't visually matter for a filled
+// blue ribbon).
+function polylineRibbon(polyline, halfWidth) {
+  const pts = polyline.filter((p) => Array.isArray(p) && Number.isFinite(p[0]) && Number.isFinite(p[1]));
+  if (pts.length < 2) return [];
+  const left = [];
+  const right = [];
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[Math.max(0, i - 1)];
+    const b = pts[Math.min(pts.length - 1, i + 1)];
+    const dx = b[0] - a[0];
+    const dy = b[1] - a[1];
+    const len = Math.hypot(dx, dy);
+    let nx = 0, ny = 0;
+    if (len > EPS_LOCAL) {
+      nx = -dy / len;
+      ny = dx / len;
+    }
+    const p = pts[i];
+    left.push([p[0] + nx * halfWidth, p[1] + ny * halfWidth]);
+    right.push([p[0] - nx * halfWidth, p[1] - ny * halfWidth]);
+  }
+  // Ring: left side forward, right side backward.
+  return left.concat(right.slice().reverse());
 }
 
 // Merge two bboxes.
@@ -191,13 +278,14 @@ export function generateTown(opts = {}) {
   const worldBbox = [-half, -half, half, half];
   const center = [0, 0];
 
-  const patchCount = Math.max(4, Math.round(o.patchCount ?? sizeM / 70));
+  const patchCount = Math.max(4, Math.round(o.patchCount ?? sizeM / 20));
   const lloyd = o.lloyd;
 
   // Layer accumulators -------------------------------------------------------
   const layers = {
     earth: [],
     districts: [],
+    blocks: [],
     buildings: [],
     prisms: [],
     walls: [],
@@ -209,6 +297,7 @@ export function generateTown(opts = {}) {
     rivers: [],
     planks: [],
     trees: [],
+    towers: [],
   };
 
   // 1. Voronoi patches --------------------------------------------------------
@@ -239,20 +328,19 @@ export function generateTown(opts = {}) {
   }
 
   // 2. Inner / outer split -----------------------------------------------------
-  const innerRadius = o.innerRadiusFrac * half;
+  // Inner = the most-central FRACTION of patches (a consistent, compact town
+  // regardless of how Lloyd relaxation placed centroids). A pure radius cut
+  // gave wildly varying inner counts — sometimes just 3 giant wards that
+  // sprawled to the map corners and subdivided into sliver noise. A fixed
+  // fraction keeps wards small and the town clustered in the centre.
   const patchInfo = patches.map((ring) => {
     const c = patchCentroid(ring);
     return { ring, centroid: c, d: dist(c, center) };
   });
   patchInfo.sort((a, b) => a.d - b.d);
 
-  let innerInfo = patchInfo.filter((p) => p.d <= innerRadius);
-  // Guarantee a sensible core: at least 3 patches (or all of them if fewer
-  // exist), even if the radius cut was too tight for this patch layout.
-  const MIN_INNER = Math.min(3, patchInfo.length);
-  if (innerInfo.length < MIN_INNER) {
-    innerInfo = patchInfo.slice(0, MIN_INNER);
-  }
+  const innerCount = Math.max(3, Math.round(patchInfo.length * o.innerFrac));
+  const innerInfo = patchInfo.slice(0, innerCount);
   const innerSet = new Set(innerInfo);
   const outerInfo = patchInfo.filter((p) => !innerSet.has(p));
 
@@ -326,6 +414,17 @@ export function generateTown(opts = {}) {
     }
   }
 
+  // Wall towers: a black bastion at a subset of wall-ring vertices (an iconic
+  // Watabou touch). Stored as points, rendered as filled circles of
+  // meta.towerRadius.
+  if (wallRing && wallRing.length >= 3) {
+    const ringPts = dedupClosing(wallRing);
+    const step = Math.max(1, Math.round(ringPts.length / 12)); // up to ~12 towers
+    for (let i = 0; i < ringPts.length; i += step) {
+      layers.towers.push(ringPts[i]);
+    }
+  }
+
   // 5. Ward assignment ----------------------------------------------------------
   // Find the most-central inner patch -> Market. A second, reasonably large
   // and central patch (if available) -> Castle or Cathedral.
@@ -361,11 +460,9 @@ export function generateTown(opts = {}) {
   for (const gate of gatePoints) {
     layers.roads.push([gate, marketCentroid]);
   }
-  // A couple of cross streets from market to other prominent inner patches.
-  const crossTargets = sortedByCentrality.slice(1, 3);
-  for (const t of crossTargets) {
-    layers.roads.push([marketCentroid, t.centroid]);
-  }
+  // (Cross streets from market to other patch centroids were removed — drawn as
+  // straight centroid-to-centroid lines they cut diagonally across building
+  // blocks. Inter-ward gaps from getCityBlock already read as the street grid.)
 
   // 7. Per-patch ward geometry -----------------------------------------------------
   const edgeStreetWidthFor = (count) => (count <= 6 ? o.regularStreet : o.mainStreet);
@@ -382,6 +479,18 @@ export function generateTown(opts = {}) {
     const streetWidth = wardType === 'Market' || wardType === 'Castle' || wardType === 'Cathedral'
       ? o.mainStreet
       : o.regularStreet;
+
+    // Solid BLOCK obstacle for residential wards: the inset city-block outline
+    // is the impassable mass the route goes AROUND. Individual buildings are
+    // drawn on top for detail only — they are NOT separate obstacles, so a
+    // runner can't thread between every house (which would defeat the route
+    // choice). Streets are the gaps between blocks.
+    if (RESIDENTIAL_WARDS.has(wardType)) {
+      const blockRing = getCityBlock(ring, { streetWidth });
+      if (Array.isArray(blockRing) && blockRing.length >= 3) {
+        layers.blocks.push([dedupClosing(blockRing)]);
+      }
+    }
 
     let result;
     try {
@@ -401,29 +510,25 @@ export function generateTown(opts = {}) {
     const a = Math.abs(area(ring));
     if (!Number.isFinite(a) || a <= 0) continue;
 
-    // 20% Farm (with a small farmhouse), else generic sparse greenfield.
+    // 20% Farm (open field + a single small farmhouse), else plain open
+    // countryside (field only — NO building scatter; a speckle of houses all
+    // over the rural fringe is the main thing that broke realism before).
     const makeFarm = genRng() < 0.2;
-    let result;
-    try {
-      result = buildWard(ring, makeFarm ? 'Farm' : 'Generic', genRng, { streetWidth: o.alley });
-    } catch (e) {
-      result = null;
-    }
-    if (!result) {
-      layers.fields.push([dedupClosing(ring)]);
-      continue;
-    }
     if (makeFarm) {
-      layers.fields.push(...result.fields.map((r) => [dedupClosing(r)]));
-      layers.buildings.push(...result.buildings.map((r) => [dedupClosing(r)]));
-    } else {
-      // Generic countryside ward already used createAlleys via buildWard;
-      // treat as sparse fields with a few buildings, but keep density low
-      // by thinning (filterOutskirts-equivalent): keep ~30% of buildings.
-      layers.fields.push([dedupClosing(ring)]);
-      for (const b of result.buildings) {
-        if (genRng() < 0.3) layers.buildings.push([dedupClosing(b)]);
+      let result = null;
+      try {
+        result = buildWard(ring, 'Farm', genRng, { streetWidth: o.alley });
+      } catch (e) {
+        result = null;
       }
+      if (result) {
+        layers.fields.push(...result.fields.map((r) => [dedupClosing(r)]));
+        layers.buildings.push(...result.buildings.map((r) => [dedupClosing(r)]));
+      } else {
+        layers.fields.push([dedupClosing(ring)]);
+      }
+    } else {
+      layers.fields.push([dedupClosing(ring)]);
     }
   }
 
@@ -438,7 +543,187 @@ export function generateTown(opts = {}) {
   // Already pushed directly during ward merge below when wardType is Castle
   // or Cathedral (see mergeWardResult). Nothing further needed here.
 
-  // rivers/water/planks intentionally left empty (later task).
+  // 11. Water: rivers, ponds, planks (CONTRACTS.md §2; REFERENCE_NOTES.md §8) ---
+  // Resolve the water option: boolean -> on/off, number -> probability,
+  // default off (matches DEFAULTS.water = false).
+  const waterRoll = genRng();
+  const waterOn = typeof o.water === 'number' ? waterRoll < o.water : !!o.water;
+
+  if (waterOn) {
+    const riverWidth = o.riverWidth;
+    const halfRiver = riverWidth / 2;
+
+    // 60% chance of a river crossing the whole town, else (or additionally,
+    // 25% of the time) a standalone pond blob. This keeps "water:true" towns
+    // visually varied rather than always drawing the same river shape.
+    const wantsRiver = genRng() < 0.6;
+    const wantsPond = !wantsRiver || genRng() < 0.25;
+
+    let riverPolyline = null;
+
+    if (wantsRiver) {
+      // Pick two opposite-ish edges of the world bbox to enter/exit from, so
+      // the river crosses the whole modeled area (REFERENCE_NOTES §8).
+      const edgeNames = ['N', 'S', 'E', 'W'];
+      const entryEdge = edgeNames[Math.floor(genRng() * 4)];
+      const oppositeOf = { N: 'S', S: 'N', E: 'W', W: 'E' };
+      // Exit edge: usually the opposite edge (crosses the whole town), but
+      // occasionally an adjacent edge for variety (river bends out a side).
+      const exitEdge = genRng() < 0.75
+        ? oppositeOf[entryEdge]
+        : edgeNames.filter((e) => e !== entryEdge && e !== oppositeOf[entryEdge])[Math.floor(genRng() * 2)];
+
+      const edgePoint = (edge, t) => {
+        // t in [0,1] parametrizes position along that edge.
+        switch (edge) {
+          case 'N': return [-half + t * sizeM, -half];
+          case 'S': return [-half + t * sizeM, half];
+          case 'E': return [half, -half + t * sizeM];
+          case 'W': return [-half, -half + t * sizeM];
+          default: return [0, 0];
+        }
+      };
+
+      const entryT = 0.25 + genRng() * 0.5; // avoid corners
+      const exitT = 0.25 + genRng() * 0.5;
+      const entryPt = edgePoint(entryEdge, entryT);
+      const exitPt = edgePoint(exitEdge, exitT);
+
+      // Build a gentle meander: a handful of control points between entry and
+      // exit, each nudged laterally (perpendicular to the entry->exit chord)
+      // by the rng so the river isn't a straight line, then connected with
+      // straight segments (sufficient at this scale/zoom for a "continuous
+      // water" read — no need for spline smoothing).
+      const chordDx = exitPt[0] - entryPt[0];
+      const chordDy = exitPt[1] - entryPt[1];
+      const chordLen = Math.hypot(chordDx, chordDy) || 1;
+      const perpX = -chordDy / chordLen;
+      const perpY = chordDx / chordLen;
+
+      const controlCount = 3 + Math.floor(genRng() * 3); // 3..5 interior points
+      const maxLateral = sizeM * 0.12; // gentle meander, not chaotic zigzag
+      riverPolyline = [entryPt];
+      for (let i = 1; i <= controlCount; i++) {
+        const t = i / (controlCount + 1);
+        const baseX = entryPt[0] + chordDx * t;
+        const baseY = entryPt[1] + chordDy * t;
+        const lateral = (genRng() * 2 - 1) * maxLateral;
+        riverPolyline.push([baseX + perpX * lateral, baseY + perpY * lateral]);
+      }
+      riverPolyline.push(exitPt);
+
+      layers.rivers.push(riverPolyline);
+
+      // Carve the river's footprint as a buffered ribbon strip -> water layer,
+      // so it renders as a continuous blue body (CONTRACTS.md §2/§4).
+      const ribbon = polylineRibbon(riverPolyline, halfRiver);
+      if (ribbon.length >= 3) {
+        layers.water.push([ribbon]);
+      }
+
+      // Planks: 1-3 short crossings near the town centre, perpendicular to
+      // the river's local direction at the crossing point, length ≈
+      // riverWidth (REFERENCE_NOTES §8/§9: plankLength ≈ riverWidth + 0-2 m).
+      const plankCount = 1 + Math.floor(genRng() * 3); // 1..3
+      const plankMargin = genRng() * 2; // 0-2 m
+      const plankHalfLen = (riverWidth + plankMargin) / 2;
+
+      // Sample candidate crossing points along the polyline segments nearest
+      // the town centre first (so planks cluster near where roads/the market
+      // are, per the task brief), then spread out if more are needed.
+      const segMidpoints = [];
+      for (let i = 0; i < riverPolyline.length - 1; i++) {
+        const a = riverPolyline[i];
+        const b = riverPolyline[i + 1];
+        const mid = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+        segMidpoints.push({ a, b, mid, d: dist(mid, center) });
+      }
+      segMidpoints.sort((s1, s2) => s1.d - s2.d);
+
+      const usedSegs = new Set();
+      for (let i = 0; i < plankCount && i < segMidpoints.length; i++) {
+        // Spread planks across distinct segments where possible; fall back to
+        // reusing segments (offset along it) once distinct ones run out.
+        let segIdx = i;
+        if (segIdx >= segMidpoints.length) segIdx = segMidpoints.length - 1;
+        const seg = segMidpoints[segIdx];
+        usedSegs.add(segIdx);
+
+        const dx = seg.b[0] - seg.a[0];
+        const dy = seg.b[1] - seg.a[1];
+        const segLen = Math.hypot(dx, dy);
+        if (segLen < EPS_LOCAL) continue;
+        const dirX = dx / segLen;
+        const dirY = dy / segLen;
+        // Perpendicular to the river's local direction.
+        const perpX2 = -dirY;
+        const perpY2 = dirX;
+
+        // Jitter the crossing point a little along the segment so multiple
+        // planks on the same segment don't perfectly overlap.
+        const along = 0.3 + genRng() * 0.4;
+        const crossX = seg.a[0] + dx * along;
+        const crossY = seg.a[1] + dy * along;
+
+        const plankLine = [
+          [crossX - perpX2 * plankHalfLen, crossY - perpY2 * plankHalfLen],
+          [crossX + perpX2 * plankHalfLen, crossY + perpY2 * plankHalfLen],
+        ];
+        layers.planks.push(plankLine);
+      }
+    }
+
+    if (wantsPond) {
+      // Standalone blob pond: a jittered circle placed away from the town
+      // centre (favour outer/countryside-ish placement per REFERENCE_NOTES
+      // §8), radius per §9 suggested range (15-60 m), clamped to fit sizeM.
+      const minR = Math.max(8, Math.min(15, sizeM * 0.03));
+      const maxR = Math.max(minR + 5, Math.min(60, sizeM * 0.08));
+      const pondR = minR + genRng() * (maxR - minR);
+
+      // Place within the inner play area but not dead-centre (avoid the
+      // market/castle core); pick a random angle + radius offset from centre.
+      const placeAngle = genRng() * Math.PI * 2;
+      const placeDist = (sizeM * 0.15) + genRng() * (sizeM * 0.25);
+      const pondCenter = [Math.cos(placeAngle) * placeDist, Math.sin(placeAngle) * placeDist];
+
+      const pondVerts = 9 + Math.floor(genRng() * 5); // 9..13 verts
+      const pondRing = [];
+      for (let i = 0; i < pondVerts; i++) {
+        const a = (i / pondVerts) * Math.PI * 2;
+        const jitter = 0.8 + genRng() * 0.4; // +-20% radius jitter per vertex
+        pondRing.push([
+          pondCenter[0] + Math.cos(a) * pondR * jitter,
+          pondCenter[1] + Math.sin(a) * pondR * jitter,
+        ]);
+      }
+      layers.water.push([pondRing]);
+    }
+
+    // Carve space for water: drop buildings/prisms/trees that fall in water
+    // or within ~riverWidth/2 of the river polyline (REFERENCE_NOTES §8 —
+    // "leave a bank margin"). Sample-checked by the self-test below.
+    const waterPolys = layers.water; // Polygon[] = Ring[][], single-ring here
+    const inWater = (pt) => {
+      for (const poly of waterPolys) {
+        const outer = poly[0];
+        if (outer && pointInPolygon(pt, outer)) return true;
+      }
+      if (riverPolyline && pointToPolylineDist(pt, riverPolyline) <= halfRiver) return true;
+      return false;
+    };
+
+    const filterByCentroid = (polyList) => polyList.filter((poly) => {
+      const outer = poly[0];
+      if (!outer || outer.length < 3) return true;
+      const c = centroid(outer);
+      return !inWater(c);
+    });
+
+    layers.buildings = filterByCentroid(layers.buildings);
+    layers.prisms = filterByCentroid(layers.prisms);
+    layers.trees = layers.trees.filter((pt) => !inWater(pt));
+  }
 
   // Assemble meta --------------------------------------------------------------
   const fallbackBbox = worldBbox;
@@ -535,8 +820,8 @@ function allCoordsFinite(layers) {
 }
 
 const REQUIRED_LAYER_KEYS = [
-  'earth', 'districts', 'buildings', 'prisms', 'walls', 'squares',
-  'greens', 'fields', 'water', 'roads', 'rivers', 'planks', 'trees',
+  'earth', 'districts', 'blocks', 'buildings', 'prisms', 'walls', 'squares',
+  'greens', 'fields', 'water', 'roads', 'rivers', 'planks', 'trees', 'towers',
 ];
 
 /**
@@ -625,6 +910,85 @@ export function __selfTest() {
     check('wall:false produces an empty walls layer', false, e.message);
   }
 
+  // --- water: rivers/ponds/planks (additive — does not touch the checks above) --
+  let waterTown = null;
+  let waterElapsedMs = null;
+  try {
+    const tw0 = Date.now();
+    waterTown = generateTown({ seed: 'water-1', sizeM: 1000, water: true });
+    waterElapsedMs = Date.now() - tw0;
+    check('water:true town does not throw and has valid schema', REQUIRED_LAYER_KEYS.every((k) => Array.isArray(waterTown.layers[k])));
+  } catch (e) {
+    check('water:true town does not throw and has valid schema', false, e.message);
+  }
+
+  if (waterTown) {
+    const riverCount = waterTown.layers.rivers.length;
+    const waterCount = waterTown.layers.water.length;
+    const plankCount = waterTown.layers.planks.length;
+
+    check(
+      'water:true produces at least one rivers OR water entry',
+      riverCount > 0 || waterCount > 0,
+      `rivers=${riverCount}, water=${waterCount}`
+    );
+    check(
+      'water:true with a river placed produces at least one plank',
+      riverCount === 0 || plankCount > 0,
+      `rivers=${riverCount}, planks=${plankCount}`
+    );
+
+    // Sample-check: no building centroid lies inside any water polygon.
+    let buildingInWater = null;
+    for (const poly of waterTown.layers.buildings) {
+      const outer = poly[0];
+      if (!outer || outer.length < 3) continue;
+      const c = centroid(outer);
+      for (const wpoly of waterTown.layers.water) {
+        const wouter = wpoly[0];
+        if (wouter && pointInPolygon(c, wouter)) {
+          buildingInWater = c;
+          break;
+        }
+      }
+      if (buildingInWater) break;
+    }
+    check(
+      'water:true — no building centroid lies inside a water polygon',
+      buildingInWater === null,
+      `found building centroid ${JSON.stringify(buildingInWater)} inside water`
+    );
+
+    // Re-run the full battery of seeds across several water seeds to make
+    // sure nothing throws regardless of which random river/pond branch is
+    // taken (entry/exit edges, meander, pond-only, river-only, both).
+    let multiSeedOk = true;
+    let multiSeedErr = '';
+    for (const s of ['water-2', 'water-3', 'water-4', 'water-5', 'water-6']) {
+      try {
+        const t = generateTown({ seed: s, sizeM: 1000, water: true });
+        if (!REQUIRED_LAYER_KEYS.every((k) => Array.isArray(t.layers[k]))) {
+          multiSeedOk = false;
+          multiSeedErr = `seed ${s}: missing layer key`;
+          break;
+        }
+      } catch (e) {
+        multiSeedOk = false;
+        multiSeedErr = `seed ${s}: ${e.message}`;
+        break;
+      }
+    }
+    check('water:true across multiple seeds does not throw', multiSeedOk, multiSeedErr);
+
+    // water as a probability (number) should also not throw.
+    try {
+      const probTown = generateTown({ seed: 'water-prob-1', sizeM: 1000, water: 0.5 });
+      check('water as a 0..1 probability does not throw', REQUIRED_LAYER_KEYS.every((k) => Array.isArray(probTown.layers[k])));
+    } catch (e) {
+      check('water as a 0..1 probability does not throw', false, e.message);
+    }
+  }
+
   // --- summary -------------------------------------------------------------
   for (const line of results) console.log(line);
   console.log(`\n${pass} passed, ${fail} failed (${pass + fail} total)`);
@@ -632,6 +996,13 @@ export function __selfTest() {
   console.log('Per-layer counts (test town, seed="test-1", sizeM=1000):');
   for (const key of REQUIRED_LAYER_KEYS) {
     console.log(`  ${key}: ${town.layers[key].length}`);
+  }
+  if (waterTown) {
+    console.log(`\nGeneration time (water:true, sizeM=1000): ${waterElapsedMs} ms`);
+    console.log('Per-layer counts (water town, seed="water-1", sizeM=1000):');
+    for (const key of REQUIRED_LAYER_KEYS) {
+      console.log(`  ${key}: ${waterTown.layers[key].length}`);
+    }
   }
 
   return fail === 0;

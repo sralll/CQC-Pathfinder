@@ -24,27 +24,28 @@ export const WARD_TYPES = [
   {
     name: 'Craftsmen',
     weight: 40,
-    params: { minSqBase: 25, minSqRand: 80, gridChaosBase: 0.5, gridChaosRand: 0.2, sizeChaos: 0.6, emptyProb: 0.04 },
+    params: { minSqBase: 120, minSqRand: 140, gridChaosBase: 0.5, gridChaosRand: 0.2, sizeChaos: 0.5, emptyProb: 0.05 },
   },
   {
     name: 'Slum',
     weight: 11,
-    params: { minSqBase: 20, minSqRand: 30, gridChaosBase: 0.6, gridChaosRand: 0.4, sizeChaos: 0.8, emptyProb: 0.03 },
+    params: { minSqBase: 70, minSqRand: 90, gridChaosBase: 0.6, gridChaosRand: 0.4, sizeChaos: 0.6, emptyProb: 0.04 },
   },
   {
     name: 'Merchant',
     weight: 6,
-    params: { minSqBase: 60, minSqRand: 60, gridChaosBase: 0.5, gridChaosRand: 0.3, sizeChaos: 0.7, emptyProb: 0.15 },
+    params: { minSqBase: 170, minSqRand: 180, gridChaosBase: 0.5, gridChaosRand: 0.3, sizeChaos: 0.6, emptyProb: 0.15 },
   },
   {
     name: 'Market',
-    weight: 6,
+    weight: 0, // forced placement only (one central market) — a whole-ward
+               // plaza is too big to scatter several of around the town
     params: {},
   },
   {
     name: 'Patriciate',
     weight: 6,
-    params: { minSqBase: 90, minSqRand: 80, gridChaosBase: 0.3, gridChaosRand: 0.2, sizeChaos: 0.5, emptyProb: 0.10 },
+    params: { minSqBase: 230, minSqRand: 220, gridChaosBase: 0.3, gridChaosRand: 0.2, sizeChaos: 0.4, emptyProb: 0.12 },
   },
   {
     name: 'Cathedral',
@@ -54,12 +55,12 @@ export const WARD_TYPES = [
   {
     name: 'Administration',
     weight: 3,
-    params: { minSqBase: 90, minSqRand: 40, gridChaosBase: 0.2, gridChaosRand: 0.1, sizeChaos: 0.3, emptyProb: 0.1 },
+    params: { minSqBase: 240, minSqRand: 180, gridChaosBase: 0.2, gridChaosRand: 0.1, sizeChaos: 0.3, emptyProb: 0.1 },
   },
   {
     name: 'Military',
     weight: 3,
-    params: { minSqBase: 90, minSqRand: 40, gridChaosBase: 0.2, gridChaosRand: 0.1, sizeChaos: 0.3, emptyProb: 0.1 },
+    params: { minSqBase: 240, minSqRand: 180, gridChaosBase: 0.2, gridChaosRand: 0.1, sizeChaos: 0.3, emptyProb: 0.1 },
   },
   {
     name: 'Park',
@@ -79,7 +80,7 @@ export const WARD_TYPES = [
   {
     name: 'Generic',
     weight: 0, // countryside fallback
-    params: { minSqBase: 80, minSqRand: 120, gridChaosBase: 0.6, gridChaosRand: 0.3, sizeChaos: 0.7, emptyProb: 0.2 },
+    params: { minSqBase: 190, minSqRand: 210, gridChaosBase: 0.6, gridChaosRand: 0.3, sizeChaos: 0.6, emptyProb: 0.2 },
   },
 ];
 
@@ -120,7 +121,7 @@ const DEFAULTS = {
 // building footprints bottom out well above this (starhill.json's smallest
 // recorded building is ~70 sq m). Kept well below typical minSq values so
 // it only catches genuine degenerate artifacts, not legitimate small lots.
-const SLIVER_FLOOR_SQM = 6;
+const SLIVER_FLOOR_SQM = 40;
 
 // ---------------------------------------------------------------------------
 // getCityBlock()
@@ -248,8 +249,12 @@ export function createAlleys(blockRing, params, rng) {
     // ratio = (1 - 0.8*gridChaos)/2 + rnd()*0.8*gridChaos
     const ratio = (1 - 0.8 * gridChaos) / 2 + rng() * 0.8 * gridChaos;
 
-    // angle offset up to +/- pi/6 * gridChaos.
-    const angle = (rng() * 2 - 1) * (Math.PI / 6) * gridChaos;
+    // Cut nearly PERPENDICULAR to the longest edge so buildings come out
+    // mostly rectangular (Watabou-style), with only a tiny ±~2° jitter for a
+    // hand-drawn feel. Shape diversity comes from the irregular block outline
+    // (boundary lots stay trapezoidal) + the ratio jitter above, not from
+    // skewing every cut (which produced "shattered glass" quadrilaterals).
+    const angle = (rng() * 2 - 1) * (Math.PI / 90) * gridChaos;
 
     let halves = bisect(ring, le.index, ratio, angle, gap);
     if (halves.length === 2 && (!withinRootBbox(halves[0]) || !withinRootBbox(halves[1]))) {
@@ -361,7 +366,10 @@ function alleysParamsFor(wardType, rng) {
     gridChaos: p.gridChaosBase + p.gridChaosRand * r2,
     sizeChaos: p.sizeChaos,
     emptyProb: p.emptyProb,
-    gap: DEFAULTS.alley,
+    // gap 0 => adjacent buildings share walls (touch), forming terraced rows /
+    // a solid block; individual houses are still distinct via the renderer's
+    // light division seam. Streets exist only BETWEEN wards (getCityBlock inset).
+    gap: 0,
   };
 }
 
@@ -482,7 +490,7 @@ export function buildWard(patchRing, wardType, rng, params = {}) {
       const ring = block.length >= 3 ? block : patchRing;
       const a = Math.abs(area(ring));
       const c = centroid(ring);
-      const side = Math.min(Math.sqrt(Math.max(a, 1)) * 0.6, Math.sqrt(Math.max(a, 1)));
+      const side = Math.min(Math.sqrt(Math.max(a, 1)) * 0.5, 45);
       const half = side / 2;
       const rot = rng() * Math.PI * 0.25;
       out.buildings = [squareAt(c, half, rot)];
@@ -492,13 +500,13 @@ export function buildWard(patchRing, wardType, rng, params = {}) {
     case 'Cathedral': {
       const block = getCityBlock(patchRing, params);
       const ring = block.length >= 3 ? block : patchRing;
-      if (rng() < 0.4) {
-        const radius = 2 + rng() * 4;
-        const bands = ringPeel(ring, radius, DEFAULTS.alley);
-        out.buildings = bands.length > 0 ? [bands[0]] : [ring];
-      } else {
-        out.buildings = orthoBuilding(ring, 50, 0.8, rng);
-      }
+      const a = Math.abs(area(ring));
+      const c = centroid(ring);
+      // A single prominent landmark building (cathedral nave), capped so a
+      // large ward doesn't yield an enormous block; slightly elongated.
+      const half = Math.min(Math.sqrt(Math.max(a, 1)) * 0.32, 30);
+      const rot = rng() * Math.PI;
+      out.buildings = [rectAt(c, half * 1.5, half, rot)];
       return out;
     }
 
@@ -518,6 +526,16 @@ function squareAt(center, half, rot) {
   ];
   const cos = Math.cos(rot);
   const sin = Math.sin(rot);
+  return corners.map(([dx, dy]) => [
+    center[0] + dx * cos - dy * sin,
+    center[1] + dx * sin + dy * cos,
+  ]);
+}
+
+// Build a rotated rectangle ring centered at `center`, half-extents halfW/halfH.
+function rectAt(center, halfW, halfH, rot) {
+  const corners = [[-halfW, -halfH], [-halfW, halfH], [halfW, halfH], [halfW, -halfH]];
+  const cos = Math.cos(rot), sin = Math.sin(rot);
   return corners.map(([dx, dy]) => [
     center[0] + dx * cos - dy * sin,
     center[1] + dx * sin + dy * cos,
