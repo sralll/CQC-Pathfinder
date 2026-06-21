@@ -1,6 +1,6 @@
 [build]
 builder = "RAILPACK"
-buildCommand = "npm install --omit=dev && python manage.py collectstatic --clear --noinput"
+buildCommand = "npm ci --omit=dev && python manage.py collectstatic --clear --noinput"
 
 [deploy]
 preDeployCommand = "sh -c 'if [ -n \"${PROD_DB_PUBLIC_URL:-${PROD_DATABASE_URL:-}}\" ] || [ -n \"${SYNC_DIRECTION:-}\" ]; then echo \"Skipping web pre-deploy migrations for cron service.\"; elif command -v python >/dev/null 2>&1 && [ -f manage.py ] && [ -n \"${DATABASE_URL:-}\" ]; then python manage.py migrate --noinput; else echo \"Skipping Django migrations in pre-deploy.\"; fi'"

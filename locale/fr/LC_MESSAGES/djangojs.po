@@ -10,7 +10,7 @@ msgid ""
 msgstr "MIME-Version: 1.0\nContent-Type: text/plain; charset=UTF-8\nContent-Transfer-Encoding: 8bit\nLanguage: fr\nPlural-Forms: nplurals=2; plural=(n > 1);\n"
 
 msgid "+ automatic route"
-msgstr "+ itinéraire automatique"
+msgstr "+ choix automatique"
 
 msgid "A project with this name already exists."
 msgstr "Un projet portant ce nom existe déjà."
@@ -31,10 +31,10 @@ msgid "Area"
 msgstr "Surface"
 
 msgid "At Left/Right controls, either click the buttons directly or click the route at the expected spot on the map, or click the map after deciding to reveal the routes."
-msgstr "Aux postes Gauche/Droite, clique soit directement les boutons, soit l'itinéraire à l'endroit attendu sur la carte, ou clique sur la carte après ta décision pour afficher les itinéraires."
+msgstr "Aux postes Gauche/Droite, clique soit directement les boutons, soit le choix à l'endroit attendu sur la carte, ou clique sur la carte après ta décision pour afficher les choix."
 
 msgid "At Left/Right controls, either tap the buttons directly or tap the route at the expected spot on the map, or tap the map after deciding to reveal the routes."
-msgstr "Aux postes Gauche/Droite, touche soit directement les boutons, soit l'itinéraire à l'endroit attendu sur la carte, ou touche la carte après ta décision pour afficher les itinéraires."
+msgstr "Aux postes Gauche/Droite, touche soit directement les boutons, soit le choix à l'endroit attendu sur la carte, ou touche la carte après ta décision pour afficher les choix."
 
 msgid "Author"
 msgstr "Auteur"
@@ -151,7 +151,7 @@ msgid "Delete project — are you sure?"
 msgstr "Supprimer le projet — es-tu sûr ?"
 
 msgid "Delete route"
-msgstr "Supprimer l'itinéraire"
+msgstr "Supprimer le choix"
 
 msgid "Deleting failed."
 msgstr "La suppression a échoué."
@@ -190,10 +190,10 @@ msgid "Error: file has not been saved yet."
 msgstr "Erreur : le fichier n'a pas encore été enregistré."
 
 msgid "Even though you may have picked a route directly, this is what happens if you miss it or click where two routes overlap:"
-msgstr "Même si tu as peut-être cliqué directement sur un itinéraire, voici ce qui se passe si tu le manques ou si tu cliques là où deux itinéraires se chevauchent :"
+msgstr "Même si tu as peut-être cliqué directement sur un choix, voici ce qui se passe si tu le manques ou si tu cliques là où deux choix se chevauchent :"
 
 msgid "Even though you may have picked a route directly, this is what happens if you miss it or tap where two routes overlap:"
-msgstr "Même si tu as peut-être touché directement un itinéraire, voici ce qui se passe si tu le manques ou si tu touches là où deux itinéraires se chevauchent :"
+msgstr "Même si tu as peut-être touché directement un choix, voici ce qui se passe si tu le manques ou si tu touches là où deux choix se chevauchent :"
 
 msgid "Fastest"
 msgstr "Le plus rapide"
@@ -208,10 +208,10 @@ msgid "File too large (max. 50 MB)"
 msgstr "Fichier trop volumineux (max. 50 Mo)"
 
 msgid "Find the fastest route on the empty map. Click directly where your route goes to select it immediately. If the selection is unambiguous at the clicked spot, the route is selected right away."
-msgstr "Trouve l'itinéraire le plus rapide sur la carte vide. Clique directement à l'endroit où passe ton itinéraire pour le sélectionner immédiatement. Si la sélection est claire à l'endroit cliqué, l'itinéraire est choisi aussitôt."
+msgstr "Trouve le choix le plus rapide sur la carte vide. Clique directement à l'endroit où passe ton choix pour le sélectionner immédiatement. Si la sélection est claire à l'endroit cliqué, le choix est sélectionné aussitôt."
 
 msgid "Find the fastest route on the empty map. Tap directly where your route goes to select it immediately. If the selection is unambiguous at the tapped spot, the route is selected right away."
-msgstr "Trouve l'itinéraire le plus rapide sur la carte vide. Touche directement à l'endroit où passe ton itinéraire pour le sélectionner immédiatement. Si la sélection est claire à l'endroit touché, l'itinéraire est choisi aussitôt."
+msgstr "Trouve le choix le plus rapide sur la carte vide. Touche directement à l'endroit où passe ton choix pour le sélectionner immédiatement. Si la sélection est claire à l'endroit touché, le choix est sélectionné aussitôt."
 
 msgid "Generating mask…"
 msgstr "Génération du masque…"
@@ -223,13 +223,13 @@ msgid "Home"
 msgstr "Accueil"
 
 msgid "If no or several routes are drawn at the chosen spot, they are revealed (or via the Show routes button). But then you only have a short time to make your decision."
-msgstr "Si aucun ou plusieurs itinéraires sont dessinés à l'endroit choisi, ils sont révélés (ou via le bouton Afficher les itinéraires). Mais tu n'as alors que peu de temps pour prendre ta décision."
+msgstr "Si aucun ou plusieurs choix sont dessinés à l'endroit choisi, ils sont révélés (ou via le bouton Afficher les choix). Mais tu n'as alors que peu de temps pour prendre ta décision."
 
 msgid "Import"
 msgstr "Importer"
 
 msgid "Import routes"
-msgstr "Importer les itinéraires"
+msgstr "Importer les choix"
 
 msgid "Individual"
 msgstr "Individuel"
@@ -262,7 +262,7 @@ msgid "Modified"
 msgstr "Modifié"
 
 msgid "Multi-route"
-msgstr "Multi-itinéraire"
+msgstr "Multi-choix"
 
 msgid "Name"
 msgstr "Nom"
@@ -277,7 +277,7 @@ msgid "New project"
 msgstr "Nouveau projet"
 
 msgid "New route"
-msgstr "Nouvel itinéraire"
+msgstr "Nouveau choix"
 
 msgid "Next point replaces anchor 1"
 msgstr "Le point suivant remplace l'ancre 1"
@@ -409,31 +409,31 @@ msgid "Right"
 msgstr "Droite"
 
 msgid "Route"
-msgstr "Itinéraire"
+msgstr "Choix"
 
 msgid "Route choice"
-msgstr "Choix d'itinéraire"
+msgstr "Choix"
 
 msgid "Route created"
-msgstr "Itinéraire créé"
+msgstr "Choix créé"
 
 msgid "Route deleted"
-msgstr "Itinéraire supprimé"
+msgstr "Choix supprimé"
 
 msgid "Route edited"
-msgstr "Itinéraire modifié"
+msgstr "Choix modifié"
 
 msgid "Route search running — another route possible"
-msgstr "Recherche d'itinéraire en cours — un autre itinéraire est possible"
+msgstr "Recherche de choix en cours — un autre choix est possible"
 
 msgid "Route search running — no further route expected"
-msgstr "Recherche d'itinéraire en cours — aucun autre itinéraire attendu"
+msgstr "Recherche de choix en cours — aucun autre choix attendu"
 
 msgid "Route-choice error"
-msgstr "Erreur de choix d'itinéraire"
+msgstr "Erreur de choix"
 
 msgid "Routes"
-msgstr "Itinéraires"
+msgstr "Choix"
 
 msgid "Saved"
 msgstr "Enregistré"
@@ -451,7 +451,7 @@ msgid "Select people to see the progression"
 msgstr "Sélectionne des personnes pour voir l'évolution"
 
 msgid "Select route"
-msgstr "Sélectionner l'itinéraire"
+msgstr "Sélectionner le choix"
 
 msgid "Sensitivity"
 msgstr "Sensibilité"
@@ -460,7 +460,7 @@ msgid "Show all versions"
 msgstr "Afficher toutes les versions"
 
 msgid "Show routes"
-msgstr "Afficher les itinéraires"
+msgstr "Afficher les choix"
 
 msgid "Shrink"
 msgstr "Réduire"
@@ -490,7 +490,7 @@ msgid "The file is not valid JSON."
 msgstr "Le fichier n'est pas un JSON valide."
 
 msgid "The routes are shown on the map, but"
-msgstr "Les itinéraires sont affichés sur la carte, mais"
+msgstr "Les choix sont affichés sur la carte, mais"
 
 msgid "This file is not a valid project."
 msgstr "Ce fichier n'est pas un projet valide."
@@ -508,7 +508,7 @@ msgid "Time vs Ø:"
 msgstr "Temps vs Ø :"
 
 msgid "Total time of the route"
-msgstr "Temps total de l'itinéraire"
+msgstr "Temps total du choix"
 
 msgid "Training"
 msgstr "Entraînement"
@@ -541,7 +541,7 @@ msgid "You have 0.5s to decide; after that every extra second counts fivefold!"
 msgstr "Tu as 0,5 s pour décider ; ensuite chaque seconde supplémentaire compte cinq fois !"
 
 msgid "automatic route"
-msgstr "itinéraire automatique"
+msgstr "choix automatique"
 
 msgid "current streak"
 msgstr "série actuelle"
@@ -559,10 +559,10 @@ msgid "extra time due to stairs or other obstacles"
 msgstr "temps supplémentaire dû aux escaliers ou autres obstacles"
 
 msgid "fastest route chosen"
-msgstr "itinéraire le plus rapide choisi"
+msgstr "choix le plus rapide s?lectionn?"
 
 msgid "including a fivefold penalty for choosing the route too late"
-msgstr "y compris une pénalité quintuple pour un choix d'itinéraire trop tardif"
+msgstr "y compris une pénalité quintuple pour un choix trop tardif"
 
 msgid "is editing"
 msgstr "est en train de modifier"
@@ -571,7 +571,7 @@ msgid "is editing this file"
 msgstr "modifie ce fichier"
 
 msgid "longest streak of fastest routes"
-msgstr "plus longue série d'itinéraires les plus rapides"
+msgstr "plus longue série de choix les plus rapides"
 
 msgid "new"
 msgstr "nouveau"

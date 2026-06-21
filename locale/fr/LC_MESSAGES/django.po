@@ -13,7 +13,7 @@ msgid "%(name)s is currently editing this file."
 msgstr "%(name)s modifie ce fichier en ce moment."
 
 msgid "A negative sensitivity means your route decisions become more accurate when you think longer than the team average."
-msgstr "Une sensibilité négative signifie que tes choix d'itinéraire deviennent plus précis lorsque tu réfléchis plus longtemps que la moyenne du cadre."
+msgstr "Une sensibilité négative signifie que tes choix deviennent plus précis lorsque tu réfléchis plus longtemps que la moyenne du cadre."
 
 msgid "A positive sensitivity means you intuitively make the right decision and thinking longer does not help you compared to other athletes."
 msgstr "Une sensibilité positive signifie que tu prends intuitivement la bonne décision et que réfléchir plus longtemps ne t'aide pas par rapport aux autres athlètes."
@@ -46,13 +46,13 @@ msgid "Auto-Pathfind"
 msgstr "Auto-Pathfind"
 
 msgid "Auto-Pathfind routes"
-msgstr "Itinéraires Auto-Pathfind"
+msgstr "Choix Auto-Pathfind"
 
 msgid "Average decision time"
 msgstr "Temps de décision moyen"
 
 msgid "Average route-choice error"
-msgstr "Erreur moyenne de choix d'itinéraire"
+msgstr "Erreur moyenne de choix"
 
 msgid "Back to forum"
 msgstr "Retour au forum"
@@ -103,7 +103,7 @@ msgid "Controls"
 msgstr "Postes"
 
 msgid "Controls without routes"
-msgstr "Postes sans itinéraires"
+msgstr "Postes sans choix"
 
 msgid "Create new project (Ctrl+N)"
 msgstr "Créer un nouveau projet (Ctrl+N)"
@@ -349,10 +349,10 @@ msgid "Results are listed as training — no pressure and no late decision penal
 msgstr "Les résultats sont listés comme entraînement – aucune pression ni pénalité de temps pour les décisions tardives."
 
 msgid "Route choice"
-msgstr "Choix d'itinéraire"
+msgstr "Choix"
 
 msgid "Routes"
-msgstr "Itinéraires"
+msgstr "Choix"
 
 msgid "Save"
 msgstr "Enregistrer"
@@ -403,7 +403,7 @@ msgid "The error potential detection shows how strongly you react when a control
 msgstr "La détection du potentiel d'erreur montre à quel point tu réagis lorsqu'un poste présente un risque d'erreur important."
 
 msgid "The first attempt of a project in competition mode is listed in the ranking. The decision time and the extra time for non-ideal routes are measured."
-msgstr "La première tentative d'un projet en mode compétition apparaît dans le classement. Le temps de décision et le temps supplémentaire pour les itinéraires non optimaux sont mesurés."
+msgstr "La première tentative d'un projet en mode compétition apparaît dans le classement. Le temps de décision et le temps supplémentaire pour les choix non optimaux sont mesurés."
 
 msgid "This analysis should be taken with caution."
 msgstr "Cette analyse est à prendre avec précaution."
@@ -418,7 +418,7 @@ msgid "Time sensitivity in ms/s"
 msgstr "Sensibilité temporelle en ms/s"
 
 msgid "Time sensitivity shows how your route-choice errors relate to your decision times. It shows the deviation of your decision time from the team average per control, and how that affects your error rate."
-msgstr "La sensibilité temporelle montre comment tes erreurs de choix d'itinéraire sont liées à tes temps de décision. Elle indique l'écart de ton temps de décision par rapport à la moyenne du cadre par poste, et comment cela influence ton taux d'erreur."
+msgstr "La sensibilité temporelle montre comment tes erreurs de choix sont liées à tes temps de décision. Elle indique l'écart de ton temps de décision par rapport à la moyenne du cadre par poste, et comment cela influence ton taux d'erreur."
 
 msgid "Title"
 msgstr "Titre"
@@ -436,7 +436,7 @@ msgid "Total"
 msgstr "Total"
 
 msgid "Total time lost vs. the fastest route"
-msgstr "Temps total perdu par rapport à l'itinéraire le plus rapide"
+msgstr "Temps total perdu par rapport au choix le plus rapide"
 
 msgid "Training"
 msgstr "Entraînement"

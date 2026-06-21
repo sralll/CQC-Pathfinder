@@ -29,3 +29,5 @@ uvicorn.log
 changes.txt
 
 *.ocd
+
+reference/
