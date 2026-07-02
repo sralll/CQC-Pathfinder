@@ -6,6 +6,7 @@ urlpatterns = [
     path('', play_views.index, name='results_home'),
     path('infinity/', play_views.infinite_play, name='infinity_play'),
     path('infinity/submit-choice/', play_views.submit_infinite_choice, name='submit_infinity_choice'),
+    path('infinity/report-route/', play_views.report_infinite_route, name='report_infinity_route'),
     path('tutorial/', play_views.play_tutorial, name='play_tutorial'),
     path('tutorial-complete/', play_views.tutorial_complete, name='play_tutorial_complete'),
     path('<int:file_id>/<str:mode>/', play_views.play, name='play'),

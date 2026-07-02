@@ -1,3 +1,9 @@
+import { generateWards } from './infinite/citygen/core/CityGen.js';
+import {
+    buildRouteVisibilityGraph,
+    computeRouteOptions,
+} from './infinite/citygen/core/RoutePlanner.js';
+
 /* =========================================================
    INFINITE PLAY — procedurally-generated sprint route-choice
    problem. Uses IOF-style colours, compound obstacles,
@@ -13,11 +19,88 @@
 const VB_W      = 1200;
 const VB_H      = 800;
 const RUN_SPEED = 4.75;   // m/s reference flat-ground speed
-const PX_PER_M  = 6;      // viewBox px → metres
+const ALT_FLAT_EQUIV_M    = 4;
+const NOA_CLUSTER_WINDOW_M       = 20;
+const NOA_COUNTER_TURN_WINDOW_M  = 10;
+const NOA_ARTIFACT_WINDOW_M      = 5;
+const NOA_MIN_SEGMENT_M          = 1.5;
+const NOA_CORNER_DEG             = 90;
+const NOA_EPSILON_DEG            = 2;
+const NOA_MIN_EFFECT_DEG         = 45;
+const NOA_COUNTER_MIN_DEG        = 45;
+const ROUTE_RUNTIME_MAX_RELATIVE_GAP = 0.5;
 
 const ROUTE_COLORS  = ['#DD0011', '#CC6000'];   // play.js's first two route colours
 const CONTROL_COLOR = '#a033f0';                // standard orienteering pink/purple
-const R_CONTROL     = 25;                       // control circle radius
+const PLAY_CONTROL_RADIUS = 25;
+const PLAY_CONTROL_STROKE_WIDTH = 3;
+const PLAY_BLOCKING_STROKE_WIDTH = 5;
+const PLAY_CONTROL_WAVE_STROKE_WIDTH = 14;
+const FOUNTAIN_RADIUS = 0.5;
+const CONTROL_RADIUS = FOUNTAIN_RADIUS * 5;     // diameter is 5x the fountain diameter
+const CONTROL_DIAMETER_M = 25;
+const MAP_METRES_PER_UNIT = CONTROL_DIAMETER_M / (CONTROL_RADIUS * 2) / 2;
+const CONTROL_SIZE_RATIO = CONTROL_RADIUS / PLAY_CONTROL_RADIUS;
+const CONTROL_STROKE_WIDTH = PLAY_CONTROL_STROKE_WIDTH * CONTROL_SIZE_RATIO;
+const BLOCKING_STROKE_WIDTH = PLAY_BLOCKING_STROKE_WIDTH * CONTROL_SIZE_RATIO * 2;
+const CONTROL_WAVE_STROKE_WIDTH = PLAY_CONTROL_WAVE_STROKE_WIDTH * CONTROL_SIZE_RATIO;
+const CONTROL_OPACITY = 0.8;
+const ROUTE_BACKGROUND_STROKE_WIDTH = 2;
+const ROUTE_FOREGROUND_STROKE_WIDTH = 1;
+const ROUTE_DOT_SURFACE_RADIUS = 1;
+const ROUTE_HIT_WIDTH = 14;
+const ROUTE_STROKE_MULTIPLIER       = 2.5;
+const ROUTE_STROKE_SCALE_EXPONENT   = 0.33;
+const ROUTE_STROKE_MIN_CAMERA_SCALE = 0.05;
+const CITY_FIT_PAD  = 0.08;
+const GAP           = 8 * CONTROL_SIZE_RATIO;
+const MIN_ZOOM      = 0.2;
+const MAX_ZOOM      = 16;
+const CAMERA_PAD    = 10;
+const PAN_CLICK_SUPPRESS_MOVE = 6;
+const PAN_CLICK_SUPPRESS_MS   = 350;
+const STATS_TOGGLE_SUPPRESS_MS = 250;
+const ROUTE_PICK_MIN_DIST = 40;
+const ROUTE_PICK_MAX_DIST = 120;
+const ROUTE_PICK_OUTSIDE_WALL_MAX_DIST = 12;
+const ROUTE_PICK_POINT_POOL_SIZE = 64;
+const ROUTE_PICK_INTERIOR_BIAS_POWER = 3;
+const ROUTE_PICK_INTERIOR_BIAS_CAP = 12;
+const ROUTE_PICK_INTERIOR_BIAS_EPS = 0.25;
+const CITY_ROUTE_RETRIES = 240;
+const CITY_SCENE_ATTEMPTS = 12;
+const CONTROL_PAIRS_PER_MAP = 5;
+const CONTROL_PAIR_ENDPOINT_MIN_GAP = 15;
+const CITY_SETTINGS = {
+    plaza: true,
+    coast: true,
+    river: true,
+    walls: true,
+    streets: true,
+    outerRatio: 4,
+    roadDensity: 5,
+    gates: -1,
+};
+
+function routeStrokeWidthForZoom(baseWidth, scale = cam.scale) {
+    const safeScale = Math.max(scale || 1, ROUTE_STROKE_MIN_CAMERA_SCALE);
+    const visualWidth = baseWidth
+        * ROUTE_STROKE_MULTIPLIER
+        * Math.pow(safeScale, ROUTE_STROKE_SCALE_EXPONENT);
+    return visualWidth / safeScale;
+}
+
+function setAdaptiveRouteStroke(el, baseWidth) {
+    el.dataset.routeBaseStroke = String(baseWidth);
+    el.setAttribute('stroke-width', routeStrokeWidthForZoom(baseWidth));
+}
+
+function updateRouteStrokeWidths() {
+    document.querySelectorAll('#rp-route-layer [data-route-base-stroke]').forEach(el => {
+        const baseWidth = parseFloat(el.dataset.routeBaseStroke);
+        if (isFinite(baseWidth)) el.setAttribute('stroke-width', routeStrokeWidthForZoom(baseWidth));
+    });
+}
 
 // IOF/OCAD-like sprint palette, sampled from the reference SVG exports.
 const IOF = {
@@ -48,52 +131,496 @@ const SVG   = (id)  => document.getElementById(id);
 /* ── State ────────────────────────────────────────────── */
 
 let scene       = null;
-let phase       = 'choose';   // 'choose' | 'reveal'
+let phase       = 'transition';   // 'transition' | 'choose' | 'reveal'
 let choiceStartTime = null;
+let lastChoiceTimes = null;
+let statsVisible = false;
+let cam = { x: 0, y: 0, scale: 1, rot: 0 };
+let camBounds = null;
+let applyTransform = () => {};
+let suppressMapClickUntil = 0;
+let suppressStatsToggleUntil = 0;
+let currentBatch = null;
+let preparedBatch = null;
+let preparingBatch = false;
+let prepareTimer = null;
+let _batchWorker = null;
+let _batchWorkerMsgId = 1;
+let _pendingBatchPromise = null;
+let _prerenderTimer = null;
+let _renderTarget = null;
+let reportingRoute = false;
+let confirmingRouteReport = false;
 let _routeAnim  = null;
+let _camAnim    = null;
 let stats       = loadStats();
 
 document.addEventListener('DOMContentLoaded', () => {
     SVG('rp-svg').setAttribute('viewBox', `0 0 ${VB_W} ${VB_H}`);
-    SVG('rp-svg').setAttribute('preserveAspectRatio', 'xMidYMid meet');
+    SVG('rp-svg').setAttribute('preserveAspectRatio', 'none');
     document.body.classList.add('has-prior-results'); // grey progress bar (visual hint: no project)
-    next();
+    initCamera();
+    showMapSpinner();
+    requestAnimationFrame(() => requestAnimationFrame(next));
     initInput();
+    initStatsPanel();
+    initReportButton();
     renderHud();
 });
 
 function initInput() {
+    const container = SVG('map-container');
+
     document.addEventListener('keydown', e => {
         if (phase === 'choose') {
-            if (e.key === 'ArrowLeft')  pickSide(0);
-            if (e.key === 'ArrowRight') pickSide(1);
-        } else if (e.key === ' ' || e.key === 'Enter' || e.key === 'ArrowRight') {
+            if (e.key === 'ArrowLeft')  { e.preventDefault(); pickSide(0); }
+            if (e.key === 'ArrowRight') { e.preventDefault(); pickSide(1); }
+            return;
+        }
+        if (e.key === ' ' || e.key === 'Enter') {
             e.preventDefault();
-            next();
+            tryAdvance();
         }
     });
-    // Tap on map background advances after reveal
-    SVG('map-container').addEventListener('click', e => {
-        if (phase !== 'reveal') return;
-        if (e.target.closest('.play-btn')) return;
-        next();
+
+    // Match normal play mode: a single map click does not advance. A deliberate
+    // double-click / double-tap on the map advances after a choice is made.
+    let lastAdvanceClick = 0;
+    const DBL_WINDOW_MS = 400;
+    container.addEventListener('click', () => {
+        if (performance.now() < suppressMapClickUntil) return;
+        if (phase !== 'reveal') { lastAdvanceClick = 0; return; }
+        const now = performance.now();
+        if (now - lastAdvanceClick < DBL_WINDOW_MS) {
+            lastAdvanceClick = 0;
+            tryAdvance();
+        } else {
+            lastAdvanceClick = now;
+        }
     });
+
+    // Match normal mobile play mode: a right-to-left swipe advances.
+    let swipeStartX = null;
+    let swipeStartY = null;
+    const SWIPE_MIN_X = 60;
+    const SWIPE_MAX_Y = 40;
+
+    container.addEventListener('touchstart', e => {
+        if (e.touches.length !== 1) { swipeStartX = null; return; }
+        swipeStartX = e.touches[0].clientX;
+        swipeStartY = e.touches[0].clientY;
+    }, { passive: true });
+
+    container.addEventListener('touchend', e => {
+        if (swipeStartX === null || !e.changedTouches.length) return;
+        const dx = e.changedTouches[0].clientX - swipeStartX;
+        const dy = e.changedTouches[0].clientY - swipeStartY;
+        swipeStartX = null;
+        if (dx < -SWIPE_MIN_X && Math.abs(dy) < SWIPE_MAX_Y) {
+            tryAdvance();
+        }
+    }, { passive: true });
+}
+
+function tryAdvance() {
+    if (phase !== 'reveal') return false;
+    next();
+    return true;
+}
+
+function selectVisibleRouteFromMap(routeIdx) {
+    if (phase !== 'choose') return;
+    pickSide(routeIdx);
+}
+
+function routeChoiceSuppressedByPan() {
+    return performance.now() < suppressMapClickUntil;
+}
+
+function addRouteHitArea(layer, route, routeIdx) {
+    const hit = createRoutePolyline(route, {
+        stroke: 'transparent',
+        strokeWidth: ROUTE_HIT_WIDTH,
+        interactive: true,
+    });
+    if (!hit) return;
+    hit.dataset.routeIdx = routeIdx;
+    hit.style.cursor = 'default';
+    hit.addEventListener('click', e => {
+        e.stopPropagation();
+        if (routeChoiceSuppressedByPan()) return;
+        selectVisibleRouteFromMap(routeIdx);
+    });
+    layer.appendChild(hit);
+}
+
+function suppressMapClickForPan() {
+    suppressMapClickUntil = performance.now() + PAN_CLICK_SUPPRESS_MS;
+}
+
+function clampCam() {
+    if (!camBounds) return;
+    const container = SVG('map-container');
+    const cw = container.clientWidth;
+    const ch = container.clientHeight;
+
+    cam.scale = Math.min(Math.max(cam.scale, camBounds.minScale), MAX_ZOOM);
+    const s = cam.scale;
+
+    const xHi = -camBounds.minRX * s;
+    const xLo =  cw - camBounds.maxRX * s;
+    cam.x = (xLo > xHi) ? (xLo + xHi) / 2 : Math.min(xHi, Math.max(xLo, cam.x));
+
+    const yHi = -camBounds.minRY * s;
+    const yLo =  ch - camBounds.maxRY * s;
+    cam.y = (yLo > yHi) ? (yLo + yHi) / 2 : Math.min(yHi, Math.max(yLo, cam.y));
+}
+
+function initCamera() {
+    const container = SVG('map-container');
+    const camera = SVG('camera');
+    let drag = null;
+    let lastPinchDist = null;
+
+    applyTransform = () => {
+        if (!isFinite(cam.x) || !isFinite(cam.y) || !isFinite(cam.scale) || !isFinite(cam.rot)) return;
+        camera.style.transform =
+            `translate(${cam.x}px, ${cam.y}px) rotate(${cam.rot}deg) scale(${cam.scale})`;
+        updateRouteStrokeWidths();
+    };
+
+    container.addEventListener('mousedown', e => {
+        if (e.button !== 0) return;
+        drag = {
+            startX: e.clientX - cam.x,
+            startY: e.clientY - cam.y,
+            downX: e.clientX,
+            downY: e.clientY,
+            moved: false,
+        };
+        container.classList.add('panning');
+    });
+
+    window.addEventListener('mousemove', e => {
+        if (!drag) return;
+        if (Math.abs(e.clientX - drag.downX) > PAN_CLICK_SUPPRESS_MOVE ||
+            Math.abs(e.clientY - drag.downY) > PAN_CLICK_SUPPRESS_MOVE) {
+            drag.moved = true;
+        }
+        cam.x = e.clientX - drag.startX;
+        cam.y = e.clientY - drag.startY;
+        clampCam();
+        applyTransform();
+    });
+
+    window.addEventListener('mouseup', () => {
+        if (drag?.moved) suppressMapClickForPan();
+        drag = null;
+        container.classList.remove('panning');
+    });
+
+    container.addEventListener('wheel', e => {
+        e.preventDefault();
+        const rawFactor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
+        const newScale = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, cam.scale * rawFactor));
+        const factor = newScale / cam.scale;
+        const rect = container.getBoundingClientRect();
+        const mx = e.clientX - rect.left;
+        const my = e.clientY - rect.top;
+        cam.x = mx - (mx - cam.x) * factor;
+        cam.y = my - (my - cam.y) * factor;
+        cam.scale = newScale;
+        clampCam();
+        applyTransform();
+    }, { passive: false });
+
+    container.addEventListener('touchstart', e => {
+        if (e.touches.length === 1) {
+            drag = {
+                startX: e.touches[0].clientX - cam.x,
+                startY: e.touches[0].clientY - cam.y,
+                downX: e.touches[0].clientX,
+                downY: e.touches[0].clientY,
+                moved: false,
+            };
+            lastPinchDist = null;
+        } else if (e.touches.length === 2) {
+            drag = null;
+            lastPinchDist = pinchDist(e.touches);
+            suppressMapClickForPan();
+        }
+    }, { passive: true });
+
+    container.addEventListener('touchmove', e => {
+        e.preventDefault();
+        if (e.touches.length === 1 && drag) {
+            if (Math.abs(e.touches[0].clientX - drag.downX) > PAN_CLICK_SUPPRESS_MOVE ||
+                Math.abs(e.touches[0].clientY - drag.downY) > PAN_CLICK_SUPPRESS_MOVE) {
+                drag.moved = true;
+            }
+            cam.x = e.touches[0].clientX - drag.startX;
+            cam.y = e.touches[0].clientY - drag.startY;
+        } else if (e.touches.length === 2 && lastPinchDist !== null) {
+            suppressMapClickForPan();
+            const dist = pinchDist(e.touches);
+            const newScale = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, cam.scale * dist / lastPinchDist));
+            const factor = newScale / cam.scale;
+            const mx = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+            const my = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+            const rect = container.getBoundingClientRect();
+            const cx = mx - rect.left;
+            const cy = my - rect.top;
+            cam.x = cx - (cx - cam.x) * factor;
+            cam.y = cy - (cy - cam.y) * factor;
+            cam.scale = newScale;
+            lastPinchDist = dist;
+        }
+        clampCam();
+        applyTransform();
+    }, { passive: false });
+
+    container.addEventListener('touchend', e => {
+        if (e.touches.length < 2) lastPinchDist = null;
+        if (e.touches.length === 0) {
+            if (drag?.moved) suppressMapClickForPan();
+            drag = null;
+            container.classList.remove('panning');
+        }
+    }, { passive: true });
+}
+
+function pinchDist(touches) {
+    const dx = touches[0].clientX - touches[1].clientX;
+    const dy = touches[0].clientY - touches[1].clientY;
+    return Math.hypot(dx, dy);
+}
+
+/* =========================================================
+   MAP SPINNER
+========================================================= */
+
+function showMapSpinner() {
+    hideMapSpinner();
+
+    const container = SVG('map-container');
+    if (!container) return;
+
+    const overlay = document.createElementNS(NS, 'svg');
+    overlay.id = 'rp-spinner-overlay';
+    overlay.setAttribute('overflow', 'visible');
+    overlay.style.position = 'absolute';
+    overlay.style.inset = '0';
+    overlay.style.width = '100%';
+    overlay.style.height = '100%';
+    overlay.style.pointerEvents = 'none';
+    overlay.style.zIndex = '5';
+
+    const spinner = document.createElementNS(NS, 'g');
+    spinner.id = 'map-spinner';
+
+    const radii  = [64, 84, 104];
+    const speeds = [1, 0.65, 0.38];
+    const colors = ['#444', '#666', '#999'];
+    const arcs   = [];
+
+    const rect = container.getBoundingClientRect();
+    const cx   = rect.width / 2;
+    const cy   = rect.height / 2;
+
+    const bg = document.createElementNS(NS, 'rect');
+    bg.setAttribute('x',      -radii[2] - 12);
+    bg.setAttribute('y',      -radii[2] - 12);
+    bg.setAttribute('width',   2 * radii[2] + 24);
+    bg.setAttribute('height',  2 * radii[2] + 24);
+    bg.setAttribute('rx',      radii[2] + 10);
+    bg.setAttribute('fill',   '#2a2a2a');
+    spinner.appendChild(bg);
+
+    radii.forEach((r, i) => {
+        const circle = document.createElementNS(NS, 'circle');
+        circle.setAttribute('cx', 0);
+        circle.setAttribute('cy', 0);
+        circle.setAttribute('r', r);
+        circle.setAttribute('fill', 'none');
+        circle.setAttribute('stroke', colors[i]);
+        circle.setAttribute('stroke-width', '5');
+        circle.setAttribute('stroke-linecap', 'round');
+        circle.setAttribute('vector-effect', 'non-scaling-stroke');
+        const circ = 2 * Math.PI * r;
+        circle.setAttribute('stroke-dasharray', `${circ * 0.35} ${circ * 0.65}`);
+        arcs.push({ el: circle, speed: speeds[i], offset: i * 0.8 });
+        spinner.appendChild(circle);
+    });
+
+    spinner.setAttribute('transform', `translate(${cx}, ${cy})`);
+    overlay.appendChild(spinner);
+    container.appendChild(overlay);
+
+    let start = null;
+    function animate(ts) {
+        if (!start) start = ts;
+        const elapsed = (ts - start) / 1000;
+        arcs.forEach(arc => {
+            arc.el.setAttribute(
+                'transform',
+                `rotate(${(elapsed * arc.speed * 360 + arc.offset * 60) % 360})`
+            );
+        });
+        if (document.getElementById('map-spinner')) requestAnimationFrame(animate);
+    }
+    requestAnimationFrame(animate);
+}
+
+function hideMapSpinner() {
+    document.getElementById('rp-spinner-overlay')?.remove();
 }
 
 /* =========================================================
    PROCEDURAL GENERATION
 ========================================================= */
 
-function next() {
-    phase = 'choose';
+async function next() {
+    phase = 'transition';
     if (_routeAnim) { cancelAnimationFrame(_routeAnim); _routeAnim = null; }
-    scene = generateScene();
-    renderScene();
+    if (_camAnim) { cancelAnimationFrame(_camAnim); _camAnim = null; }
+    hideStatsPanel();
+    lastChoiceTimes = null;
+    suppressStatsToggleUntil = 0;
+    camBounds = null;
+    updateReportButton();
+    const ct = SVG('rp-choice-time');
+    if (ct) ct.textContent = '';
+    const bar = SVG('play-btn-bar');
+    if (bar) bar.innerHTML = '';
+    const startTime = performance.now();
+    showMapSpinner();
+    try {
+        scene = await takeNextScene();
+    } catch (err) {
+        console.error('failed to load infinite map:', err);
+        window.setTimeout(next, 500);
+        return;
+    }
+    hideMapSpinner();
+    renderScene({
+        cameraDuration: 1000,
+        onCameraReady: beginChoice,
+    });
+    const elapsed = performance.now() - startTime;
+    console.log(`infinite map swap took ${elapsed.toFixed(1)} ms`);
+    scheduleUpcomingScenePrerender();
+    scheduleBatchPreparation();
+}
+
+function beginChoice() {
+    if (!scene) return;
+    phase = 'choose';
+    renderChoiceButtons();
+    updateReportButton();
+    choiceStartTime = performance.now();
     // Clear the centre choice-time slot — fresh problem, no time to show yet
     const ct = SVG('rp-choice-time');
     if (ct) ct.textContent = '';
-    renderChoiceButtons();
-    choiceStartTime = performance.now();
+}
+
+async function takeNextScene() {
+    if (!currentBatch || currentBatch.index >= currentBatch.scenes.length) {
+        currentBatch = preparedBatch || await generateSceneBatchAsync();
+        preparedBatch = null;
+        currentBatch.index = 0;
+    }
+    const sceneForPair = currentBatch.scenes[currentBatch.index];
+    sceneForPair.batch = currentBatch;
+    sceneForPair.batchIndex = currentBatch.index;
+    currentBatch.index++;
+    return sceneForPair;
+}
+
+function scheduleBatchPreparation() {
+    if (preparedBatch || preparingBatch || prepareTimer) return;
+
+    const run = async () => {
+        prepareTimer = null;
+        if (preparedBatch || preparingBatch) return;
+        preparingBatch = true;
+        const startTime = performance.now();
+        try {
+            const batch = await generateSceneBatchAsync();
+            if (batch !== currentBatch) preparedBatch = batch;
+            console.log(`prepared next infinite map in ${(performance.now() - startTime).toFixed(1)} ms`);
+            scheduleScenePrerender(preparedBatch?.scenes?.[0]);
+        } catch (err) {
+            console.warn('failed to prepare next infinite map:', err);
+        } finally {
+            preparingBatch = false;
+            if (!preparedBatch) window.setTimeout(scheduleBatchPreparation, 500);
+        }
+    };
+
+    if ('requestIdleCallback' in window) {
+        prepareTimer = window.requestIdleCallback(run, { timeout: 1000 });
+    } else {
+        prepareTimer = window.setTimeout(run, 80);
+    }
+}
+
+function ensureBatchWorker() {
+    if (_batchWorker) return _batchWorker;
+    if (!window.Worker) return null;
+    try {
+        _batchWorker = new Worker(new URL('./infinite/infinite_batch_worker.js', import.meta.url), { type: 'module' });
+        _batchWorker.addEventListener('error', (event) => {
+            console.warn('infinite batch worker error:', event.message || event);
+            try { _batchWorker?.terminate(); } catch (_) {}
+            _batchWorker = null;
+        });
+        return _batchWorker;
+    } catch (err) {
+        console.warn('infinite batch worker unavailable:', err);
+        _batchWorker = null;
+        return null;
+    }
+}
+
+function generateSceneBatchAsync(pairCount = CONTROL_PAIRS_PER_MAP) {
+    if (_pendingBatchPromise) return _pendingBatchPromise;
+    const worker = ensureBatchWorker();
+    if (!worker) return Promise.resolve(generateSceneBatch(pairCount));
+
+    const msgId = _batchWorkerMsgId++;
+    _pendingBatchPromise = new Promise((resolve, reject) => {
+        const cleanup = () => {
+            worker.removeEventListener('message', onMessage);
+            worker.removeEventListener('error', onWorkerError);
+            worker.removeEventListener('messageerror', onMessageError);
+            _pendingBatchPromise = null;
+        };
+        const onMessage = (event) => {
+            const msg = event.data;
+            if (!msg || msg.type !== 'batch' || msg.msgId !== msgId) return;
+            cleanup();
+            if (msg.error) reject(new Error(msg.error));
+            else resolve(msg.batch);
+        };
+        const onMessageError = () => {
+            cleanup();
+            reject(new Error('batch worker message error'));
+        };
+        const onWorkerError = (event) => {
+            cleanup();
+            reject(new Error(event.message || 'batch worker error'));
+        };
+        worker.addEventListener('message', onMessage);
+        worker.addEventListener('error', onWorkerError);
+        worker.addEventListener('messageerror', onMessageError);
+        worker.postMessage({ type: 'generateBatch', msgId, pairCount });
+    }).catch((err) => {
+        console.warn('falling back to main-thread infinite generation:', err);
+        try { _batchWorker?.terminate(); } catch (_) {}
+        _batchWorker = null;
+        return generateSceneBatch(pairCount);
+    });
+    return _pendingBatchPromise;
 }
 
 function generateExperimentalScene() {
@@ -698,44 +1225,496 @@ function randomEdgePoint() {
 ========================================================= */
 
 function generateScene() {
-    let best = null;
-    let bestDiff = -1;
-    for (let i = 0; i < 10; i++) {
-        const candidate = buildSceneCandidate();
-        const diff = Math.abs(candidate.routes[0].time - candidate.routes[1].time);
-        if (diff > bestDiff) {
-            best = candidate;
-            bestDiff = diff;
+    return generateSceneBatch(1).scenes[0];
+}
+
+function generateSceneBatch(pairCount = CONTROL_PAIRS_PER_MAP) {
+    let lastError = null;
+    for (let i = 0; i < CITY_SCENE_ATTEMPTS; i++) {
+        try {
+            return buildSceneBatchCandidate(pairCount);
+        } catch (err) {
+            lastError = err;
+            console.warn('infinite city batch candidate failed:', err);
         }
-        if (diff >= 0.55) return candidate;
+    }
+
+    throw lastError || new Error('No routable city batch generated');
+}
+
+function buildSceneCandidate() {
+    return buildSceneBatchCandidate(1).scenes[0];
+}
+
+function buildSceneBatchCandidate(pairCount = CONTROL_PAIRS_PER_MAP) {
+    const seed = Math.floor(Math.random() * 2147483646) + 1;
+    const settings = {
+        ...CITY_SETTINGS,
+        seed,
+        size: randInt(25, 40),
+        river: Math.random() >= 0.45,
+        coast: Math.random() >= 0.45,
+        walls: Math.random() >= 0.20,
+    };
+
+    const generationStart = performance.now();
+    const city = generateWards(settings);
+    const generationMs = performance.now() - generationStart;
+
+    const graphStart = performance.now();
+    const visibilityGraph = buildRouteVisibilityGraph(city);
+    const graphMs = performance.now() - graphStart;
+
+    const candidates = (city.wards || [])
+        .filter((w) => !w.water && w.polygon && w.polygon.length >= 3)
+        .map((ward) => ({ ward, bbox: routePickWardBbox(ward) }));
+    if (candidates.length === 0) throw new Error('Generated city has no traversable wards');
+
+    const rejectionCounts = { distinct: 0, distance: 0, side: 0, routeside: 0, timeout: 0 };
+    const scenes = [];
+    const usedEndpoints = [];
+    const maxRetries = CITY_ROUTE_RETRIES * pairCount;
+
+    for (let retries = 0; retries < maxRetries && scenes.length < pairCount; retries++) {
+        const pair = routePickPair(candidates, visibilityGraph, city.wall);
+        if (!pair) {
+            rejectionCounts.distance++;
+            continue;
+        }
+        if (routePairTooCloseToUsed(pair, usedEndpoints)) {
+            rejectionCounts.distance++;
+            continue;
+        }
+        const routeResult = computeRouteOptions(pair.start, pair.goal, visibilityGraph);
+        const runtimeResult = selectRuntimeRouteOptions(pair, routeResult);
+        if (runtimeResult.ok) {
+            const scene = buildSceneFromRouteResult(city, visibilityGraph, pair, runtimeResult);
+            scene.meta = {
+                seed,
+                settings,
+                generationMs,
+                graphMs,
+                retries,
+                pairIndex: scenes.length,
+                routeMs: routeResult.dt,
+                rejectionCounts,
+            };
+            scenes.push(scene);
+            usedEndpoints.push(pair.start, pair.goal);
+            continue;
+        }
+        const rejectionReason = runtimeResult.reason || (runtimeResult.timeout ? 'timeout' : 'side');
+        if (rejectionReason === 'timeout') rejectionCounts.timeout++;
+        else if (rejectionReason === 'distinct') rejectionCounts.distinct++;
+        else if (rejectionReason === 'runtime') rejectionCounts.distance++;
+        else if (rejectionReason === 'routeside') rejectionCounts.routeside++;
+        else rejectionCounts.side++;
+    }
+
+    if (scenes.length < pairCount)
+        throw new Error(`Only found ${scenes.length}/${pairCount} route pairs for seed ${seed}`);
+
+    const batch = {
+        kind: 'city-batch',
+        city,
+        visibilityGraph,
+        scenes,
+        index: 0,
+        meta: {
+            seed,
+            settings,
+            generationMs,
+            graphMs,
+            routeCount: scenes.length,
+            rejectionCounts,
+        },
+    };
+    scenes.forEach((batchScene, batchIndex) => {
+        batchScene.batch = batch;
+        batchScene.batchIndex = batchIndex;
+    });
+    return batch;
+}
+
+function routePairTooCloseToUsed(pair, usedEndpoints) {
+    for (const endpoint of usedEndpoints) {
+        if (Math.hypot(pair.start.x - endpoint.x, pair.start.y - endpoint.y) < CONTROL_PAIR_ENDPOINT_MIN_GAP)
+            return true;
+        if (Math.hypot(pair.goal.x - endpoint.x, pair.goal.y - endpoint.y) < CONTROL_PAIR_ENDPOINT_MIN_GAP)
+            return true;
+    }
+    return false;
+}
+
+function mapMetresPerUnit() {
+    return MAP_METRES_PER_UNIT;
+}
+
+function calcRuntimeRouteLength(path) {
+    if (!path || path.length < 2) return 0;
+    const metresPerUnit = mapMetresPerUnit();
+    let total = 0;
+    for (let i = 1; i < path.length; i++) {
+        const dx = path[i].x - path[i - 1].x;
+        const dy = path[i].y - path[i - 1].y;
+        total += Math.hypot(dx, dy) * metresPerUnit;
+    }
+    return Math.round(total);
+}
+
+function normalizeTurnRad(angle) {
+    while (angle > Math.PI) angle -= 2 * Math.PI;
+    while (angle < -Math.PI) angle += 2 * Math.PI;
+    return angle;
+}
+
+function roundNoA(value) {
+    return Math.round(value * 10) / 10;
+}
+
+function simplifiedNoAPoints(points) {
+    const minStep = NOA_MIN_SEGMENT_M / mapMetresPerUnit();
+    const out = [];
+    for (const p of points || []) {
+        if (!Number.isFinite(p?.x) || !Number.isFinite(p?.y)) continue;
+        const current = { x: p.x, y: p.y };
+        const prev = out[out.length - 1];
+        if (!prev || Math.hypot(current.x - prev.x, current.y - prev.y) >= minStep) {
+            out.push(current);
+        }
+    }
+    const last = points?.[points.length - 1];
+    if (out.length && last && Number.isFinite(last.x) && Number.isFinite(last.y)) {
+        out[out.length - 1] = { x: last.x, y: last.y };
+    }
+    return out;
+}
+
+function calcRuntimeRouteNoA(path) {
+    const rP = simplifiedNoAPoints(path);
+    if (!rP || rP.length < 3) return 0;
+
+    const epsRad = NOA_EPSILON_DEG * Math.PI / 180;
+    const metresPerUnit = mapMetresPerUnit();
+    const cum = [0];
+    const headings = [];
+    const segLen = [];
+    for (let i = 1; i < rP.length; i++) {
+        const dx = rP[i].x - rP[i - 1].x;
+        const dy = rP[i].y - rP[i - 1].y;
+        const len = Math.hypot(dx, dy) * metresPerUnit;
+        cum.push(cum[i - 1] + len);
+        segLen.push(len);
+        headings.push((dx === 0 && dy === 0) ? null : Math.atan2(dy, dx));
+    }
+
+    const turns = [];
+    for (let i = 1; i < headings.length; i++) {
+        const h1 = headings[i - 1], h2 = headings[i];
+        if (h1 === null || h2 === null) continue;
+        const signed = normalizeTurnRad(h2 - h1);
+        const abs = Math.abs(signed);
+        if (abs < epsRad) continue;
+        if (Math.min(segLen[i - 1], segLen[i]) < NOA_MIN_SEGMENT_M) continue;
+        turns.push({ pos: cum[i], signedDeg: signed * 180 / Math.PI, absDeg: abs * 180 / Math.PI });
+    }
+
+    let noA = 0;
+    for (let i = 0; i < turns.length;) {
+        const cluster = [turns[i++]];
+        while (i < turns.length && turns[i].pos - cluster[0].pos <= NOA_CLUSTER_WINDOW_M) {
+            cluster.push(turns[i++]);
+        }
+
+        const span = cluster[cluster.length - 1].pos - cluster[0].pos;
+        const totalAbs = cluster.reduce((sum, turn) => sum + turn.absDeg, 0);
+        const net = Math.abs(cluster.reduce((sum, turn) => sum + turn.signedDeg, 0));
+        const maxTurn = Math.max(...cluster.map(turn => turn.absDeg));
+        if (span <= NOA_ARTIFACT_WINDOW_M && net < NOA_MIN_EFFECT_DEG && totalAbs >= NOA_CORNER_DEG) continue;
+
+        const directionDeg = Math.max(maxTurn, net);
+        if (directionDeg >= NOA_MIN_EFFECT_DEG || totalAbs >= NOA_CORNER_DEG) {
+            noA += directionDeg / NOA_CORNER_DEG;
+        }
+
+        let counterDeg = 0;
+        for (let j = 0; j < cluster.length; j++) {
+            let localAbs = 0;
+            let localNet = 0;
+            for (let k = j; k < cluster.length; k++) {
+                if (cluster[k].pos - cluster[j].pos > NOA_COUNTER_TURN_WINDOW_M) break;
+                localAbs += cluster[k].absDeg;
+                localNet += cluster[k].signedDeg;
+            }
+            counterDeg = Math.max(counterDeg, localAbs - Math.abs(localNet));
+        }
+        if (counterDeg >= NOA_COUNTER_MIN_DEG) {
+            noA += counterDeg / (2 * NOA_CORNER_DEG);
+        }
+    }
+    return roundNoA(noA);
+}
+
+function calcRuntimeRouteTime(length, noA, elevation = 0, obstacle = 0) {
+    if (!length) return null;
+    const elev = Number.isFinite(Number(elevation)) ? Number(elevation) : 0;
+    const obstaclePenalty = Number.isFinite(Number(obstacle)) ? Number(obstacle) : 0;
+    const flatEquiv = length + ALT_FLAT_EQUIV_M * elev;
+    return flatEquiv / RUN_SPEED + (noA || 0) + obstaclePenalty;
+}
+
+function enrichRuntimePath(pathRecord) {
+    const length = calcRuntimeRouteLength(pathRecord.path);
+    const noA = calcRuntimeRouteNoA(pathRecord.path);
+    const elevation = 0;
+    const obstacle = 0;
+    return {
+        ...pathRecord,
+        length,
+        noA,
+        elevation,
+        obstacle,
+        run_time: calcRuntimeRouteTime(length, noA, elevation, obstacle),
+    };
+}
+
+function runtimeSlotsFor(paths, field) {
+    const slots = [null, null, null, null];
+    for (const p of paths || []) slots[p.routeIndex - 1] = p[field] ?? null;
+    return slots;
+}
+
+function selectRuntimeRouteOptions(pair, routeResult) {
+    const paths = (routeResult.paths || []).map(enrichRuntimePath);
+    const base = {
+        ...routeResult,
+        paths,
+        selected: null,
+        routeIndexes: [],
+        routeLengthSlots: runtimeSlotsFor(paths, 'length'),
+        routeSideSlots: runtimeSlotsFor(paths, 'side'),
+        routeSideLabelSlots: runtimeSlotsFor(paths, 'sideLabel'),
+        routeRuntimeSlots: runtimeSlotsFor(paths, 'run_time'),
+        routeNoASlots: runtimeSlotsFor(paths, 'noA'),
+        routeElevationSlots: runtimeSlotsFor(paths, 'elevation'),
+        blockFastest: false,
+        ok: false,
+    };
+
+    if (paths.length === 0) return { ...base, reason: routeResult.reason || 'timeout' };
+    if (paths.length === 1) return { ...base, reason: 'distinct', routeIndexes: [paths[0].routeIndex] };
+
+    const sgDx = pair.goal.x - pair.start.x;
+    const sgDy = pair.goal.y - pair.start.y;
+    const sgLen = Math.hypot(sgDx, sgDy) || 1;
+    for (const p of paths) {
+        if (Number.isFinite(p.side)) continue;
+        let sum = 0;
+        for (const pt of p.path) sum += sgDx * (pt.y - pair.start.y) - sgDy * (pt.x - pair.start.x);
+        p.side = (sum / p.path.length) / sgLen;
+        p.sideLabel = p.side > 0 ? 'R' : p.side < 0 ? 'L' : 'C';
+    }
+
+    paths.sort((a, b) => (a.run_time ?? Infinity) - (b.run_time ?? Infinity));
+    for (let i = 0; i < paths.length; i++) paths[i].routeIndex = i + 1;
+
+    const pairs = [];
+    for (let i = 0; i < paths.length; i++) {
+        for (let j = i + 1; j < paths.length; j++) {
+            const a = paths[i], b = paths[j];
+            if (!a.run_time || !b.run_time) continue;
+            const faster = Math.min(a.run_time, b.run_time);
+            const slower = Math.max(a.run_time, b.run_time);
+            const sideGap = Math.abs(a.side - b.side);
+            pairs.push({
+                i,
+                j,
+                relativeGap: faster > 0 ? (slower - faster) / faster : Infinity,
+                absGap: slower - faster,
+                total: a.run_time + b.run_time,
+                sideGap,
+            });
+        }
+    }
+    pairs.sort((a, b) => a.relativeGap - b.relativeGap || a.absGap - b.absGap || a.total - b.total);
+
+    const sideValid = pairs.filter((p) => {
+        const selected = [paths[p.i], paths[p.j]];
+        return p.sideGap >= 10 && selected[0].side * selected[1].side < 0;
+    });
+    const bestPair = sideValid[0];
+    if (!bestPair) return { ...base, reason: 'side' };
+
+    const selected = [paths[bestPair.i], paths[bestPair.j]];
+    const routeSideMin = bestPair.sideGap / 4;
+    if (selected.some((p) => Math.abs(p.side) < routeSideMin))
+        return { ...base, reason: 'routeside' };
+
+    if (bestPair.relativeGap > ROUTE_RUNTIME_MAX_RELATIVE_GAP)
+        return { ...base, reason: 'runtime' };
+
+    const selectedFastest = Math.min(selected[0].run_time, selected[1].run_time);
+    const skippedBarriers = paths
+        .filter((p) => p.run_time < selectedFastest && p.barrier)
+        .map((p) => p.barrier);
+
+    return {
+        ...base,
+        ok: true,
+        reason: 'ok',
+        selected,
+        routeIndexes: selected.map((p) => p.routeIndex),
+        routeLengthSlots: runtimeSlotsFor(paths, 'length'),
+        routeSideSlots: runtimeSlotsFor(paths, 'side'),
+        routeSideLabelSlots: runtimeSlotsFor(paths, 'sideLabel'),
+        routeRuntimeSlots: runtimeSlotsFor(paths, 'run_time'),
+        routeNoASlots: runtimeSlotsFor(paths, 'noA'),
+        routeElevationSlots: runtimeSlotsFor(paths, 'elevation'),
+        skippedBarriers,
+        blockFastest: skippedBarriers.length > 0,
+    };
+}
+
+function buildSceneFromRouteResult(city, visibilityGraph, pair, routeResult) {
+    const selected = routeResult.selected
+        .slice()
+        .sort((a, b) => (a.side || 0) - (b.side || 0));
+
+    const routes = selected.map((r) => {
+        return {
+            points: r.path,
+            length: r.length,
+            noA: r.noA,
+            elevation: r.elevation,
+            obstacle: r.obstacle,
+            run_time: r.run_time,
+            time: r.run_time,
+            routeIndex: r.routeIndex,
+            pos: r.side,
+            side: r.side,
+            sideLabel: r.sideLabel,
+        };
+    });
+
+    return {
+        kind: 'city',
+        city,
+        visibilityGraph,
+        routeResult,
+        start: pair.start,
+        ziel: pair.goal,
+        routes,
+        mapScale: 1,
+    };
+}
+
+function routePickPointInPolygon(pt, poly) {
+    let inside = false;
+    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+        const a = poly[i], b = poly[j];
+        if ((a.y > pt.y) !== (b.y > pt.y)) {
+            const x = (b.x - a.x) * (pt.y - a.y) / (b.y - a.y) + a.x;
+            if (pt.x < x) inside = !inside;
+        }
+    }
+    return inside;
+}
+
+function routePickWardBbox(ward) {
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const p of ward.polygon) {
+        if (p.x < minX) minX = p.x;
+        if (p.y < minY) minY = p.y;
+        if (p.x > maxX) maxX = p.x;
+        if (p.y > maxY) maxY = p.y;
+    }
+    return { minX, minY, maxX, maxY };
+}
+
+function routePickPointSegmentDistance(pt, a, b) {
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const len2 = dx * dx + dy * dy;
+    if (len2 <= 1e-9) return Math.hypot(pt.x - a.x, pt.y - a.y);
+    const t = Math.max(0, Math.min(1, ((pt.x - a.x) * dx + (pt.y - a.y) * dy) / len2));
+    return Math.hypot(pt.x - (a.x + dx * t), pt.y - (a.y + dy * t));
+}
+
+function routePickDistanceToClosedPolyline(pt, pts) {
+    let best = Infinity;
+    for (let i = 0; i < pts.length; i++) {
+        const a = pts[i], b = pts[(i + 1) % pts.length];
+        best = Math.min(best, routePickPointSegmentDistance(pt, a, b));
     }
     return best;
 }
 
-function buildSceneCandidate() {
-    const primary = generateUrbanPrimary();
-    let { start, ziel } = placeEndpoints(primary.hull);
-    let routes = tangentRoutes(start, ziel, primary.hull);
-    const decor = generateUrbanDecoration(primary.hull, [routes[0].points, routes[1].points], start, ziel);
+function routePickPointAllowed(pt, ward, wall) {
+    if (ward.inner) return 'inner';
+    const wallShape = wall && wall.shape;
+    if (!wallShape || wallShape.length < 3) return null;
+    if (routePickPointInPolygon(pt, wallShape)) return null;
+    if (routePickDistanceToClosedPolyline(pt, wallShape) <= ROUTE_PICK_OUTSIDE_WALL_MAX_DIST) return 'outsideWall';
+    return null;
+}
 
-    const angle = Math.atan2(ziel.y - start.y, ziel.x - start.x);
-    const rot = -Math.PI / 2 - angle;
-    const mid = { x: (start.x + ziel.x) / 2, y: (start.y + ziel.y) / 2 };
-    const dst = { x: VB_W / 2, y: VB_H / 2 };
+function routePickWeightedPoint(pool) {
+    let total = 0;
+    for (const p of pool) total += p.weight;
+    let r = Math.random() * total;
+    for (const p of pool) {
+        r -= p.weight;
+        if (r <= 0) return p;
+    }
+    return pool[pool.length - 1] || null;
+}
 
-    const transform = p => {
-        const dx = p.x - mid.x, dy = p.y - mid.y;
-        const ca = Math.cos(rot), sa = Math.sin(rot);
-        return { x: dst.x + dx * ca - dy * sa, y: dst.y + dx * sa + dy * ca };
-    };
+function routePickPoint(candidates, visGraph, wall = null) {
+    const pool = [];
+    for (let attempt = 0; attempt < 500; attempt++) {
+        const item = candidates[(Math.random() * candidates.length) | 0];
+        const b = item.bbox;
+        for (let local = 0; local < 20; local++) {
+            const pt = {
+                x: b.minX + Math.random() * (b.maxX - b.minX),
+                y: b.minY + Math.random() * (b.maxY - b.minY),
+            };
+            if (!routePickPointInPolygon(pt, item.ward.polygon)) continue;
+            const area = routePickPointAllowed(pt, item.ward, wall);
+            if (!area) continue;
+            if (visGraph._inRawObstacle && visGraph._inRawObstacle(pt.x, pt.y)) continue;
+            const boundaryDist = routePickDistanceToClosedPolyline(pt, item.ward.polygon);
+            const biasedDist = Math.min(boundaryDist, ROUTE_PICK_INTERIOR_BIAS_CAP) + ROUTE_PICK_INTERIOR_BIAS_EPS;
+            pool.push({
+                ...pt,
+                wardType: item.ward.type || 'generic',
+                area,
+                boundaryDist,
+                weight: Math.pow(biasedDist, ROUTE_PICK_INTERIOR_BIAS_POWER),
+            });
+            if (pool.length >= ROUTE_PICK_POINT_POOL_SIZE) {
+                const picked = routePickWeightedPoint(pool);
+                if (!picked) return null;
+                const { weight, ...out } = picked;
+                return out;
+            }
+        }
+    }
+    const picked = routePickWeightedPoint(pool);
+    if (!picked) return null;
+    const { weight, ...out } = picked;
+    return out;
+}
 
-    const start2 = transform(start);
-    const ziel2 = transform(ziel);
-    const primary2 = applyTransformToCompound(primary, transform);
-    const routes2 = tangentRoutes(start2, ziel2, primary2.hull);
-    const decor2 = decor.map(d => applyTransformToShape(d, transform));
-
-    return { primary: primary2, decor: decor2, start: start2, ziel: ziel2, routes: routes2 };
+function routePickPair(candidates, visGraph, wall = null) {
+    for (let attempt = 0; attempt < 1000; attempt++) {
+        const start = routePickPoint(candidates, visGraph, wall);
+        const goal = routePickPoint(candidates, visGraph, wall);
+        if (!start || !goal) return null;
+        const straightLine = Math.hypot(goal.x - start.x, goal.y - start.y);
+        if (straightLine >= ROUTE_PICK_MIN_DIST && straightLine <= ROUTE_PICK_MAX_DIST)
+            return { start, goal, straightLine };
+    }
+    return null;
 }
 
 function generateUrbanPrimary() {
@@ -1028,44 +2007,911 @@ function walkArc(hull, fromIdx, toIdx, step) {
 }
 
 function route(pts) {
-    const len   = pathLength(pts);
-    const time  = (len / PX_PER_M) / RUN_SPEED;   // seconds
-    return { points: pts, length: len, time };
+    const length = pathLength(pts) * mapMetresPerUnit();
+    const time  = length / RUN_SPEED;   // seconds
+    return { points: pts, length, time };
 }
 
 /* =========================================================
    RENDERING
 ========================================================= */
 
-function renderScene() {
-    clearLayer('rp-bg-layer');
-    clearLayer('rp-decor-layer');
-    clearLayer('rp-obstacle-layer');
-    clearLayer('rp-route-layer');
-    clearLayer('rp-control-layer');
+function renderScene({ cameraDuration = 1000, onCameraReady = null } = {}) {
+    if (!installRenderedScene(scene)) {
+        clearLayer('rp-bg-layer');
+        clearLayer('rp-decor-layer');
+        clearLayer('rp-obstacle-layer');
+        clearLayer('rp-route-layer');
+        clearLayer('rp-control-layer');
 
-    // No runtime rotation — the coords are already in the canonical frame.
-    const rotGroup = SVG('rp-rotation');
-    if (rotGroup) rotGroup.removeAttribute('transform');
+        const rotGroup = SVG('rp-rotation');
+        if (rotGroup) rotGroup.setAttribute('transform', cityFitTransform(scene.city?.bounds));
 
-    drawBackground();
-    drawDecor(scene.decor);
-    for (const shape of scene.primary.shapes) drawShape(shape, true);
-    drawControls(scene.start, scene.ziel);
+        drawBackground();
+        drawCityMap(scene.city);
+        drawRouteHitAreas();
+        drawRouteBlocks();
+        drawControls(scene.start, scene.ziel);
+    }
+    orientCameraToScene(cameraDuration, onCameraReady);
 }
 
-function clearLayer(id) { SVG(id).innerHTML = ''; }
+function layerEl(id) {
+    return (_renderTarget && _renderTarget[id]) || SVG(id);
+}
+
+function clearLayer(id) { layerEl(id).innerHTML = ''; }
+
+function createRenderLayerSet() {
+    return {
+        'rp-bg-layer': svgEl('g'),
+        'rp-decor-layer': svgEl('g'),
+        'rp-obstacle-layer': svgEl('g'),
+        'rp-route-layer': svgEl('g'),
+        'rp-control-layer': svgEl('g'),
+    };
+}
+
+function withSceneAndTarget(sceneToRender, target, fn) {
+    const prevScene = scene;
+    const prevTarget = _renderTarget;
+    scene = sceneToRender;
+    _renderTarget = target;
+    try {
+        return fn();
+    } finally {
+        _renderTarget = prevTarget;
+        scene = prevScene;
+    }
+}
+
+function buildRenderedScene(sceneToRender) {
+    if (!sceneToRender || sceneToRender._renderCache) return sceneToRender?._renderCache || null;
+    const layers = createRenderLayerSet();
+    const rotationTransform = withSceneAndTarget(sceneToRender, layers, () => {
+        const transform = cityFitTransform(sceneToRender.city?.bounds);
+        drawBackground();
+        drawCityMap(sceneToRender.city);
+        drawRouteHitAreas();
+        drawRouteBlocks();
+        drawControls(sceneToRender.start, sceneToRender.ziel);
+        return transform;
+    });
+    sceneToRender._renderCache = { layers, rotationTransform };
+    return sceneToRender._renderCache;
+}
+
+function installRenderedScene(sceneToRender) {
+    const cache = sceneToRender?._renderCache;
+    if (!cache) return false;
+    const rotGroup = SVG('rp-rotation');
+    if (rotGroup) rotGroup.setAttribute('transform', cache.rotationTransform || '');
+    for (const id of Object.keys(cache.layers)) {
+        const target = SVG(id);
+        target.replaceChildren(...Array.from(cache.layers[id].childNodes));
+    }
+    sceneToRender._renderCache = null;
+    return true;
+}
+
+function scheduleUpcomingScenePrerender() {
+    if (!currentBatch || currentBatch.index >= currentBatch.scenes.length) return;
+    scheduleScenePrerender(currentBatch.scenes[currentBatch.index]);
+}
+
+function scheduleScenePrerender(sceneToRender) {
+    if (!sceneToRender || sceneToRender._renderCache || _prerenderTimer) return;
+    const run = () => {
+        _prerenderTimer = null;
+        if (!sceneToRender._renderCache) {
+            const startTime = performance.now();
+            buildRenderedScene(sceneToRender);
+            console.log(`prerendered infinite scene in ${(performance.now() - startTime).toFixed(1)} ms`);
+        }
+    };
+    if ('requestIdleCallback' in window) {
+        _prerenderTimer = window.requestIdleCallback(run, { timeout: 1200 });
+    } else {
+        _prerenderTimer = window.setTimeout(run, 120);
+    }
+}
 
 function drawBackground() {
     const bg = svgEl('rect');
-    bg.setAttribute('x', 0); bg.setAttribute('y', 0);
-    bg.setAttribute('width', VB_W); bg.setAttribute('height', VB_H);
-    bg.setAttribute('fill', IOF.paved);
-    SVG('rp-bg-layer').appendChild(bg);
+    const bounds = scene?.city?.bounds;
+    if (bounds) {
+        const pad = Math.max(bounds.maxX - bounds.minX, bounds.maxY - bounds.minY) * 0.15;
+        bg.setAttribute('x', bounds.minX - pad);
+        bg.setAttribute('y', bounds.minY - pad);
+        bg.setAttribute('width', (bounds.maxX - bounds.minX) + pad * 2);
+        bg.setAttribute('height', (bounds.maxY - bounds.minY) + pad * 2);
+    } else {
+        bg.setAttribute('x', 0); bg.setAttribute('y', 0);
+        bg.setAttribute('width', VB_W); bg.setAttribute('height', VB_H);
+    }
+    bg.setAttribute('fill', '#efe9d8');
+    layerEl('rp-bg-layer').appendChild(bg);
+}
+
+function cityFitTransform(bounds) {
+    if (!bounds) {
+        if (scene) scene.mapScale = 1;
+        if (scene) { scene.mapTx = 0; scene.mapTy = 0; }
+        return '';
+    }
+    const bw = Math.max(1e-3, bounds.maxX - bounds.minX);
+    const bh = Math.max(1e-3, bounds.maxY - bounds.minY);
+    const scale = Math.min((VB_W * (1 - CITY_FIT_PAD * 2)) / bw, (VB_H * (1 - CITY_FIT_PAD * 2)) / bh);
+    const tx = VB_W / 2 - ((bounds.minX + bounds.maxX) / 2) * scale;
+    const ty = VB_H / 2 - ((bounds.minY + bounds.maxY) / 2) * scale;
+    if (scene) {
+        scene.mapScale = scale;
+        scene.mapTx = tx;
+        scene.mapTy = ty;
+    }
+    return `translate(${tx},${ty}) scale(${scale})`;
+}
+
+function mapPointToSurface(p) {
+    const s = scene?.mapScale || 1;
+    return {
+        x: (scene?.mapTx || 0) + p.x * s,
+        y: (scene?.mapTy || 0) + p.y * s,
+    };
+}
+
+function orientCameraToScene(duration = 0, onComplete = null) {
+    if (!scene?.start || !scene?.ziel) {
+        onComplete?.();
+        return;
+    }
+
+    const start = mapPointToSurface(scene.start);
+    const ziel = mapPointToSurface(scene.ziel);
+
+    const dx = ziel.x - start.x;
+    const dy = ziel.y - start.y;
+    const rotDeg = -90 - Math.atan2(dy, dx) * (180 / Math.PI);
+    const R = rotDeg * Math.PI / 180;
+    const cosR = Math.cos(R);
+    const sinR = Math.sin(R);
+    const toRot = p => ({ rx: p.x * cosR - p.y * sinR, ry: p.x * sinR + p.y * cosR });
+
+    const routePts = [];
+    for (const route of scene.routes || []) {
+        if (route.points?.length) routePts.push(...route.points.map(mapPointToSurface));
+    }
+    const dataPts = routePts.length ? routePts : [start, ziel];
+    const rotData = dataPts.map(toRot);
+
+    let minRX = Math.min(...rotData.map(p => p.rx));
+    let maxRX = Math.max(...rotData.map(p => p.rx));
+    let minRY = Math.min(...rotData.map(p => p.ry));
+    let maxRY = Math.max(...rotData.map(p => p.ry));
+
+    [start, ziel].forEach(pt => {
+        const { rx, ry } = toRot(pt);
+        const controlSurfaceRadius = CONTROL_RADIUS * (scene?.mapScale || 1);
+        minRX = Math.min(minRX, rx - controlSurfaceRadius);
+        maxRX = Math.max(maxRX, rx + controlSurfaceRadius);
+        minRY = Math.min(minRY, ry - controlSurfaceRadius);
+        maxRY = Math.max(maxRY, ry + controlSurfaceRadius);
+    });
+
+    const startRX = toRot(start).rx;
+    const centerRY = (minRY + maxRY) / 2;
+
+    const container = SVG('map-container');
+    const cw = container.clientWidth;
+    const ch = container.clientHeight;
+    const halfW = Math.max(startRX - minRX, maxRX - startRX);
+    const halfH = (maxRY - minRY) / 2;
+    const scaleX = halfW > 0 ? (cw / 2 - CAMERA_PAD) / halfW : MAX_ZOOM;
+    const scaleY = halfH > 0 ? (ch / 2 - CAMERA_PAD) / halfH : MAX_ZOOM;
+    const scale = Math.max(1e-6, Math.min(scaleX, scaleY, MAX_ZOOM));
+
+    const setBounds = () => {
+        camBounds = {
+            minRX: startRX - (cw / 2) / scale,
+            maxRX: startRX + (cw / 2) / scale,
+            minRY: centerRY - (ch / 2) / scale,
+            maxRY: centerRY + (ch / 2) / scale,
+            minScale: scale,
+        };
+        clampCam();
+        applyTransform();
+        onComplete?.();
+    };
+
+    animateCam({
+        rot: rotDeg,
+        scale,
+        cx: startRX * cosR + centerRY * sinR,
+        cy: -startRX * sinR + centerRY * cosR,
+    }, duration, setBounds);
+}
+
+function animateCam(target, duration = 1000, onComplete) {
+    if (_camAnim) cancelAnimationFrame(_camAnim);
+
+    const container = SVG('map-container');
+    const scx = container.clientWidth / 2;
+    const scy = container.clientHeight / 2;
+
+    const fromR = cam.rot * Math.PI / 180;
+    const fromCosR = Math.cos(fromR);
+    const fromSinR = Math.sin(fromR);
+    const fromDX = scx - cam.x;
+    const fromDY = scy - cam.y;
+    const safeScale = cam.scale > 0 ? cam.scale : 1;
+    const fromCx = ( fromCosR * fromDX + fromSinR * fromDY) / safeScale;
+    const fromCy = (-fromSinR * fromDX + fromCosR * fromDY) / safeScale;
+    const fromScale = cam.scale;
+    const fromRotDeg = cam.rot;
+    const dRot = ((target.rot - fromRotDeg) % 360 + 540) % 360 - 180;
+    const ease = t => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+
+    const applyAt = (e) => {
+        const curRotDeg = fromRotDeg + dRot * e;
+        const curScale = fromScale + (target.scale - fromScale) * e;
+        const curCx = fromCx + (target.cx - fromCx) * e;
+        const curCy = fromCy + (target.cy - fromCy) * e;
+        const curR = curRotDeg * Math.PI / 180;
+        const cosR = Math.cos(curR);
+        const sinR = Math.sin(curR);
+        cam.rot = curRotDeg;
+        cam.scale = curScale;
+        cam.x = scx - (curCx * cosR - curCy * sinR) * curScale;
+        cam.y = scy - (curCx * sinR + curCy * cosR) * curScale;
+        applyTransform();
+    };
+
+    if (duration <= 0) {
+        applyAt(1);
+        cam.rot = target.rot;
+        _camAnim = null;
+        onComplete?.();
+        return;
+    }
+
+    let startTs = null;
+    function step(ts) {
+        if (!startTs) startTs = ts;
+        const t = Math.min((ts - startTs) / duration, 1);
+        applyAt(ease(t));
+        if (t < 1) {
+            _camAnim = requestAnimationFrame(step);
+        } else {
+            cam.rot = target.rot;
+            _camAnim = null;
+            onComplete?.();
+        }
+    }
+
+    _camAnim = requestAnimationFrame(step);
+}
+
+const MAP_PALETTE = {
+    innerFill: '#e4d7b6', innerStroke: '#9a8a63',
+    outerFill: '#cdd6ac', outerStroke: '#9aa877',
+    waterFill: '#00adef', waterStroke: '#000000',
+    river: '#00adef', riverBank: '#000000',
+    wall: '#888888', wallOutline: '#000000', gate: '#efe9d8', gateTower: '#c8c8c8',
+    bridgeDock: '#c8a46a', bridgeDockOutline: '#000000',
+    seed: '#c0392b',
+    block: '#000000',
+    building: '#888888', buildingStroke: '#000000',
+    plazaBuilding: '#888888',
+    outerGarden: '#a6b93c',
+    cathedralGround: '#fdc01d',
+    park: '#fdc01d', parkStroke: '#000000',
+    largestLotInset: '#c8c8c8',
+    cathedral: '#888888', cathedralStroke: '#000000',
+    cathedralWall: '#000000',
+    hedge: '#009218',
+    alley: '#a99d77',
+    featureObject: '#000', featureTree: '#009218', featureFountain: '#2b7fc4',
+};
+const MAP_BUILDING_OUTLINE_WIDTH = 0.18;
+const MAP_GATE_TOWER_OUTLINE_WIDTH = MAP_BUILDING_OUTLINE_WIDTH / 2;
+const MAP_WALL_TOWER_DIAMETER_SCALE = 2;
+const MAP_WATER_OUTLINE_WIDTH = 0.2;
+const MAP_RIVER_MOUTH_FILL_OVERLAP = MAP_WATER_OUTLINE_WIDTH;
+const MAP_HEDGE_WIDTH = 0.5;
+const MAP_CITY_WALL_WIDTH = 1.8;
+const MAP_BRIDGE_FILL_WIDTH = 1.6;
+const MAP_BLOCK_OUTLINE_FILLET = 0.4;
+
+function mapWardBaseFill(w) {
+    const outerCity = w.type === 'outerGarden' || w.type === 'outerHighrise';
+    return w.water ? MAP_PALETTE.waterFill : (w.inner || outerCity) ? MAP_PALETTE.innerFill : MAP_PALETTE.outerFill;
+}
+
+function mapPolyPath(pts) {
+    if (pts.length < 2) return '';
+    return 'M' + pts.map(p => p.x + ',' + p.y).join('L');
+}
+
+function mapPolygonPath(poly) {
+    if (!poly || poly.length < 3) return '';
+    return `M${poly.map((p) => `${p.x},${p.y}`).join('L')}Z`;
+}
+
+function mapPointDist(a, b) {
+    return Math.hypot(a.x - b.x, a.y - b.y);
+}
+
+function mapChaikinSmooth(pts, iterations) {
+    if (pts.length < 3) return pts;
+    let a = pts;
+    for (let it = 0; it < iterations; it++) {
+        const h = [a[0]];
+        for (let i = 1, n = a.length - 1; i < n; i++) {
+            const g = a[i], p = a[i - 1], nx = a[i + 1];
+            h.push({ x: g.x * 0.75 + p.x * 0.25, y: g.y * 0.75 + p.y * 0.25 });
+            h.push({ x: g.x * 0.75 + nx.x * 0.25, y: g.y * 0.75 + nx.y * 0.25 });
+        }
+        h.push(a[a.length - 1]);
+        a = h;
+    }
+    return a;
+}
+
+function mapPreviewDeltaFromPath(delta, path, width) {
+    if (!delta || path.length < 2) return delta;
+    const p0 = path[0], p1 = path[1];
+    const dx = p1.x - p0.x, dy = p1.y - p0.y;
+    const len = Math.hypot(dx, dy) || 1;
+    const tx = dx / len, ty = dy / len;
+    const hw = width / 2;
+    const a = { x: p0.x - ty * hw, y: p0.y + tx * hw };
+    const b = { x: p0.x + ty * hw, y: p0.y - tx * hw };
+    const right = mapPointDist(a, delta.right) <= mapPointDist(b, delta.right) ? a : b;
+    const left = right === a ? b : a;
+    const ctrlLen = Math.max(mapPointDist(delta.right, delta.rightCtrl1), len * 0.5);
+    return {
+        ...delta,
+        right,
+        rightCtrl1: { x: right.x - tx * ctrlLen, y: right.y - ty * ctrlLen },
+        leftCtrl2: { x: left.x - tx * ctrlLen, y: left.y - ty * ctrlLen },
+        left,
+    };
+}
+
+function mapDeltaPath(dl) {
+    let d = `M${dl.right.x},${dl.right.y}`;
+    d += ` C${dl.rightCtrl1.x},${dl.rightCtrl1.y} ${dl.rightCtrl2.x},${dl.rightCtrl2.y} ${dl.prevShore.x},${dl.prevShore.y}`;
+    if (dl.isConvex) d += ` L${dl.mouth.x},${dl.mouth.y}`;
+    d += ` L${dl.nextShore.x},${dl.nextShore.y}`;
+    d += ` C${dl.leftCtrl1.x},${dl.leftCtrl1.y} ${dl.leftCtrl2.x},${dl.leftCtrl2.y} ${dl.left.x},${dl.left.y}`;
+    return d;
+}
+
+function mapRiverRenderGeometry(river) {
+    if (!river || !river.course || river.course.length < 2) return null;
+    const course = river.delta
+        ? [{ x: (river.course[0].x + river.course[1].x) / 2, y: (river.course[0].y + river.course[1].y) / 2 }, ...river.course.slice(1)]
+        : river.course;
+    const visualCourse = mapChaikinSmooth(course, 3);
+    let fillCourse = visualCourse;
+    if (river.delta && visualCourse.length >= 2) {
+        const p0 = visualCourse[0], p1 = visualCourse[1];
+        const dx = p1.x - p0.x, dy = p1.y - p0.y;
+        const len = Math.hypot(dx, dy) || 1;
+        fillCourse = [{ x: p0.x - (dx / len) * MAP_RIVER_MOUTH_FILL_OVERLAP, y: p0.y - (dy / len) * MAP_RIVER_MOUTH_FILL_OVERLAP }, ...visualCourse.slice(1)];
+    }
+    return {
+        visualCourse,
+        pathD: mapPolyPath(visualCourse),
+        fillPathD: mapPolyPath(fillCourse),
+        delta: river.delta ? mapPreviewDeltaFromPath(river.delta, visualCourse, river.width) : null,
+    };
+}
+
+function drawCityMap(city) {
+    if (!city) return;
+    const layer = layerEl('rp-bg-layer');
+    for (const w of city.wards || []) {
+        if (w.water) continue;
+        if (!w.polygon || w.polygon.length < 3) continue;
+        const el = svgEl('polygon');
+        el.setAttribute('points', w.polygon.map((p) => p.x + ',' + p.y).join(' '));
+        el.setAttribute('fill', mapWardBaseFill(w));
+        el.setAttribute('stroke', 'none');
+        layer.appendChild(el);
+    }
+    const riverGeometry = mapRiverRenderGeometry(city.river);
+    drawMapBlocks(layer, city.blocks);
+    drawMapBuildings(layer, city.buildings);
+    drawMapHedges(layer, city.hedges);
+    drawMapCathedralHedges(layer, city.cathedralHedges);
+    drawMapRoads();
+    drawMapWaterBody(layer, city.wards, city.river, riverGeometry);
+    if (riverGeometry) drawMapBridges(layer, city.river, riverGeometry.visualCourse);
+    drawMapDocks(layer, city.docks);
+    const riverNodeSet = new Set();
+    if (city.river && city.river.course) for (const v of city.river.course) riverNodeSet.add(v);
+    drawMapWall(layer, city.wall, city.river && city.river.width, riverNodeSet);
+    drawMapFeatures(layer, city.features);
+}
+
+function drawMapWaterBody(layer, wards, river, riverGeometry) {
+    let d = '';
+    for (const w of wards || []) if (w.water) d += mapPolygonPath(w.polygon);
+    if (riverGeometry?.delta) d += mapDeltaPath(riverGeometry.delta);
+    const hasRiver = riverGeometry && river?.width;
+    const outlineWidth = MAP_WATER_OUTLINE_WIDTH * 2;
+    if (d) {
+        const outline = svgEl('path');
+        outline.setAttribute('d', d);
+        outline.setAttribute('fill', 'none');
+        outline.setAttribute('stroke', MAP_PALETTE.waterStroke);
+        outline.setAttribute('stroke-width', outlineWidth);
+        outline.setAttribute('stroke-linejoin', 'round');
+        layer.appendChild(outline);
+    }
+    if (hasRiver) {
+        const outline = svgEl('path');
+        outline.setAttribute('d', riverGeometry.pathD);
+        outline.setAttribute('fill', 'none');
+        outline.setAttribute('stroke', MAP_PALETTE.waterStroke);
+        outline.setAttribute('stroke-width', river.width + outlineWidth);
+        outline.setAttribute('stroke-linecap', river.delta ? 'butt' : 'round');
+        outline.setAttribute('stroke-linejoin', 'round');
+        layer.appendChild(outline);
+    }
+    if (d) {
+        const water = svgEl('path');
+        water.setAttribute('d', d);
+        water.setAttribute('fill', MAP_PALETTE.waterFill);
+        water.setAttribute('stroke', 'none');
+        layer.appendChild(water);
+    }
+    if (hasRiver) {
+        const riverFill = svgEl('path');
+        riverFill.setAttribute('d', riverGeometry.fillPathD || riverGeometry.pathD);
+        riverFill.setAttribute('fill', 'none');
+        riverFill.setAttribute('stroke', MAP_PALETTE.river);
+        riverFill.setAttribute('stroke-width', river.width);
+        riverFill.setAttribute('stroke-linecap', river.delta ? 'butt' : 'round');
+        riverFill.setAttribute('stroke-linejoin', 'round');
+        layer.appendChild(riverFill);
+    }
+}
+
+function drawMapRoads() {
+    return;
+}
+
+function mapClosestPointOnSegment(p, a, b) {
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const l2 = dx * dx + dy * dy || 1;
+    let t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / l2;
+    t = Math.max(0, Math.min(1, t));
+    return {
+        x: a.x + dx * t,
+        y: a.y + dy * t,
+        t,
+        distance: Math.hypot(p.x - (a.x + dx * t), p.y - (a.y + dy * t)),
+    };
+}
+
+function mapClosestPointOnPath(p, path) {
+    let best = null;
+    for (let i = 0; i < path.length - 1; i++) {
+        const q = mapClosestPointOnSegment(p, path[i], path[i + 1]);
+        if (!best || q.distance < best.distance) best = { ...q, segment: i };
+    }
+    return best;
+}
+
+function mapVisualRiverCrossing(origin, axis, path, allowFallback = true) {
+    let best = null;
+    for (let i = 0; i < path.length - 1; i++) {
+        const a = path[i], b = path[i + 1];
+        const sx = b.x - a.x, sy = b.y - a.y;
+        const denom = axis.x * sy - axis.y * sx;
+        if (Math.abs(denom) < 1e-8) continue;
+        const ox = a.x - origin.x, oy = a.y - origin.y;
+        const t = (ox * sy - oy * sx) / denom;
+        const u = (ox * axis.y - oy * axis.x) / denom;
+        if (u < -1e-6 || u > 1 + 1e-6) continue;
+        const point = { x: origin.x + axis.x * t, y: origin.y + axis.y * t };
+        const score = Math.abs(t);
+        if (!best || score < best.score) best = { point, segment: i, score };
+    }
+    if (best) return best;
+    if (!allowFallback) return null;
+    const closest = mapClosestPointOnPath(origin, path);
+    return closest ? { point: { x: closest.x, y: closest.y }, segment: closest.segment, score: closest.distance } : null;
+}
+
+function mapRiverTangentAt(path, segment) {
+    const a = path[Math.max(0, Math.min(segment, path.length - 2))];
+    const b = path[Math.max(1, Math.min(segment + 1, path.length - 1))];
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const len = Math.hypot(dx, dy) || 1;
+    return { x: dx / len, y: dy / len };
+}
+
+function mapBridgeSideShorePoints(origin, axis, path, shoreHalfWidth, referenceNormal = null) {
+    const crossing = mapVisualRiverCrossing(origin, axis, path, false);
+    if (!crossing) return null;
+    const tangent = mapRiverTangentAt(path, crossing.segment);
+    let normal = { x: -tangent.y, y: tangent.x };
+    if (referenceNormal && normal.x * referenceNormal.x + normal.y * referenceNormal.y < 0)
+        normal = { x: -normal.x, y: -normal.y };
+    const denom = axis.x * normal.x + axis.y * normal.y;
+    if (Math.abs(denom) < 0.12) return null;
+    const span = shoreHalfWidth / denom;
+    return {
+        minus: { x: crossing.point.x - axis.x * span, y: crossing.point.y - axis.y * span },
+        plus: { x: crossing.point.x + axis.x * span, y: crossing.point.y + axis.y * span },
+        center: crossing.point,
+        normal,
+    };
+}
+
+function mapBridgeDeckBleedPoint(side, point, bleed) {
+    const dx = point.x - side.center.x;
+    const dy = point.y - side.center.y;
+    const len = Math.hypot(dx, dy);
+    if (len < 1e-6) return point;
+    return { x: point.x + dx / len * bleed, y: point.y + dy / len * bleed };
+}
+
+function drawMapBridges(layer, river, visualCourse = null) {
+    if (!river || !river.bridges || !river.course || river.course.length < 3) return;
+    const path = visualCourse && visualCourse.length >= 2 ? visualCourse : river.course;
+    const riverWidth = Number.isFinite(river.width) ? river.width : 5;
+    const bridgePoint = (bridge) => ({ x: bridge.x, y: bridge.y });
+    for (const bridge of river.bridges) {
+        const i = river.course.findIndex((p) => Math.abs(p.x - bridge.x) < 1e-6 && Math.abs(p.y - bridge.y) < 1e-6);
+        if (i <= 0 || i >= river.course.length - 1) continue;
+        const fill = '#e4d7b6';
+        const fillWidth = Number.isFinite(bridge.width) ? bridge.width : MAP_BRIDGE_FILL_WIDTH;
+        const sideOutlineWidth = 0.2;
+        let axis = null;
+        if (bridge.from && bridge.to) {
+            const dx = bridge.to.x - bridge.from.x, dy = bridge.to.y - bridge.from.y;
+            const len = Math.hypot(dx, dy) || 1;
+            axis = { x: dx / len, y: dy / len };
+        } else {
+            const crossing = mapClosestPointOnPath(bridgePoint(bridge), path);
+            if (!crossing) continue;
+            const tangent = mapRiverTangentAt(path, crossing.segment);
+            axis = { x: -tangent.y, y: tangent.x };
+        }
+        const centerCrossing = mapVisualRiverCrossing(bridgePoint(bridge), axis, path);
+        if (!centerCrossing) continue;
+        const centerTangent = mapRiverTangentAt(path, centerCrossing.segment);
+        const referenceNormal = { x: -centerTangent.y, y: centerTangent.x };
+        const sideNormal = { x: -axis.y, y: axis.x };
+        const halfDeck = fillWidth / 2;
+        const shoreHalfWidth = riverWidth / 2 + MAP_WATER_OUTLINE_WIDTH;
+        const deckBleed = MAP_WATER_OUTLINE_WIDTH * 1.5 + 0.05;
+        const leftOrigin = { x: centerCrossing.point.x + sideNormal.x * halfDeck, y: centerCrossing.point.y + sideNormal.y * halfDeck };
+        const rightOrigin = { x: centerCrossing.point.x - sideNormal.x * halfDeck, y: centerCrossing.point.y - sideNormal.y * halfDeck };
+        const left = mapBridgeSideShorePoints(leftOrigin, axis, path, shoreHalfWidth, referenceNormal);
+        const right = mapBridgeSideShorePoints(rightOrigin, axis, path, shoreHalfWidth, referenceNormal);
+        if (!left || !right) continue;
+        const deck = svgEl('polygon');
+        const deckPts = [
+            mapBridgeDeckBleedPoint(left, left.minus, deckBleed),
+            mapBridgeDeckBleedPoint(left, left.plus, deckBleed),
+            mapBridgeDeckBleedPoint(right, right.plus, deckBleed),
+            mapBridgeDeckBleedPoint(right, right.minus, deckBleed),
+        ];
+        deck.setAttribute('points', deckPts.map((p) => `${p.x},${p.y}`).join(' '));
+        deck.setAttribute('fill', fill);
+        deck.setAttribute('stroke', 'none');
+        layer.appendChild(deck);
+        for (const side of [left, right]) {
+            const rail = svgEl('line');
+            rail.setAttribute('x1', side.minus.x); rail.setAttribute('y1', side.minus.y);
+            rail.setAttribute('x2', side.plus.x); rail.setAttribute('y2', side.plus.y);
+            rail.setAttribute('stroke', MAP_PALETTE.bridgeDockOutline);
+            rail.setAttribute('stroke-width', sideOutlineWidth);
+            rail.setAttribute('stroke-linecap', 'butt');
+            layer.appendChild(rail);
+        }
+    }
+}
+
+function drawMapDocks(layer, docks) {
+    if (!docks || docks.length === 0) return;
+    for (const dock of docks) {
+        const w = dock.large ? 2 : 1;
+        const fillWidth = 1.6 * w;
+        const outlineWidth = fillWidth + 0.4 * w;
+        const fill = '#e4d7b6';
+        for (const pier of dock.piers || []) {
+            if (!pier.from || !pier.to) continue;
+            const dx = pier.to.x - pier.from.x;
+            const dy = pier.to.y - pier.from.y;
+            const len = Math.hypot(dx, dy) || 1;
+            const ux = dx / len;
+            const uy = dy / len;
+            const seaCap = { x: pier.to.x + ux * outlineWidth / 10, y: pier.to.y + uy * outlineWidth / 10 };
+            const landOverlap = MAP_WATER_OUTLINE_WIDTH * 2;
+            const landFrom = { x: pier.from.x - ux * landOverlap, y: pier.from.y - uy * landOverlap };
+            const dFill = `M${landFrom.x},${landFrom.y} L${pier.to.x},${pier.to.y}`;
+            const dOutline = `M${pier.from.x},${pier.from.y} L${seaCap.x},${seaCap.y}`;
+            for (const [stroke, width, d] of [[MAP_PALETTE.bridgeDockOutline, outlineWidth, dOutline], [fill, fillWidth, dFill]]) {
+                const path = svgEl('path');
+                path.setAttribute('d', d); path.setAttribute('fill', 'none');
+                path.setAttribute('stroke', stroke); path.setAttribute('stroke-width', width);
+                path.setAttribute('stroke-linecap', 'butt'); path.setAttribute('stroke-linejoin', 'round');
+                layer.appendChild(path);
+            }
+        }
+    }
+}
+
+function mapRoundedBlockPath(points, r) {
+    if (!points || points.length < 3) return null;
+    const n = points.length;
+    const leftNormal = (dx, dy, len) => (len > 0 ? { x: -dy / len, y: dx / len } : null);
+    const segs = [];
+    for (let i = 0; i < n; i++) {
+        const A = points[(i - 1 + n) % n];
+        const B = points[i];
+        const C = points[(i + 1) % n];
+        const inDx = B.x - A.x, inDy = B.y - A.y;
+        const outDx = C.x - B.x, outDy = C.y - B.y;
+        const inLen = Math.hypot(inDx, inDy);
+        const outLen = Math.hypot(outDx, outDy);
+        if (inLen < 1e-9 || outLen < 1e-9) return null;
+        const inUx = inDx / inLen, inUy = inDy / inLen;
+        const outUx = outDx / outLen, outUy = outDy / outLen;
+        const dot = inUx * outUx + inUy * outUy;
+        const turn = Math.acos(Math.max(-1, Math.min(1, dot)));
+        if (turn < 1e-6) return null;
+        const lnIn = leftNormal(inDx, inDy, inLen);
+        const lnOut = leftNormal(outDx, outDy, outLen);
+        const bisX = lnIn.x + lnOut.x;
+        const bisY = lnIn.y + lnOut.y;
+        const bisLen = Math.hypot(bisX, bisY);
+        if (bisLen < 1e-9) return null;
+        const nBisX = bisX / bisLen;
+        const nBisY = bisY / bisLen;
+        const halfTurn = turn / 2;
+        const tanHalf = Math.tan(halfTurn);
+        const cosHalf = Math.cos(halfTurn);
+        if (tanHalf < 1e-9 || cosHalf < 1e-9) return null;
+        let d = r * tanHalf;
+        d = Math.min(d, inLen * 0.499, outLen * 0.499);
+        const effR = d / tanHalf;
+        const centerDist = effR / cosHalf;
+        const t1x = B.x - inUx * d;
+        const t1y = B.y - inUy * d;
+        const t2x = B.x + outUx * d;
+        const t2y = B.y + outUy * d;
+        const cx = B.x + nBisX * centerDist;
+        const cy = B.y + nBisY * centerDist;
+        const a1 = Math.atan2(t1y - cy, t1x - cx);
+        const a2 = Math.atan2(t2y - cy, t2x - cx);
+        let delta = a2 - a1;
+        while (delta > Math.PI) delta -= 2 * Math.PI;
+        while (delta < -Math.PI) delta += 2 * Math.PI;
+        const sweep = delta > 0 ? 1 : 0;
+        const largeArc = Math.abs(delta) > Math.PI ? 1 : 0;
+        segs.push({ t1x, t1y, t2x, t2y, r: effR, sweep, largeArc });
+    }
+    let d = `M${segs[0].t2x},${segs[0].t2y}`;
+    for (let i = 0; i < n; i++) {
+        const next = segs[(i + 1) % n];
+        d += ` L${next.t1x},${next.t1y}`;
+        d += ` A${next.r},${next.r} 0 ${next.largeArc},${next.sweep} ${next.t2x},${next.t2y}`;
+    }
+    return d + 'Z';
+}
+
+function drawMapBlocks(layer, blocks) {
+    if (!blocks || blocks.length === 0) return;
+    let d = '';
+    for (const b of blocks) {
+        if (!b || b.length < 3) continue;
+        const rounded = mapRoundedBlockPath(b, MAP_BLOCK_OUTLINE_FILLET);
+        if (rounded) d += rounded;
+    }
+    if (!d) return;
+    const el = svgEl('path');
+    el.setAttribute('d', d);
+    el.setAttribute('fill', 'none');
+    el.setAttribute('stroke', MAP_PALETTE.block);
+    el.setAttribute('stroke-width', '0.06');
+    el.setAttribute('stroke-linejoin', 'round');
+    el.setAttribute('fill-rule', 'evenodd');
+    layer.appendChild(el);
+}
+
+function drawMapBuildings(layer, buildings) {
+    if (!buildings || buildings.length === 0) return;
+    for (const b of buildings) {
+        const polygon = Array.isArray(b) ? b : b.polygon;
+        if (!polygon || polygon.length < 3) continue;
+        const cls = Array.isArray(b) ? null : b.class;
+        let fill = MAP_PALETTE.building, stroke = MAP_PALETTE.buildingStroke;
+        if (cls === 'park' || cls === 'outerHighrisePark') { fill = MAP_PALETTE.park; stroke = MAP_PALETTE.parkStroke; }
+        else if (cls === 'largestLotInset' || cls === 'housingEntranceFill') { fill = MAP_PALETTE.largestLotInset; stroke = MAP_PALETTE.buildingStroke; }
+        else if (cls === 'outerHighrisePath') { fill = MAP_PALETTE.alley; stroke = 'none'; }
+        else if (cls === 'outerGarden') { fill = MAP_PALETTE.outerGarden; stroke = MAP_PALETTE.outerGarden; }
+        else if (cls === 'outerGardenOutline') { fill = 'none'; stroke = MAP_PALETTE.buildingStroke; }
+        else if (cls === 'cathedralGround') { fill = MAP_PALETTE.cathedralGround; stroke = MAP_PALETTE.parkStroke; }
+        else if (cls === 'cathedral') { fill = MAP_PALETTE.cathedral; stroke = MAP_PALETTE.cathedralStroke; }
+        else if (cls === 'plazaBuilding') { fill = MAP_PALETTE.plazaBuilding; stroke = MAP_PALETTE.buildingStroke; }
+        const el = svgEl('polygon');
+        el.setAttribute('points', polygon.map((p) => p.x + ',' + p.y).join(' '));
+        el.setAttribute('fill', fill);
+        el.setAttribute('stroke', stroke);
+        if (cls === 'outerGarden' || cls === 'outerHighrisePath') {
+            el.setAttribute('stroke-width', '0');
+        } else if (cls === 'outerGardenOutline') {
+            el.setAttribute('stroke-width', MAP_BUILDING_OUTLINE_WIDTH);
+        } else if (cls === 'largestLotInset' || cls === 'housingEntranceFill') {
+            el.setAttribute('stroke-width', MAP_BUILDING_OUTLINE_WIDTH / 2);
+        } else if (cls === 'cathedral' || cls === 'cathedralGround' || cls === 'park' || cls === 'outerHighrisePark') {
+            el.setAttribute('stroke-width', MAP_BUILDING_OUTLINE_WIDTH / 2);
+        } else {
+            el.setAttribute('stroke-width', MAP_BUILDING_OUTLINE_WIDTH);
+        }
+        el.setAttribute('stroke-linejoin', 'round');
+        layer.appendChild(el);
+    }
+}
+
+function drawMapHedges(layer, hedges) {
+    if (!hedges || hedges.length === 0) return;
+    for (const hedge of hedges) {
+        if (!hedge || hedge.length < 2) continue;
+        if (!hedge.every((p) => p && Number.isFinite(p.x) && Number.isFinite(p.y))) continue;
+        const el = svgEl('polyline');
+        el.setAttribute('points', hedge.map((p) => `${p.x},${p.y}`).join(' '));
+        el.setAttribute('fill', 'none');
+        el.setAttribute('stroke', MAP_PALETTE.hedge);
+        el.setAttribute('stroke-width', MAP_HEDGE_WIDTH);
+        el.setAttribute('stroke-linecap', 'butt');
+        el.setAttribute('stroke-linejoin', 'round');
+        layer.appendChild(el);
+    }
+}
+
+function drawMapCathedralHedges(layer, hedges) {
+    if (!hedges || hedges.length === 0) return;
+    for (const hedge of hedges) {
+        if (!hedge || hedge.length < 2) continue;
+        if (!hedge.every((p) => p && Number.isFinite(p.x) && Number.isFinite(p.y))) continue;
+        const el = svgEl('polyline');
+        el.setAttribute('points', hedge.map((p) => `${p.x},${p.y}`).join(' '));
+        el.setAttribute('fill', 'none');
+        el.setAttribute('stroke', MAP_PALETTE.cathedralWall);
+        el.setAttribute('stroke-width', MAP_HEDGE_WIDTH);
+        el.setAttribute('stroke-linecap', 'butt');
+        el.setAttribute('stroke-linejoin', 'round');
+        layer.appendChild(el);
+    }
+}
+
+function drawMapWall(layer, wall, riverWidth, riverNodes) {
+    if (!wall || !wall.shape || wall.shape.length < 2) return;
+    const thickness = MAP_CITY_WALL_WIDTH;
+    const outlineThickness = thickness + MAP_BUILDING_OUTLINE_WIDTH;
+    const n = wall.shape.length;
+    const segs = wall.segments;
+    const halfRiver = (riverWidth || 0) / 2;
+    const endpointAt = new Map();
+    for (let i = 0; i < n; i++) {
+        if (segs && segs[i] === false) continue;
+        let a = wall.shape[i];
+        let b = wall.shape[(i + 1) % n];
+        if (halfRiver > 0 && segs) {
+            const dx = b.x - a.x, dy = b.y - a.y;
+            const len = Math.hypot(dx, dy) || 1;
+            const ux = dx / len, uy = dy / len;
+            let ax = a.x, ay = a.y, bx = b.x, by = b.y;
+            if (segs[(i + n - 1) % n] === false || (riverNodes && riverNodes.has(a))) { ax = a.x + ux * halfRiver; ay = a.y + uy * halfRiver; }
+            if (segs[(i + 1) % n] === false || (riverNodes && riverNodes.has(b))) { bx = b.x - ux * halfRiver; by = b.y - uy * halfRiver; }
+            a = { x: ax, y: ay }; b = { x: bx, y: by };
+        }
+        endpointAt.set(i, a);
+        endpointAt.set((i + 1) % n, b);
+        for (const [stroke, width] of [[MAP_PALETTE.wallOutline, outlineThickness], [MAP_PALETTE.wall, thickness]]) {
+            const seg = svgEl('line');
+            seg.setAttribute('x1', a.x); seg.setAttribute('y1', a.y);
+            seg.setAttribute('x2', b.x); seg.setAttribute('y2', b.y);
+            seg.setAttribute('stroke', stroke); seg.setAttribute('stroke-width', width);
+            seg.setAttribute('stroke-linecap', 'butt'); seg.setAttribute('stroke-linejoin', 'round');
+            layer.appendChild(seg);
+        }
+    }
+    const towerR = thickness * MAP_WALL_TOWER_DIAMETER_SCALE / 2;
+    for (const t of wall.towers || []) {
+        const ti = wall.shape.findIndex((p) => Math.abs(p.x - t.x) < 1e-6 && Math.abs(p.y - t.y) < 1e-6);
+        const pos = (ti !== -1 && endpointAt.get(ti)) || t;
+        const tower = svgEl('circle');
+        tower.setAttribute('cx', pos.x); tower.setAttribute('cy', pos.y);
+        tower.setAttribute('r', towerR); tower.setAttribute('fill', MAP_PALETTE.wall);
+        tower.setAttribute('stroke', MAP_PALETTE.wallOutline); tower.setAttribute('stroke-width', MAP_BUILDING_OUTLINE_WIDTH);
+        layer.appendChild(tower);
+    }
+    for (const gate of wall.gates || []) {
+        if (riverNodes && riverNodes.has(gate)) continue;
+        const idx = wall.shape.findIndex((p) => Math.abs(p.x - gate.x) < 1e-6 && Math.abs(p.y - gate.y) < 1e-6);
+        const pos = (idx !== -1 && endpointAt.get(idx)) || gate;
+        const tower = svgEl('circle');
+        tower.setAttribute('cx', pos.x); tower.setAttribute('cy', pos.y);
+        tower.setAttribute('r', towerR); tower.setAttribute('fill', MAP_PALETTE.gateTower);
+        tower.setAttribute('stroke', MAP_PALETTE.wallOutline); tower.setAttribute('stroke-width', MAP_GATE_TOWER_OUTLINE_WIDTH);
+        tower.setAttribute('class', 'gate-tower');
+        tower.setAttribute('data-kind', 'gate');
+        layer.appendChild(tower);
+    }
+}
+
+function drawMapFeatures(layer, features) {
+    if (!features || features.length === 0) return;
+    const r = 0.5;
+    for (const f of features) {
+        if (!Number.isFinite(f.x) || !Number.isFinite(f.y)) continue;
+        const c = svgEl('circle');
+        const isTree = f.kind === 'tree';
+        c.setAttribute('cx', f.x); c.setAttribute('cy', f.y); c.setAttribute('r', isTree ? 0.67 * r : r);
+        c.setAttribute('stroke', isTree ? 'none' : f.kind === 'object' ? MAP_PALETTE.featureObject : MAP_PALETTE.featureFountain);
+        c.setAttribute('stroke-width', isTree ? '0' : '0.2');
+        c.setAttribute('fill', isTree ? MAP_PALETTE.featureTree : 'none');
+        layer.appendChild(c);
+    }
+}
+
+function drawRouteHitAreas() {
+    const layer = layerEl('rp-route-layer');
+    if (!scene?.routes?.length) return;
+
+    scene.routes.forEach((route, i) => addRouteHitArea(layer, route, i));
+}
+
+function createRoutePolyline(route, { stroke = 'black', strokeWidth = 1.5, opacity = 1, adaptiveStroke = false, interactive = false } = {}) {
+    const points = route?.points || route?.rP;
+    if (!points || points.length < 2) return null;
+    const el = svgEl('polyline');
+    el.setAttribute('points', points.map(p => `${p.x},${p.y}`).join(' '));
+    el.setAttribute('fill', 'none');
+    el.setAttribute('stroke', stroke);
+    if (adaptiveStroke) setAdaptiveRouteStroke(el, strokeWidth);
+    else el.setAttribute('stroke-width', strokeWidth);
+    el.setAttribute('stroke-linecap', 'round');
+    el.setAttribute('stroke-linejoin', 'round');
+    el.setAttribute('vector-effect', 'non-scaling-stroke');
+    el.setAttribute('opacity', String(opacity));
+    if (interactive) {
+        el.setAttribute('pointer-events', 'stroke');
+        el.style.cursor = 'pointer';
+    } else {
+        el.setAttribute('pointer-events', 'none');
+    }
+    return el;
+}
+
+function drawRouteBlocks(layer = layerEl('rp-route-layer')) {
+    const blockedBars = (scene.routeResult?.skippedBarriers?.length)
+        ? scene.routeResult.skippedBarriers
+        : (scene.routeResult?.blockFastest && scene.routeResult?.barriers?.length ? [scene.routeResult.barriers[0]] : []);
+    for (const b of blockedBars) {
+        const line = svgEl('line');
+        line.setAttribute('x1', b.ax); line.setAttribute('y1', b.ay);
+        line.setAttribute('x2', b.bx); line.setAttribute('y2', b.by);
+        line.setAttribute('stroke', CONTROL_COLOR);
+        line.setAttribute('stroke-width', BLOCKING_STROKE_WIDTH);
+        line.setAttribute('stroke-linecap', 'butt');
+        line.setAttribute('pointer-events', 'none');
+        layer.appendChild(line);
+    }
 }
 
 function drawDecor(items) {
-    const layer = SVG('rp-decor-layer');
+    const layer = layerEl('rp-decor-layer');
     for (const d of items) {
         if (d.kind === 'tile_polygon') {
             const p = svgEl('polygon');
@@ -1080,7 +2926,7 @@ function drawDecor(items) {
 }
 
 function drawShape(shape, primary, layer) {
-    layer = layer || SVG('rp-obstacle-layer');
+    layer = layer || layerEl('rp-obstacle-layer');
     switch (shape.kind) {
         case 'grass':
         case 'private_garden': {
@@ -1258,37 +3104,368 @@ function drawFenceTicks(layer, a, b) {
 }
 
 function drawControls(start, ziel) {
-    const layer = SVG('rp-control-layer');
+    const layer = layerEl('rp-control-layer');
     // Use the same draw routines as regular play mode: two equal circles +
     // a straight connection line (no arrow, no dashed line).
     [start, ziel].forEach(pt => {
         const c = svgEl('circle');
-        c.setAttribute('cx', pt.x); c.setAttribute('cy', pt.y); c.setAttribute('r', R_CONTROL);
+        c.setAttribute('cx', pt.x); c.setAttribute('cy', pt.y); c.setAttribute('r', CONTROL_RADIUS);
         c.setAttribute('fill', 'transparent');
         c.setAttribute('stroke', CONTROL_COLOR);
-        c.setAttribute('stroke-width', '3');
-        c.setAttribute('vector-effect', 'non-scaling-stroke');
+        c.setAttribute('stroke-width', CONTROL_STROKE_WIDTH);
+        c.setAttribute('opacity', CONTROL_OPACITY);
         layer.appendChild(c);
     });
 
-    const GAP = 8;
     const dx  = ziel.x - start.x;
     const dy  = ziel.y - start.y;
     const dist = Math.hypot(dx, dy);
-    if (dist <= 2 * (R_CONTROL + GAP)) return;
+    if (dist <= 2 * (CONTROL_RADIUS + GAP)) return;
 
     const angle  = Math.atan2(dy, dx);
-    const offset = R_CONTROL + GAP;
+    const offset = CONTROL_RADIUS + GAP;
     const line = svgEl('line');
     line.setAttribute('x1', start.x + Math.cos(angle) * offset);
     line.setAttribute('y1', start.y + Math.sin(angle) * offset);
     line.setAttribute('x2', ziel.x  - Math.cos(angle) * offset);
     line.setAttribute('y2', ziel.y  - Math.sin(angle) * offset);
     line.setAttribute('stroke', CONTROL_COLOR);
-    line.setAttribute('stroke-width', '3');
+    line.setAttribute('stroke-width', CONTROL_STROKE_WIDTH);
     line.setAttribute('fill', 'none');
-    line.setAttribute('vector-effect', 'non-scaling-stroke');
+    line.setAttribute('opacity', CONTROL_OPACITY);
     layer.appendChild(line);
+}
+
+function formatTimeDelta(diffSec) {
+    if (diffSec < 60) return `+${diffSec.toFixed(1)}s`;
+    const m = Math.floor(diffSec / 60);
+    const s = diffSec % 60;
+    return `+${m}:${String(s.toFixed(1)).padStart(2, '0')}`;
+}
+
+function formatTime(sec) {
+    if (sec == null || isNaN(sec)) return '-';
+    if (sec < 60) return `${sec.toFixed(0)}s`;
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    return `${m}:${String(s.toFixed(0)).padStart(2, '0')}`;
+}
+
+function initStatsPanel() {
+    const bar = document.getElementById('play-btn-bar');
+    if (!bar) return;
+
+    bar.addEventListener('click', e => {
+        if (phase !== 'reveal' || !scene) return;
+        if (e.target.closest('.play-btn')) return;
+        if (performance.now() < suppressStatsToggleUntil) return;
+
+        if (statsVisible) {
+            hideStatsPanel();
+        } else {
+            renderStatsPanel({ routes: scene.routes });
+        }
+    });
+}
+
+function hideStatsPanel() {
+    statsVisible = false;
+    const panel = document.getElementById('play-stats-panel');
+    if (panel) panel.classList.remove('visible');
+}
+
+function renderStatsPanel(cp) {
+    const panel = document.getElementById('play-stats-panel');
+    if (!panel) return;
+    panel.innerHTML = '';
+
+    const sorted = cp.routes
+        .map((route, i) => ({ route, i }))
+        .sort((a, b) => (a.route.pos ?? Infinity) - (b.route.pos ?? Infinity));
+
+    const isDesktop = document.body.classList.contains('desktop');
+    const stacked = !isDesktop && sorted.length > 3;
+
+    if (lastChoiceTimes) {
+        const t = lastChoiceTimes;
+        const ICON_CLOCK = window.icon ? window.icon('clock', '0.9em') : '';
+        const ICON_HOUR = window.icon ? window.icon('hourglass', '0.9em') : '';
+        const header = document.createElement('div');
+        header.id = 'play-stats-header';
+        header.innerHTML =
+            `<span class="stats-choice-total"><span class="stats-icon">${ICON_CLOCK}</span>${(t.total).toFixed(2)}s</span>` +
+            `<span class="stats-choice-sub"><span class="stats-icon">${ICON_HOUR}</span>+${(t.penalty).toFixed(2)}s</span>`;
+        panel.appendChild(header);
+    }
+
+    const inner = document.createElement('div');
+    inner.id = 'play-stats-inner';
+    if (stacked) inner.classList.add('stacked');
+
+    const row = (label, value) =>
+        `<span class="stats-row"><span class="stats-label">${label}</span><span class="stats-value">${value}</span></span>`;
+
+    sorted.forEach(({ route, i }) => {
+        const distTime = route.length ? (route.length / RUN_SPEED).toFixed(1) : null;
+        const noATime = route.noA ? route.noA.toFixed(1) : '0';
+        const showCorners = Number(noATime) > 0;
+
+        const lengthStr = route.length ? `${route.length.toFixed(0)}m` : '-';
+        const ICON_ANGLE = window.icon ? window.icon('angle', '1em') : '';
+        const noALabel = `<span class="stats-icon">${ICON_ANGLE}</span>${noATime}:`;
+
+        const col = document.createElement('div');
+        col.className = 'stats-col';
+        col.style.borderColor = ROUTE_COLORS[i] || '#888';
+        col.innerHTML =
+            `<span class="stats-total">${formatTime(route.run_time)}</span>` +
+            row(`${lengthStr}:`, distTime == null ? '+0.0s' : `+${distTime}s`) +
+            (showCorners ? row(noALabel, `+${noATime}s`) : '');
+        inner.appendChild(col);
+    });
+
+    panel.appendChild(inner);
+    statsVisible = true;
+    panel.classList.add('visible');
+}
+
+function initReportButton() {
+    const btn = SVG('rp-report-btn');
+    if (!btn) return;
+    ensureHudActionButtons(btn);
+    btn.addEventListener('click', () => {
+        confirmRouteReport()
+            .then(confirmed => {
+                if (!confirmed) return;
+                return reportCurrentRoute();
+            })
+            .catch(err => console.error('report-infinite-route failed:', err));
+    });
+    updateReportButton();
+}
+
+function ensureHudActionButtons(reportBtn) {
+    const hud = SVG('rp-hud');
+    if (!hud || SVG('rp-home-btn')) return;
+
+    let actions = SVG('rp-hud-actions');
+    if (!actions) {
+        actions = document.createElement('div');
+        actions.id = 'rp-hud-actions';
+        actions.style.justifySelf = 'end';
+        actions.style.display = 'inline-flex';
+        actions.style.alignItems = 'center';
+        actions.style.gap = '6px';
+        reportBtn.replaceWith(actions);
+        actions.appendChild(reportBtn);
+        reportBtn.style.justifySelf = 'auto';
+    }
+
+    const homeLabel = typeof gettext === 'function' ? gettext('Home') : 'Home';
+    const homeBtn = document.createElement('a');
+    homeBtn.id = 'rp-home-btn';
+    homeBtn.className = 'rp-report-btn';
+    homeBtn.href = '/';
+    homeBtn.title = homeLabel;
+    homeBtn.setAttribute('aria-label', homeLabel);
+    homeBtn.style.justifySelf = 'auto';
+    homeBtn.style.textDecoration = 'none';
+    homeBtn.innerHTML = '<x-icon name="home" size="20px"></x-icon>';
+    actions.appendChild(homeBtn);
+}
+
+function updateReportButton() {
+    const btn = SVG('rp-report-btn');
+    if (!btn) return;
+    btn.disabled = reportingRoute || confirmingRouteReport || !['choose', 'reveal'].includes(phase) || !scene;
+}
+
+function ensureReportModal() {
+    let modal = SVG('rp-report-modal');
+    if (modal) return modal;
+
+    const reportTitle = typeof gettext === 'function' ? gettext('Report route') : 'Report route';
+    const reportText = typeof gettext === 'function'
+        ? gettext('Please only report significant mistakes, slightly imperfect routes can happen.')
+        : 'Please only report significant mistakes, slightly imperfect routes can happen.';
+    const cancelLabel = typeof gettext === 'function' ? gettext('Cancel') : 'Cancel';
+    const sendLabel = typeof gettext === 'function' ? gettext('Send') : 'Send';
+
+    modal = document.createElement('div');
+    modal.id = 'rp-report-modal';
+    modal.className = 'rp-modal';
+    modal.setAttribute('role', 'dialog');
+    modal.setAttribute('aria-modal', 'true');
+    modal.setAttribute('aria-labelledby', 'rp-report-modal-title');
+
+    const card = document.createElement('div');
+    card.className = 'rp-modal-card';
+
+    const title = document.createElement('h2');
+    title.id = 'rp-report-modal-title';
+    title.textContent = reportTitle;
+
+    const text = document.createElement('p');
+    text.textContent = reportText;
+
+    const actions = document.createElement('div');
+    actions.className = 'rp-modal-actions';
+
+    const cancelBtn = document.createElement('button');
+    cancelBtn.className = 'rp-modal-btn rp-modal-btn-secondary';
+    cancelBtn.type = 'button';
+    cancelBtn.dataset.reportCancel = '';
+    cancelBtn.textContent = cancelLabel;
+
+    const confirmBtn = document.createElement('button');
+    confirmBtn.className = 'rp-modal-btn rp-modal-btn-primary';
+    confirmBtn.type = 'button';
+    confirmBtn.dataset.reportConfirm = '';
+    confirmBtn.textContent = sendLabel;
+
+    actions.append(cancelBtn, confirmBtn);
+    card.append(title, text, actions);
+    modal.appendChild(card);
+    document.body.appendChild(modal);
+    return modal;
+}
+
+function confirmRouteReport() {
+    if (reportingRoute || confirmingRouteReport || !['choose', 'reveal'].includes(phase) || !scene) {
+        return Promise.resolve(false);
+    }
+
+    const modal = ensureReportModal();
+    const confirmBtn = modal.querySelector('[data-report-confirm]');
+    const cancelBtn = modal.querySelector('[data-report-cancel]');
+
+    confirmingRouteReport = true;
+    updateReportButton();
+    modal.classList.add('open');
+    confirmBtn?.focus();
+
+    return new Promise(resolve => {
+        let done = false;
+        const close = confirmed => {
+            if (done) return;
+            done = true;
+            modal.classList.remove('open');
+            modal.removeEventListener('click', onBackdrop);
+            document.removeEventListener('keydown', onKey);
+            confirmBtn?.removeEventListener('click', onConfirm);
+            cancelBtn?.removeEventListener('click', onCancel);
+            confirmingRouteReport = false;
+            updateReportButton();
+            resolve(confirmed);
+        };
+        const onConfirm = () => close(true);
+        const onCancel = () => close(false);
+        const onBackdrop = e => {
+            if (e.target === modal) close(false);
+        };
+        const onKey = e => {
+            if (e.key === 'Escape') close(false);
+        };
+
+        modal.addEventListener('click', onBackdrop);
+        document.addEventListener('keydown', onKey);
+        confirmBtn?.addEventListener('click', onConfirm);
+        cancelBtn?.addEventListener('click', onCancel);
+    });
+}
+
+function showReportSentModal() {
+    let modal = SVG('rp-report-sent-modal');
+    if (!modal) {
+        const sentLabel = typeof gettext === 'function' ? gettext('Report sent') : 'Report sent';
+        modal = document.createElement('div');
+        modal.id = 'rp-report-sent-modal';
+        modal.className = 'rp-modal rp-success-modal';
+        modal.setAttribute('role', 'status');
+        modal.setAttribute('aria-live', 'polite');
+
+        const card = document.createElement('div');
+        card.className = 'rp-success-card';
+        card.setAttribute('aria-label', sentLabel);
+        card.innerHTML = '<x-icon name="check" size="96px"></x-icon>';
+        modal.appendChild(card);
+        document.body.appendChild(modal);
+    }
+
+    modal.classList.add('open');
+    window.setTimeout(() => modal.classList.remove('open'), 1000);
+}
+
+function clonePoint(p) {
+    return p && Number.isFinite(p.x) && Number.isFinite(p.y)
+        ? { x: p.x, y: p.y }
+        : null;
+}
+
+function clonePoints(points) {
+    return (points || []).map(clonePoint).filter(Boolean);
+}
+
+function buildInfinityReportPayload() {
+    if (!scene?.meta?.seed || !scene.start || !scene.ziel) return null;
+    const routeResult = scene.routeResult || {};
+    return {
+        seed: scene.meta.seed,
+        pair_index: scene.meta.pairIndex ?? scene.batchIndex ?? null,
+        start: clonePoint(scene.start),
+        goal: clonePoint(scene.ziel),
+        map_metres_per_unit: MAP_METRES_PER_UNIT,
+        settings: scene.meta.settings || {},
+        route_indexes: routeResult.routeIndexes || [],
+        routes: (scene.routes || []).map((route, index) => ({
+            index,
+            routeIndex: route.routeIndex ?? null,
+            side: route.side ?? null,
+            sideLabel: route.sideLabel ?? null,
+            pos: route.pos ?? null,
+            length: route.length ?? null,
+            noA: route.noA ?? null,
+            run_time: route.run_time ?? null,
+            points: clonePoints(route.points),
+        })),
+        skipped_barriers: routeResult.skippedBarriers || [],
+        route_result: {
+            reason: routeResult.reason || null,
+            blockFastest: !!routeResult.blockFastest,
+            routeIndexes: routeResult.routeIndexes || [],
+            routeLengthSlots: routeResult.routeLengthSlots || [],
+            routeRuntimeSlots: routeResult.routeRuntimeSlots || [],
+            routeNoASlots: routeResult.routeNoASlots || [],
+            routeSideSlots: routeResult.routeSideSlots || [],
+            routeSideLabelSlots: routeResult.routeSideLabelSlots || [],
+        },
+        client_state: {
+            mapScale: scene.mapScale ?? null,
+            mapTx: scene.mapTx ?? null,
+            mapTy: scene.mapTy ?? null,
+            batchIndex: scene.batchIndex ?? null,
+            cityBounds: scene.city?.bounds || null,
+            camera: { x: cam.x, y: cam.y, scale: cam.scale, rot: cam.rot },
+        },
+    };
+}
+
+async function reportCurrentRoute() {
+    if (reportingRoute || !['choose', 'reveal'].includes(phase) || !scene) return;
+    const payload = buildInfinityReportPayload();
+    if (!payload) return;
+
+    reportingRoute = true;
+    updateReportButton();
+    try {
+        await submitRouteReport(payload);
+        showReportSentModal();
+        await new Promise(resolve => window.setTimeout(resolve, 1000));
+        next();
+    } finally {
+        reportingRoute = false;
+        updateReportButton();
+    }
 }
 
 /* =========================================================
@@ -1325,10 +3502,13 @@ function renderChoiceButtons() {
 function pickSide(idx) {
     if (phase !== 'choose') return;
     phase = 'reveal';
+    updateReportButton();
 
     const choiceTime = ((performance.now() - choiceStartTime) / 1000);
     const chosen     = scene.routes[idx];
     const other      = scene.routes[1 - idx];
+    lastChoiceTimes = { total: choiceTime, real: choiceTime, penalty: 0 };
+    suppressStatsToggleUntil = performance.now() + STATS_TOGGLE_SUPPRESS_MS;
 
     // Disable buttons; mark which one was clicked
     const buttons = SVG('play-btn-bar').querySelectorAll('.play-btn');
@@ -1337,13 +3517,15 @@ function pickSide(idx) {
         if (i === idx) b.classList.add('active');
     });
 
-    // Determine which route is the shorter (correct)
-    const shorter = chosen.time <= other.time ? chosen : other;
-    const longer  = chosen.time >  other.time ? chosen : other;
-    const correctIdx = chosen.time <= other.time ? idx : 1 - idx;
+    // Determine which route is faster by editor-style runtime.
+    const chosenTime = chosen.run_time;
+    const otherTime = other.run_time;
+    const shorter = chosenTime <= otherTime ? chosen : other;
+    const longer  = chosenTime >  otherTime ? chosen : other;
+    const correctIdx = chosenTime <= otherTime ? idx : 1 - idx;
     const slowerIdx  = correctIdx === 0 ? 1 : 0;
     const isCorrect  = idx === correctIdx;
-    const diffSec    = longer.time - shorter.time;
+    const diffSec    = longer.run_time - shorter.run_time;
 
     // Replace the original Links/Rechts label with the crown (correct) and
     // the +X% / +Ys delta (slower). Layout is identical for both — the same
@@ -1358,8 +3540,8 @@ function pickSide(idx) {
     const slowerLabel = buttons[slowerIdx].querySelector('.play-btn-label');
     if (slowerLabel && diffSec > 0) {
         slowerLabel.innerHTML =
-            `<span class="route-btn-delta-rel">+${Math.round((diffSec / shorter.time) * 100)}%</span>` +
-            `<span class="route-btn-delta-abs">+${diffSec.toFixed(1)}s</span>`;
+            `<span class="route-btn-delta-rel">+${Math.round((diffSec / shorter.run_time) * 100)}%</span>` +
+            `<span class="route-btn-delta-abs">${formatTimeDelta(diffSec)}</span>`;
         slowerLabel.classList.add('route-btn-delta');
     }
 
@@ -1386,8 +3568,8 @@ function pickSide(idx) {
     submitChoice({
         correct:      isCorrect,
         choice_time:  choiceTime,
-        shorter_time: shorter.time,
-        longer_time:  longer.time,
+        shorter_time: shorter.run_time,
+        longer_time:  longer.run_time,
     });
 }
 
@@ -1395,7 +3577,7 @@ function animateRoutes(chosenIdx) {
     const layer = SVG('rp-route-layer');
     layer.innerHTML = '';
 
-    const validTimes = scene.routes.map(r => r.time).filter(t => t > 0);
+    const validTimes = scene.routes.map(r => r.run_time).filter(t => t > 0);
     const minTime    = validTimes.length ? Math.min(...validTimes) : 1;
 
     const anims = scene.routes.map((route, i) => {
@@ -1407,42 +3589,49 @@ function animateRoutes(chosenIdx) {
             dists.push(dists[j - 1] + Math.hypot(rP[j].x - rP[j - 1].x, rP[j].y - rP[j - 1].y));
         const totalDist = dists[dists.length - 1];
 
-        const ratio    = route.time > 0 ? route.time / minTime : 1;
+        const ratio    = route.run_time > 0 ? route.run_time / minTime : 1;
         const excess   = ratio - 1;
         const amp      = 5 - 4 * Math.min(excess, 1);
         const duration = 1 + excess * amp;        // seconds
 
         const color = ROUTE_COLORS[i];
 
-        // Background dimmed white outline
-        const bg = svgEl('polyline');
-        bg.setAttribute('points', rP.map(p => `${p.x},${p.y}`).join(' '));
-        bg.setAttribute('fill', 'none');
-        bg.setAttribute('stroke', 'white');
-        bg.setAttribute('stroke-width', '3');
-        bg.setAttribute('opacity', '0.2');
-        bg.setAttribute('stroke-linejoin', 'round');
-        layer.appendChild(bg);
+        // Same route presentation as normal play: white background trail and
+        // colored foreground trail with adaptive zoom-aware stroke widths.
+        const bgTrail = svgEl('polyline');
+        bgTrail.setAttribute('fill', 'none');
+        bgTrail.setAttribute('stroke', 'white');
+        setAdaptiveRouteStroke(bgTrail, ROUTE_BACKGROUND_STROKE_WIDTH);
+        bgTrail.setAttribute('stroke-linecap', 'round');
+        bgTrail.setAttribute('stroke-linejoin', 'round');
+        bgTrail.setAttribute('vector-effect', 'non-scaling-stroke');
+        bgTrail.setAttribute('points', `${rP[0].x},${rP[0].y}`);
+        bgTrail.setAttribute('pointer-events', 'none');
+        layer.appendChild(bgTrail);
 
         const trail = svgEl('polyline');
         trail.setAttribute('fill', 'none');
         trail.setAttribute('stroke', color);
-        trail.setAttribute('stroke-width', '3');
+        setAdaptiveRouteStroke(trail, ROUTE_FOREGROUND_STROKE_WIDTH);
         trail.setAttribute('stroke-linecap',  'round');
         trail.setAttribute('stroke-linejoin', 'round');
         trail.setAttribute('points', `${rP[0].x},${rP[0].y}`);
-        if (i !== chosenIdx) trail.setAttribute('opacity', '0.7');
+        trail.setAttribute('vector-effect', 'non-scaling-stroke');
+        trail.setAttribute('opacity', '1');
         layer.appendChild(trail);
 
         const dot = svgEl('circle');
-        dot.setAttribute('r', '6');
+        dot.setAttribute('r', ROUTE_DOT_SURFACE_RADIUS / (scene?.mapScale || 1));
         dot.setAttribute('fill', color);
         dot.setAttribute('cx', rP[0].x);
         dot.setAttribute('cy', rP[0].y);
+        dot.setAttribute('vector-effect', 'non-scaling-stroke');
         layer.appendChild(dot);
 
-        return { rP, dists, totalDist, duration, color, trail, dot, i, done: false };
+        return { rP, dists, totalDist, duration, color, bgTrail, trail, dot, i, done: false };
     }).filter(Boolean);
+
+    drawRouteBlocks(layer);
 
     const t0 = performance.now();
     if (_routeAnim) cancelAnimationFrame(_routeAnim);
@@ -1453,7 +3642,7 @@ function animateRoutes(chosenIdx) {
 
         anims.forEach(anim => {
             if (anim.done) return;
-            const { rP, dists, totalDist, duration, trail, dot } = anim;
+            const { rP, dists, totalDist, duration, bgTrail, trail, dot } = anim;
 
             const dist = Math.min((elapsed / duration) * totalDist, totalDist);
             let seg = dists.length - 2;
@@ -1471,7 +3660,9 @@ function animateRoutes(chosenIdx) {
 
             const pts = rP.slice(0, seg + 1).map(p => `${p.x},${p.y}`);
             if (segT > 0) pts.push(`${cx},${cy}`);
-            trail.setAttribute('points', pts.join(' '));
+            const trailPoints = pts.join(' ');
+            bgTrail.setAttribute('points', trailPoints);
+            trail.setAttribute('points', trailPoints);
 
             if (dist >= totalDist) {
                 anim.done = true;
@@ -1490,19 +3681,18 @@ function animateRoutes(chosenIdx) {
 function emitWave(pos, color) {
     const layer = SVG('rp-control-layer');
     const c = svgEl('circle');
-    c.setAttribute('cx', pos.x); c.setAttribute('cy', pos.y); c.setAttribute('r', R_CONTROL);
+    c.setAttribute('cx', pos.x); c.setAttribute('cy', pos.y); c.setAttribute('r', CONTROL_RADIUS);
     c.setAttribute('fill', 'none');
     c.setAttribute('stroke', color);
-    c.setAttribute('stroke-width', '14');
+    c.setAttribute('stroke-width', CONTROL_WAVE_STROKE_WIDTH);
     c.setAttribute('opacity', '0.85');
-    c.setAttribute('vector-effect', 'non-scaling-stroke');
     c.style.filter = 'blur(4px)';
     layer.appendChild(c);
     const start = performance.now();
     (function step(now) {
         const t = Math.min((now - start) / 1800, 1);
         const e = 1 - Math.pow(1 - t, 2);
-        c.setAttribute('r',       R_CONTROL + (R_CONTROL * 1.6) * e);
+        c.setAttribute('r',       CONTROL_RADIUS + (CONTROL_RADIUS * 1.6) * e);
         c.setAttribute('opacity', (1 - e) * 0.85);
         if (t < 1) requestAnimationFrame(step);
         else c.remove();
@@ -1545,7 +3735,8 @@ function renderHud(opts = {}) {
         }
     }
     if (choiceEl && opts.choiceTime !== undefined) {
-        choiceEl.textContent = `${opts.choiceTime.toFixed(2)}s`;
+        const clockIcon = window.icon ? window.icon('clock', '0.9em') : '';
+        choiceEl.innerHTML = `${clockIcon}<span>${opts.choiceTime.toFixed(2)}s</span>`;
     }
 }
 
@@ -1556,4 +3747,22 @@ function submitChoice(payload) {
         headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf },
         body:    JSON.stringify(payload),
     }).catch(err => console.error('submit-infinite-choice failed:', err));
+}
+
+async function submitRouteReport(payload) {
+    const csrf = document.cookie.match(/csrftoken=([^;]+)/)?.[1] ?? '';
+    const res = await fetch('/play/infinity/report-route/', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf },
+        body:    JSON.stringify(payload),
+    });
+    if (!res.ok) {
+        let message = `HTTP ${res.status}`;
+        try {
+            const data = await res.json();
+            if (data?.error) message = data.error;
+        } catch {}
+        throw new Error(message);
+    }
+    return res.json();
 }

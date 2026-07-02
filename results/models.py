@@ -71,3 +71,42 @@ class InfiniteChoice(models.Model):
     def __str__(self):
         u = self.user.username if self.user else 'deleted'
         return f"{u} · {'✓' if self.correct else '✗'} · {self.choice_time:.1f}s"
+
+
+class ReportedInfinity(models.Model):
+    """A user report for a procedurally-generated infinity route-choice leg."""
+
+    user         = models.ForeignKey('auth.User', on_delete=models.SET_NULL,
+                                     null=True, blank=True, related_name='reported_infinity')
+    team         = models.ForeignKey('account.Team', on_delete=models.SET_NULL,
+                                     null=True, blank=True, related_name='reported_infinity')
+    timestamp    = models.DateTimeField(auto_now_add=True)
+
+    seed         = models.PositiveIntegerField()
+    pair_index   = models.PositiveIntegerField(null=True, blank=True)
+    start_x      = models.FloatField()
+    start_y      = models.FloatField()
+    goal_x       = models.FloatField()
+    goal_y       = models.FloatField()
+    map_metres_per_unit = models.FloatField(null=True, blank=True)
+
+    settings         = models.JSONField(default=dict, blank=True)
+    route_indexes    = models.JSONField(default=list, blank=True)
+    routes           = models.JSONField(default=list, blank=True)
+    skipped_barriers = models.JSONField(default=list, blank=True)
+    route_result     = models.JSONField(default=dict, blank=True)
+    client_state     = models.JSONField(default=dict, blank=True)
+    user_agent       = models.CharField(max_length=512, blank=True)
+
+    class Meta:
+        db_table = 'reported_infinity'
+        ordering = ['-timestamp']
+        indexes = [
+            models.Index(fields=['seed', 'pair_index'], name='repinf_seed_pair_idx'),
+            models.Index(fields=['team', 'timestamp'], name='repinf_team_time_idx'),
+            models.Index(fields=['user', 'timestamp'], name='repinf_user_time_idx'),
+        ]
+
+    def __str__(self):
+        u = self.user.username if self.user else 'deleted'
+        return f"{u} reported seed {self.seed}"

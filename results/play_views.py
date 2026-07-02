@@ -121,6 +121,67 @@ def submit_infinite_choice(request):
         return JsonResponse({'error': str(e)}, status=500)
 
 
+def _json_obj(value):
+    return value if isinstance(value, dict) else {}
+
+
+def _json_list(value):
+    return value if isinstance(value, list) else []
+
+
+def _point_coord(point, key):
+    if not isinstance(point, dict):
+        raise ValueError('Invalid point payload')
+    return float(point[key])
+
+
+@login_required
+@require_POST
+def report_infinite_route(request):
+    import json
+    try:
+        data = json.loads(request.body)
+        start = data.get('start')
+        goal = data.get('goal')
+
+        try:
+            active_team = getattr(request.user.profile, 'active_team', None)
+        except Exception:
+            active_team = None
+
+        from .models import ReportedInfinity
+        report = ReportedInfinity.objects.create(
+            user=request.user,
+            team=active_team,
+            seed=int(data['seed']),
+            pair_index=int(data['pair_index']) if data.get('pair_index') is not None else None,
+            start_x=_point_coord(start, 'x'),
+            start_y=_point_coord(start, 'y'),
+            goal_x=_point_coord(goal, 'x'),
+            goal_y=_point_coord(goal, 'y'),
+            map_metres_per_unit=(
+                float(data['map_metres_per_unit'])
+                if data.get('map_metres_per_unit') is not None
+                else None
+            ),
+            settings=_json_obj(data.get('settings')),
+            route_indexes=_json_list(data.get('route_indexes')),
+            routes=_json_list(data.get('routes')),
+            skipped_barriers=_json_list(data.get('skipped_barriers')),
+            route_result=_json_obj(data.get('route_result')),
+            client_state=_json_obj(data.get('client_state')),
+            user_agent=(request.META.get('HTTP_USER_AGENT') or '')[:512],
+        )
+        try:
+            _clear_stats_cache_for_team(active_team)
+        except Exception:
+            pass
+        return JsonResponse({'status': 'reported', 'id': report.id})
+    except Exception as e:
+        traceback.print_exc()
+        return JsonResponse({'error': str(e)}, status=500)
+
+
 @login_required
 @require_GET
 def get_file(request, file_id):

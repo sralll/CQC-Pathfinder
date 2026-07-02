@@ -351,6 +351,9 @@ msgstr "Personale"
 msgid "Please enter a project name."
 msgstr "Inserisci un nome per il progetto."
 
+msgid "Please only report significant mistakes, slightly imperfect routes can happen."
+msgstr "Segnala solo errori significativi; percorsi leggermente imperfetti possono capitare."
+
 msgid "Please open or upload a map first."
 msgstr "Prima apri o carica una mappa."
 
@@ -395,6 +398,12 @@ msgstr "Sostituire i punti esistenti o importare in aggiunta il percorso OCAD?"
 
 msgid "Replay?"
 msgstr "Riproduci?"
+
+msgid "Report route"
+msgstr "Segnala percorso"
+
+msgid "Report sent"
+msgstr "Segnalazione inviata"
 
 msgid "Reset"
 msgstr "Reimposta"
@@ -452,6 +461,9 @@ msgstr "Seleziona delle persone per vedere l'andamento"
 
 msgid "Select route"
 msgstr "Seleziona percorso"
+
+msgid "Send"
+msgstr "Invia"
 
 msgid "Sensitivity"
 msgstr "Sensibilità"

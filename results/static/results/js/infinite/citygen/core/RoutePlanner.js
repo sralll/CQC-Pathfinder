@@ -1,0 +1,336 @@
+import { extractObstacles } from './Obstacles.js';
+import { buildVisibilityGraph } from './VisibilityGraph.js';
+
+export const ROUTE_VISIBILITY_GRAPH_OPTIONS = {
+	// Physical runner clearance: routes keep this far from every wall.
+	clearance: 0.3,
+	// Lazy visibility graph expansion radius. Keep this aligned with stress tests.
+	neighborRing: 8,
+};
+
+export const ROUTE_BARRIER_DRAW_WIDTH = 0.8;
+const ROUTE_BARRIER_SLIDE_FRACTION = 0.05;
+const ROUTE_INSIGNIFICANT_BARRIER_KINDS = new Set(['hedge']);
+
+const ROUTE_LATERAL_ASTAR_OPTIONS = { maxStartGoalPerpendicularFactor: 1 };
+const ROUTE_ASTAR_OPTIONS = ROUTE_LATERAL_ASTAR_OPTIONS;
+const ROUTE_EXTRA_ASTAR_OPTIONS = { ...ROUTE_ASTAR_OPTIONS, timeBudgetMs: 200 };
+const ROUTE_MANUAL_ASTAR_OPTIONS = ROUTE_LATERAL_ASTAR_OPTIONS;
+
+export const ROUTE_STRESS_ALTERNATE_ATTEMPTS = 4;
+const ROUTE_MANUAL_ALTERNATE_ATTEMPTS = 3;
+const ROUTE_PAIR_MIN_SIDE_GAP = 10;
+
+export const emptyRouteSlots = () => [null, null, null, null];
+
+export function buildRouteVisibilityGraph(data, options = ROUTE_VISIBILITY_GRAPH_OPTIONS) {
+	return buildVisibilityGraph(extractObstacles(data), options);
+}
+
+export function routePathLength(path) {
+	let len = 0;
+	for (let i = 1; i < path.length; i++)
+		len += Math.hypot(path[i].x - path[i - 1].x, path[i].y - path[i - 1].y);
+	return len;
+}
+
+function routePointInFlatPolygon(px, py, poly) {
+	let inside = false;
+	const n = poly.length;
+	for (let i = 0, j = n - 2; i < n; i += 2, j = i - 2) {
+		const ax = poly[j], ay = poly[j + 1];
+		const bx = poly[i], by = poly[i + 1];
+		if ((ay > py) !== (by > py)) {
+			const xInt = ax + (py - ay) * (bx - ax) / (by - ay);
+			if (px < xInt) inside = !inside;
+		}
+	}
+	return inside;
+}
+
+function routePointInSignificantRawObstacle(px, py, visGraph) {
+	if (visGraph._inPortal && visGraph._inPortal(px, py)) return false;
+	const grid = visGraph.rawPolyGrid;
+	if (!grid || !visGraph.rawPolygons || !visGraph.rawPolyBboxes || !visGraph.rawKinds)
+		return visGraph._inRawObstacle(px, py);
+	const arr = grid.bins[grid.key(grid.col(px), grid.row(py))];
+	if (!arr) return false;
+	for (let a = 0; a < arr.length; a++) {
+		const pi = arr[a];
+		if (ROUTE_INSIGNIFICANT_BARRIER_KINDS.has(visGraph.rawKinds[pi])) continue;
+		const b = visGraph.rawPolyBboxes[pi];
+		if (px < b.minX || px > b.maxX || py < b.minY || py > b.maxY) continue;
+		if (routePointInFlatPolygon(px, py, visGraph.rawPolygons[pi])) return true;
+	}
+	return false;
+}
+
+function findSmartBarrier(path, visGraph) {
+	const total = routePathLength(path);
+	if (total < 1e-6) return null;
+	const MAX_HALF = 12;
+	const STEP = 0.25;
+	const MARGIN = 1.0;
+	const CENTER_FRACTION = 0.5;
+	const SLIDE_SAMPLES = 32;
+	const FALLBACK_SAMPLES = 30;
+
+	const probe = (frac) => {
+		const targetLen = total * frac;
+		let accum = 0;
+		for (let i = 1; i < path.length; i++) {
+			const segLen = Math.hypot(path[i].x - path[i - 1].x, path[i].y - path[i - 1].y);
+			if (accum + segLen >= targetLen) {
+				const t = (targetLen - accum) / (segLen || 1);
+				const mx = path[i - 1].x + (path[i].x - path[i - 1].x) * t;
+				const my = path[i - 1].y + (path[i].y - path[i - 1].y) * t;
+				const norm = segLen || 1;
+				const px = -(path[i].y - path[i - 1].y) / norm;
+				const py = (path[i].x - path[i - 1].x) / norm;
+				const distFromPrev = targetLen - accum;
+				const distToNext = accum + segLen - targetLen;
+				let leftDist = MAX_HALF, rightDist = MAX_HALF;
+				let leftHit = false, rightHit = false;
+				for (let d = STEP; d <= MAX_HALF; d += STEP) {
+					if (routePointInSignificantRawObstacle(mx + px * d, my + py * d, visGraph)) { leftDist = d; leftHit = true; break; }
+				}
+				for (let d = STEP; d <= MAX_HALF; d += STEP) {
+					if (routePointInSignificantRawObstacle(mx - px * d, my - py * d, visGraph)) { rightDist = d; rightHit = true; break; }
+				}
+				return { frac, mx, my, px, py, leftDist, rightDist, leftHit, rightHit, distFromPrev, distToNext };
+			}
+			accum += segLen;
+		}
+		return null;
+	};
+	const wallAt = (p) => ({
+		mx: p.mx, my: p.my,
+		ax: p.mx + p.px * (p.leftDist + MARGIN), ay: p.my + p.py * (p.leftDist + MARGIN),
+		bx: p.mx - p.px * (p.rightDist + MARGIN), by: p.my - p.py * (p.rightDist + MARGIN),
+		len: p.leftDist + p.rightDist + MARGIN * 2,
+	});
+	const isClearOfRouteNodes = (p) =>
+		Math.min(p.distFromPrev, p.distToNext) >= ROUTE_BARRIER_DRAW_WIDTH;
+
+	let bestClearEnclosed = null, bestClearScore = Infinity;
+	let bestEnclosed = null, bestEnclosedScore = Infinity;
+	let bestFallback = null, bestFallbackScore = Infinity;
+	const minFrac = Math.max(0, CENTER_FRACTION - ROUTE_BARRIER_SLIDE_FRACTION);
+	const maxFrac = Math.min(1, CENTER_FRACTION + ROUTE_BARRIER_SLIDE_FRACTION);
+	for (let s = 0; s <= SLIDE_SAMPLES; s++) {
+		const frac = minFrac + (maxFrac - minFrac) * (s / SLIDE_SAMPLES);
+		const p = probe(frac);
+		if (!p) continue;
+		const width = p.leftDist + p.rightDist;
+		const centerPenalty = Math.abs(frac - CENTER_FRACTION) * 1e-3;
+		if (p.leftHit && p.rightHit) {
+			const score = width + centerPenalty;
+			if (isClearOfRouteNodes(p) && score < bestClearScore) {
+				bestClearScore = score;
+				bestClearEnclosed = wallAt(p);
+			}
+			if (score < bestEnclosedScore) {
+				bestEnclosedScore = score;
+				bestEnclosed = wallAt(p);
+			}
+		}
+		if (width + centerPenalty < bestFallbackScore) {
+			bestFallbackScore = width + centerPenalty;
+			bestFallback = wallAt(p);
+		}
+	}
+	if (bestClearEnclosed || bestEnclosed) return bestClearEnclosed || bestEnclosed;
+
+	let broadEnclosed = null, broadEnclosedScore = Infinity;
+	let broadFallback = null, broadFallbackScore = Infinity;
+	for (let s = 0; s <= FALLBACK_SAMPLES; s++) {
+		const frac = 0.25 + 0.5 * (s / FALLBACK_SAMPLES);
+		const p = probe(frac);
+		if (!p) continue;
+		const width = p.leftDist + p.rightDist;
+		if (p.leftHit && p.rightHit) {
+			const score = Math.abs(frac - CENTER_FRACTION);
+			if (score < broadEnclosedScore) { broadEnclosedScore = score; broadEnclosed = wallAt(p); }
+		}
+		if (width < broadFallbackScore) { broadFallbackScore = width; broadFallback = wallAt(p); }
+	}
+	return broadEnclosed || bestFallback || broadFallback;
+}
+
+function routePathSignature(path) {
+	return path.map((p) => `${Math.round(p.x * 1000)},${Math.round(p.y * 1000)}`).join('|');
+}
+
+function routeSlotsFor(paths) {
+	const routeLengthSlots = emptyRouteSlots();
+	const routeSideSlots = emptyRouteSlots();
+	const routeSideLabelSlots = emptyRouteSlots();
+	for (const p of paths) {
+		routeLengthSlots[p.routeIndex - 1] = p.len;
+		routeSideSlots[p.routeIndex - 1] = p.side;
+		routeSideLabelSlots[p.routeIndex - 1] = p.sideLabel;
+	}
+	return { routeLengthSlots, routeSideSlots, routeSideLabelSlots };
+}
+
+function failedRoute(reason, paths, selected, extras) {
+	const slots = routeSlotsFor(paths);
+	return {
+		ok: false,
+		reason,
+		paths,
+		selected,
+		...slots,
+		routeIndexes: selected ? selected.map((p) => p.routeIndex) : [],
+		blockFastest: false,
+		...extras,
+	};
+}
+
+export function computeRouteOptions(startPt, goalPt, visGraph) {
+	const t0 = performance.now();
+	if (!visGraph) return {
+		ok: false,
+		reason: 'side',
+		paths: [],
+		selected: null,
+		routeLengthSlots: emptyRouteSlots(),
+		routeSideSlots: emptyRouteSlots(),
+		routeSideLabelSlots: emptyRouteSlots(),
+		routeIndexes: [],
+		blockFastest: false,
+		barriers: [],
+		skippedBarriers: [],
+		dt: 0,
+		timeout: false,
+	};
+	if (visGraph.clearTempBlockers) visGraph.clearTempBlockers();
+
+	let paths = [];
+	const barriers = [];
+	let timeout = false;
+	let lateralRejected = false;
+
+	for (let attempt = 0; attempt < ROUTE_STRESS_ALTERNATE_ATTEMPTS; attempt++) {
+		const astarOptions = attempt >= 2 ? ROUTE_EXTRA_ASTAR_OPTIONS : ROUTE_ASTAR_OPTIONS;
+		const result = visGraph.astar(startPt, goalPt, astarOptions);
+		if (visGraph.lastAstarTimedOut) timeout = true;
+		if (!result && visGraph.lastAstarRejectedByLateralLimit) lateralRejected = true;
+		if (!result || result.path.length < 2) break;
+		const path = result.path;
+		const len = routePathLength(path);
+		const pathRecord = { path, len, routeIndex: attempt + 1, attemptIndex: attempt + 1, barrier: null };
+		paths.push(pathRecord);
+		if (attempt >= ROUTE_STRESS_ALTERNATE_ATTEMPTS - 1) break;
+		const barrier = findSmartBarrier(path, visGraph);
+		if (!barrier) break;
+		barrier.attemptIndex = attempt + 1;
+		pathRecord.barrier = barrier;
+		barriers.push(barrier);
+		visGraph.addTempBlocker(barrier.ax, barrier.ay, barrier.bx, barrier.by);
+	}
+
+	if (visGraph.clearTempBlockers) visGraph.clearTempBlockers();
+	const dt = performance.now() - t0;
+	const baseExtras = { barriers, skippedBarriers: [], dt, timeout };
+
+	if (paths.length === 0)
+		return failedRoute(lateralRejected ? 'side' : 'timeout', paths, null, baseExtras);
+	if (paths.length === 1)
+		return failedRoute(timeout ? 'timeout' : 'distinct', paths, null, { ...baseExtras, routeIndexes: [1] });
+
+	paths.sort((a, b) => a.len - b.len);
+	for (let i = 0; i < paths.length; i++) paths[i].routeIndex = i + 1;
+
+	const sgDx = goalPt.x - startPt.x, sgDy = goalPt.y - startPt.y;
+	const sgLen = Math.hypot(sgDx, sgDy) || 1;
+	for (const p of paths) {
+		let sum = 0;
+		for (const pt of p.path) sum += sgDx * (pt.y - startPt.y) - sgDy * (pt.x - startPt.x);
+		p.side = (sum / p.path.length) / sgLen;
+		p.sideLabel = p.side > 0 ? 'R' : p.side < 0 ? 'L' : 'C';
+	}
+
+	const seenPathSignatures = new Set();
+	paths = paths.filter((p) => {
+		const sig = routePathSignature(p.path);
+		if (seenPathSignatures.has(sig)) return false;
+		seenPathSignatures.add(sig);
+		return true;
+	});
+	for (let i = 0; i < paths.length; i++) paths[i].routeIndex = i + 1;
+	if (paths.length < 2)
+		return failedRoute('distinct', paths, null, baseExtras);
+
+	const pairs = [];
+	for (let i = 0; i < paths.length; i++) {
+		for (let j = i + 1; j < paths.length; j++) {
+			const sideGap = Math.abs(paths[i].side - paths[j].side);
+			const shorter = paths[i].len;
+			const longer = paths[j].len;
+			pairs.push({ i, j, relativeGap: shorter > 0 ? (longer - shorter) / shorter : Infinity, total: shorter + longer, sideGap });
+		}
+	}
+	pairs.sort((a, b) => a.relativeGap - b.relativeGap || a.total - b.total);
+	const bestPair = pairs[0];
+	const selected = [paths[bestPair.i], paths[bestPair.j]];
+
+	if (bestPair.relativeGap > 0.5)
+		return failedRoute('distance', paths, null, baseExtras);
+
+	if (bestPair.sideGap < ROUTE_PAIR_MIN_SIDE_GAP || selected[0].side * selected[1].side >= 0)
+		return failedRoute('side', paths, null, baseExtras);
+
+	const selectedShortest = Math.min(selected[0].len, selected[1].len);
+	const skippedBarriers = paths
+		.filter((p) => p.len < selectedShortest && p.barrier)
+		.map((p) => p.barrier);
+	const blockFastest = skippedBarriers.length > 0;
+
+	const routeLengthSlots = emptyRouteSlots();
+	const routeSideSlots = emptyRouteSlots();
+	const routeSideLabelSlots = emptyRouteSlots();
+	for (const p of selected) routeLengthSlots[p.routeIndex - 1] = p.len;
+	for (const p of paths) {
+		routeSideSlots[p.routeIndex - 1] = p.side;
+		routeSideLabelSlots[p.routeIndex - 1] = p.sideLabel;
+	}
+	return {
+		ok: true,
+		reason: 'ok',
+		paths,
+		selected,
+		routeLengthSlots,
+		routeSideSlots,
+		routeSideLabelSlots,
+		routeIndexes: selected.map((p) => p.routeIndex),
+		blockFastest,
+		barriers,
+		skippedBarriers,
+		dt,
+		timeout,
+	};
+}
+
+export function computeManualSingleRoute(startPt, goalPt, visGraph) {
+	if (!visGraph) return { result: null, candidates: [], dt: 0 };
+	if (visGraph.clearTempBlockers) visGraph.clearTempBlockers();
+	const t0 = performance.now();
+	const candidates = [];
+	for (let attempt = 0; attempt < ROUTE_MANUAL_ALTERNATE_ATTEMPTS; attempt++) {
+		const candidate = visGraph.astar(startPt, goalPt, ROUTE_MANUAL_ASTAR_OPTIONS);
+		if (!candidate || !candidate.path || candidate.path.length < 2) break;
+		candidates.push({
+			result: candidate,
+			len: routePathLength(candidate.path),
+		});
+		const barrier = findSmartBarrier(candidate.path, visGraph);
+		if (!barrier) break;
+		visGraph.addTempBlocker(barrier.ax, barrier.ay, barrier.bx, barrier.by);
+	}
+	if (visGraph.clearTempBlockers) visGraph.clearTempBlockers();
+	const dt = performance.now() - t0;
+	candidates.sort((a, b) => a.len - b.len);
+	const result = candidates.length ? candidates[0].result : null;
+	return { result, candidates, dt };
+}

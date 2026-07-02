@@ -7,20 +7,25 @@
 {% endblock %}
 
 {% block scripts %}
-<script defer src="{% static 'results/js/infinite_play.js' %}"></script>
+<script type="module" src="{% static 'results/js/infinite_play.js' %}"></script>
 {% endblock %}
 
 {% block content %}
 <div id="play-wrap" class="rp-play-wrap">
 
-    <!-- HUD: attempts count (left), last choice time (centre), streak inside flame (right) -->
+    <!-- HUD: attempts + streak (left), last choice time (centre), report action (right) -->
     <div id="rp-hud">
-        <div class="rp-hud-attempts" id="rp-attempts">0</div>
-        <div class="rp-hud-choice-time" id="rp-choice-time"></div>
-        <div class="rp-hud-flame" id="rp-flame">
-            <x-icon name="flame" size="28px"></x-icon>
-            <span class="rp-hud-streak" id="rp-streak">0</span>
+        <div class="rp-hud-left">
+            <div class="rp-hud-attempts" id="rp-attempts">0</div>
+            <div class="rp-hud-flame" id="rp-flame">
+                <x-icon name="flame" size="28px"></x-icon>
+                <span class="rp-hud-streak" id="rp-streak">0</span>
+            </div>
         </div>
+        <div class="rp-hud-choice-time" id="rp-choice-time"></div>
+        <button id="rp-report-btn" class="rp-report-btn" type="button" title="Report route" aria-label="Report route">
+            <x-icon name="report-route" size="20px"></x-icon>
+        </button>
     </div>
 
     <!-- Map area: same DOM structure as play.html so play.css applies -->
@@ -53,6 +58,8 @@
     </div>
 
     <!-- Action bar — same id as play mode so play.css route-btn styling applies -->
+    <div id="play-stats-panel"></div>
+
     <div id="play-btn-bar"></div>
 
     <!-- Progress bar mirror of play mode (grey when re-attempting) -->

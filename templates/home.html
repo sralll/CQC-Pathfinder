@@ -10,7 +10,9 @@
     <div class="home-card">
 
         <div class="home-logo-wrap">
-            <img class="home-logo" src="{% static 'img/logo.svg' %}" alt="CQC Pathfinder">
+            <div class="home-logo-stage" data-home-infinity-logo>
+                <img class="home-logo" src="{% static 'img/logo.svg' %}" alt="CQC Pathfinder">
+            </div>
         </div>
 
         <div class="home-grid {% if is_trainer %}home-grid-trainer{% endif %}">
@@ -51,4 +53,8 @@
 
     </div>
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{% static 'js/home_infinity.js' %}"></script>
 {% endblock %}
