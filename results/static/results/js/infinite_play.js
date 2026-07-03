@@ -48,7 +48,7 @@ const CONTROL_OPACITY = 0.8;
 const ROUTE_BACKGROUND_STROKE_WIDTH = 2;
 const ROUTE_FOREGROUND_STROKE_WIDTH = 1;
 const ROUTE_DOT_SURFACE_RADIUS = 1;
-const ROUTE_HIT_WIDTH = 14;
+const ROUTE_HIT_WIDTH = 28;
 const ROUTE_STROKE_MULTIPLIER       = 2.5;
 const ROUTE_STROKE_SCALE_EXPONENT   = 0.33;
 const ROUTE_STROKE_MIN_CAMERA_SCALE = 0.05;
@@ -87,7 +87,7 @@ function routeStrokeWidthForZoom(baseWidth, scale = cam.scale) {
     const visualWidth = baseWidth
         * ROUTE_STROKE_MULTIPLIER
         * Math.pow(safeScale, ROUTE_STROKE_SCALE_EXPONENT);
-    return visualWidth / safeScale;
+    return visualWidth / cssCameraDeltaScale(scale);
 }
 
 function setAdaptiveRouteStroke(el, baseWidth) {
@@ -128,6 +128,63 @@ const NS    = 'http://www.w3.org/2000/svg';
 const svgEl = (tag) => document.createElementNS(NS, tag);
 const SVG   = (id)  => document.getElementById(id);
 
+function cloneCameraState(state) {
+    return { x: state.x, y: state.y, scale: state.scale, rot: state.rot };
+}
+
+function cameraMatrix(state) {
+    const scale = Number.isFinite(state.scale) ? state.scale : 1;
+    const rad = (Number.isFinite(state.rot) ? state.rot : 0) * Math.PI / 180;
+    const cos = Math.cos(rad);
+    const sin = Math.sin(rad);
+    return {
+        a: cos * scale,
+        b: sin * scale,
+        c: -sin * scale,
+        d: cos * scale,
+        e: Number.isFinite(state.x) ? state.x : 0,
+        f: Number.isFinite(state.y) ? state.y : 0,
+    };
+}
+
+function multiplyMatrix(m1, m2) {
+    return {
+        a: m1.a * m2.a + m1.c * m2.b,
+        b: m1.b * m2.a + m1.d * m2.b,
+        c: m1.a * m2.c + m1.c * m2.d,
+        d: m1.b * m2.c + m1.d * m2.d,
+        e: m1.a * m2.e + m1.c * m2.f + m1.e,
+        f: m1.b * m2.e + m1.d * m2.f + m1.f,
+    };
+}
+
+function invertMatrix(m) {
+    const det = m.a * m.d - m.b * m.c;
+    if (Math.abs(det) < 1e-12) return { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 };
+    return {
+        a: m.d / det,
+        b: -m.b / det,
+        c: -m.c / det,
+        d: m.a / det,
+        e: (m.c * m.f - m.d * m.e) / det,
+        f: (m.b * m.e - m.a * m.f) / det,
+    };
+}
+
+function matrixString(m) {
+    return `matrix(${m.a},${m.b},${m.c},${m.d},${m.e},${m.f})`;
+}
+
+function cssCameraDeltaMatrix() {
+    return multiplyMatrix(cameraMatrix(cam), invertMatrix(cameraMatrix(committedCam)));
+}
+
+function cssCameraDeltaScale(scale = cam.scale) {
+    const committedScale = Math.max(Math.abs(committedCam.scale || 1), 1e-6);
+    const currentScale = Math.max(Math.abs(scale || 1), 1e-6);
+    return currentScale / committedScale;
+}
+
 /* ── State ────────────────────────────────────────────── */
 
 let scene       = null;
@@ -136,6 +193,7 @@ let choiceStartTime = null;
 let lastChoiceTimes = null;
 let statsVisible = false;
 let cam = { x: 0, y: 0, scale: 1, rot: 0 };
+let committedCam = { x: 0, y: 0, scale: 1, rot: 0 };
 let camBounds = null;
 let applyTransform = () => {};
 let suppressMapClickUntil = 0;
@@ -150,6 +208,7 @@ let _pendingBatchPromise = null;
 let _streamingBatch = null;
 let _prerenderTimer = null;
 let _renderTarget = null;
+let _cameraCommitTimer = null;
 let reportingRoute = false;
 let confirmingRouteReport = false;
 let _routeAnim  = null;
@@ -247,7 +306,8 @@ function addRouteHitArea(layer, route, routeIdx) {
     });
     if (!hit) return;
     hit.dataset.routeIdx = routeIdx;
-    hit.style.cursor = 'default';
+    // Keep the hidden hit area from exposing route positions via cursor changes.
+    hit.style.cursor = 'inherit';
     hit.addEventListener('click', e => {
         e.stopPropagation();
         if (routeChoiceSuppressedByPan()) return;
@@ -283,11 +343,11 @@ function initCamera() {
     const camera = SVG('camera');
     let drag = null;
     let lastPinchDist = null;
+    commitCameraTransform();
 
     applyTransform = () => {
         if (!isFinite(cam.x) || !isFinite(cam.y) || !isFinite(cam.scale) || !isFinite(cam.rot)) return;
-        camera.style.transform =
-            `translate(${cam.x}px, ${cam.y}px) rotate(${cam.rot}deg) scale(${cam.scale})`;
+        camera.style.transform = matrixString(cssCameraDeltaMatrix());
         updateRouteStrokeWidths();
     };
 
@@ -317,6 +377,7 @@ function initCamera() {
 
     window.addEventListener('mouseup', () => {
         if (drag?.moved) suppressMapClickForPan();
+        if (drag?.moved) scheduleCameraCommit();
         drag = null;
         container.classList.remove('panning');
     });
@@ -334,6 +395,7 @@ function initCamera() {
         cam.scale = newScale;
         clampCam();
         applyTransform();
+        scheduleCameraCommit();
     }, { passive: false });
 
     container.addEventListener('touchstart', e => {
@@ -385,10 +447,33 @@ function initCamera() {
         if (e.touches.length < 2) lastPinchDist = null;
         if (e.touches.length === 0) {
             if (drag?.moved) suppressMapClickForPan();
+            scheduleCameraCommit();
             drag = null;
             container.classList.remove('panning');
         }
     }, { passive: true });
+}
+
+function scheduleCameraCommit(delay = 100) {
+    if (_cameraCommitTimer) window.clearTimeout(_cameraCommitTimer);
+    _cameraCommitTimer = window.setTimeout(() => {
+        _cameraCommitTimer = null;
+        commitCameraTransform();
+    }, delay);
+}
+
+function commitCameraTransform() {
+    if (_cameraCommitTimer) {
+        window.clearTimeout(_cameraCommitTimer);
+        _cameraCommitTimer = null;
+    }
+    if (!isFinite(cam.x) || !isFinite(cam.y) || !isFinite(cam.scale) || !isFinite(cam.rot)) return;
+    committedCam = cloneCameraState(cam);
+    const cameraLayer = SVG('rp-camera-layer');
+    if (cameraLayer) cameraLayer.setAttribute('transform', matrixString(cameraMatrix(committedCam)));
+    const camera = SVG('camera');
+    if (camera) camera.style.transform = 'none';
+    updateRouteStrokeWidths();
 }
 
 function pinchDist(touches) {
@@ -2363,6 +2448,7 @@ function animateCam(target, duration = 1000, onComplete) {
         cam.rot = target.rot;
         _camAnim = null;
         onComplete?.();
+        commitCameraTransform();
         return;
     }
 
@@ -2377,6 +2463,7 @@ function animateCam(target, duration = 1000, onComplete) {
             cam.rot = target.rot;
             _camAnim = null;
             onComplete?.();
+            commitCameraTransform();
         }
     }
 
