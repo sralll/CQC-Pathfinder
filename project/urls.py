@@ -20,6 +20,7 @@ urlpatterns = [
     path('snapshots/<int:file_id>/',          views.get_snapshots,      name='get_snapshots'),
     path('snapshots/<int:snapshot_id>/load/', views.load_snapshot,      name='load_snapshot'),
     path('upload-map/',                       views.upload_map,          name='upload_map'),
+    path('ocad-conversion/<int:file_id>/',    views.ocad_conversion_status, name='ocad_conversion_status'),
     path('analyze-ocad/',                     views.analyze_ocad,        name='analyze_ocad'),
     path('import-courses/',                   views.import_courses,      name='import_courses'),
     path('files/<int:file_id>/label/',        views.assign_label,        name='assign_label'),

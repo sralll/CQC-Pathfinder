@@ -5311,6 +5311,43 @@ async function importCourseFile(file) {
 let mapUploadGeneration = 0;
 let localImagePreviewState = { generation: 0, prevSrc: null, prevDisplay: "", blobUrl: null };
 
+function _sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function setRasterizingStatus(message) {
+    const text = document.getElementById("mask-gen-text");
+    if (text) text.textContent = message;
+}
+
+async function waitForOcadConversion(fileId, uploadGeneration) {
+    const startedAt = Date.now();
+    const timeoutMs = 20 * 60 * 1000;
+
+    while (Date.now() - startedAt < timeoutMs) {
+        if (uploadGeneration !== mapUploadGeneration) return null;
+
+        const res = await fetch(`/editor/ocad-conversion/${fileId}/`);
+        const data = await res.json().catch(() => ({}));
+        const progress = data.progress || {};
+
+        if (!res.ok) throw new Error(data.error || gettext("OCAD conversion status failed."));
+        if (progress.status === "done") return progress.result;
+        if (progress.status === "failed") {
+            throw new Error(progress.error || gettext("OCAD conversion failed."));
+        }
+
+        setRasterizingStatus(
+            progress.status === "pending"
+                ? gettext("Waiting to rasterize map...")
+                : gettext("Rasterizing map...")
+        );
+        await _sleep(1000);
+    }
+
+    throw new Error(gettext("OCAD conversion timed out."));
+}
+
 function emitPublishWave(btn) {
     const rect = btn.getBoundingClientRect();
     const cx = rect.left + rect.width  / 2;
@@ -5392,6 +5429,7 @@ async function uploadSelectedMap() {
     closeMapModal();
     const uploadGeneration = ++mapUploadGeneration;
     const targetProjectId = isOcad ? project.id : null;
+    const targetProjectName = isOcad ? project.name : null;
     if (isOcad) {
         // resetProjectForOcadUpload wipes ui-layer (including any spinner), so
         // the spinner must be (re-)shown afterwards to survive the reset.
@@ -5406,19 +5444,30 @@ async function uploadSelectedMap() {
     try {
         const fd = new FormData();
         fd.append("file", file);
+        if (isOcad && targetProjectId) fd.append("file_id", targetProjectId);
+        if (isOcad && targetProjectName) fd.append("name", targetProjectName);
         const res  = await fetch("/editor/upload-map/", {
             method: "POST",
             headers: { "X-CSRFToken": csrf },
             body: fd,
         });
-        const data = await res.json();
-        if (!res.ok || !data.map_file) {
+        let data = await res.json();
+        if (!res.ok || (!data.map_file && !(isOcad && data.async))) {
             hideMapSpinner();
             if (isOcad) hideRasterizingBar();
             if (!isOcad) revertLocalImagePreview(uploadGeneration);
             alert(data.error || gettext("Upload failed."));
             if (ocadBtn) ocadBtn.disabled = false;
             return;
+        }
+
+        if (isOcad && data.async) {
+            project.id = data.file_id || project.id;
+            project.name = data.name || project.name;
+            updateFilenameInput();
+            const conversion = await waitForOcadConversion(project.id, uploadGeneration);
+            if (!conversion) return;
+            data = conversion;
         }
 
         // Clear leftover state from previously open files now that we're committing
@@ -5434,7 +5483,7 @@ async function uploadSelectedMap() {
         }
 
         // Update project state and save so the file exists on the server
-        if (targetProjectId) project.id = targetProjectId;
+        if (targetProjectId && !project.id) project.id = targetProjectId;
         project.map_file = data.map_file;
         const uploadedScale = Number(data.scale);
         const uploadedMapScale = Number(data.map_scale);
@@ -5482,7 +5531,7 @@ async function uploadSelectedMap() {
         hideMapSpinner();
         if (isOcad) hideRasterizingBar();
         if (!isOcad) revertLocalImagePreview(uploadGeneration);
-        alert(gettext("Upload failed."));
+        alert(e?.message || gettext("Upload failed."));
         if (ocadBtn) ocadBtn.disabled = false;
     }
 }

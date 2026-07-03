@@ -8,9 +8,11 @@ from django.db.models import Prefetch
 import traceback
 import logging
 from django.conf import settings
+from django.utils import timezone
 from django.utils.translation import gettext as _
 import os
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
 
 from .media_access import (
     safe_media_filename,
@@ -21,6 +23,9 @@ from .media_access import (
 )
 
 logger = logging.getLogger(__name__)
+
+_OCAD_CONVERSION_EXECUTOR = ThreadPoolExecutor(max_workers=1)
+_OCAD_CONVERSION_STALE_MINUTES = 15
 
 
 def _normalize_order_payload(control_pairs):
@@ -1002,6 +1007,143 @@ def delete_project_file(request, file_id):
         return JsonResponse({'error': str(e)}, status=500)
 
 
+def _ocad_conversion_payload(conversion, map_filename):
+    mask_filename = f"mask_{os.path.splitext(map_filename)[0]}.png"
+    return {
+        'status': 'ok',
+        'map_file': map_filename,
+        'mask_file': mask_filename,
+        'has_mask': False,
+        'auto_generate_mask': True,
+        'scale': conversion.get('scale'),
+        'map_scale': conversion.get('ocad_map_scale') or 4000,
+        'scaled': conversion.get('scaled', True),
+        'control_pairs': conversion.get('control_pairs', []),
+        'ocad': {
+            'courses': conversion.get('courses', 0),
+            'controls': conversion.get('controls', 0),
+            'mask_symbols': conversion.get('mask_symbols', 0),
+            'width': conversion.get('width'),
+            'height': conversion.get('height'),
+            'map_scale': conversion.get('ocad_map_scale'),
+            'scale_calibration_factor': conversion.get('scale_calibration_factor'),
+            'meters_per_raster_pixel': conversion.get('meters_per_raster_pixel'),
+        },
+    }
+
+
+def _ocad_progress(status, **extra):
+    now_iso = timezone.now().isoformat()
+    payload = {
+        'type': 'ocad_conversion',
+        'status': status,
+        'updated_at': now_iso,
+    }
+    payload.update(extra)
+    return payload
+
+
+def _unique_file_name_for_team(team, requested_name, exclude_id=None):
+    base = (requested_name or _('New project')).strip() or _('New project')
+    base = base[:240]
+    name = base
+    suffix = 1
+    qs = File.objects.filter(team=team, deleted=False)
+    if exclude_id:
+        qs = qs.exclude(id=exclude_id)
+    while qs.filter(name=name).exists():
+        suffix += 1
+        tail = f" ({suffix})"
+        name = f"{base[:255 - len(tail)]}{tail}"
+    return name
+
+
+def _set_ocad_progress(file_id, status, **extra):
+    progress = _ocad_progress(status, **extra)
+    File.objects.filter(id=file_id, deleted=False).update(batch_progress=progress)
+    return progress
+
+
+def _run_ocad_conversion(file_id, source_path, map_filename, uploaded_name):
+    from django.db import close_old_connections
+
+    close_old_connections()
+    try:
+        _set_ocad_progress(file_id, 'converting', source_name=uploaded_name)
+        from .ocad_tools.ocad import OcadConversionError, convert_ocad_map_to_editor_assets
+
+        try:
+            conversion = convert_ocad_map_to_editor_assets(source_path, map_filename)
+        except OcadConversionError as exc:
+            logger.warning("OCAD map upload conversion failed for %s: %s", uploaded_name, exc)
+            _set_ocad_progress(
+                file_id,
+                'failed',
+                source_name=uploaded_name,
+                error=str(_('OCAD conversion failed: %(error)s') % {'error': exc}),
+            )
+            return
+
+        result = _ocad_conversion_payload(conversion, map_filename)
+        File.objects.filter(id=file_id, deleted=False).update(
+            map_file=map_filename,
+            has_mask=False,
+            scale=result.get('scale'),
+            map_scale=_map_scale_value(result.get('map_scale')),
+            scaled=bool(result.get('scaled') and result.get('scale')),
+            batch_progress=_ocad_progress('done', source_name=uploaded_name, result=result),
+            last_edited=timezone.now(),
+        )
+    except Exception as exc:
+        logger.exception("Unexpected OCAD conversion failure for %s", uploaded_name)
+        _set_ocad_progress(file_id, 'failed', source_name=uploaded_name, error=str(exc))
+    finally:
+        try:
+            os.unlink(source_path)
+        except OSError:
+            pass
+        close_old_connections()
+
+
+def _mark_stale_ocad_conversion_failed(file):
+    progress = file.batch_progress
+    if not isinstance(progress, dict) or progress.get('type') != 'ocad_conversion':
+        return progress
+    if progress.get('status') not in ('pending', 'converting'):
+        return progress
+
+    from datetime import timedelta
+    from django.utils.dateparse import parse_datetime
+
+    updated_at = parse_datetime(progress.get('updated_at') or '')
+    if updated_at and timezone.is_naive(updated_at):
+        updated_at = timezone.make_aware(updated_at, timezone.get_current_timezone())
+    if updated_at and timezone.now() - updated_at <= timedelta(minutes=_OCAD_CONVERSION_STALE_MINUTES):
+        return progress
+
+    # If the dyno restarts while the in-process worker is busy, the thread is gone.
+    # Mark the job terminal so the editor can offer a retry instead of polling forever.
+    progress = _ocad_progress(
+        'failed',
+        source_name=progress.get('source_name'),
+        error=str(_('OCAD conversion stopped before it finished. Please upload the file again.')),
+    )
+    File.objects.filter(id=file.id, deleted=False).update(batch_progress=progress)
+    return progress
+
+
+@role_required('Trainer')
+@require_GET
+def ocad_conversion_status(request, file_id):
+    file = get_object_or_404(File, id=file_id, deleted=False)
+    if not user_can_access_file(request, file):
+        return JsonResponse({'error': 'File not found'}, status=404)
+    progress = _mark_stale_ocad_conversion_failed(file)
+    if not isinstance(progress, dict) or progress.get('type') != 'ocad_conversion':
+        return JsonResponse({'error': 'No OCAD conversion is active for this file'}, status=404)
+    return JsonResponse({'progress': progress})
+
+
 @role_required('Trainer')
 @require_POST
 def upload_map(request):
@@ -1026,8 +1168,6 @@ def upload_map(request):
         token = f"{stamp}_{uuid.uuid4().hex[:12]}"
 
         if is_ocad:
-            from .ocad_tools.ocad import OcadConversionError, convert_ocad_map_to_editor_assets
-
             tmp = tempfile.NamedTemporaryFile(delete=False, suffix=ext or '.ocd')
             source_path = tmp.name
             with tmp as f:
@@ -1035,39 +1175,41 @@ def upload_map(request):
                     f.write(chunk)
 
             map_filename = f"{token}.png"
-            mask_filename = f"mask_{os.path.splitext(map_filename)[0]}.png"
-            try:
-                conversion = convert_ocad_map_to_editor_assets(source_path, map_filename)
-            except OcadConversionError as exc:
-                logger.warning("OCAD map upload conversion failed for %s: %s", uploaded.name, exc)
-                return JsonResponse({'error': _('OCAD conversion failed: %(error)s') % {'error': exc}}, status=400)
-            finally:
+            active_team = request.user.profile.active_team
+            if not active_team:
                 try:
                     os.unlink(source_path)
                 except OSError:
                     pass
+                return JsonResponse({'error': _('No active team')}, status=403)
 
+            file = None
+            file_id = request.POST.get('file_id')
+            if file_id:
+                file = File.objects.filter(id=file_id, team=active_team, deleted=False).first()
+            if file is None:
+                requested_name = request.POST.get('name') or os.path.splitext(uploaded.name)[0]
+                file = File.objects.create(
+                    name=_unique_file_name_for_team(active_team, requested_name),
+                    team=active_team,
+                    author=request.user.first_name or request.user.username,
+                    locked_by=request.user,
+                    locked_at=timezone.now(),
+                )
+
+            progress = _ocad_progress('pending', source_name=uploaded.name)
+            file.batch_progress = progress
+            file.locked_by = request.user
+            file.locked_at = timezone.now()
+            file.save(update_fields=['batch_progress', 'locked_by', 'locked_at'])
+            _OCAD_CONVERSION_EXECUTOR.submit(_run_ocad_conversion, file.id, source_path, map_filename, uploaded.name)
             return JsonResponse({
-                'status': 'ok',
-                'map_file': map_filename,
-                'mask_file': mask_filename,
-                'has_mask': False,
-                'auto_generate_mask': True,
-                'scale': conversion.get('scale'),
-                'map_scale': conversion.get('ocad_map_scale') or 4000,
-                'scaled': conversion.get('scaled', True),
-                'control_pairs': conversion.get('control_pairs', []),
-                'ocad': {
-                    'courses': conversion.get('courses', 0),
-                    'controls': conversion.get('controls', 0),
-                    'mask_symbols': conversion.get('mask_symbols', 0),
-                    'width': conversion.get('width'),
-                    'height': conversion.get('height'),
-                    'map_scale': conversion.get('ocad_map_scale'),
-                    'scale_calibration_factor': conversion.get('scale_calibration_factor'),
-                    'meters_per_raster_pixel': conversion.get('meters_per_raster_pixel'),
-                },
-            })
+                'status': 'pending',
+                'async': True,
+                'file_id': file.id,
+                'name': file.name,
+                'progress': progress,
+            }, status=202)
 
         ext      = ext or image_ext or '.png'
         filename = f"{token}{ext}"
