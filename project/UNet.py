@@ -101,10 +101,14 @@ def _run_mask_generation(*, job, job_key, map_path, scale, mask_filename,
         if new_size[0] > 16000 or new_size[1] > 16000:
             raise ValueError(_("Map too large for the neural network. Check the scale."))
         img = img.resize(new_size, resample=Image.BICUBIC)
-        ort_session = ort.InferenceSession("best_model_300dpi.onnx")
+        # arena off so freed inference buffers return to the OS (long-lived web workers); 2 threads for the shared Railway vCPU
+        so = ort.SessionOptions()
+        so.enable_cpu_mem_arena = False
+        so.intra_op_num_threads = 2
+        ort_session = ort.InferenceSession("best_model_300dpi.onnx", sess_options=so)
 
         img_w, img_h = img.size
-        output_img = np.zeros((img_h, img_w), dtype=np.float32)
+        output_img = np.zeros((img_h, img_w), dtype=np.uint8)
         tile_size = 2048
         overlap = int(tile_size * 0.2)
         step = tile_size - overlap
@@ -125,7 +129,9 @@ def _run_mask_generation(*, job, job_key, map_path, scale, mask_filename,
                     out = out[0]
                 if out.shape[0] > 1:
                     out = out.argmax(axis=0)
-                tile_pred = out.astype(np.float32)
+                    tile_pred = out.astype(np.uint8)
+                else:
+                    tile_pred = np.clip(np.floor(out), 0, 255).astype(np.uint8)
 
                 oy0 = y0 if y0 == 0 else y0 + overlap // 2
                 oy1 = y1 if y1 == img_h else y1 - overlap // 2
@@ -140,8 +146,9 @@ def _run_mask_generation(*, job, job_key, map_path, scale, mask_filename,
                 print(f"[MASK] tile {processed}/{total_tiles} ({time.time() - t0:.1f}s)", flush=True)
                 job.publish({'current': processed, 'total': total_tiles})
 
+        img = None
         mo = SimpleNamespace(impassable=0, outline=200, very_slow=135, slow=231, cross=241, stairs=242, fast=243)
-        vis = 255 * np.ones((img_h, img_w, 1), dtype=np.uint8)
+        vis = 255 * np.ones((img_h, img_w), dtype=np.uint8)
         vis[output_img < 10] = mo.impassable
         vis[(output_img >= 10) & (output_img < 22)] = mo.very_slow
         vis[(output_img >= 22) & (output_img < 26)] = mo.slow
@@ -152,16 +159,15 @@ def _run_mask_generation(*, job, job_key, map_path, scale, mask_filename,
         vis[output_img == 33] = mo.fast
         vis[output_img == 34] = mo.impassable
 
-        vis_2d = vis[:, :, 0]
-        impassable_mask = vis_2d == mo.impassable
+        impassable_mask = vis == mo.impassable
         padded = np.pad(impassable_mask, 1, mode="constant", constant_values=False)
         dilated = (
             padded[:-2, :-2] | padded[:-2, 1:-1] | padded[:-2, 2:] |
             padded[1:-1, :-2] | padded[1:-1, 1:-1] | padded[1:-1, 2:] |
             padded[2:, :-2] | padded[2:, 1:-1] | padded[2:, 2:]
         )
-        vis_2d[dilated & ~impassable_mask] = mo.outline
-        final = Image.fromarray(np.repeat(vis, 3, axis=2).astype(np.uint8))
+        vis[dilated & ~impassable_mask] = mo.outline
+        final = Image.fromarray(vis, mode="L").convert("RGB")
         buf = BytesIO()
         final.save(buf, format="PNG")
         buf.seek(0)
@@ -169,7 +175,7 @@ def _run_mask_generation(*, job, job_key, map_path, scale, mask_filename,
         os.makedirs(os.path.dirname(mask_path), exist_ok=True)
         with open(mask_path, 'wb') as f:
             f.write(buf.read())
-        del vis, vis_2d, padded, dilated, impassable_mask, final, buf
+        del vis, padded, dilated, impassable_mask, final, buf
 
         if file_id is not None:
             File.objects.filter(id=file_id, deleted=False, map_file=filename).update(has_mask=True)

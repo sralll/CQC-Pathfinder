@@ -383,23 +383,55 @@ function mapRiverTangentAt(path, segment) {
     return { x: dx / len, y: dy / len };
 }
 
-function mapBridgeSideShorePoints(origin, axis, path, shoreHalfWidth, referenceNormal = null) {
+function mapDistanceToPath(p, path) {
+    let best = Infinity;
+    for (let i = 0; i < path.length - 1; i++) {
+        const a = path[i], b = path[i + 1];
+        const dx = b.x - a.x, dy = b.y - a.y;
+        const l2 = dx * dx + dy * dy || 1;
+        let t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / l2;
+        t = Math.max(0, Math.min(1, t));
+        const ex = p.x - (a.x + dx * t), ey = p.y - (a.y + dy * t);
+        const d = ex * ex + ey * ey;
+        if (d < best) best = d;
+    }
+    return Math.sqrt(best);
+}
+
+// The rendered river is a round-join stroke along the smoothed centerline, so
+// water is exactly the set of points within `radius` of that polyline. March
+// along `dir` from a point on the centerline until the ray first leaves the
+// water band, then bisect the exact shore distance. A tangent projection
+// (span = shoreHalfWidth / axis·normal) assumes a locally straight river and
+// misses the real shore wherever the river bends sharply near the bridge.
+function mapShoreExitAlongRay(start, dir, path, radius) {
+    const step = Math.max(0.4, radius * 0.2);
+    const maxSpan = radius * 12;
+    let inside = 0;
+    let outside = -1;
+    for (let s = step; s <= maxSpan; s += step) {
+        if (mapDistanceToPath({ x: start.x + dir.x * s, y: start.y + dir.y * s }, path) >= radius) {
+            outside = s;
+            break;
+        }
+        inside = s;
+    }
+    if (outside < 0) return null;
+    for (let k = 0; k < 20; k++) {
+        const mid = (inside + outside) / 2;
+        if (mapDistanceToPath({ x: start.x + dir.x * mid, y: start.y + dir.y * mid }, path) >= radius) outside = mid;
+        else inside = mid;
+    }
+    return { x: start.x + dir.x * outside, y: start.y + dir.y * outside };
+}
+
+function mapBridgeSideShorePoints(origin, axis, path, shoreHalfWidth) {
     const crossing = mapVisualRiverCrossing(origin, axis, path, false);
     if (!crossing) return null;
-    const tangent = mapRiverTangentAt(path, crossing.segment);
-    let normal = { x: -tangent.y, y: tangent.x };
-    if (referenceNormal && normal.x * referenceNormal.x + normal.y * referenceNormal.y < 0) {
-        normal = { x: -normal.x, y: -normal.y };
-    }
-    const denom = axis.x * normal.x + axis.y * normal.y;
-    if (Math.abs(denom) < 0.12) return null;
-    const span = shoreHalfWidth / denom;
-    return {
-        minus: { x: crossing.point.x - axis.x * span, y: crossing.point.y - axis.y * span },
-        plus: { x: crossing.point.x + axis.x * span, y: crossing.point.y + axis.y * span },
-        center: crossing.point,
-        normal,
-    };
+    const plus = mapShoreExitAlongRay(crossing.point, axis, path, shoreHalfWidth);
+    const minus = mapShoreExitAlongRay(crossing.point, { x: -axis.x, y: -axis.y }, path, shoreHalfWidth);
+    if (!plus || !minus) return null;
+    return { minus, plus, center: crossing.point };
 }
 
 function mapBridgeDeckBleedPoint(side, point, bleed) {
@@ -434,16 +466,14 @@ function drawMapBridges(layer, river, visualCourse = null) {
         }
         const centerCrossing = mapVisualRiverCrossing(bridgePoint(bridge), axis, path);
         if (!centerCrossing) continue;
-        const centerTangent = mapRiverTangentAt(path, centerCrossing.segment);
-        const referenceNormal = { x: -centerTangent.y, y: centerTangent.x };
         const sideNormal = { x: -axis.y, y: axis.x };
         const halfDeck = fillWidth / 2;
         const shoreHalfWidth = riverWidth / 2 + MAP_WATER_OUTLINE_WIDTH;
         const deckBleed = MAP_WATER_OUTLINE_WIDTH * 1.5 + 0.05;
         const leftOrigin = { x: centerCrossing.point.x + sideNormal.x * halfDeck, y: centerCrossing.point.y + sideNormal.y * halfDeck };
         const rightOrigin = { x: centerCrossing.point.x - sideNormal.x * halfDeck, y: centerCrossing.point.y - sideNormal.y * halfDeck };
-        const left = mapBridgeSideShorePoints(leftOrigin, axis, path, shoreHalfWidth, referenceNormal);
-        const right = mapBridgeSideShorePoints(rightOrigin, axis, path, shoreHalfWidth, referenceNormal);
+        const left = mapBridgeSideShorePoints(leftOrigin, axis, path, shoreHalfWidth);
+        const right = mapBridgeSideShorePoints(rightOrigin, axis, path, shoreHalfWidth);
         if (!left || !right) continue;
         drawPolygon(layer, [
             mapBridgeDeckBleedPoint(left, left.minus, deckBleed),

@@ -400,8 +400,9 @@ function sampleBezier(P0, C1, C2, P3, steps) {
 //   1. axis = direction from bridge.from→bridge.to if available, else perpendicular
 //      to the river tangent at the bridge point;
 //   2. shift two parallel lines ±halfDeck along the sideNormal (perpendicular to
-//      the axis) and intersect each with the smoothed river path to find the
-//      shore landings on the left and right side of the deck;
+//      the axis); from each line's crossing with the smoothed centerline, walk
+//      outward along the axis to where the line leaves the water band (distance
+//      to the centerline ≥ shoreHalfWidth) — that is the shore landing;
 //   3. bleed each corner outward by BRIDGE_DECK_BLEED so the deck overlaps the
 //      water-outline stroke, leaving no hairline gap.
 function buildBridgeDeck(bridge, course, smoothed, riverWidth) {
@@ -421,8 +422,6 @@ function buildBridgeDeck(bridge, course, smoothed, riverWidth) {
 	}
 	const centerCrossing = visualRiverCrossing({ x: bridge.x, y: bridge.y }, axis, smoothed, true);
 	if (!centerCrossing) return null;
-	const centerTangent = riverTangentAt(smoothed, centerCrossing.segment);
-	const referenceNormal = { x: -centerTangent.y, y: centerTangent.x };
 	const sideNormal = { x: -axis.y, y: axis.x };
 	// WIDE_MAIN_ROADS_50_FLAG: road-connected bridges carry a serialized 50%-wider deck width.
 	const deckWidth = Number.isFinite(bridge.width) ? bridge.width : BRIDGE_FILL_WIDTH;
@@ -436,8 +435,8 @@ function buildBridgeDeck(bridge, course, smoothed, riverWidth) {
 		x: centerCrossing.point.x - sideNormal.x * halfDeck,
 		y: centerCrossing.point.y - sideNormal.y * halfDeck,
 	};
-	const left = bridgeSideShorePoints(leftOrigin, axis, smoothed, shoreHalfWidth, referenceNormal);
-	const right = bridgeSideShorePoints(rightOrigin, axis, smoothed, shoreHalfWidth, referenceNormal);
+	const left = bridgeSideShorePoints(leftOrigin, axis, smoothed, shoreHalfWidth);
+	const right = bridgeSideShorePoints(rightOrigin, axis, smoothed, shoreHalfWidth);
 	if (!left || !right) return null;
 	return [
 		bleedPoint(left.center, left.minus, BRIDGE_DECK_BLEED),
@@ -511,21 +510,49 @@ function riverTangentAt(path, segment) {
 	return { x: dx / len, y: dy / len };
 }
 
-function bridgeSideShorePoints(origin, axis, path, shoreHalfWidth, referenceNormal) {
+function distanceToPath(p, path) {
+	let best = Infinity;
+	for (let i = 0; i < path.length - 1; i++) {
+		const d = pointSegmentDistanceSq(p, path[i], path[i + 1]);
+		if (d < best) best = d;
+	}
+	return Math.sqrt(best);
+}
+
+// The rendered river is a round-join stroke along the smoothed centerline, so
+// water is exactly the set of points within `radius` of that polyline. March
+// along `dir` from a point on the centerline until the ray first leaves the
+// water band, then bisect the exact shore distance. A tangent projection
+// (span = shoreHalfWidth / axis·normal) assumes a locally straight river and
+// misses the real shore wherever the river bends sharply near the bridge.
+function shoreExitAlongRay(start, dir, path, radius) {
+	const step = Math.max(0.4, radius * 0.2);
+	const maxSpan = radius * 12;
+	let inside = 0;
+	let outside = -1;
+	for (let s = step; s <= maxSpan; s += step) {
+		if (distanceToPath({ x: start.x + dir.x * s, y: start.y + dir.y * s }, path) >= radius) {
+			outside = s;
+			break;
+		}
+		inside = s;
+	}
+	if (outside < 0) return null;
+	for (let k = 0; k < 20; k++) {
+		const mid = (inside + outside) / 2;
+		if (distanceToPath({ x: start.x + dir.x * mid, y: start.y + dir.y * mid }, path) >= radius) outside = mid;
+		else inside = mid;
+	}
+	return { x: start.x + dir.x * outside, y: start.y + dir.y * outside };
+}
+
+function bridgeSideShorePoints(origin, axis, path, shoreHalfWidth) {
 	const crossing = visualRiverCrossing(origin, axis, path, false);
 	if (!crossing) return null;
-	const tangent = riverTangentAt(path, crossing.segment);
-	let normal = { x: -tangent.y, y: tangent.x };
-	if (referenceNormal && normal.x * referenceNormal.x + normal.y * referenceNormal.y < 0)
-		normal = { x: -normal.x, y: -normal.y };
-	const denom = axis.x * normal.x + axis.y * normal.y;
-	if (Math.abs(denom) < 0.12) return null;
-	const span = shoreHalfWidth / denom;
-	return {
-		minus: { x: crossing.point.x - axis.x * span, y: crossing.point.y - axis.y * span },
-		plus: { x: crossing.point.x + axis.x * span, y: crossing.point.y + axis.y * span },
-		center: crossing.point,
-	};
+	const plus = shoreExitAlongRay(crossing.point, axis, path, shoreHalfWidth);
+	const minus = shoreExitAlongRay(crossing.point, { x: -axis.x, y: -axis.y }, path, shoreHalfWidth);
+	if (!plus || !minus) return null;
+	return { minus, plus, center: crossing.point };
 }
 
 function bleedPoint(center, point, bleed) {

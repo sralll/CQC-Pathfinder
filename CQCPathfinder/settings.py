@@ -157,11 +157,18 @@ if CACHE_URL:
             'LOCATION': CACHE_URL,
         }
     }
+elif not DEBUG:
+    CACHES = {
+        'default': {
+            'BACKEND': 'django.core.cache.backends.db.DatabaseCache',
+            'LOCATION': 'django_cache',  # Shared across workers and survives worker recycling; table is created by `createcachetable` in the Railway pre-deploy step.
+        }
+    }
 else:
     CACHES = {
         'default': {
             'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
-            'LOCATION': 'cqc-pathfinder',
+            'LOCATION': 'cqc-pathfinder',  # Locmem in dev/tests — the test runner's DB has no cache table.
         }
     }
 STATS_TEAM_CACHE_TIMEOUT = int(os.environ.get('STATS_TEAM_CACHE_TIMEOUT', '600'))
