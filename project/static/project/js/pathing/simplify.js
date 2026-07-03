@@ -51,6 +51,7 @@ export function getAStarTurns(flatPath) {
 export function simplifyWps(flatWps, grid, w, h, minDistance = 10) {
     const out = [];
     const n = flatWps.length / 2;
+    const minDistanceSq = minDistance * minDistance;
     let i = 0;
     while (i < n) {
         const ix = flatWps[2 * i], iy = flatWps[2 * i + 1];
@@ -59,8 +60,7 @@ export function simplifyWps(flatWps, grid, w, h, minDistance = 10) {
         for (let j = n - 1; j > i; j--) {
             const jx = flatWps[2 * j], jy = flatWps[2 * j + 1];
             const dx = jx - ix, dy = jy - iy;
-            const dist = Math.hypot(dx, dy);
-            if (dist < minDistance) continue;
+            if (dx * dx + dy * dy < minDistanceSq) continue;
             if (hasLineOfSight(grid, w, h, ix, iy, jx, jy)) {
                 nextI = j;
                 break;
@@ -125,6 +125,7 @@ export function simplifyAStarPath(astarPath, grid, w, h, minDistance = 10) {
 export function simplifyAStarSameTerrainPath(astarPath, grid, w, h, minDistance = 10) {
     const out = [];
     const n = astarPath.length / 2;
+    const minDistanceSq = minDistance * minDistance;
     if (n === 0) return out;
     out.push(astarPath[0], astarPath[1]);
     let i = 0;
@@ -133,8 +134,9 @@ export function simplifyAStarSameTerrainPath(astarPath, grid, w, h, minDistance 
         let bestJ = -1;
         for (let j = n - 1; j > i; j--) {
             const jx = astarPath[2 * j], jy = astarPath[2 * j + 1];
-            const dist = Math.hypot(jx - ix, jy - iy);
-            if (dist < minDistance) break;
+            const dx = jx - ix, dy = jy - iy;
+            const dist = dx * dx + dy * dy;
+            if (dist < minDistanceSq) break;
             if (sameTerrainOnLine(grid, w, h, ix, iy, jx, jy)) {
                 bestJ = j;
                 break;

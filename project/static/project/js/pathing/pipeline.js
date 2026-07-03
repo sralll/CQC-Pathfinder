@@ -105,6 +105,7 @@ export function runPipeline(grid, labels, w, h, startGrid, zielGrid, wasCached, 
     let margin = initialMargin;
     let aStarTotal = 0;
     let routeMaskTotal = 0;
+    const aStarScratch = {};
     while (margin <= maxMargin) {
         const tA = nowMs();
         sub = extractSubgrid(grid, w, h, startGrid, zielGrid, margin);
@@ -126,7 +127,7 @@ export function runPipeline(grid, labels, w, h, startGrid, zielGrid, wasCached, 
         }
         sub.startSub = startSnap;
         sub.zielSub = zielSnap;
-        aStarPath = astar(sub.subgrid, sub.sw, sub.sh, startSnap, zielSnap);
+        aStarPath = astar(sub.subgrid, sub.sw, sub.sh, startSnap, zielSnap, aStarScratch);
         const dt = nowMs() - tA;
         aStarTotal += dt;
         if (aStarPath !== null) {

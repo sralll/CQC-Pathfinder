@@ -16,16 +16,28 @@ const DXS = new Int8Array([-1, -1, -1, 0, 0, 1, 1, 1]);
 const DYS = new Int8Array([-1, 0, 1, -1, 1, -1, 0, 1]);
 const STEPS = new Float32Array([SQRT2, 1, SQRT2, 1, 1, SQRT2, 1, SQRT2]);
 
-export function astar(grid, w, h, start, goal) {
+export function astar(grid, w, h, start, goal, scratch = null) {
     const sx = start.x | 0, sy = start.y | 0;
     const gx = goal.x | 0, gy = goal.y | 0;
     if (sx === gx && sy === gy) return [sx, sy];
 
     const n = w * h;
-    const gScore = new Float32Array(n);
-    for (let i = 0; i < n; i++) gScore[i] = Infinity;
-    const parent = new Int32Array(n).fill(-1);
-    const closed = new Uint8Array(n);
+    let gScore = scratch?.gScore;
+    let parent = scratch?.parent;
+    let closed = scratch?.closed;
+    if (!gScore || gScore.length < n) {
+        gScore = new Float32Array(n);
+        parent = new Int32Array(n);
+        closed = new Uint8Array(n);
+        if (scratch) {
+            scratch.gScore = gScore;
+            scratch.parent = parent;
+            scratch.closed = closed;
+        }
+    }
+    gScore.fill(Infinity, 0, n);
+    parent.fill(-1, 0, n);
+    closed.fill(0, 0, n);
 
     const open = new MinHeap();
     const startIdx = sy * w + sx;
