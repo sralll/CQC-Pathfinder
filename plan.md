@@ -2,6 +2,13 @@
 
 > **For executing agents:** work through the phases in the order given under "Suggested execution order & commits" at the bottom. Tick the checkboxes as tasks complete. Read the Ground rules before touching anything.
 
+## Execution log (orchestrator state — update on every wave change)
+
+- **Phase 1: DONE** (commits `80655ad`, `a14d619`). ⚠️ Prod must deploy `80655ad` in a deploy of its own (or drop the three legacy tables manually) — see 1.1 step 4.
+- **Wave 1 (in flight):** Phase 2 → Sonnet agent in the main tree; Phase 3 → Opus agent in a git worktree; Phase 5.1 → Sonnet agent in a git worktree. Worktree agents commit on their own branches; the orchestrator merges them into `staging` when they finish, then ticks the checkboxes here.
+- **Wave 2 (queued, start after Wave 1 merges):** Phase 4 (4.0 debug page + 4.3 streaming first, then 4.1/4.2/4.4) → Opus agent; then Phase 5.2 → Sonnet agent (touches `project/views.py` + `editor.js`, must not overlap Phase 3).
+- **Resume procedure ("continue"):** 1) `git branch -a` + `git worktree list` — merge any finished agent branches into `staging`. 2) Read the checkboxes below and this log to see what's left. 3) Run `python manage.py test --noinput` (plain `test` hangs on a stale test-DB prompt). 4) Relaunch the next unfinished phase per the wave assignments above. Agents must NOT edit plan.md — only the orchestrator updates it.
+
 ## Context
 
 The app is functionally complete with no significant known bugs, but has not been optimized for efficiency. The heavy computational parts are (a) editor pathfinding (`project/static/project/js/editor.js` + `pathing/` modules, running in a Web Worker) and (b) infinite-mode map generation + route computation (`results/static/results/js/infinite_play.js` + `infinite/` citygen modules, also worker-based). Infinite mode is about to be linked into the play menu, so its cold-start and per-scene performance will soon be user-facing (including mobile). Additionally, three deprecated Django apps and various dev artifacts remain in the codebase.
