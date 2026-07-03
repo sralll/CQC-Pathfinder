@@ -1,5 +1,5 @@
 from django.conf import settings
-from django.contrib.auth.decorators import login_required, login_not_required
+from django.contrib.auth.decorators import login_required
 from django.shortcuts import get_object_or_404, redirect, render
 from django.http import JsonResponse, HttpResponseForbidden
 from django.views.decorators.http import require_POST
@@ -10,16 +10,15 @@ from django.utils.translation import gettext as _
 from .models import Profile, Team, ForumThread, ForumComment
 
 
-@login_not_required
+@login_required
 def set_language(request):
     """Language switcher endpoint.
 
     Delegates to Django's built-in set_language (validates the language, sets the
     cookie, redirects to ?next). On top of that, for an authenticated user it
     persists the choice to Profile.language so the preference follows the account
-    across devices — Profile.language is the durable source of truth, the cookie
-    is the per-browser runtime state. Stays public so the language can be changed
-    on the login page too (the project enforces login globally).
+    across devices. Profile.language is the durable source of truth, the cookie
+    is the per-browser runtime state.
     """
     response = django_set_language(request)
     if request.method == 'POST' and request.user.is_authenticated:

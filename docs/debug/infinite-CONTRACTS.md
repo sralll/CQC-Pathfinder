@@ -1,8 +1,8 @@
 # Infinite-mode town generator — module contracts (Phase 1)
 
 **Read this fully before writing code.** Phase 1 = a *standalone* procedural
-town generator + ISSprOM SVG visualization, opened via a local `test.html`. NO
-start/ziel, NO routing/pathfinding (that's a later phase). Everything is
+town generator + ISSprOM SVG visualization. NO start/ziel, NO routing/pathfinding
+(that's a later phase). Everything is
 **vanilla ES modules, no external dependencies, no build step**, runnable in the
 browser and in a Web Worker later (so generator modules must be **DOM-free**;
 only `issprom.js` touches the DOM).
@@ -192,18 +192,9 @@ Weights are in **metres** and scaled to px via the renderer's px-per-metre
 
 ---
 
-## 5. Fixture & how to test in isolation
+## 5. Fixture
 
-- `fixtures/sample-town.json` is a valid `TownModel`. The renderer (`issprom.js`)
-  and `test.html` must work against it **before** `model.generateTown` exists —
-  load the JSON and render it. This lets the renderer/harness be built in
-  parallel with the generator.
-- `test.html` lives at `results/static/results/infinite/test.html`. It imports
-  `../js/infinite/town/model.js` + `../js/infinite/issprom.js`, renders one town,
-  and offers **Regenerate**, a **seed** input, and tunable inputs. It must also
-  have a "load fixture" path so it works before the generator lands. ES-module
-  imports are blocked under `file://` — document opening via
-  `python -m http.server` at the repo root.
+- `fixtures/sample-town.json` is a valid `TownModel` for renderer sanity checks.
 
 ---
 

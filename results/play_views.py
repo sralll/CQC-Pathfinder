@@ -7,7 +7,7 @@ from django.shortcuts import get_object_or_404, render
 from django.views.decorators.http import require_GET, require_POST
 
 from project.models import ControlPair, File, Route
-from project.media_access import serve_map_file, user_can_access_map_file
+from project.media_access import serve_map_file, user_can_access_file, user_can_access_map_file
 
 from .stats_views import _clear_stats_cache_for_team
 
@@ -371,8 +371,22 @@ def submit_result(request):
             penalty     = max(0.0, choice_time - real)
 
         from .models import Choice
-        cp    = get_object_or_404(ControlPair, id=cp_id)
-        route = get_object_or_404(Route, id=route_id) if route_id else None
+        cp = (
+            ControlPair.objects
+            .select_related('file', 'file__team')
+            .filter(id=cp_id, file__deleted=False, file__published=True)
+            .first()
+        )
+        if not cp:
+            return JsonResponse({'error': 'Control pair not found'}, status=404)
+        if not user_can_access_file(request, cp.file, require_published=True):
+            return JsonResponse({'error': 'Permission denied'}, status=403)
+
+        route = None
+        if route_id:
+            route = Route.objects.filter(id=route_id, control_pair=cp).first()
+            if not route:
+                return JsonResponse({'error': 'Route not found'}, status=404)
 
         # First attempt only — never overwrite an existing Choice (replay mode)
         _, created = Choice.objects.get_or_create(

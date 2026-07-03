@@ -56,7 +56,7 @@ const CITY_FIT_PAD  = 0.08;
 const GAP           = 8 * CONTROL_SIZE_RATIO;
 const MIN_ZOOM      = 0.2;
 const MAX_ZOOM      = 16;
-const CAMERA_PAD    = 10;
+const CAMERA_PAD    = 20;
 const PAN_CLICK_SUPPRESS_MOVE = 6;
 const PAN_CLICK_SUPPRESS_MS   = 350;
 const STATS_TOGGLE_SUPPRESS_MS = 250;
@@ -407,6 +407,7 @@ function showMapSpinner() {
 
     const overlay = document.createElementNS(NS, 'svg');
     overlay.id = 'rp-spinner-overlay';
+    if (!scene) overlay.classList.add('rp-first-map-loading');
     overlay.setAttribute('overflow', 'visible');
     overlay.style.position = 'absolute';
     overlay.style.inset = '0';

@@ -1,9 +1,14 @@
-from django.test import TestCase
-from django.contrib.auth.models import User
+import json
 
+from django.contrib.auth.models import Group, User
+from django.core.cache import cache
+from django.test import TestCase
+from django.urls import reverse
+
+from account.models import Profile, Team
 from project.models import ControlPair, File, Route
 
-from .models import Choice
+from .models import Choice, InfiniteChoice
 from .stats_views import (
     _choice_error_potential_fit,
     _choice_error_potential_points,
@@ -130,3 +135,117 @@ class ErrorPotentialStatsTests(TestCase):
         fit = _choice_time_sensitivity_fit(athlete_qs, benchmark_qs)
 
         self.assertEqual(fit['sensitivity_ms'], 4000)
+
+
+class PlaySubmissionSecurityTests(TestCase):
+    def setUp(self):
+        self.team = Team.objects.create(name='Team A')
+        self.other_team = Team.objects.create(name='Team B')
+        self.user = User.objects.create_user(username='athlete', password='pw')
+        profile = Profile.objects.create(user=self.user, active_team=self.team)
+        profile.teams.add(self.team)
+        self.client.force_login(self.user)
+
+    def test_submit_result_rejects_control_pair_from_inaccessible_team(self):
+        other_file = File.objects.create(name='Other course', team=self.other_team, published=True)
+        cp = ControlPair.objects.create(file=other_file, order=0)
+        route = Route.objects.create(control_pair=cp, order=0, run_time=10)
+
+        response = self.client.post(
+            reverse('submit_result'),
+            data=json.dumps({
+                'control_pair_id': cp.id,
+                'selected_route_id': route.id,
+                'choice_time': 1.5,
+                'competition': True,
+            }),
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertFalse(Choice.objects.filter(user=self.user, control_pair=cp).exists())
+
+    def test_submit_result_rejects_route_from_different_control_pair(self):
+        file = File.objects.create(name='Own course', team=self.team, published=True)
+        cp = ControlPair.objects.create(file=file, order=0)
+        other_cp = ControlPair.objects.create(file=file, order=1)
+        wrong_route = Route.objects.create(control_pair=other_cp, order=0, run_time=10)
+
+        response = self.client.post(
+            reverse('submit_result'),
+            data=json.dumps({
+                'control_pair_id': cp.id,
+                'selected_route_id': wrong_route.id,
+                'choice_time': 1.5,
+                'competition': True,
+            }),
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 404)
+        self.assertFalse(Choice.objects.filter(user=self.user, control_pair=cp).exists())
+
+
+class StatsSecurityTests(TestCase):
+    def setUp(self):
+        cache.clear()
+        self.team = Team.objects.create(name='Team A')
+        self.other_team = Team.objects.create(name='Team B')
+        self.trainer = User.objects.create_user(username='trainer', password='pw')
+        Group.objects.create(name='Trainer').user_set.add(self.trainer)
+        trainer_profile = Profile.objects.create(user=self.trainer, active_team=self.team)
+        trainer_profile.teams.add(self.team)
+        self.client.force_login(self.trainer)
+
+    def make_athlete(self, username, team, extra_team=None):
+        user = User.objects.create_user(username=username, password='pw')
+        profile = Profile.objects.create(user=user, active_team=team)
+        profile.teams.add(team)
+        if extra_team:
+            profile.teams.add(extra_team)
+        return user
+
+    def test_trainer_cannot_request_stats_for_unrelated_user(self):
+        other_user = self.make_athlete('other-athlete', self.other_team)
+        InfiniteChoice.objects.create(
+            user=other_user,
+            team=self.other_team,
+            correct=True,
+            choice_time=1,
+            shorter_time=10,
+            longer_time=12,
+        )
+
+        response = self.client.get(
+            reverse('stats_get_stats'),
+            {'mode': 'random', 'user_id': other_user.id},
+        )
+
+        self.assertEqual(response.status_code, 403)
+
+    def test_random_stats_table_uses_only_active_team_rows(self):
+        athlete = self.make_athlete('shared-athlete', self.team, extra_team=self.other_team)
+        InfiniteChoice.objects.create(
+            user=athlete,
+            team=self.team,
+            correct=True,
+            choice_time=1,
+            shorter_time=10,
+            longer_time=12,
+        )
+        InfiniteChoice.objects.create(
+            user=athlete,
+            team=self.other_team,
+            correct=False,
+            choice_time=5,
+            shorter_time=10,
+            longer_time=20,
+        )
+
+        response = self.client.get(reverse('stats_get_table'), {'mode': 'random'})
+
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        athlete_row = next(row for row in data if row.get('user_id') == athlete.id)
+        self.assertEqual(athlete_row['posten'], 1)
+        self.assertEqual(athlete_row['schnellste'], 100.0)

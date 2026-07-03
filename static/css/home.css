@@ -38,8 +38,17 @@ html, body {
 .home-logo-stage {
     position: relative;
     width: 100%;
+    max-width: 100%;
     aspect-ratio: 140.04231 / 90.002087;
     isolation: isolate;
+}
+
+@supports not (aspect-ratio: 1 / 1) {
+    .home-logo-stage::before {
+        content: "";
+        display: block;
+        padding-top: 64.268%;
+    }
 }
 
 .home-logo,
@@ -66,8 +75,8 @@ html, body {
 }
 
 .home-infinity-canvas-front {
-    z-index: 3;
-    mix-blend-mode: screen;
+    z-index: 5;
+    mix-blend-mode: normal;
 }
 
 .home-logo-depth-occluder {
@@ -80,23 +89,6 @@ html, body {
     fill: #cccccc;
     fill-opacity: 1;
     fill-rule: evenodd;
-}
-
-.home-logo-depth-q-arc,
-.home-logo-depth-q-tail {
-    fill: none;
-    stroke: #ff00cc;
-    stroke-width: 10;
-    stroke-linejoin: round;
-    stroke-miterlimit: 8.5;
-}
-
-.home-logo-depth-q-arc {
-    stroke-linecap: round;
-}
-
-.home-logo-depth-q-tail {
-    stroke-linecap: butt;
 }
 
 /* ── Tile grid ────────────────────────────────────────── */
@@ -203,14 +195,32 @@ html, body {
     margin-top: 0;
 }
 
-.home-links a {
+.home-link-form {
+    display: inline;
+    margin: 0;
+}
+
+.home-links a,
+.home-link-form button {
     color: var(--text-muted);
     font-size: var(--font-sm);
     text-decoration: none;
     transition: color 0.1s;
     padding: 4px 6px;
 }
-.home-links a:hover { color: var(--text); text-decoration: underline; }
+
+.home-link-form button {
+    appearance: none;
+    border: 0;
+    background: transparent;
+    cursor: pointer;
+    font-family: inherit;
+    font-weight: inherit;
+    line-height: inherit;
+}
+
+.home-links a:hover,
+.home-link-form button:hover { color: var(--text); text-decoration: underline; }
 
 /* ── Trainer update note ──────────────────────────────── */
 
@@ -240,7 +250,8 @@ body.mobile .home-tile-label   { font-size: var(--font-lg); }
 body.mobile .home-tile-icon x-icon { font-size: 30px; }
 body.mobile .home-feedback     { min-height: var(--touch-target); font-size: var(--font-lg); padding: 11px 18px; margin-top: 0; }
 body.mobile .home-links        { flex-wrap: nowrap; gap: 4px; }
-body.mobile .home-links a      { font-size: 10px; padding: 4px 4px; white-space: nowrap; }
+body.mobile .home-links a,
+body.mobile .home-link-form button { font-size: 10px; padding: 4px 4px; white-space: nowrap; }
 body.mobile .home-update-info  { min-height: 32px; font-size: var(--font-sm); padding: 6px 10px; }
 
 /* On narrow phones (also catches small windowed desktops) */
@@ -253,6 +264,7 @@ body.mobile .home-update-info  { min-height: 32px; font-size: var(--font-sm); pa
     .home-grid:not(.home-grid-trainer) .home-tile-primary { grid-column: auto; }
     .home-feedback   { min-height: var(--touch-target); padding: 11px 18px; margin-top: 0; }
     .home-links      { flex-wrap: nowrap; gap: 4px; }
-    .home-links a    { font-size: 10px; padding: 4px 4px; white-space: nowrap; }
+    .home-links a,
+    .home-link-form button { font-size: 10px; padding: 4px 4px; white-space: nowrap; }
     .home-update-info { min-height: 32px; padding: 6px 10px; }
 }

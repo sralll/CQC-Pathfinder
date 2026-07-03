@@ -132,7 +132,9 @@
     document.body.classList.add('desktop');
     }
     </script>
+    {% if user.is_authenticated %}
     <script src="{% url 'javascript-catalog' %}"></script>
+    {% endif %}
     <script src="{% static 'js/icons.js' %}"></script>
     {% block scripts %}{% endblock %}
 </body>

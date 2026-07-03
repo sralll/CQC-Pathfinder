@@ -42,7 +42,10 @@
         <a class="home-feedback" href="{% url 'forum' %}"><span class="home-tile-label"></span>{% trans "Forum" %}</span></a>
 
         <div class="home-links">
-            <a href="/logout/">{% trans "Log out" %}</a>
+            <form class="home-link-form" method="post" action="{% url 'logout' %}">
+                {% csrf_token %}
+                <button type="submit">{% trans "Log out" %}</button>
+            </form>
             <a href="/password_change/">{% trans "Change password" %}</a>
             <a href="{% url 'guide' %}">Guide (DE)</a>
         </div>

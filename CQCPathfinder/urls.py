@@ -17,11 +17,10 @@ urlpatterns = [
 
     path("admin/", admin.site.urls),
 
-    # i18n — language switcher (POST) and the JS gettext catalog. Both are
-    # login_not_required so the language can be switched on the public login page
-    # (the project enforces login globally via LoginRequiredMiddleware).
+    # i18n endpoints are covered by LoginRequiredMiddleware. The login page uses
+    # server-rendered translations and does not need the JS catalog.
     path("i18n/setlang/", set_language, name="set_language"),
-    path("jsi18n/", login_not_required(JavaScriptCatalog.as_view()), name="javascript-catalog"),
+    path("jsi18n/", JavaScriptCatalog.as_view(), name="javascript-catalog"),
 
     path("internal/sync-volume-to-r2/", internal_views.trigger_volume_sync, name="trigger_volume_sync"),
     path("", views.home_view, name="home"),
@@ -32,8 +31,7 @@ urlpatterns = [
     path('stats/', include('results.stats_urls')),
     path('forum/', include('account.forum_urls')),
 
-    # login/logout — login page must stay public (else the redirect-to-login
-    # would loop forever).
+    # Login must stay public, otherwise redirect-to-login would loop forever.
     path('login/', login_not_required(
         views.LocaleLoginView.as_view()
     ), name='login'),
@@ -46,5 +44,5 @@ urlpatterns = [
         success_url='/',
     ), name='password_change'),
 
-    path('favicon.ico', login_not_required(RedirectView.as_view(url='/static/favicon.ico', permanent=True))),
+    path('favicon.ico', RedirectView.as_view(url='/static/favicon.ico', permanent=True)),
 ]

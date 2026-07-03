@@ -45,16 +45,43 @@ html, body {
 
 /* ── Mode toggle ─────────────────────────────────────── */
 
+#play-mode-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex: 1;
+    min-width: 0;
+}
+
 #play-mode-toggle {
     display: flex;
     align-items: center;
     gap: 6px;
-    flex: 1;
+    flex: 0 0 auto;
 }
 
 .play-header-end {
     flex: 1;
 }
+
+#play-infinity-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 42px;
+    height: 28px;
+    flex: 0 0 auto;
+    border-radius: 999px;
+    background: var(--brand);
+    color: var(--text-strong);
+    text-decoration: none;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25);
+    transition: background var(--t-fast), transform var(--t-fast);
+    -webkit-tap-highlight-color: transparent;
+}
+#play-infinity-btn:hover { background: var(--brand-hover); }
+#play-infinity-btn:active { transform: translateY(1px); }
+#play-infinity-btn x-icon { display: inline-flex; }
 
 .mode-icon-tip {
     position: relative;
@@ -568,18 +595,19 @@ html, body {
     }
     #play-wrap { padding: 0; }
 
-    #play-mode-toggle { flex: 0 0 auto; order: 2; }
-    #play-search-wrap { order: 1; }
+    #play-mode-actions { flex: 0 0 100%; width: 100%; order: 1; justify-content: flex-start; }
+    #play-mode-toggle { flex: 0 0 auto; }
+    #play-search-wrap { order: 2; }
     .play-header-end  { display: none; }
 
-    #play-search-wrap { flex: 1; min-width: 0; width: auto; }
+    #play-search-wrap { flex: 0 0 100%; min-width: 0; width: 100%; }
 
     #play-mobile-controls { width: 100%; order: 3; }
 
     .mode-tip-box,
     .mode-icon-tip[data-mode="competition"] .mode-tip-box {
-        left: auto;
-        right: 0;
+        left: 0;
+        right: auto;
         width: calc(100vw - 32px);
         max-width: 220px;
         box-sizing: border-box;
@@ -630,6 +658,7 @@ body.mobile .play-card-cp         { font-size: var(--font-md); }
 body.mobile .play-card-row2       { font-size: var(--font-md); }
 body.mobile .play-card-date       { font-size: var(--font-sm); }
 body.mobile .play-ctrl-btn        { font-size: var(--font-md); padding: 11px 16px; min-height: var(--touch-target); box-sizing: border-box; }
+body.mobile #play-infinity-btn    { width: 54px; min-height: var(--touch-target); font-size: var(--font-lg); }
 body.mobile .mode-icon-tip        { padding: 8px; }
 body.mobile .mode-icon-tip x-icon { font-size: 22px; }
 body.mobile .mode-switch          { width: 44px; height: 26px; }

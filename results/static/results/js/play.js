@@ -764,8 +764,8 @@ function showControlPair(index) {
     const cw = container.clientWidth;
     const ch = container.clientHeight;
 
-    // Scale: 10 screen-pixel margin on every side, centred at startRX horizontally
-    const PAD     = 10;
+    // Scale: 20 screen-pixel margin on every side, centred at startRX horizontally
+    const PAD     = 20;
     const halfW   = Math.max(startRX - minRX, maxRX - startRX);  // widest half-extent from centre line
     const halfH   = (maxRY - minRY) / 2;
     const scaleX  = halfW > 0 ? (cw / 2 - PAD) / halfW : MAX_ZOOM;

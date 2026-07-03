@@ -2,27 +2,121 @@
     const stage = document.querySelector('[data-home-infinity-logo]');
     if (!stage) return;
 
-    const backCanvas = stage.querySelector('[data-depth-layer="back"]');
-    const frontCanvas = stage.querySelector('[data-depth-layer="front"]');
-    if (!backCanvas || !frontCanvas) return;
+    const logo = stage.querySelector('.home-logo');
+    if (!logo) return;
 
-    const backCtx = backCanvas.getContext('2d', { alpha: true });
-    const frontCtx = frontCanvas.getContext('2d', { alpha: true });
-    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
     const TAU = Math.PI * 2;
     const LOGO = {
         width: 140.04231,
         height: 90.002087,
         cx: 70.02106,
         cy: 35.00001,
-        ampX: 58.2,
-        ampY: 43.0,
+        ampX: 46.5,
+        ampY: 7.0,
     };
+    const SVG_NS = 'http://www.w3.org/2000/svg';
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+
+    function applyLayerStyle(element, zIndex) {
+        element.style.position = 'absolute';
+        element.style.inset = '0';
+        element.style.width = '100%';
+        element.style.height = '100%';
+        element.style.display = 'block';
+        element.style.pointerEvents = 'none';
+        element.style.zIndex = String(zIndex);
+    }
+
+    function createCanvas(className, layer, zIndex) {
+        const canvas = document.createElement('canvas');
+        canvas.className = className;
+        canvas.dataset.depthLayer = layer;
+        canvas.setAttribute('aria-hidden', 'true');
+        applyLayerStyle(canvas, zIndex);
+        return canvas;
+    }
+
+    function createPath(className, d) {
+        const path = document.createElementNS(SVG_NS, 'path');
+        path.setAttribute('class', className);
+        path.setAttribute('d', d);
+        return path;
+    }
+
+    function createOccluder() {
+        const svg = document.createElementNS(SVG_NS, 'svg');
+        svg.setAttribute('class', 'home-logo-depth-occluder');
+        svg.setAttribute('viewBox', '0 0 140.04231 90.002087');
+        svg.setAttribute('aria-hidden', 'true');
+        svg.setAttribute('focusable', 'false');
+        applyLayerStyle(svg, 4);
+        svg.style.overflow = 'visible';
+
+        const g = document.createElementNS(SVG_NS, 'g');
+        g.setAttribute('transform', 'translate(-44.978842,-21.47607)');
+        g.appendChild(createPath(
+            'home-logo-depth-c',
+            'm 150.00015,21.47621 a 34.999998,34.999998 0 0 0 -14.40738,3.125908 37.949999,37.949999 0 0 1 8.48113,7.597985 25,25 0 0 1 5.92625,-0.723987 25,25 0 0 1 24.99951,25.000023 25,25 0 0 1 -23.78821,24.968504 l 8.62066,8.620662 A 34.999998,34.999998 0 0 0 185.00009,56.476139 34.999998,34.999998 0 0 0 150.00015,21.47621 Z m -14.40067,66.84243 a 37.949999,37.949999 0 0 1 -0.03,0.02119 34.999998,34.999998 0 0 0 0.0873,0.03617 z'
+        ));
+        g.appendChild(createPath(
+            'home-logo-depth-c',
+            'm 79.999833,21.47607 a 34.999998,34.999998 0 0 0 -34.99993,34.99993 34.999998,34.999998 0 0 0 34.99993,34.99993 34.999998,34.999998 0 0 0 14.43065,-3.136243 37.949999,37.949999 0 0 1 -8.48682,-7.592301 25,25 0 0 1 -5.94383,0.728638 A 25,25 0 0 1 54.99981,56.476 25,25 0 0 1 79.999833,31.475976 a 25,25 0 0 1 5.95106,0.720368 37.949999,37.949999 0 0 1 8.49767,-7.595402 34.999998,34.999998 0 0 0 -14.44873,-3.124872 z'
+        ));
+        svg.appendChild(g);
+        return svg;
+    }
+
+    function syncStageBox() {
+        const parentRect = stage.parentElement.getBoundingClientRect();
+        if (!parentRect.width) return;
+
+        const mobileLayout = window.matchMedia('(max-width: 700px)').matches
+            || document.body.classList.contains('mobile');
+        const targetWidth = mobileLayout
+            ? Math.min(parentRect.width, window.innerWidth * 0.82, 340)
+            : parentRect.width;
+
+        stage.style.position = 'relative';
+        stage.style.width = targetWidth + 'px';
+        stage.style.height = (targetWidth * LOGO.height / LOGO.width) + 'px';
+        stage.style.aspectRatio = LOGO.width + ' / ' + LOGO.height;
+        stage.style.isolation = 'isolate';
+    }
+
+    syncStageBox();
+
+    stage.querySelectorAll('.home-infinity-canvas, .home-logo-depth-occluder').forEach(function (element) {
+        element.remove();
+    });
+
+    const backCanvas = createCanvas(
+        'home-infinity-canvas home-infinity-canvas-back',
+        'back',
+        1
+    );
+    const frontCanvas = createCanvas(
+        'home-infinity-canvas home-infinity-canvas-front',
+        'front',
+        5
+    );
+    const occluder = createOccluder();
+
+    stage.insertBefore(backCanvas, logo);
+    stage.appendChild(frontCanvas);
+    stage.appendChild(occluder);
+
+    applyLayerStyle(logo, 2);
+    logo.style.objectFit = 'contain';
+    frontCanvas.style.mixBlendMode = 'normal';
+
+    const backCtx = backCanvas.getContext('2d', { alpha: true });
+    const frontCtx = frontCanvas.getContext('2d', { alpha: true });
+    if (!backCtx || !frontCtx) return;
+
+    stage.dataset.homeInfinityReady = 'true';
 
     const colors = {
-        warm: [255, 170, 86],
-        pale: [255, 226, 174],
-        pink: [255, 88, 210],
+        cGray: [204, 204, 204],
     };
 
     let metrics = {
@@ -39,21 +133,9 @@
         return Math.min(max, Math.max(min, value));
     }
 
-    function lerp(a, b, t) {
-        return a + (b - a) * t;
-    }
-
     function smoothstep(edge0, edge1, value) {
         const t = clamp((value - edge0) / (edge1 - edge0), 0, 1);
         return t * t * (3 - 2 * t);
-    }
-
-    function mixRgb(a, b, t) {
-        return [
-            Math.round(lerp(a[0], b[0], t)),
-            Math.round(lerp(a[1], b[1], t)),
-            Math.round(lerp(a[2], b[2], t)),
-        ];
     }
 
     function rgba(rgb, alpha) {
@@ -63,16 +145,16 @@
     function makeParticle(index, count) {
         return {
             t: (index / count + Math.random() * 0.045) % 1,
-            speed: 0.010 + Math.random() * 0.008,
+            speed: 0.026 + Math.random() * 0.018,
             lane: (Math.random() * 2 - 1),
-            radius: 0.58 + Math.random() * 0.68,
-            alpha: 0.48 + Math.random() * 0.34,
+            radius: 0.62 + Math.random() * 0.72,
+            alpha: 0.44 + Math.random() * 0.26,
             phase: Math.random() * TAU,
         };
     }
 
     function syncParticles() {
-        const desired = clamp(Math.round(metrics.width * 0.38), 96, 182);
+        const desired = clamp(Math.round(metrics.width * 0.26), 72, 128);
         if (particles.length > desired) {
             particles = particles.slice(0, desired);
             return;
@@ -90,6 +172,8 @@
     }
 
     function resize() {
+        syncStageBox();
+
         const rect = stage.getBoundingClientRect();
         if (!rect.width || !rect.height) return;
 
@@ -113,46 +197,64 @@
         };
     }
 
-    function pathPoint(particle, now) {
-        const theta = particle.t * TAU;
+    function pathPoint(particle, now, tOverride) {
+        const t = typeof tOverride === 'number' ? tOverride : particle.t;
+        const theta = t * TAU;
         const sin = Math.sin(theta);
         const cos = Math.cos(theta);
         const x = LOGO.cx + LOGO.ampX * sin;
-        const y = LOGO.cy + LOGO.ampY * sin * cos;
+        const yWave = Math.sin(theta * 2);
+        const y = LOGO.cy + LOGO.ampY * yWave;
         const dx = LOGO.ampX * cos;
-        const dy = LOGO.ampY * Math.cos(theta * 2);
+        const dy = LOGO.ampY * 2 * Math.cos(theta * 2);
         const length = Math.hypot(dx, dy) || 1;
         const nx = -dy / length;
         const ny = dx / length;
-        const breath = Math.sin(now * 0.00042 + particle.phase) * 0.52;
-        const curl = Math.sin(theta * 3.0 + now * 0.00058 + particle.phase) * 1.05
-            + Math.sin(theta * 7.0 - now * 0.00026 + particle.phase * 0.7) * 0.42;
-        const laneOffset = particle.lane * 2.25 + breath + curl;
-        const driftX = Math.sin(theta * 2.0 - now * 0.00024 + particle.phase) * 0.32;
-        const driftY = Math.cos(theta * 2.0 + now * 0.00028 + particle.phase) * 0.32;
-        const z = Math.cos(theta - 0.16) + Math.sin(theta * 3.0 + particle.phase) * 0.12;
+        const breath = Math.sin(now * 0.0005 + particle.phase) * 0.24;
+        const curl = Math.sin(theta * 4.0 + now * 0.0008 + particle.phase) * 0.28
+            + Math.sin(theta * 8.0 - now * 0.00036 + particle.phase * 0.7) * 0.12;
+        const laneOffset = particle.lane * 1.75 + breath + curl;
+        const driftX = Math.sin(theta * 3.0 - now * 0.0003 + particle.phase) * 0.18;
+        const driftY = Math.cos(theta * 2.0 + now * 0.00034 + particle.phase)
+            * 0.08
+            * Math.abs(yWave);
+        const finalX = x + nx * laneOffset + driftX;
+        const finalY = y + ny * laneOffset + driftY;
+        const frontWindow = smoothstep(-0.26, 0.26, yWave);
+        const z = -1 + frontWindow * 2 + yWave * 0.04 + Math.sin(theta * 3.0 + particle.phase) * 0.025;
 
         return {
-            x: x + nx * laneOffset + driftX,
-            y: y + ny * laneOffset + driftY,
+            x: finalX,
+            y: finalY,
             z: clamp(z, -1, 1),
             theta: theta,
         };
     }
 
-    function particleColor(point, particle, depth) {
-        const qGlow = 0.12 + 0.18 * (0.5 + 0.5 * Math.sin(point.theta * 2 + particle.phase));
-        const warmPink = mixRgb(colors.warm, colors.pink, qGlow);
-        return mixRgb(warmPink, colors.pale, depth * 0.34);
+    function particleColor() {
+        return colors.cGray;
     }
 
-    function drawDot(ctx, canvasPoint, radius, alpha, rgb, glowScale) {
+    function drawTrail(ctx, from, to, radius, alpha, rgb) {
+        if (!from || alpha <= 0.01) return;
+
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.strokeStyle = rgba(rgb, alpha);
+        ctx.lineWidth = Math.max(0.72, radius * 1.05);
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(from.x, from.y);
+        ctx.lineTo(to.x, to.y);
+        ctx.stroke();
+    }
+
+    function drawDot(ctx, canvasPoint, radius, alpha, rgb) {
         if (alpha <= 0.01) return;
 
-        ctx.globalCompositeOperation = 'lighter';
-        ctx.fillStyle = rgba(rgb, alpha * 0.18);
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.fillStyle = rgba(rgb, alpha * 0.02);
         ctx.beginPath();
-        ctx.arc(canvasPoint.x, canvasPoint.y, radius * glowScale, 0, TAU);
+        ctx.arc(canvasPoint.x, canvasPoint.y, radius * 1.35, 0, TAU);
         ctx.fill();
 
         ctx.fillStyle = rgba(rgb, alpha);
@@ -167,44 +269,77 @@
         frontCtx.clearRect(0, 0, metrics.width, metrics.height);
     }
 
+    function fadeTrails() {
+        [backCtx, frontCtx].forEach(function (ctx) {
+            ctx.save();
+            ctx.globalCompositeOperation = 'destination-out';
+            ctx.fillStyle = 'rgba(0,0,0,0.045)';
+            ctx.fillRect(0, 0, metrics.width, metrics.height);
+            ctx.restore();
+        });
+    }
+
     function render(now, advance) {
         if (!metrics.width || !metrics.height) return;
 
         const dt = clamp((now - lastTime) / 1000 || 0, 0, 0.05);
         lastTime = now;
-        clear();
+        if (advance) {
+            fadeTrails();
+        } else {
+            clear();
+        }
 
         for (let i = 0; i < particles.length; i += 1) {
             const particle = particles[i];
+            const previousT = particle.t;
             if (advance) {
                 particle.t = (particle.t + particle.speed * dt) % 1;
             }
 
             const point = pathPoint(particle, now);
+            const previousPoint = advance && particle.t > previousT
+                ? pathPoint(particle, now - dt * 1000, previousT)
+                : null;
             const canvasPoint = logoToCanvas(point);
+            const previousCanvasPoint = previousPoint ? logoToCanvas(previousPoint) : null;
             const depth = (point.z + 1) * 0.5;
-            const frontAmount = smoothstep(-0.08, 0.42, point.z);
-            const backAmount = 1 - smoothstep(-0.36, 0.14, point.z);
-            const shimmer = 0.9 + Math.sin(now * 0.001 + particle.phase) * 0.1;
+            const frontAmount = smoothstep(-0.18, 0.52, point.z);
+            const backAmount = 1 - smoothstep(-0.52, 0.18, point.z);
+            const shimmer = 0.94 + Math.sin(now * 0.0014 + particle.phase) * 0.06;
             const baseRadius = particle.radius * metrics.scale * shimmer;
-            const rgb = particleColor(point, particle, depth);
+            const rgb = particleColor();
 
+            drawTrail(
+                backCtx,
+                previousCanvasPoint,
+                canvasPoint,
+                baseRadius * (0.62 + depth * 0.16),
+                particle.alpha * backAmount * 0.18,
+                rgb
+            );
             drawDot(
                 backCtx,
                 canvasPoint,
-                baseRadius * (0.78 + depth * 0.1),
-                particle.alpha * backAmount * 0.58,
-                rgb,
-                3.2
+                baseRadius * (0.62 + depth * 0.16),
+                particle.alpha * backAmount * 0.26,
+                rgb
             );
 
+            drawTrail(
+                frontCtx,
+                previousCanvasPoint,
+                canvasPoint,
+                baseRadius * (0.78 + depth * 0.62),
+                particle.alpha * frontAmount * (0.2 + depth * 0.18),
+                rgb
+            );
             drawDot(
                 frontCtx,
                 canvasPoint,
-                baseRadius * (0.9 + depth * 0.32),
-                particle.alpha * frontAmount,
-                rgb,
-                3.8
+                baseRadius * (0.78 + depth * 0.62),
+                particle.alpha * frontAmount * (0.54 + depth * 0.32),
+                rgb
             );
         }
     }

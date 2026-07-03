@@ -51,6 +51,14 @@ def _map_scale_value(raw, default=4000):
     return value if value > 0 else default
 
 
+def _map_file_is_claimable(request, filename):
+    filename = safe_media_filename(filename)
+    if not filename:
+        return False
+    existing_files = File.objects.filter(map_file=filename, deleted=False).select_related('team')
+    return all(user_can_access_file(request, existing) for existing in existing_files)
+
+
 MAX_MAP_IMAGE_PIXELS = 100_000_000
 
 
@@ -446,6 +454,8 @@ def get_snapshots(request, file_id):
     from .models import FileSnapshot
     try:
         file = get_object_or_404(File, id=file_id, deleted=False)
+        if not user_can_access_file(request, file):
+            return JsonResponse({'error': 'File not found'}, status=404)
         qs         = FileSnapshot.objects.filter(file=file).order_by('-created_at')
         total      = qs.count()
         show_all   = request.GET.get('all')
@@ -539,11 +549,19 @@ def save_file(request):
             file = File(team=active_team,
                         author=request.user.first_name or request.user.username)
 
+        incoming_map_file = data.get('map_file', '')
+        if incoming_map_file:
+            incoming_map_file = safe_media_filename(incoming_map_file)
+            if not incoming_map_file:
+                return JsonResponse({'error': 'Invalid map filename'}, status=400)
+            if not _map_file_is_claimable(request, incoming_map_file):
+                return JsonResponse({'error': 'Permission denied for map file'}, status=403)
+
         file.name            = data.get('name', _('New project'))
         file.scale           = data.get('scale')
         file.map_scale       = _map_scale_value(data.get('map_scale'))
         file.scaled          = data.get('scaled', False)
-        file.map_file        = data.get('map_file', '')
+        file.map_file        = incoming_map_file
         file.has_mask        = data.get('has_mask', False)
         file.blocked_terrain = data.get('blocked_terrain')
         file.last_edited     = tz.now()
@@ -1003,7 +1021,9 @@ def upload_map(request):
             return JsonResponse({'error': error}, status=400)
     try:
         from django.utils.timezone import now
+        import uuid
         stamp = now().strftime('%Y%m%d_%H%M%S')
+        token = f"{stamp}_{uuid.uuid4().hex[:12]}"
 
         if is_ocad:
             from .ocad_tools.ocad import OcadConversionError, convert_ocad_map_to_editor_assets
@@ -1014,7 +1034,7 @@ def upload_map(request):
                 for chunk in uploaded.chunks():
                     f.write(chunk)
 
-            map_filename = f"{stamp}.png"
+            map_filename = f"{token}.png"
             mask_filename = f"mask_{os.path.splitext(map_filename)[0]}.png"
             try:
                 conversion = convert_ocad_map_to_editor_assets(source_path, map_filename)
@@ -1050,7 +1070,7 @@ def upload_map(request):
             })
 
         ext      = ext or image_ext or '.png'
-        filename = f"{stamp}{ext}"
+        filename = f"{token}{ext}"
         dest     = os.path.join(settings.MEDIA_ROOT, 'maps', filename)
         os.makedirs(os.path.dirname(dest), exist_ok=True)
         with open(dest, 'wb') as f:

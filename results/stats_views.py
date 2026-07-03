@@ -14,6 +14,49 @@ def _is_trainer(user):
     return user.groups.filter(name='Trainer').exists()
 
 
+def _active_team_for(user):
+    try:
+        return user.profile.active_team
+    except Exception:
+        return None
+
+
+def _stats_target_user(request):
+    target_user = request.user
+    if not _is_trainer(request.user):
+        return target_user, None
+
+    uid = request.GET.get('user_id')
+    if not uid:
+        return target_user, None
+
+    active_team = _active_team_for(request.user)
+    if not active_team:
+        return None, JsonResponse({'error': 'No active team'}, status=403)
+
+    try:
+        target_id = int(uid)
+    except (TypeError, ValueError):
+        return None, JsonResponse({'error': 'Not authorized'}, status=403)
+
+    from django.contrib.auth.models import User
+    target_user = (
+        User.objects
+        .filter(id=target_id)
+        .filter(
+            Q(profile__teams=active_team) |
+            Q(profile__active_team=active_team) |
+            Q(choices__team=active_team) |
+            Q(infinite_choices__team=active_team)
+        )
+        .distinct()
+        .first()
+    )
+    if not target_user:
+        return None, JsonResponse({'error': 'Not authorized'}, status=403)
+    return target_user, None
+
+
 @login_required
 def stats_view(request):
     return render(request, 'results/stats.html', {'is_trainer': _is_trainer(request.user)})
@@ -591,33 +634,24 @@ def _aggregate_random(rcs):
 @require_GET
 def get_user_stats(request):
     from .models import Choice, InfiniteChoice
-    from django.contrib.auth.models import User
 
     mode = (request.GET.get('mode') or '').lower()
     # Backwards-compat: ?competition=true|false was the old flag
     if not mode:
         mode = 'competition' if request.GET.get('competition', 'true').lower() != 'false' else 'training'
 
-    target_user = request.user
-    if _is_trainer(request.user):
-        uid = request.GET.get('user_id')
-        if uid:
-            try:
-                target_user = User.objects.get(id=int(uid))
-            except (User.DoesNotExist, ValueError):
-                pass
+    target_user, error_response = _stats_target_user(request)
+    if error_response:
+        return error_response
+    active_team = _active_team_for(request.user)
 
     # ── Infinity mode: aggregate InfiniteChoice rows independent of team / file ──
     if mode == 'random':
-        target_rcs = list(
-            InfiniteChoice.objects.filter(user=target_user).order_by('timestamp')
-        )
+        target_rcs_qs = InfiniteChoice.objects.filter(user=target_user)
+        if target_user != request.user and _is_trainer(request.user) and active_team:
+            target_rcs_qs = target_rcs_qs.filter(_team_choice_filter(active_team))
+        target_rcs = list(target_rcs_qs.order_by('timestamp'))
         team_rcs = target_rcs   # No team aggregation for random plays for now
-        try:
-            profile     = request.user.profile
-            active_team = profile.active_team
-        except Exception:
-            active_team = None
 
         user_stats = _aggregate_random(target_rcs)
         team_stats = _cached_team_random_stats(active_team) if active_team else _aggregate_random(team_rcs)
@@ -864,7 +898,11 @@ def get_stats_table(request):
 
     # ── Mode-specific data + classifier ────────────────────────────────
     if mode == 'random':
-        rcs = list(InfiniteChoice.objects.filter(user_id__in=team_user_ids))
+        rcs = list(
+            InfiniteChoice.objects
+            .filter(user_id__in=team_user_ids)
+            .filter(_team_choice_filter(active_team))
+        )
         per_user = {}
         for rc in rcs:
             per_user.setdefault(rc.user_id, []).append(rc)

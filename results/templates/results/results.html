@@ -17,26 +17,31 @@
         <!-- Search + mode toggle -->
         <div id="play-header">
 
-            <!-- Mode toggle (left) -->
-            <div id="play-mode-toggle">
-                <div class="mode-icon-tip" data-mode="training">
-                    <x-icon name="book-open" size="14px"></x-icon>
-                    <div class="mode-tip-box">
-                        <b>{% trans "Training mode" %}</b><br>
-                        {% trans "Results are listed as training — no pressure and no late decision penalty." %}
+            <!-- Mode controls (left) -->
+            <div id="play-mode-actions">
+                <div id="play-mode-toggle">
+                    <div class="mode-icon-tip" data-mode="training">
+                        <x-icon name="book-open" size="14px"></x-icon>
+                        <div class="mode-tip-box">
+                            <b>{% trans "Training mode" %}</b><br>
+                            {% trans "Results are listed as training — no pressure and no late decision penalty." %}
+                        </div>
+                    </div>
+                    <label class="mode-switch">
+                        <input type="checkbox" id="mode-toggle-input" checked>
+                        <span class="mode-slider"></span>
+                    </label>
+                    <div class="mode-icon-tip" data-mode="competition">
+                        <x-icon name="trophy" size="14px"></x-icon>
+                        <div class="mode-tip-box">
+                            <b>{% trans "Competition mode" %}</b><br>
+                            {% trans "The first attempt of a project in competition mode is listed in the ranking. The decision time and the extra time for non-ideal routes are measured." %}
+                        </div>
                     </div>
                 </div>
-                <label class="mode-switch">
-                    <input type="checkbox" id="mode-toggle-input" checked>
-                    <span class="mode-slider"></span>
-                </label>
-                <div class="mode-icon-tip" data-mode="competition">
-                    <x-icon name="trophy" size="14px"></x-icon>
-                    <div class="mode-tip-box">
-                        <b>{% trans "Competition mode" %}</b><br>
-                        {% trans "The first attempt of a project in competition mode is listed in the ranking. The decision time and the extra time for non-ideal routes are measured." %}
-                    </div>
-                </div>
+                <a id="play-infinity-btn" href="{% url 'infinity_play' %}" aria-label="{% trans 'Infinity' %}" title="{% trans 'Infinity' %}">
+                    <x-icon name="infinity" size="1.25em"></x-icon>
+                </a>
             </div>
 
             <!-- Search (centred on desktop, fills remaining on mobile) -->

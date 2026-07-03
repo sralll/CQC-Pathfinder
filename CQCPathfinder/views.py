@@ -5,6 +5,7 @@ from django.contrib.auth.views import LoginView
 from django.core.cache import cache
 from django.shortcuts import redirect, render
 from django.utils import translation
+from django.views.decorators.http import require_POST
 
 from CQCPathfinder.forms import StyledLoginForm
 
@@ -87,6 +88,8 @@ def feedback_view(request):
     return redirect('forum')
 
 
+@login_required
+@require_POST
 def logout_view(request):
     logout(request)
     return redirect('login')
