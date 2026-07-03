@@ -14,14 +14,12 @@ uvicorn==0.34.2  # production ASGI worker in start.sh
 h11==0.16.0  # uvicorn dependency
 servestatic==3.0.1  # settings.py staticfiles middleware/storage
 Brotli==1.1.0  # compressed static asset support
-whitenoise==6.9.0  # installed but not currently used; servestatic is configured instead
 
 # Object storage / R2 sync tooling. Not used by the project editor request path.
 boto3==1.38.18  # admin/R2 tooling
 botocore==1.38.18  # boto3 dependency
 jmespath==1.0.1  # boto3 dependency
 s3transfer==0.12.0  # boto3 dependency
-django-storages==1.14.6  # installed but not currently configured in settings.py
 
 # OCAD rendering and editor mask generation. Used by the project app.
 resvg_py==0.3.2  # project app: OCAD SVG-to-PNG rendering
@@ -30,21 +28,12 @@ numpy==2.2.4  # project app: UNet mask generation arrays
 onnxruntime==1.22.0  # project app: UNet model inference
 # scipy==1.14.1  # no direct import found after UNet dilation moved to numpy
 
-# HTTP/util packages. No current direct app imports found; keep only if a dependency needs them.
-certifi==2025.4.26  # requests dependency
-charset-normalizer==3.4.2  # requests dependency
-idna==3.10  # requests dependency
-urllib3==2.4.0  # requests/botocore dependency
-requests==2.32.3  # no direct import found
-python-dateutil==2.9.0.post0  # no direct import found
-PyYAML==6.0.2  # no direct import found
-ruamel.yaml==0.18.10  # no direct import found
-
-# Packaging/CLI transitive leftovers. No current direct app imports found.
-click==8.2.0  # likely transitive/leftover
-colorama==0.4.6  # likely transitive/leftover
-packaging==25.0  # likely transitive/leftover
+# Pinned transitive dependencies of the packages above.
+urllib3==2.4.0  # botocore dependency
+python-dateutil==2.9.0.post0  # botocore dependency
+six==1.17.0  # python-dateutil dependency
+click==8.2.0  # uvicorn dependency
+colorama==0.4.6  # click dependency on Windows (dev)
+packaging==25.0  # onnxruntime dependency
 setuptools==79.0.1  # build/install tooling
-six==1.17.0  # likely transitive/leftover
-typing_extensions==4.13.2  # likely transitive/leftover
-yarg==0.1.10  # likely unused now
+typing_extensions==4.13.2  # dj-database-url dependency

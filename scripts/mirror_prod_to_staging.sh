@@ -66,7 +66,12 @@ pg_restore \
   "$DUMP_FILE"
 log "Staging restore completed in $((SECONDS - restore_start))s."
 
-if [[ "${RUN_DJANGO_MIGRATIONS_AFTER_RESTORE:-true}" == "true" && -f "manage.py" ]]; then
+# Default is a plain copy: prod already carries the full migration history, so
+# no migrate run is needed after restore. Opt back in with
+# RUN_DJANGO_MIGRATIONS_AFTER_RESTORE=true while staging code carries
+# migrations that are not yet deployed to prod (otherwise the mirrored schema
+# lags behind staging's code until the next staging deploy runs migrate).
+if [[ "${RUN_DJANGO_MIGRATIONS_AFTER_RESTORE:-false}" == "true" && -f "manage.py" ]]; then
   export DATABASE_URL="$TARGET_URL"
   export SECRET_KEY="${SECRET_KEY:-db-mirror-temporary-secret-key}"
 
@@ -74,7 +79,7 @@ if [[ "${RUN_DJANGO_MIGRATIONS_AFTER_RESTORE:-true}" == "true" && -f "manage.py"
   migrate_start=$SECONDS
   python manage.py migrate --noinput
   log "Django migrations completed in $((SECONDS - migrate_start))s."
-elif [[ "${RUN_DJANGO_MIGRATIONS_AFTER_RESTORE:-true}" != "true" ]]; then
+elif [[ "${RUN_DJANGO_MIGRATIONS_AFTER_RESTORE:-false}" != "true" ]]; then
   log "Skipping Django migrations because RUN_DJANGO_MIGRATIONS_AFTER_RESTORE is not true."
 else
   log "Skipping Django migrations because manage.py was not found in this container."

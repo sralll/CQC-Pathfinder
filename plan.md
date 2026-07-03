@@ -24,7 +24,7 @@ Goal: optimize the hot compute paths, clean out dead code, harden the backend, f
 ## Phase 1 — Dead code & artifact cleanup (low risk, do first)
 
 ### 1.1 Remove the three deprecated apps: `accounts`, `coursesetter`, `play`
-- [ ] Done
+- [x] Done
 
 User confirmed these are dead (kept only for a past data migration, now complete) and approved **full removal including dropping DB tables**. Cross-references: `coursesetter/models.py:10` and `play/models.py:18` reference `accounts.Kader` by string.
 
@@ -36,24 +36,24 @@ Safe removal order (tables must be dropped by migration before the code disappea
 5. Follow-up commit: delete the three app directories, remove the three entries from `INSTALLED_APPS` in `CQCPathfinder/settings.py` (~lines 39–54).
 
 ### 1.2 Update the prod→staging DB mirror script
-- [ ] Done
+- [x] Done
 
 `scripts/mirror_prod_to_staging.sh:69-81` runs `manage.py migrate` after restoring the prod dump. Per user: prod now has the account-migration in place, so the nightly mirror should be a **plain copy — no migration run**. Flip the default at line 69 from `:-true` to `:-false` (keep the `RUN_DJANGO_MIGRATIONS_AFTER_RESTORE` env override). ⚠️ Caveat to document in the script comment: while staging code carries migrations not yet deployed to prod (e.g. Phase 1.1 / 2.1 of this plan), the nightly mirror will restore a schema that's behind staging's code — either temporarily set the env var to `true` on the Railway CRON service or redeploy staging after the mirror (preDeploy migrate) during that window.
 
 ### 1.3 Settings cleanup
-- [ ] Done
+- [x] Done
 
 Remove commented-out `admin_reorder` lines: `settings.py:53-54` (INSTALLED_APPS), `:74` (MIDDLEWARE), and the unused `ADMIN_REORDER` config block (~lines 77–97).
 
 ### 1.4 File artifacts
-- [ ] Done
+- [x] Done
 
 - Delete `media/maps/debug_ocad_upload_test.png` (1.3 MB debug upload).
 - Delete `docs/debug/infinite-CONTRACTS.md` and `docs/debug/infinite-REFERENCE_NOTES.md` (user is done developing this mode; notes no longer needed).
 - Orphaned compiled assets in `staticfiles/`: `staticfiles/results/css/random_play.*` and `staticfiles/results/js/random_play.*` (+ hashed/.gz variants) have no source files and no references. Delete if git-tracked; run `collectstatic --clear` to regenerate clean output (also clears stale `staticfiles/results/infinite/test.html`).
 
 ### 1.5 requirements.txt pruning (verify each before removing)
-- [ ] Done
+- [x] Done
 
 Likely-unused (grep for imports before deleting each): `yarg`, `django-storages` (not configured in settings; R2 sync uses boto3 directly), and the "transitive leftovers" blocks (~lines 38–50). Remove only entries that aren't transitive deps of kept packages; verify with a clean venv: `pip install -r requirements.txt` then `python manage.py check` + smoke-run.
 

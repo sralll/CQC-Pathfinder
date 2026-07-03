@@ -54,7 +54,6 @@ PLURAL = {
 EXCLUDE_DIRS = {
     ".venv", "venv", "env", ".git", "__pycache__", "node_modules",
     "staticfiles", "locale", "migrations",
-    "coursesetter", "play",          # deprecated apps — intentionally ignored
 }
 # Helper scripts that mention gettext()/trans in their own source.
 EXCLUDE_FILES = {"manage_translations.py", "compile_messages.py"}
