@@ -16,6 +16,7 @@
     };
     const SVG_NS = 'http://www.w3.org/2000/svg';
     const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const TRAIL_OFFSETS = [0.0520, 0.0440, 0.0360, 0.0280, 0.0205, 0.0135, 0.0070, 0];
 
     function applyLayerStyle(element, zIndex) {
         element.style.position = 'absolute';
@@ -147,8 +148,8 @@
             t: (index / count + Math.random() * 0.045) % 1,
             speed: 0.0182 + Math.random() * 0.0126,
             lane: (Math.random() * 2 - 1),
-            radius: 0.62 + Math.random() * 0.72,
-            alpha: 0.44 + Math.random() * 0.26,
+            radius: 0.42 + Math.random() * 0.46,
+            alpha: 0.72 + Math.random() * 0.22,
             phase: Math.random() * TAU,
         };
     }
@@ -239,15 +240,25 @@
         if (alpha <= 0.01) return;
 
         ctx.globalCompositeOperation = 'source-over';
-        ctx.fillStyle = rgba(rgb, alpha * 0.02);
-        ctx.beginPath();
-        ctx.arc(canvasPoint.x, canvasPoint.y, radius * 1.35, 0, TAU);
-        ctx.fill();
-
         ctx.fillStyle = rgba(rgb, alpha);
         ctx.beginPath();
         ctx.arc(canvasPoint.x, canvasPoint.y, radius, 0, TAU);
         ctx.fill();
+        ctx.globalCompositeOperation = 'source-over';
+    }
+
+    function drawLine(ctx, from, to, width, alpha, rgb) {
+        if (alpha <= 0.01) return;
+
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.strokeStyle = rgba(rgb, alpha);
+        ctx.lineWidth = width;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        ctx.beginPath();
+        ctx.moveTo(from.x, from.y);
+        ctx.lineTo(to.x, to.y);
+        ctx.stroke();
         ctx.globalCompositeOperation = 'source-over';
     }
 
@@ -256,14 +267,76 @@
         frontCtx.clearRect(0, 0, metrics.width, metrics.height);
     }
 
-    function fadeTrails() {
-        [backCtx, frontCtx].forEach(function (ctx) {
-            ctx.save();
-            ctx.globalCompositeOperation = 'destination-out';
-            ctx.fillStyle = 'rgba(0,0,0,0.045)';
-            ctx.fillRect(0, 0, metrics.width, metrics.height);
-            ctx.restore();
-        });
+    function drawParticle(particle, now, t, alphaScale, radiusScale) {
+        const point = pathPoint(particle, now, t);
+        const canvasPoint = logoToCanvas(point);
+        const depth = (point.z + 1) * 0.5;
+        const frontAmount = smoothstep(-0.34, 0.66, point.z);
+        const backAmount = 1 - smoothstep(-0.66, 0.34, point.z);
+        const shimmer = 0.94 + Math.sin(now * 0.0014 + particle.phase) * 0.06;
+        const baseRadius = particle.radius * metrics.scale * shimmer * radiusScale;
+        const rgb = particleColor();
+
+        drawDot(
+            backCtx,
+            canvasPoint,
+            baseRadius * (0.66 + depth * 0.12),
+            particle.alpha * alphaScale * backAmount * 0.42,
+            rgb
+        );
+
+        drawDot(
+            frontCtx,
+            canvasPoint,
+            baseRadius * (0.78 + depth * 0.36),
+            particle.alpha * alphaScale * frontAmount * (0.66 + depth * 0.20),
+            rgb
+        );
+    }
+
+    function drawTrailSegment(particle, now, fromT, toT, midT, alphaScale) {
+        const fromPoint = pathPoint(particle, now, fromT);
+        const toPoint = pathPoint(particle, now, toT);
+        const midPoint = pathPoint(particle, now, midT);
+        const depth = (midPoint.z + 1) * 0.5;
+        const frontAmount = smoothstep(-0.34, 0.66, midPoint.z);
+        const backAmount = 1 - smoothstep(-0.66, 0.34, midPoint.z);
+        const shimmer = 0.94 + Math.sin(now * 0.0014 + particle.phase) * 0.06;
+        const baseRadius = particle.radius * metrics.scale * shimmer;
+        const rgb = particleColor();
+        const fromCanvas = logoToCanvas(fromPoint);
+        const toCanvas = logoToCanvas(toPoint);
+
+        drawLine(
+            backCtx,
+            fromCanvas,
+            toCanvas,
+            baseRadius * (0.66 + depth * 0.12) * 2,
+            particle.alpha * alphaScale * backAmount * 0.16,
+            rgb
+        );
+
+        drawLine(
+            frontCtx,
+            fromCanvas,
+            toCanvas,
+            baseRadius * (0.78 + depth * 0.36) * 2,
+            particle.alpha * alphaScale * frontAmount * (0.26 + depth * 0.08),
+            rgb
+        );
+    }
+
+    function drawTrail(particle, now) {
+        for (let j = 0; j < TRAIL_OFFSETS.length - 1; j += 1) {
+            const fromOffset = TRAIL_OFFSETS[j];
+            const toOffset = TRAIL_OFFSETS[j + 1];
+            const fromT = (particle.t - fromOffset + 1) % 1;
+            const toT = (particle.t - toOffset + 1) % 1;
+            const midT = (particle.t - (fromOffset + toOffset) * 0.5 + 1) % 1;
+            const progress = (j + 1) / (TRAIL_OFFSETS.length - 1);
+            const alphaScale = 0.18 + progress * progress * 0.48;
+            drawTrailSegment(particle, now, fromT, toT, midT, alphaScale);
+        }
     }
 
     function render(now, advance) {
@@ -271,11 +344,7 @@
 
         const dt = clamp((now - lastTime) / 1000 || 0, 0, 0.05);
         lastTime = now;
-        if (advance) {
-            fadeTrails();
-        } else {
-            clear();
-        }
+        clear();
 
         for (let i = 0; i < particles.length; i += 1) {
             const particle = particles[i];
@@ -283,30 +352,8 @@
                 particle.t = (particle.t + particle.speed * dt) % 1;
             }
 
-            const point = pathPoint(particle, now);
-            const canvasPoint = logoToCanvas(point);
-            const depth = (point.z + 1) * 0.5;
-            const frontAmount = smoothstep(-0.34, 0.66, point.z);
-            const backAmount = 1 - smoothstep(-0.66, 0.34, point.z);
-            const shimmer = 0.94 + Math.sin(now * 0.0014 + particle.phase) * 0.06;
-            const baseRadius = particle.radius * metrics.scale * shimmer;
-            const rgb = particleColor();
-
-            drawDot(
-                backCtx,
-                canvasPoint,
-                baseRadius * (0.66 + depth * 0.12),
-                particle.alpha * backAmount * 0.22,
-                rgb
-            );
-
-            drawDot(
-                frontCtx,
-                canvasPoint,
-                baseRadius * (0.78 + depth * 0.36),
-                particle.alpha * frontAmount * (0.42 + depth * 0.18),
-                rgb
-            );
+            drawTrail(particle, now);
+            drawParticle(particle, now, particle.t, 1, 1);
         }
     }
 
