@@ -145,7 +145,7 @@
     function makeParticle(index, count) {
         return {
             t: (index / count + Math.random() * 0.045) % 1,
-            speed: 0.026 + Math.random() * 0.018,
+            speed: 0.0182 + Math.random() * 0.0126,
             lane: (Math.random() * 2 - 1),
             radius: 0.62 + Math.random() * 0.72,
             alpha: 0.44 + Math.random() * 0.26,
@@ -235,19 +235,6 @@
         return colors.cGray;
     }
 
-    function drawTrail(ctx, from, to, radius, alpha, rgb) {
-        if (!from || alpha <= 0.01) return;
-
-        ctx.globalCompositeOperation = 'source-over';
-        ctx.strokeStyle = rgba(rgb, alpha);
-        ctx.lineWidth = Math.max(0.72, radius * 1.05);
-        ctx.lineCap = 'round';
-        ctx.beginPath();
-        ctx.moveTo(from.x, from.y);
-        ctx.lineTo(to.x, to.y);
-        ctx.stroke();
-    }
-
     function drawDot(ctx, canvasPoint, radius, alpha, rgb) {
         if (alpha <= 0.01) return;
 
@@ -292,53 +279,32 @@
 
         for (let i = 0; i < particles.length; i += 1) {
             const particle = particles[i];
-            const previousT = particle.t;
             if (advance) {
                 particle.t = (particle.t + particle.speed * dt) % 1;
             }
 
             const point = pathPoint(particle, now);
-            const previousPoint = advance && particle.t > previousT
-                ? pathPoint(particle, now - dt * 1000, previousT)
-                : null;
             const canvasPoint = logoToCanvas(point);
-            const previousCanvasPoint = previousPoint ? logoToCanvas(previousPoint) : null;
             const depth = (point.z + 1) * 0.5;
-            const frontAmount = smoothstep(-0.18, 0.52, point.z);
-            const backAmount = 1 - smoothstep(-0.52, 0.18, point.z);
+            const frontAmount = smoothstep(-0.34, 0.66, point.z);
+            const backAmount = 1 - smoothstep(-0.66, 0.34, point.z);
             const shimmer = 0.94 + Math.sin(now * 0.0014 + particle.phase) * 0.06;
             const baseRadius = particle.radius * metrics.scale * shimmer;
             const rgb = particleColor();
 
-            drawTrail(
-                backCtx,
-                previousCanvasPoint,
-                canvasPoint,
-                baseRadius * (0.62 + depth * 0.16),
-                particle.alpha * backAmount * 0.18,
-                rgb
-            );
             drawDot(
                 backCtx,
                 canvasPoint,
-                baseRadius * (0.62 + depth * 0.16),
-                particle.alpha * backAmount * 0.26,
+                baseRadius * (0.66 + depth * 0.12),
+                particle.alpha * backAmount * 0.22,
                 rgb
             );
 
-            drawTrail(
-                frontCtx,
-                previousCanvasPoint,
-                canvasPoint,
-                baseRadius * (0.78 + depth * 0.62),
-                particle.alpha * frontAmount * (0.2 + depth * 0.18),
-                rgb
-            );
             drawDot(
                 frontCtx,
                 canvasPoint,
-                baseRadius * (0.78 + depth * 0.62),
-                particle.alpha * frontAmount * (0.54 + depth * 0.32),
+                baseRadius * (0.78 + depth * 0.36),
+                particle.alpha * frontAmount * (0.42 + depth * 0.18),
                 rgb
             );
         }
