@@ -2,60 +2,29 @@
 import os
 import shutil
 import subprocess
-import tempfile
 import time
 from datetime import datetime, timezone
 
 from django.core.management.base import BaseCommand, CommandError
 
+from .sync_volume_to_r2 import _TRANSFER_CONFIG, _r2_client
+
 
 CONTENT_TYPE = "application/vnd.postgresql.dump"
 
 
-def _transfer_config():
-    try:
-        from boto3.s3.transfer import TransferConfig
-    except ModuleNotFoundError as exc:
-        raise CommandError(
-            f"Python dependency missing: {exc.name}. Install boto3 in the main "
-            "Django service image."
-        ) from exc
+class _CountingReader:
+    """Wraps a file-like object and tallies bytes read, for logging sizes
+    without needing a seekable temp file to stat."""
 
-    return TransferConfig(
-        multipart_threshold=32 * 1024 * 1024,
-        multipart_chunksize=8 * 1024 * 1024,
-        max_concurrency=2,
-        use_threads=True,
-    )
+    def __init__(self, fileobj):
+        self._fileobj = fileobj
+        self.bytes_read = 0
 
-
-def _r2_client():
-    try:
-        import boto3
-        from botocore.client import Config as BotoConfig
-    except ModuleNotFoundError as exc:
-        raise CommandError(
-            f"Python dependency missing: {exc.name}. Install boto3 in the main "
-            "Django service image."
-        ) from exc
-
-    endpoint = os.environ.get("R2_ENDPOINT_URL")
-    access_key = os.environ.get("R2_ACCESS_KEY_ID")
-    secret_key = os.environ.get("R2_SECRET_ACCESS_KEY")
-    if not (endpoint and access_key and secret_key):
-        raise CommandError(
-            "R2 credentials missing. Set R2_ENDPOINT_URL, R2_ACCESS_KEY_ID, "
-            "and R2_SECRET_ACCESS_KEY on the Django app service."
-        )
-
-    return boto3.client(
-        "s3",
-        endpoint_url=endpoint,
-        aws_access_key_id=access_key,
-        aws_secret_access_key=secret_key,
-        region_name="auto",
-        config=BotoConfig(signature_version="s3v4"),
-    )
+    def read(self, size=-1):
+        chunk = self._fileobj.read(size)
+        self.bytes_read += len(chunk)
+        return chunk
 
 
 def _truthy(value: str, default: bool = False) -> bool:
@@ -122,59 +91,64 @@ class Command(BaseCommand):
         if latest_key:
             latest_key = latest_key.strip().strip("/")
 
-        fd, dump_path = tempfile.mkstemp(prefix="postgres-backup-", suffix=".dump")
-        os.close(fd)
+        client = _r2_client()
 
-        try:
-            self.stdout.write("Creating PostgreSQL dump...")
-            dump_start = time.monotonic()
-            subprocess.run(
-                [
-                    "pg_dump",
-                    "--format=custom",
-                    "--no-owner",
-                    "--no-acl",
-                    "--file",
-                    dump_path,
-                    db_url,
-                ],
-                check=True,
-            )
-            elapsed = int(time.monotonic() - dump_start)
-            size = os.path.getsize(dump_path)
-            self.stdout.write(
-                f"PostgreSQL dump completed in {elapsed}s ({size} bytes)."
-            )
+        # Stream pg_dump's stdout straight into the R2 upload instead of writing
+        # a temp file: a temp file's contents sit in the OS page cache, which
+        # Railway's memory metric counts, making a dump look like a full-DB-size
+        # memory spike even though the Python heap barely grows.
+        self.stdout.write("Creating PostgreSQL dump...")
+        dump_start = time.monotonic()
+        proc = subprocess.Popen(
+            [
+                "pg_dump",
+                "--format=custom",
+                "--no-owner",
+                "--no-acl",
+                db_url,
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        counting_reader = _CountingReader(proc.stdout)
 
-            client = _r2_client()
-            self.stdout.write(f"Uploading database backup to r2://{bucket}/{key}...")
-            upload_start = time.monotonic()
-            client.upload_file(
-                dump_path,
-                bucket,
-                key,
-                ExtraArgs={"ContentType": CONTENT_TYPE},
-                Config=_transfer_config(),
-            )
+        self.stdout.write(f"Uploading database backup to r2://{bucket}/{key}...")
+        client.upload_fileobj(
+            counting_reader,
+            bucket,
+            key,
+            ExtraArgs={"ContentType": CONTENT_TYPE},
+            Config=_TRANSFER_CONFIG,
+        )
 
-            if latest_key:
-                client.copy_object(
-                    Bucket=bucket,
-                    CopySource={"Bucket": bucket, "Key": key},
-                    Key=latest_key,
-                    ContentType=CONTENT_TYPE,
-                    MetadataDirective="REPLACE",
-                )
-
-            elapsed = int(time.monotonic() - upload_start)
-            self.stdout.write(f"Database backup uploaded in {elapsed}s.")
-            if latest_key:
-                self.stdout.write(
-                    f"Latest database backup pointer updated at "
-                    f"r2://{bucket}/{latest_key}"
-                )
-        finally:
+        # Drain stderr to EOF before wait() so pg_dump can never block on a
+        # full stderr pipe.
+        stderr_output = proc.stderr.read().decode("utf-8", errors="replace")
+        proc.wait()
+        if proc.returncode != 0:
             try:
-                os.unlink(dump_path)
-            except FileNotFoundError:
+                client.delete_object(Bucket=bucket, Key=key)
+            except Exception:
                 pass
+            raise CommandError(
+                f"pg_dump failed with exit code {proc.returncode}: {stderr_output}"
+            )
+
+        elapsed = int(time.monotonic() - dump_start)
+        self.stdout.write(
+            f"PostgreSQL dump completed and uploaded in {elapsed}s "
+            f"({counting_reader.bytes_read} bytes)."
+        )
+
+        if latest_key:
+            client.copy_object(
+                Bucket=bucket,
+                CopySource={"Bucket": bucket, "Key": key},
+                Key=latest_key,
+                ContentType=CONTENT_TYPE,
+                MetadataDirective="REPLACE",
+            )
+            self.stdout.write(
+                f"Latest database backup pointer updated at "
+                f"r2://{bucket}/{latest_key}"
+            )

@@ -37,18 +37,14 @@ if [[ "${CONFIRM_STAGING_DB_RESET:-}" != "true" ]]; then
   fail "Set CONFIRM_STAGING_DB_RESET=true on this Railway service to confirm that staging may be wiped and replaced."
 fi
 
-DUMP_FILE="/tmp/prod-db.dump"
-
-cleanup() {
-  rm -f "$DUMP_FILE"
-}
-trap cleanup EXIT
-
 log "Starting production to staging database mirror."
-log "Creating production database dump..."
-dump_start=$SECONDS
-pg_dump --format=custom --no-owner --no-acl --file="$DUMP_FILE" "$PROD_URL"
-log "Production dump completed in $((SECONDS - dump_start))s."
+
+# The streamed pipe below wipes staging before the dump starts, so make sure
+# prod is actually reachable first -- otherwise a connectivity blip would
+# leave staging empty until the next nightly run.
+log "Checking production connectivity..."
+psql "$PROD_URL" --set=ON_ERROR_STOP=1 --command="SELECT 1;" >/dev/null \
+  || fail "Cannot reach the production database; staging left untouched."
 
 log "Resetting staging public schema..."
 reset_start=$SECONDS
@@ -57,14 +53,14 @@ psql "$TARGET_URL" \
   --command="DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;"
 log "Staging schema reset completed in $((SECONDS - reset_start))s."
 
-log "Restoring production dump into staging..."
-restore_start=$SECONDS
-pg_restore \
-  --no-owner \
-  --no-acl \
-  --dbname="$TARGET_URL" \
-  "$DUMP_FILE"
-log "Staging restore completed in $((SECONDS - restore_start))s."
+# Pipe pg_dump straight into pg_restore instead of dumping to a temp file:
+# a temp file's contents sit in the OS page cache, which Railway's memory
+# metric counts, making the mirror look like a full-DB-size memory spike.
+log "Streaming production dump into staging..."
+transfer_start=$SECONDS
+pg_dump --format=custom --no-owner --no-acl "$PROD_URL" \
+  | pg_restore --no-owner --no-acl --dbname="$TARGET_URL"
+log "Mirror transfer completed in $((SECONDS - transfer_start))s."
 
 # Default is a plain copy: prod already carries the full migration history, so
 # no migrate run is needed after restore. Opt back in with
