@@ -39,6 +39,11 @@ const COURSE_DISPLAY_EXCLUDED_SYMS = new Set([
   760000,
   10602010, // fastest route
 ]);
+// ocad2geojson/src/ocad-reader/{object-types,symbol-types}.js:
+// text objects are 4/5/6, text symbols are 4 and line-text symbols are 6.
+const TEXT_OBJECT_TYPES = new Set([4, 5, 6]);
+const TEXT_SYMBOL_TYPES = new Set([4, 6]);
+const HIDDEN_SYMBOL_STATUS_BIT = 0x02;
 const MASK_VALUES = {
   impassable: 0,
   verySlow: 135,
@@ -148,13 +153,26 @@ function isCourseDisplayObject(object) {
   return COURSE_DISPLAY_EXCLUDED_SYMS.has(Number(object.sym));
 }
 
+function isTextObject(object, symbol) {
+  return TEXT_OBJECT_TYPES.has(Number(object.objType)) ||
+    (symbol && TEXT_SYMBOL_TYPES.has(Number(symbol.type)));
+}
+
+function isHiddenSymbol(symbol) {
+  if (!symbol) return false;
+  if (typeof symbol.isHidden === "function") return symbol.isHidden();
+  return (Number(symbol.status || 0) & HIDDEN_SYMBOL_STATUS_BIT) === HIDDEN_SYMBOL_STATUS_BIT;
+}
+
 function makeRenderableObjectFilter(ocadFile) {
   const symbolByNumber = new Map((ocadFile.symbols || []).map((symbol) => [Number(symbol.symNum), symbol]));
   return (object) => {
     if (isCourseDisplayObject(object)) return false;
     if (isActualRouteObject(object, symbolByNumber)) return false;
     const symbol = symbolByNumber.get(Number(object.sym));
-    return !symbol || Number(symbol.status || 0) === 0;
+    if (isTextObject(object, symbol)) return false;
+    if (isHiddenSymbol(symbol)) return false;
+    return true;
   };
 }
 
