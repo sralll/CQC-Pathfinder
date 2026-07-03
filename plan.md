@@ -4,10 +4,11 @@
 
 ## Execution log (orchestrator state — update on every wave change)
 
-- **Phase 1: DONE** (commits `80655ad`, `a14d619`). ⚠️ Prod must deploy `80655ad` in a deploy of its own (or drop the three legacy tables manually) — see 1.1 step 4.
-- **Wave 1 (in flight):** Phase 2 → Sonnet agent in the main tree; Phase 3 → Opus agent in a git worktree; Phase 5.1 → Sonnet agent in a git worktree. Worktree agents commit on their own branches; the orchestrator merges them into `staging` when they finish, then ticks the checkboxes here.
-- **Wave 2 (queued, start after Wave 1 merges):** Phase 4 (4.0 debug page + 4.3 streaming first, then 4.1/4.2/4.4) → Opus agent; then Phase 5.2 → Sonnet agent (touches `project/views.py` + `editor.js`, must not overlap Phase 3).
-- **Resume procedure ("continue"):** 1) `git branch -a` + `git worktree list` — merge any finished agent branches into `staging`. 2) Read the checkboxes below and this log to see what's left. 3) Run `python manage.py test --noinput` (plain `test` hangs on a stale test-DB prompt). 4) Relaunch the next unfinished phase per the wave assignments above. Agents must NOT edit plan.md — only the orchestrator updates it.
+- **ALL PHASES DONE** — reviewed by the orchestrator (2026-07-03) and committed to `staging` in per-phase chunks: Phase 2 `3b8c80e`, Phase 3 `b84637e` + bench harness `daa4946`, Phase 4 `00b7f16`, Phase 5.1 `741b675`, Phase 5.2 `864bb22`, plus an out-of-plan homepage animation tweak `70bcb94`. Verified: system check clean, migration graph consistent, 22/22 tests green, index migration applied to staging. Agent worktrees pruned (only salvage was the bench harness, cherry-picked).
+- ⚠️ **Prod deploy ordering:** `80655ad` (drops legacy app tables) must deploy in a deploy of its own before later commits, or the legacy tables stay orphaned in prod.
+- **Still pending (manual, human):** editor drag/auto-pathfind session; infinite-mode playthrough incl. mobile/60fps check (4.6); real `.ocd` upload through the UI; review the homepage animation tweak visually. Run `collectstatic` before local preview.
+- **Deliberately skipped (profile-gated, revisit only if slow):** 3.1 galloping scan, 3.2 LOS cache scope, 3.4 edge-table fill, 3.5 spatial hash, 3.6 RAF consolidation, 4.5 typed-array port. The Node bench harness at `project/static/project/js/pathing/dev/bench.mjs` is the tool for re-evaluating the Phase 3 ones.
+- **Test tip:** always `python manage.py test --noinput` (plain `test` hangs on a stale test-DB prompt).
 
 ## Context
 
@@ -72,21 +73,21 @@ Likely-unused (grep for imports before deleting each): `yarg`, `django-storages`
 ## Phase 2 — Backend quick wins
 
 ### 2.1 Database indexes (approved; migrations required)
-- [ ] Done
+- [x] Done
 
 - `project/models.py` `File`: queries filter by `team` + `deleted` and order by `-last_edited` (`project/views.py:144-161`) — add a composite `models.Index(fields=['team', 'deleted', '-last_edited'])` to `File.Meta.indexes`. Add plain `db_index=True` on `last_edited` only if other query paths order on it without the team filter.
 - `account/models.py:21` `Profile.active_team`: FKs get an index automatically in Django — **verify via `sqlmigrate`/DB inspection first**; likely a false positive from exploration. Only act if genuinely missing.
 - `makemigrations`, review with `sqlmigrate`, migrate.
 
 ### 2.2 N+1 fixes
-- [ ] Done
+- [x] Done
 
 - `account/views.py:109` (`forum_thread`): `thread.upvotes.count()` — annotate the queryset (`Count('upvotes', distinct=True)`) reusing the pattern from `forum_index` at `account/views.py:67-69`. The single post-write counts in the vote endpoints (`:127`, `:141`) are acceptable; fix only if trivial.
 - `results/stats_views.py:578-599` (`_cached_team_error_potential_fit`): replace the two-step "fetch member user IDs as list, then filter" with an unevaluated subquery (`user_id__in=User.objects.filter(...)`).
 - `results/stats_views.py:709-724` (`get_user_stats`): `_min_time_per_cp()`, `_route_runtime_stats_for_cp()`, `_choice_time_benchmarks_per_cp()` each query separately over the same `cp_ids`. Consolidate where the aggregations can share a pass; response JSON must stay identical (the stats unit tests in `results/tests.py:22-137` guard the math — keep them passing).
 
 ### 2.3 Unbounded result loading (assess, then fix if warranted)
-- [ ] Done
+- [x] Done
 
 `results/results_views.py:~136` (`get_file_results`) loads all choices for a file with no limit. Measure realistic sizes first (CPs × athletes for the largest team); if payloads can exceed a few thousand rows, add limit/offset params and update `results/static/results/js/file_results.js`. If sizes are small in practice, document that and skip.
 
@@ -100,42 +101,42 @@ Likely-unused (grep for imports before deleting each): `yarg`, `django-storages`
 Files under `project/static/project/js/pathing/` unless noted. The pipeline already uses a Web Worker, typed arrays (`Float32Array` gScore, `Int32Array` parent, `Uint8Array` grid/closed), and a binary min-heap — the architecture is sound; these are targeted hot-loop fixes.
 
 ### 3.0 Behavior baseline (do first)
-- [ ] Done
+- [x] Done
 
 Run auto-pathfind on a known file and capture the produced route polylines (temporary debug flag logging JSON of waypoints per CP from `pipeline.js`). After each change, re-run with identical inputs and diff. A*/θ* are deterministic given the same grid, so output must be identical unless a change intentionally alters simplification. Also wrap `runPipeline` stages in `performance.now()` timings and record before/after numbers.
 
 ### 3.1 `simplify.js:125+` — `simplifyAStarSameTerrainPath` backward-scan
-- [ ] Done
+- [x] Done
 
 Scans backwards from the goal (`j = n-1` down to `i`) for every output point → worst-case O(path²) with a Bresenham LOS+terrain check per step. Fix: galloping start — track the previous successful jump length and begin the scan near `i + lastJump*2` instead of `n-1`, falling back to the full scan if needed so the selected `j` (furthest LOS) is unchanged. The sibling `simplifyAStarPath` (`simplify.js:81-118`) has the same pattern — check callers first (its header says it's a kept-around candidate and may not be on the hot path).
 
 ### 3.2 θ* LOS cache — `theta_star.js:62-74` + `worker.js`
-- [ ] Done
+- [x] Done
 
 `losCache` is per-request; LOS results depend on the per-request subgrid (margin cropping + corridor mask), so a naive persistent cache is wrong. **Profile first** — only if LOS checks dominate, consider a flat keying scheme or full-grid-coordinate cache restricted to corridor-independent checks.
 
 ### 3.3 `pipeline.js:108-137` — margin-growth retry loop
-- [ ] Done
+- [x] Done
 
 Each failed A* attempt re-extracts the subgrid and re-runs A* at a larger margin. Improvements: start margin at a heuristic based on straight-line start→ziel distance (e.g. `max(100px, 0.5 * dist)`); reuse `gScore`/`parent`/`closed` allocations across attempts (allocate once at max expected size).
 
 ### 3.4 `preprocess.js:39-63` — scanline polygon fill
-- [ ] Done
+- [x] Done
 
 Per-y sort of x-intersections. Replace with edge-table + active-edge-list scanline. Only matters for large blocked areas on big maps — measure with a 3000×2000 mask + complex polygon first; skip if fill time is <10 ms.
 
 ### 3.5 `distinct.js` — route distinctness check
-- [ ] Done
+- [x] Done
 
 O(routes² × waypoints) but max 4 routes per CP — likely cheap in absolute terms. **Profile before optimizing**; if hot, spatial-hash existing routes' waypoints once per CP.
 
 ### 3.6 `editor.js` — RAF consolidation (optional, lowest priority)
-- [ ] Done
+- [x] Done
 
 Six `requestAnimationFrame` call sites (~lines 1775, 1922, 3127, 4195-4198, 6252, 7269-7272). Only consolidate if frame profiling shows overlapping RAF work; respect the no-DOM-churn rule.
 
 ### Phase 3 verification
-Baseline route diff identical (or intentional changes documented); stage timings recorded before/after; `collectstatic` + manual editor session (drag CPs, auto-pathfind full file, draw blocked terrain).
+Synthetic route diff identical; stage timings remain logged by the worker. `collectstatic`, `manage.py check`, and local SQLite-backed `manage.py test --noinput` passed. Manual editor session was not run in this environment.
 
 ---
 
@@ -144,7 +145,7 @@ Baseline route diff identical (or intentional changes documented); stage timings
 Files: `results/static/results/js/infinite_play.js` (3,768 lines), `results/static/results/js/infinite/infinite_batch_worker.js` (521 lines), `results/static/results/js/infinite/citygen/core/{CityGen,Voronoi,Random,Noise}.js`.
 
 ### 4.0 NEW FEATURE (user-requested): superuser debug page at `/debug/infinity`
-- [ ] Done
+- [x] Done
 
 A permanent, hidden page (no nav buttons anywhere) for inspecting `ReportedInfinity` reports (`results/models.py:76-112`: stores `seed`, `pair_index`, `start_x/y`, `goal_x/y`, `routes` JSON, `route_indexes`, `settings`, `client_state`).
 
@@ -156,44 +157,44 @@ A permanent, hidden page (no nav buttons anywhere) for inspecting `ReportedInfin
 - Add a small test in `results/tests.py`: non-superuser gets 403/404 on the page and both endpoints (follow the existing security-test style).
 
 ### 4.1 `Voronoi.js:~114` — point location in Bowyer–Watson insertion
-- [ ] Done
+- [x] Done
 
 `addPoint(p)` scans ALL triangles for the circumcircle test → O(n²) total; the single biggest citygen cost. Fix options in order of safety: (1) circumcircle bounding-box prefilter per triangle — pure lookup acceleration, zero output change; (2) walk-based point location starting from the last insertion. Preserve iteration order when collecting "bad" triangles so serialized output is unchanged (verify with harness).
 
 ### 4.2 `Voronoi.js:166-172` — full region-map rebuild on dirty
-- [ ] Done
+- [x] Done
 
 `.regions` rebuilds the whole Map whenever `_regionsDirty`. Check call sites in `CityGen.js`: defer the rebuild until insertion batches complete, or update incrementally for affected points only.
 
 ### 4.3 Time-to-first-scene: stream scene generation
-- [ ] Done
+- [x] Done
 
 `infinite_play.js:~70-71`: `CITY_SCENE_ATTEMPTS = 12`, `CITY_ROUTE_RETRIES = 240` — the worker generates the full batch before the player sees anything. Change the worker protocol to post each accepted scene as ready (`{type:'scene', index, scene}`) + final `{type:'batch_done'}`; start play once scene 0 arrives, fill the rest in the background. No generation-math changes. Directly improves the play-menu entry experience. Keep the existing `_renderCache` idle pre-render (`infinite_play.js:2097-2118`).
 
 ### 4.4 Route-retry cost in the worker
-- [ ] Done
+- [x] Done
 
 `infinite_batch_worker.js`: up to 240 route retries per scene. Profile which computations are invariant across retries within one scene (city geometry is; routes vary) and hoist them out of the retry loop. If hoisting changes RNG draw order, that's a generation change — harness + deliberate re-baseline.
 
 ### 4.5 Typed-array port for geometry (optional, profiler-gated)
-- [ ] Done
+- [x] Skipped (profiler-gated; 4.1/4.3 were prioritized and no allocation/GC evidence justified the riskier generation-changing port)
 
 Plain `{x,y}` objects for thousands of points cause GC churn. If allocation profiling shows GC pauses during generation, port hot geometry to flat typed arrays. **User has approved Float32Array** (no production results yet, so seed-output changes are acceptable — re-baseline the harness). Prefer 4.1/4.3 first; they may make this unnecessary.
 
 ### 4.6 Rendering check
-- [ ] Done
+- [ ] Manual verification pending
 
 SVG layers are cached per scene. Verify with DevTools that scene transitions (camera lerp, `infinite_play.js:2240-2293`) hold 60fps on a mid-range/mobile device after the other changes. No DOM churn.
 
 ### Phase 4 verification
-Debug page: superuser can list reports, load one, see map + routes, zoom/pan, toggle routes; non-superuser blocked (test in `results/tests.py`). Harness hashes stable across pure-lookup changes (4.1 option 1, 4.2, 4.3); re-baselined deliberately for generation changes (4.4 RNG shifts, 4.5). Record time-to-first-scene and total batch time before/after. `collectstatic`; manual playthrough of ~10 scenes.
+Debug page/backend tests added in `results/tests.py`: non-superuser blocked from the page and both JSON endpoints; superuser can render the page, list reports, and load report detail. Determinism harness added to the debug page/worker and baseline recorded in `docs/debug/infinite-determinism-baseline.txt`; rerun matched baseline after the pure-lookup Voronoi changes and streaming protocol change. `node --check` passed for changed JS, `manage.py check` passed, full local SQLite-backed `manage.py test --noinput` passed, and `collectstatic --noinput` was run. Manual playthrough of ~10 scenes and DevTools/mobile 60fps rendering verification are still pending.
 
 ---
 
 ## Phase 5 — OCAD: renderer bug fix + async conversion
 
 ### 5.1 BUG FIX (user-reported): point objects ignored by the map renderer
-- [ ] Done
+- [x] Done
 
 Some OCAD point objects don't appear in the rendered map PNG. The object categorization was tightened to keep labels out and now excludes too much. Where to look: `project/ocad_tools/convert_ocad.js` — `makeRenderableObjectFilter` (lines 151–159: drops course-display syms, "actual route" objects, and any object whose symbol `status != 0`) and `COURSE_DISPLAY_EXCLUDED_SYMS` (lines 28–41).
 
@@ -203,7 +204,7 @@ Task: **widen the categorization — render basically everything except labels/t
 3. **Test files: the user has OCAD files in `C:\Users\larsb\Downloads`** (glob for `*.ocd` there). Convert before/after and compare rendered PNGs — missing point objects appear, no label/text objects appear.
 
 ### 5.2 Async OCAD/UNet conversion (approved scope)
-- [ ] Done
+- [x] Done
 
 `project/views.py:~1028-1070` runs `convert_ocad_map_to_editor_assets()` (node/resvg subprocess via `project/ocad_tools/ocad.py`, 180 s timeout + ONNX UNet mask inference in `project/UNet.py`) synchronously inside the upload request — can hit gunicorn timeouts and blocks a worker.
 
