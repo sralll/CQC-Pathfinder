@@ -469,8 +469,23 @@ export class LazyVisibilityGraph {
 		this.buildTimeMs = (typeof performance !== 'undefined' ? performance.now() : 0) - tStart;
 	}
 
-	addTempBlocker(ax, ay, bx, by) {
-		this.tempBlockers.push({ ax, ay, bx, by });
+	addTempBlocker(ax, ay, bx, by, halfWidth = 0) {
+		// With halfWidth > 0 the blocker is the full rectangle of the rendered
+		// bar (segment inflated perpendicularly), not just its centerline —
+		// otherwise routes can squeeze through the drawn stroke near the ends.
+		let segs = [ax, ay, bx, by];
+		const len = Math.hypot(bx - ax, by - ay);
+		if (halfWidth > 0 && len > EPS) {
+			const ox = -((by - ay) / len) * halfWidth;
+			const oy = ((bx - ax) / len) * halfWidth;
+			segs = [
+				ax + ox, ay + oy, bx + ox, by + oy,
+				ax - ox, ay - oy, bx - ox, by - oy,
+				ax + ox, ay + oy, ax - ox, ay - oy,
+				bx + ox, by + oy, bx - ox, by - oy,
+			];
+		}
+		this.tempBlockers.push({ ax, ay, bx, by, segs });
 		// Only the transient blocked overlay is invalidated; the clean base
 		// adjacency (adjCache/exactAdjCache) is blocker-independent and stays warm.
 		this._blockedAdjCache = null;
@@ -656,8 +671,7 @@ export class LazyVisibilityGraph {
 		}
 		if (!ignoreTemp) {
 			for (let ti = 0; ti < this.tempBlockers.length; ti++) {
-				const tb = this.tempBlockers[ti];
-				if (_segmentsCross(ax, ay, bx, by, tb.ax, tb.ay, tb.bx, tb.by)) return false;
+				if (_tempBlockerCross(this.tempBlockers[ti], ax, ay, bx, by)) return false;
 			}
 		}
 		return !this._segmentInteriorBlocked(ax, ay, bx, by);
@@ -711,8 +725,7 @@ export class LazyVisibilityGraph {
 		}
 		if (!ignoreTemp) {
 			for (let ti = 0; ti < this.tempBlockers.length; ti++) {
-				const tb = this.tempBlockers[ti];
-				if (_segmentsCross(ax, ay, bx, by, tb.ax, tb.ay, tb.bx, tb.by)) return false;
+				if (_tempBlockerCross(this.tempBlockers[ti], ax, ay, bx, by)) return false;
 			}
 		}
 		return !this._segmentInteriorBlocked(ax, ay, bx, by);
@@ -902,8 +915,7 @@ export class LazyVisibilityGraph {
 			const vx = this.nodeX[e.to], vy = this.nodeY[e.to];
 			let crosses = false;
 			for (let ti = 0; ti < tbs.length; ti++) {
-				const tb = tbs[ti];
-				if (_segmentsCross(ux, uy, vx, vy, tb.ax, tb.ay, tb.bx, tb.by)) { crosses = true; break; }
+				if (_tempBlockerCross(tbs[ti], ux, uy, vx, vy)) { crosses = true; break; }
 			}
 			if (!crosses) out.push(e);
 		}
@@ -1308,6 +1320,14 @@ function _segmentsCross(ax, ay, bx, by, cx, cy, dx, dy) {
 			const bMin = Math.min(cy, dy), bMax = Math.max(cy, dy);
 			return aMin < bMax - EPS && bMin < aMax - EPS;
 		}
+	}
+	return false;
+}
+
+function _tempBlockerCross(tb, ax, ay, bx, by) {
+	const s = tb.segs;
+	for (let k = 0; k < s.length; k += 4) {
+		if (_segmentsCross(ax, ay, bx, by, s[k], s[k + 1], s[k + 2], s[k + 3])) return true;
 	}
 	return false;
 }

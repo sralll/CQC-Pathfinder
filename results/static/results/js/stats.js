@@ -618,6 +618,17 @@ function drawDonutLegend() {
     }).join('');
 }
 
+function chartTextSizes(svg) {
+    const expanded = svg?.closest('.stats-card')?.classList.contains('expanded');
+    return expanded
+        ? { tick: 12, axis: 13, value: 13, group: 14, legend: 14, empty: 15, sensitivity: 14 }
+        : { tick: 9,  axis: 9,  value: 9,  group: 10, legend: 10, empty: 11, sensitivity: 10 };
+}
+
+function approxTextWidth(text, fontSize) {
+    return String(text || '').length * fontSize * 0.52;
+}
+
 /* =========================================================
    DONUT — route-choice quality
    (team in the outer ring, user in the inner ring with
@@ -735,6 +746,7 @@ function drawAvgChart() {
     svg.innerHTML = '';
     const W = svg.clientWidth  || 320;
     const H = svg.clientHeight || 220;
+    const text = chartTextSizes(svg);
     svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
 
     // Reserve space at top for the legend
@@ -765,7 +777,7 @@ function drawAvgChart() {
         lbl.setAttribute('x', ML - 6); lbl.setAttribute('y', y + 3);
         lbl.setAttribute('text-anchor', 'end');
         lbl.setAttribute('fill', '#555');
-        lbl.setAttribute('font-size', '9');
+        lbl.setAttribute('font-size', text.tick);
         lbl.textContent = `${v.toFixed(step < 1 ? 1 : 0)}s`;
         svg.appendChild(lbl);
     }
@@ -807,7 +819,7 @@ function drawAvgChart() {
         userLbl.setAttribute('y', toY(g.user) - 4);
         userLbl.setAttribute('text-anchor', 'middle');
         userLbl.setAttribute('fill', '#ccc');
-        userLbl.setAttribute('font-size', '9');
+        userLbl.setAttribute('font-size', text.value);
         userLbl.setAttribute('font-weight', '600');
         userLbl.setAttribute('pointer-events', 'none');
         userLbl.textContent = `${g.user.toFixed(1)}s`;
@@ -818,16 +830,16 @@ function drawAvgChart() {
         glbl.setAttribute('y', MT + chartH + 17);
         glbl.setAttribute('text-anchor', 'middle');
         glbl.setAttribute('fill', '#888');
-        glbl.setAttribute('font-size', '10');
+        glbl.setAttribute('font-size', text.group);
         glbl.textContent = g.label;
         svg.appendChild(glbl);
     });
 
     // Legend at top: team (faded wide rect) | individual (solid narrow rect)
-    drawAvgLegend(svg, W);
+    drawAvgLegend(svg, W, text);
 }
 
-function drawAvgLegend(svg, W) {
+function drawAvgLegend(svg, W, text = chartTextSizes(svg)) {
     // Render the legend in the top-right of the SVG
     const items = [
         { label: gettext('Team'),       color: 'rgba(224,112,32,0.42)', w: 14, h: 8 },
@@ -840,13 +852,13 @@ function drawAvgLegend(svg, W) {
         const t = svgEl('text');
         t.setAttribute('y', y + 9);
         t.setAttribute('fill', '#888');
-        t.setAttribute('font-size', '10');
+        t.setAttribute('font-size', text.legend);
         t.setAttribute('text-anchor', 'end');
         t.setAttribute('x', x);
         t.textContent = item.label;
         svg.appendChild(t);
         // approximate text width
-        const textW = item.label.length * 5.2;
+        const textW = approxTextWidth(item.label, text.legend);
         x -= textW + 4;
 
         const rect = svgEl('rect');
@@ -871,6 +883,7 @@ function drawActivityChart() {
     svg.innerHTML = '';
     const W = svg.clientWidth  || 320;
     const H = svg.clientHeight || 220;
+    const text = chartTextSizes(svg);
     svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
 
     // statsData.activity is an array of ISO timestamp strings (one per result).
@@ -880,7 +893,7 @@ function drawActivityChart() {
         t.setAttribute('x', W / 2); t.setAttribute('y', H / 2);
         t.setAttribute('text-anchor', 'middle');
         t.setAttribute('fill', '#444');
-        t.setAttribute('font-size', '11');
+        t.setAttribute('font-size', text.empty);
         t.textContent = gettext('No activity yet');
         svg.appendChild(t);
         return;
@@ -932,7 +945,7 @@ function drawActivityChart() {
         lbl.setAttribute('x', ML - 5); lbl.setAttribute('y', y + 3);
         lbl.setAttribute('text-anchor', 'end');
         lbl.setAttribute('fill', '#555');
-        lbl.setAttribute('font-size', '9');
+        lbl.setAttribute('font-size', text.tick);
         lbl.textContent = String(Math.round(v));
         svg.appendChild(lbl);
     }
@@ -949,7 +962,7 @@ function drawActivityChart() {
     const slotW = chartW / bins.length;
     const barW  = Math.max(1.5, slotW * 0.75);
 
-    drawActivityAccuracyOverlay(svg, qualityBins, ML, MT, chartW, chartH, slotW);
+    drawActivityAccuracyOverlay(svg, qualityBins, ML, MT, chartW, chartH, slotW, text);
 
     bins.forEach((count, i) => {
         const binStart = new Date(start0 + i * binDays * dayMs);
@@ -982,7 +995,7 @@ function drawActivityChart() {
             lbl.setAttribute('y', MT + chartH + 15);
             lbl.setAttribute('text-anchor', 'middle');
             lbl.setAttribute('fill', '#777');
-            lbl.setAttribute('font-size', '9');
+            lbl.setAttribute('font-size', text.tick);
             lbl.textContent = labelFmt(binStart);
             svg.appendChild(lbl);
         }
@@ -1009,7 +1022,7 @@ function buildActivityQualityBins(start0, binDays, binCount) {
     return bins;
 }
 
-function drawActivityAccuracyOverlay(svg, bins, ML, MT, chartW, chartH, slotW) {
+function drawActivityAccuracyOverlay(svg, bins, ML, MT, chartW, chartH, slotW, text = chartTextSizes(svg)) {
     if (!bins.some(b => b.total > 0)) return;
     const toPctY = pct => MT + chartH - (pct / 100) * chartH;
     const rightX = ML + chartW;
@@ -1059,7 +1072,7 @@ function drawActivityAccuracyOverlay(svg, bins, ML, MT, chartW, chartH, slotW) {
         lbl.setAttribute('x', rightX + 7);
         lbl.setAttribute('y', y + 3);
         lbl.setAttribute('fill', '#666');
-        lbl.setAttribute('font-size', '9');
+        lbl.setAttribute('font-size', text.tick);
         lbl.textContent = `${pct}%`;
         svg.appendChild(lbl);
     });
@@ -1171,6 +1184,7 @@ function drawErrorBinsChart() {
     svg.innerHTML = '';
     const W = svg.clientWidth  || 320;
     const H = svg.clientHeight || 220;
+    const text = chartTextSizes(svg);
     svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
 
     const points = errorPotentialPoints();
@@ -1201,7 +1215,7 @@ function drawErrorBinsChart() {
         lbl.setAttribute('x', ML - 6); lbl.setAttribute('y', y + 3);
         lbl.setAttribute('text-anchor', 'end');
         lbl.setAttribute('fill', '#555');
-        lbl.setAttribute('font-size', '9');
+        lbl.setAttribute('font-size', text.tick);
         lbl.textContent = `${v.toFixed(yStep < 1 ? 1 : 0)}s`;
         svg.appendChild(lbl);
     }
@@ -1232,7 +1246,7 @@ function drawErrorBinsChart() {
         lbl.setAttribute('y', MT + chartH + 15);
         lbl.setAttribute('text-anchor', 'middle');
         lbl.setAttribute('fill', '#777');
-        lbl.setAttribute('font-size', '9');
+        lbl.setAttribute('font-size', text.tick);
         lbl.textContent = formatShortBinLabel(b);
         svg.appendChild(lbl);
     });
@@ -1258,6 +1272,7 @@ function drawSequenceEffectChart() {
     svg.innerHTML = '';
     const W = svg.clientWidth  || 320;
     const H = svg.clientHeight || 220;
+    const text = chartTextSizes(svg);
     svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
 
     const points = timeSensitivityPoints();
@@ -1326,7 +1341,7 @@ function drawSequenceEffectChart() {
         label.setAttribute('y', MT + 10);
         label.setAttribute('text-anchor', 'end');
         label.setAttribute('fill', '#f3b27d');
-        label.setAttribute('font-size', '10');
+        label.setAttribute('font-size', text.sensitivity);
         label.setAttribute('font-weight', '600');
         label.textContent = `${gettext('Sensitivity')}: ${formatMsSensitivity(fit)} ms/s`;
         svg.appendChild(label);
@@ -1353,16 +1368,17 @@ function formatMsSensitivity(fit) {
 }
 
 function drawSensitivityLabels(svg, W, MT, userFit, teamFit) {
+    const text = chartTextSizes(svg);
     const rows = [];
     if (userFit) rows.push({ label: `Du: ${formatMsSensitivity(userFit)} ms/s`, color: '#f3b27d' });
     if (teamFit) rows.push({ label: `${gettext('Team')}: ${formatMsSensitivity(teamFit)} ms/s`, color: TEAM_BLUE });
     rows.forEach((row, i) => {
         const t = svgEl('text');
         t.setAttribute('x', W - 14);
-        t.setAttribute('y', MT + 10 + i * 13);
+        t.setAttribute('y', MT + text.sensitivity + i * (text.sensitivity + 3));
         t.setAttribute('text-anchor', 'end');
         t.setAttribute('fill', row.color);
-        t.setAttribute('font-size', '10');
+        t.setAttribute('font-size', text.sensitivity);
         t.setAttribute('font-weight', '600');
         t.textContent = row.label;
         svg.appendChild(t);
@@ -1370,16 +1386,18 @@ function drawSensitivityLabels(svg, W, MT, userFit, teamFit) {
 }
 
 function drawCenteredEmpty(svg, W, H, text) {
+    const sizes = chartTextSizes(svg);
     const t = svgEl('text');
     t.setAttribute('x', W / 2); t.setAttribute('y', H / 2);
     t.setAttribute('text-anchor', 'middle');
     t.setAttribute('fill', '#444');
-    t.setAttribute('font-size', '11');
+    t.setAttribute('font-size', sizes.empty);
     t.textContent = text;
     svg.appendChild(t);
 }
 
 function drawGridRange(svg, ML, MT, chartW, chartH, xMin, xMax, yMin, yMax, xStep, yStep, toX, toY, xUnit = 's', yUnit = 's') {
+    const text = chartTextSizes(svg);
     const yStart = Math.ceil(yMin / yStep) * yStep;
     for (let v = yStart; v <= yMax + yStep * 0.01; v += yStep) {
         const y = toY(v);
@@ -1395,7 +1413,7 @@ function drawGridRange(svg, ML, MT, chartW, chartH, xMin, xMax, yMin, yMax, xSte
         lbl.setAttribute('x', ML - 6); lbl.setAttribute('y', y + 3);
         lbl.setAttribute('text-anchor', 'end');
         lbl.setAttribute('fill', '#555');
-        lbl.setAttribute('font-size', '9');
+        lbl.setAttribute('font-size', text.tick);
         lbl.textContent = `${v.toFixed(yStep < 1 ? 1 : 0)}${yUnit}`;
         svg.appendChild(lbl);
     }
@@ -1415,13 +1433,14 @@ function drawGridRange(svg, ML, MT, chartW, chartH, xMin, xMax, yMin, yMax, xSte
         lbl.setAttribute('x', x); lbl.setAttribute('y', MT + chartH + 15);
         lbl.setAttribute('text-anchor', 'middle');
         lbl.setAttribute('fill', '#555');
-        lbl.setAttribute('font-size', '9');
+        lbl.setAttribute('font-size', text.tick);
         lbl.textContent = `${v.toFixed(xStep < 1 ? 1 : 0)}${xUnit}`;
         svg.appendChild(lbl);
     }
 }
 
 function drawGrid(svg, ML, MT, chartW, chartH, xMax, yMax, xStep, yStep, toX, toY, xUnit = 's', yUnit = 's') {
+    const text = chartTextSizes(svg);
     for (let v = 0; v <= yMax + yStep * 0.01; v += yStep) {
         const y = toY(v);
         const line = svgEl('line');
@@ -1435,7 +1454,7 @@ function drawGrid(svg, ML, MT, chartW, chartH, xMax, yMax, xStep, yStep, toX, to
         lbl.setAttribute('x', ML - 6); lbl.setAttribute('y', y + 3);
         lbl.setAttribute('text-anchor', 'end');
         lbl.setAttribute('fill', '#555');
-        lbl.setAttribute('font-size', '9');
+        lbl.setAttribute('font-size', text.tick);
         lbl.textContent = `${v.toFixed(yStep < 1 ? 1 : 0)}${yUnit}`;
         svg.appendChild(lbl);
     }
@@ -1453,19 +1472,20 @@ function drawGrid(svg, ML, MT, chartW, chartH, xMax, yMax, xStep, yStep, toX, to
         lbl.setAttribute('x', x); lbl.setAttribute('y', MT + chartH + 15);
         lbl.setAttribute('text-anchor', 'middle');
         lbl.setAttribute('fill', '#555');
-        lbl.setAttribute('font-size', '9');
+        lbl.setAttribute('font-size', text.tick);
         lbl.textContent = `${v.toFixed(xStep < 1 ? 1 : 0)}${xUnit}`;
         svg.appendChild(lbl);
     }
 }
 
 function drawAxisLabels(svg, W, H, ML, MT, chartH, xLabel, yLabel) {
+    const text = chartTextSizes(svg);
     const x = svgEl('text');
     x.setAttribute('x', W / 2);
-    x.setAttribute('y', H - 3);
+    x.setAttribute('y', H - Math.max(3, text.axis * 0.25));
     x.setAttribute('text-anchor', 'middle');
     x.setAttribute('fill', '#777');
-    x.setAttribute('font-size', '9');
+    x.setAttribute('font-size', text.axis);
     x.textContent = xLabel;
     svg.appendChild(x);
 
@@ -1477,7 +1497,7 @@ function drawAxisLabels(svg, W, H, ML, MT, chartH, xLabel, yLabel) {
     y.setAttribute('text-anchor', 'middle');
     y.setAttribute('transform', `rotate(-90 ${yx} ${yy})`);
     y.setAttribute('fill', '#777');
-    y.setAttribute('font-size', '9');
+    y.setAttribute('font-size', text.axis);
     y.textContent = yLabel;
     svg.appendChild(y);
 }
@@ -1565,24 +1585,25 @@ function valueExtent(values) {
 }
 
 function drawMiniLegend(svg, W, items) {
+    const text = chartTextSizes(svg);
     let x = W - 12;
     const y = 4;
     items.slice().reverse().forEach(item => {
         const t = svgEl('text');
-        t.setAttribute('y', y + 9);
+        t.setAttribute('y', y + text.legend * 0.9);
         t.setAttribute('fill', '#888');
-        t.setAttribute('font-size', '10');
+        t.setAttribute('font-size', text.legend);
         t.setAttribute('text-anchor', 'end');
         t.setAttribute('x', x);
         t.textContent = item.label;
         svg.appendChild(t);
-        x -= item.label.length * 5.2 + 5;
+        x -= approxTextWidth(item.label, text.legend) + 5;
 
         const line = svgEl('line');
         line.setAttribute('x1', x - 16);
-        line.setAttribute('y1', y + 5);
+        line.setAttribute('y1', y + text.legend * 0.5);
         line.setAttribute('x2', x - 2);
-        line.setAttribute('y2', y + 5);
+        line.setAttribute('y2', y + text.legend * 0.5);
         line.setAttribute('stroke', item.color);
         line.setAttribute('stroke-width', '1.8');
         line.setAttribute('class', 'stats-trend-line');

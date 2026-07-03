@@ -12,7 +12,8 @@
 {% block content %}
 <main id="debug-infinity"
       data-reports-url="{% url 'debug_infinity_reports' %}"
-      data-report-base-url="/debug/infinity/api/reports/">
+      data-report-base-url="/debug/infinity/api/reports/"
+      data-csrf-token="{{ csrf_token }}">
     <aside class="di-sidebar">
         <div class="di-toolbar">
             <h1>Infinity reports</h1>
@@ -32,6 +33,9 @@
                 </button>
                 <button id="di-determinism" type="button" title="Run determinism check">
                     Hash
+                </button>
+                <button id="di-delete-report" class="di-danger" type="button" title="Delete selected report" disabled>
+                    Delete
                 </button>
             </div>
         </div>

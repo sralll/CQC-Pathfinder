@@ -16,6 +16,7 @@ const NOA_EPSILON_DEG = 2;
 const NOA_MIN_EFFECT_DEG = 45;
 const NOA_COUNTER_MIN_DEG = 45;
 const ROUTE_RUNTIME_MAX_RELATIVE_GAP = 0.5;
+const ROUTE_RUNTIME_MIN_SIDE_GAP = 10;
 const MAP_METRES_PER_UNIT = 2.5;
 const ROUTE_PICK_MIN_DIST = 40;
 const ROUTE_PICK_MAX_DIST = 120;
@@ -242,16 +243,18 @@ function selectRuntimeRouteOptions(pair, routeResult) {
     }
     pairs.sort((a, b) => a.relativeGap - b.relativeGap || a.absGap - b.absGap || a.total - b.total);
 
-    const bestPair = pairs.filter((p) => {
-        const selected = [paths[p.i], paths[p.j]];
-        return p.sideGap >= 10 && selected[0].side * selected[1].side < 0;
-    })[0];
-    if (!bestPair) return { ...base, reason: 'side' };
+    const bestPair = pairs[0];
+    if (!bestPair) return { ...base, reason: 'distinct' };
+
+    if (bestPair.relativeGap > ROUTE_RUNTIME_MAX_RELATIVE_GAP) return { ...base, reason: 'runtime' };
 
     const selected = [paths[bestPair.i], paths[bestPair.j]];
     const routeSideMin = bestPair.sideGap / 4;
-    if (selected.some((p) => Math.abs(p.side) < routeSideMin)) return { ...base, reason: 'routeside' };
-    if (bestPair.relativeGap > ROUTE_RUNTIME_MAX_RELATIVE_GAP) return { ...base, reason: 'runtime' };
+    if (
+        bestPair.sideGap < ROUTE_RUNTIME_MIN_SIDE_GAP ||
+        selected[0].side * selected[1].side >= 0 ||
+        selected.some((p) => Math.abs(p.side) < routeSideMin)
+    ) return { ...base, reason: 'routeside' };
 
     const selectedFastest = Math.min(selected[0].run_time, selected[1].run_time);
     const skippedBarriers = paths

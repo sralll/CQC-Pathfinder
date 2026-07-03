@@ -59,6 +59,20 @@ body {
     background: #e6eef5;
 }
 
+.di-actions button.di-danger {
+    border-color: #b94b4b;
+    color: #9c2020;
+}
+
+.di-actions button.di-danger:hover:not(:disabled) {
+    background: #ffe9e9;
+}
+
+.di-actions button:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
 .di-report-list {
     overflow: auto;
     padding: 8px;

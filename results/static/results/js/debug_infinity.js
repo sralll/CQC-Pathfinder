@@ -1,3 +1,5 @@
+import { ROUTE_BARRIER_DRAW_WIDTH } from './infinite/citygen/core/RoutePlanner.js';
+
 const NS = 'http://www.w3.org/2000/svg';
 const ROUTE_COLORS = ['#dd0011', '#cc6000', '#0066cc', '#7a2cbf'];
 const CONTROL_COLOR = '#a033f0';
@@ -19,6 +21,7 @@ const routeLayer = document.getElementById('di-route-layer');
 const controlLayer = document.getElementById('di-control-layer');
 const mapWrap = document.getElementById('di-map-wrap');
 const toggleRoutesBtn = document.getElementById('di-toggle-routes');
+const deleteReportBtn = document.getElementById('di-delete-report');
 
 let worker = null;
 let workerMsgId = 1;
@@ -32,6 +35,21 @@ function el(tag) {
 
 function setStatus(message, extra = null) {
     outputEl.textContent = extra ? `${message}\n\n${extra}` : message;
+}
+
+function csrfToken() {
+    return root.dataset.csrfToken || document.querySelector('meta[name="csrf-token"]')?.content || '';
+}
+
+function clearReport(message = 'Select a report') {
+    currentReport = null;
+    mapLayer.replaceChildren();
+    routeLayer.replaceChildren();
+    controlLayer.replaceChildren();
+    setViewBox({ x: -100, y: -100, w: 200, h: 200 });
+    titleEl.textContent = 'Select a report';
+    deleteReportBtn.disabled = true;
+    setStatus(message);
 }
 
 function ensureWorker() {
@@ -141,6 +159,538 @@ function drawCircle(layer, point, radius, fill, stroke, strokeWidth = 0.35) {
     layer.appendChild(node);
 }
 
+const MAP_PALETTE = {
+    innerFill: '#e4d7b6', innerStroke: '#9a8a63',
+    outerFill: '#cdd6ac', outerStroke: '#9aa877',
+    waterFill: '#00adef', waterStroke: '#000000',
+    river: '#00adef', riverBank: '#000000',
+    wall: '#888888', wallOutline: '#000000', gate: '#efe9d8', gateTower: '#c8c8c8',
+    bridgeDock: '#c8a46a', bridgeDockOutline: '#000000',
+    seed: '#c0392b',
+    block: '#000000',
+    building: '#888888', buildingStroke: '#000000',
+    plazaBuilding: '#888888',
+    outerGarden: '#a6b93c',
+    cathedralGround: '#fdc01d',
+    park: '#fdc01d', parkStroke: '#000000',
+    largestLotInset: '#c8c8c8',
+    cathedral: '#888888', cathedralStroke: '#000000',
+    cathedralWall: '#000000',
+    hedge: '#009218',
+    alley: '#a99d77',
+    featureObject: '#000', featureTree: '#009218', featureFountain: '#2b7fc4',
+};
+const MAP_BUILDING_OUTLINE_WIDTH = 0.18;
+const MAP_GATE_TOWER_OUTLINE_WIDTH = MAP_BUILDING_OUTLINE_WIDTH / 2;
+const MAP_WALL_TOWER_DIAMETER_SCALE = 2;
+const MAP_WATER_OUTLINE_WIDTH = 0.2;
+const MAP_RIVER_MOUTH_FILL_OVERLAP = MAP_WATER_OUTLINE_WIDTH;
+const MAP_HEDGE_WIDTH = 0.5;
+const MAP_CITY_WALL_WIDTH = 1.8;
+const MAP_BRIDGE_FILL_WIDTH = 1.6;
+const MAP_BLOCK_OUTLINE_FILLET = 0.4;
+
+function mapWardBaseFill(ward) {
+    const outerCity = ward.type === 'outerGarden' || ward.type === 'outerHighrise';
+    return ward.water
+        ? MAP_PALETTE.waterFill
+        : (ward.inner || outerCity) ? MAP_PALETTE.innerFill : MAP_PALETTE.outerFill;
+}
+
+function mapPolyPath(points) {
+    if (!points || points.length < 2) return '';
+    return `M${points.map((p) => `${p.x},${p.y}`).join('L')}`;
+}
+
+function mapPolygonPath(points) {
+    if (!points || points.length < 3) return '';
+    return `M${points.map((p) => `${p.x},${p.y}`).join('L')}Z`;
+}
+
+function mapPointDist(a, b) {
+    return Math.hypot(a.x - b.x, a.y - b.y);
+}
+
+function mapPointKey(point) {
+    return point && Number.isFinite(point.x) && Number.isFinite(point.y)
+        ? `${point.x.toFixed(6)},${point.y.toFixed(6)}`
+        : '';
+}
+
+function mapPointSet(points) {
+    return new Set((points || []).map(mapPointKey).filter(Boolean));
+}
+
+function mapChaikinSmooth(points, iterations) {
+    if (!points || points.length < 3) return points || [];
+    let smoothed = points;
+    for (let it = 0; it < iterations; it++) {
+        const next = [smoothed[0]];
+        for (let i = 1, n = smoothed.length - 1; i < n; i++) {
+            const current = smoothed[i], prev = smoothed[i - 1], following = smoothed[i + 1];
+            next.push({ x: current.x * 0.75 + prev.x * 0.25, y: current.y * 0.75 + prev.y * 0.25 });
+            next.push({ x: current.x * 0.75 + following.x * 0.25, y: current.y * 0.75 + following.y * 0.25 });
+        }
+        next.push(smoothed[smoothed.length - 1]);
+        smoothed = next;
+    }
+    return smoothed;
+}
+
+function mapPreviewDeltaFromPath(delta, path, width) {
+    if (!delta || path.length < 2) return delta;
+    const p0 = path[0], p1 = path[1];
+    const dx = p1.x - p0.x, dy = p1.y - p0.y;
+    const len = Math.hypot(dx, dy) || 1;
+    const tx = dx / len, ty = dy / len;
+    const hw = width / 2;
+    const a = { x: p0.x - ty * hw, y: p0.y + tx * hw };
+    const b = { x: p0.x + ty * hw, y: p0.y - tx * hw };
+    const right = mapPointDist(a, delta.right) <= mapPointDist(b, delta.right) ? a : b;
+    const left = right === a ? b : a;
+    const ctrlLen = Math.max(mapPointDist(delta.right, delta.rightCtrl1), len * 0.5);
+    return {
+        ...delta,
+        right,
+        rightCtrl1: { x: right.x - tx * ctrlLen, y: right.y - ty * ctrlLen },
+        leftCtrl2: { x: left.x - tx * ctrlLen, y: left.y - ty * ctrlLen },
+        left,
+    };
+}
+
+function mapDeltaPath(delta) {
+    let d = `M${delta.right.x},${delta.right.y}`;
+    d += ` C${delta.rightCtrl1.x},${delta.rightCtrl1.y} ${delta.rightCtrl2.x},${delta.rightCtrl2.y} ${delta.prevShore.x},${delta.prevShore.y}`;
+    if (delta.isConvex) d += ` L${delta.mouth.x},${delta.mouth.y}`;
+    d += ` L${delta.nextShore.x},${delta.nextShore.y}`;
+    d += ` C${delta.leftCtrl1.x},${delta.leftCtrl1.y} ${delta.leftCtrl2.x},${delta.leftCtrl2.y} ${delta.left.x},${delta.left.y}`;
+    return d;
+}
+
+function mapRiverRenderGeometry(river) {
+    if (!river || !river.course || river.course.length < 2) return null;
+    const course = river.delta
+        ? [{ x: (river.course[0].x + river.course[1].x) / 2, y: (river.course[0].y + river.course[1].y) / 2 }, ...river.course.slice(1)]
+        : river.course;
+    const visualCourse = mapChaikinSmooth(course, 3);
+    let fillCourse = visualCourse;
+    if (river.delta && visualCourse.length >= 2) {
+        const p0 = visualCourse[0], p1 = visualCourse[1];
+        const dx = p1.x - p0.x, dy = p1.y - p0.y;
+        const len = Math.hypot(dx, dy) || 1;
+        fillCourse = [{ x: p0.x - (dx / len) * MAP_RIVER_MOUTH_FILL_OVERLAP, y: p0.y - (dy / len) * MAP_RIVER_MOUTH_FILL_OVERLAP }, ...visualCourse.slice(1)];
+    }
+    return {
+        visualCourse,
+        pathD: mapPolyPath(visualCourse),
+        fillPathD: mapPolyPath(fillCourse),
+        delta: river.delta ? mapPreviewDeltaFromPath(river.delta, visualCourse, river.width) : null,
+    };
+}
+
+function drawPath(layer, d, attrs) {
+    if (!d) return;
+    const node = el('path');
+    node.setAttribute('d', d);
+    for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, value);
+    layer.appendChild(node);
+}
+
+function drawMapWaterBody(layer, wards, river, riverGeometry) {
+    let d = '';
+    for (const ward of wards || []) if (ward.water) d += mapPolygonPath(ward.polygon);
+    if (riverGeometry?.delta) d += mapDeltaPath(riverGeometry.delta);
+    const hasRiver = riverGeometry && river?.width;
+    const outlineWidth = MAP_WATER_OUTLINE_WIDTH * 2;
+    if (d) {
+        drawPath(layer, d, {
+            fill: 'none',
+            stroke: MAP_PALETTE.waterStroke,
+            'stroke-width': outlineWidth,
+            'stroke-linejoin': 'round',
+        });
+    }
+    if (hasRiver) {
+        drawPath(layer, riverGeometry.pathD, {
+            fill: 'none',
+            stroke: MAP_PALETTE.waterStroke,
+            'stroke-width': river.width + outlineWidth,
+            'stroke-linecap': river.delta ? 'butt' : 'round',
+            'stroke-linejoin': 'round',
+        });
+    }
+    if (d) drawPath(layer, d, { fill: MAP_PALETTE.waterFill, stroke: 'none' });
+    if (hasRiver) {
+        drawPath(layer, riverGeometry.fillPathD || riverGeometry.pathD, {
+            fill: 'none',
+            stroke: MAP_PALETTE.river,
+            'stroke-width': river.width,
+            'stroke-linecap': river.delta ? 'butt' : 'round',
+            'stroke-linejoin': 'round',
+        });
+    }
+}
+
+function mapClosestPointOnSegment(p, a, b) {
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const len2 = dx * dx + dy * dy || 1;
+    let t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2;
+    t = Math.max(0, Math.min(1, t));
+    return {
+        x: a.x + dx * t,
+        y: a.y + dy * t,
+        t,
+        distance: Math.hypot(p.x - (a.x + dx * t), p.y - (a.y + dy * t)),
+    };
+}
+
+function mapClosestPointOnPath(p, path) {
+    let best = null;
+    for (let i = 0; i < path.length - 1; i++) {
+        const q = mapClosestPointOnSegment(p, path[i], path[i + 1]);
+        if (!best || q.distance < best.distance) best = { ...q, segment: i };
+    }
+    return best;
+}
+
+function mapVisualRiverCrossing(origin, axis, path, allowFallback = true) {
+    let best = null;
+    for (let i = 0; i < path.length - 1; i++) {
+        const a = path[i], b = path[i + 1];
+        const sx = b.x - a.x, sy = b.y - a.y;
+        const denom = axis.x * sy - axis.y * sx;
+        if (Math.abs(denom) < 1e-8) continue;
+        const ox = a.x - origin.x, oy = a.y - origin.y;
+        const t = (ox * sy - oy * sx) / denom;
+        const u = (ox * axis.y - oy * axis.x) / denom;
+        if (u < -1e-6 || u > 1 + 1e-6) continue;
+        const point = { x: origin.x + axis.x * t, y: origin.y + axis.y * t };
+        const score = Math.abs(t);
+        if (!best || score < best.score) best = { point, segment: i, score };
+    }
+    if (best) return best;
+    if (!allowFallback) return null;
+    const closest = mapClosestPointOnPath(origin, path);
+    return closest ? { point: { x: closest.x, y: closest.y }, segment: closest.segment, score: closest.distance } : null;
+}
+
+function mapRiverTangentAt(path, segment) {
+    const a = path[Math.max(0, Math.min(segment, path.length - 2))];
+    const b = path[Math.max(1, Math.min(segment + 1, path.length - 1))];
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const len = Math.hypot(dx, dy) || 1;
+    return { x: dx / len, y: dy / len };
+}
+
+function mapBridgeSideShorePoints(origin, axis, path, shoreHalfWidth, referenceNormal = null) {
+    const crossing = mapVisualRiverCrossing(origin, axis, path, false);
+    if (!crossing) return null;
+    const tangent = mapRiverTangentAt(path, crossing.segment);
+    let normal = { x: -tangent.y, y: tangent.x };
+    if (referenceNormal && normal.x * referenceNormal.x + normal.y * referenceNormal.y < 0) {
+        normal = { x: -normal.x, y: -normal.y };
+    }
+    const denom = axis.x * normal.x + axis.y * normal.y;
+    if (Math.abs(denom) < 0.12) return null;
+    const span = shoreHalfWidth / denom;
+    return {
+        minus: { x: crossing.point.x - axis.x * span, y: crossing.point.y - axis.y * span },
+        plus: { x: crossing.point.x + axis.x * span, y: crossing.point.y + axis.y * span },
+        center: crossing.point,
+        normal,
+    };
+}
+
+function mapBridgeDeckBleedPoint(side, point, bleed) {
+    const dx = point.x - side.center.x;
+    const dy = point.y - side.center.y;
+    const len = Math.hypot(dx, dy);
+    if (len < 1e-6) return point;
+    return { x: point.x + dx / len * bleed, y: point.y + dy / len * bleed };
+}
+
+function drawMapBridges(layer, river, visualCourse = null) {
+    if (!river || !river.bridges || !river.course || river.course.length < 3) return;
+    const path = visualCourse && visualCourse.length >= 2 ? visualCourse : river.course;
+    const riverWidth = Number.isFinite(river.width) ? river.width : 5;
+    const bridgePoint = (bridge) => ({ x: bridge.x, y: bridge.y });
+    for (const bridge of river.bridges) {
+        const i = river.course.findIndex((p) => Math.abs(p.x - bridge.x) < 1e-6 && Math.abs(p.y - bridge.y) < 1e-6);
+        if (i <= 0 || i >= river.course.length - 1) continue;
+        const fill = MAP_PALETTE.innerFill;
+        const fillWidth = Number.isFinite(bridge.width) ? bridge.width : MAP_BRIDGE_FILL_WIDTH;
+        const sideOutlineWidth = 0.2;
+        let axis = null;
+        if (bridge.from && bridge.to) {
+            const dx = bridge.to.x - bridge.from.x, dy = bridge.to.y - bridge.from.y;
+            const len = Math.hypot(dx, dy) || 1;
+            axis = { x: dx / len, y: dy / len };
+        } else {
+            const crossing = mapClosestPointOnPath(bridgePoint(bridge), path);
+            if (!crossing) continue;
+            const tangent = mapRiverTangentAt(path, crossing.segment);
+            axis = { x: -tangent.y, y: tangent.x };
+        }
+        const centerCrossing = mapVisualRiverCrossing(bridgePoint(bridge), axis, path);
+        if (!centerCrossing) continue;
+        const centerTangent = mapRiverTangentAt(path, centerCrossing.segment);
+        const referenceNormal = { x: -centerTangent.y, y: centerTangent.x };
+        const sideNormal = { x: -axis.y, y: axis.x };
+        const halfDeck = fillWidth / 2;
+        const shoreHalfWidth = riverWidth / 2 + MAP_WATER_OUTLINE_WIDTH;
+        const deckBleed = MAP_WATER_OUTLINE_WIDTH * 1.5 + 0.05;
+        const leftOrigin = { x: centerCrossing.point.x + sideNormal.x * halfDeck, y: centerCrossing.point.y + sideNormal.y * halfDeck };
+        const rightOrigin = { x: centerCrossing.point.x - sideNormal.x * halfDeck, y: centerCrossing.point.y - sideNormal.y * halfDeck };
+        const left = mapBridgeSideShorePoints(leftOrigin, axis, path, shoreHalfWidth, referenceNormal);
+        const right = mapBridgeSideShorePoints(rightOrigin, axis, path, shoreHalfWidth, referenceNormal);
+        if (!left || !right) continue;
+        drawPolygon(layer, [
+            mapBridgeDeckBleedPoint(left, left.minus, deckBleed),
+            mapBridgeDeckBleedPoint(left, left.plus, deckBleed),
+            mapBridgeDeckBleedPoint(right, right.plus, deckBleed),
+            mapBridgeDeckBleedPoint(right, right.minus, deckBleed),
+        ], fill);
+        for (const side of [left, right]) {
+            const rail = el('line');
+            rail.setAttribute('x1', side.minus.x);
+            rail.setAttribute('y1', side.minus.y);
+            rail.setAttribute('x2', side.plus.x);
+            rail.setAttribute('y2', side.plus.y);
+            rail.setAttribute('stroke', MAP_PALETTE.bridgeDockOutline);
+            rail.setAttribute('stroke-width', sideOutlineWidth);
+            rail.setAttribute('stroke-linecap', 'butt');
+            layer.appendChild(rail);
+        }
+    }
+}
+
+function drawMapDocks(layer, docks) {
+    if (!docks || docks.length === 0) return;
+    for (const dock of docks) {
+        const w = dock.large ? 2 : 1;
+        const fillWidth = 1.6 * w;
+        const outlineWidth = fillWidth + 0.4 * w;
+        const fill = MAP_PALETTE.innerFill;
+        for (const pier of dock.piers || []) {
+            if (!pier.from || !pier.to) continue;
+            const dx = pier.to.x - pier.from.x;
+            const dy = pier.to.y - pier.from.y;
+            const len = Math.hypot(dx, dy) || 1;
+            const ux = dx / len;
+            const uy = dy / len;
+            const seaCap = { x: pier.to.x + ux * outlineWidth / 10, y: pier.to.y + uy * outlineWidth / 10 };
+            const landOverlap = MAP_WATER_OUTLINE_WIDTH * 2;
+            const landFrom = { x: pier.from.x - ux * landOverlap, y: pier.from.y - uy * landOverlap };
+            const dFill = `M${landFrom.x},${landFrom.y} L${pier.to.x},${pier.to.y}`;
+            const dOutline = `M${pier.from.x},${pier.from.y} L${seaCap.x},${seaCap.y}`;
+            for (const [stroke, width, d] of [[MAP_PALETTE.bridgeDockOutline, outlineWidth, dOutline], [fill, fillWidth, dFill]]) {
+                drawPath(layer, d, {
+                    fill: 'none',
+                    stroke,
+                    'stroke-width': width,
+                    'stroke-linecap': 'butt',
+                    'stroke-linejoin': 'round',
+                });
+            }
+        }
+    }
+}
+
+function mapRoundedBlockPath(points, r) {
+    if (!points || points.length < 3) return null;
+    const n = points.length;
+    const leftNormal = (dx, dy, len) => (len > 0 ? { x: -dy / len, y: dx / len } : null);
+    const segs = [];
+    for (let i = 0; i < n; i++) {
+        const A = points[(i - 1 + n) % n];
+        const B = points[i];
+        const C = points[(i + 1) % n];
+        const inDx = B.x - A.x, inDy = B.y - A.y;
+        const outDx = C.x - B.x, outDy = C.y - B.y;
+        const inLen = Math.hypot(inDx, inDy);
+        const outLen = Math.hypot(outDx, outDy);
+        if (inLen < 1e-9 || outLen < 1e-9) return null;
+        const inUx = inDx / inLen, inUy = inDy / inLen;
+        const outUx = outDx / outLen, outUy = outDy / outLen;
+        const dot = inUx * outUx + inUy * outUy;
+        const turn = Math.acos(Math.max(-1, Math.min(1, dot)));
+        if (turn < 1e-6) return null;
+        const lnIn = leftNormal(inDx, inDy, inLen);
+        const lnOut = leftNormal(outDx, outDy, outLen);
+        const bisX = lnIn.x + lnOut.x;
+        const bisY = lnIn.y + lnOut.y;
+        const bisLen = Math.hypot(bisX, bisY);
+        if (bisLen < 1e-9) return null;
+        const nBisX = bisX / bisLen;
+        const nBisY = bisY / bisLen;
+        const halfTurn = turn / 2;
+        const tanHalf = Math.tan(halfTurn);
+        const cosHalf = Math.cos(halfTurn);
+        if (tanHalf < 1e-9 || cosHalf < 1e-9) return null;
+        let d = r * tanHalf;
+        d = Math.min(d, inLen * 0.499, outLen * 0.499);
+        const effR = d / tanHalf;
+        const centerDist = effR / cosHalf;
+        const t1x = B.x - inUx * d;
+        const t1y = B.y - inUy * d;
+        const t2x = B.x + outUx * d;
+        const t2y = B.y + outUy * d;
+        const cx = B.x + nBisX * centerDist;
+        const cy = B.y + nBisY * centerDist;
+        const a1 = Math.atan2(t1y - cy, t1x - cx);
+        const a2 = Math.atan2(t2y - cy, t2x - cx);
+        let delta = a2 - a1;
+        while (delta > Math.PI) delta -= 2 * Math.PI;
+        while (delta < -Math.PI) delta += 2 * Math.PI;
+        const sweep = delta > 0 ? 1 : 0;
+        const largeArc = Math.abs(delta) > Math.PI ? 1 : 0;
+        segs.push({ t1x, t1y, t2x, t2y, r: effR, sweep, largeArc });
+    }
+    let d = `M${segs[0].t2x},${segs[0].t2y}`;
+    for (let i = 0; i < n; i++) {
+        const next = segs[(i + 1) % n];
+        d += ` L${next.t1x},${next.t1y}`;
+        d += ` A${next.r},${next.r} 0 ${next.largeArc},${next.sweep} ${next.t2x},${next.t2y}`;
+    }
+    return `${d}Z`;
+}
+
+function drawMapBlocks(layer, blocks) {
+    if (!blocks || blocks.length === 0) return;
+    let d = '';
+    for (const block of blocks) {
+        const rounded = mapRoundedBlockPath(block, MAP_BLOCK_OUTLINE_FILLET);
+        if (rounded) d += rounded;
+    }
+    drawPath(layer, d, {
+        fill: 'none',
+        stroke: MAP_PALETTE.block,
+        'stroke-width': '0.06',
+        'stroke-linejoin': 'round',
+        'fill-rule': 'evenodd',
+    });
+}
+
+function drawMapBuildings(layer, buildings) {
+    if (!buildings || buildings.length === 0) return;
+    for (const building of buildings) {
+        const polygon = Array.isArray(building) ? building : building.polygon;
+        if (!polygon || polygon.length < 3) continue;
+        const cls = Array.isArray(building) ? null : building.class;
+        let fill = MAP_PALETTE.building, stroke = MAP_PALETTE.buildingStroke;
+        if (cls === 'park' || cls === 'outerHighrisePark') { fill = MAP_PALETTE.park; stroke = MAP_PALETTE.parkStroke; }
+        else if (cls === 'largestLotInset' || cls === 'housingEntranceFill') { fill = MAP_PALETTE.largestLotInset; stroke = MAP_PALETTE.buildingStroke; }
+        else if (cls === 'outerHighrisePath') { fill = MAP_PALETTE.alley; stroke = 'none'; }
+        else if (cls === 'outerGarden') { fill = MAP_PALETTE.outerGarden; stroke = MAP_PALETTE.outerGarden; }
+        else if (cls === 'outerGardenOutline') { fill = 'none'; stroke = MAP_PALETTE.buildingStroke; }
+        else if (cls === 'cathedralGround') { fill = MAP_PALETTE.cathedralGround; stroke = MAP_PALETTE.parkStroke; }
+        else if (cls === 'cathedral') { fill = MAP_PALETTE.cathedral; stroke = MAP_PALETTE.cathedralStroke; }
+        else if (cls === 'plazaBuilding') { fill = MAP_PALETTE.plazaBuilding; stroke = MAP_PALETTE.buildingStroke; }
+
+        const node = el('polygon');
+        node.setAttribute('points', polygonPoints(polygon));
+        node.setAttribute('fill', fill);
+        node.setAttribute('stroke', stroke);
+        if (cls === 'outerGarden' || cls === 'outerHighrisePath') {
+            node.setAttribute('stroke-width', '0');
+        } else if (cls === 'outerGardenOutline') {
+            node.setAttribute('stroke-width', MAP_BUILDING_OUTLINE_WIDTH);
+        } else if (cls === 'largestLotInset' || cls === 'housingEntranceFill') {
+            node.setAttribute('stroke-width', MAP_BUILDING_OUTLINE_WIDTH / 2);
+        } else if (cls === 'cathedral' || cls === 'cathedralGround' || cls === 'park' || cls === 'outerHighrisePark') {
+            node.setAttribute('stroke-width', MAP_BUILDING_OUTLINE_WIDTH / 2);
+        } else {
+            node.setAttribute('stroke-width', MAP_BUILDING_OUTLINE_WIDTH);
+        }
+        node.setAttribute('stroke-linejoin', 'round');
+        layer.appendChild(node);
+    }
+}
+
+function drawMapLines(layer, lines, stroke, width) {
+    for (const line of lines || []) {
+        if (!line || line.length < 2) continue;
+        if (!line.every((p) => p && Number.isFinite(p.x) && Number.isFinite(p.y))) continue;
+        const node = el('polyline');
+        node.setAttribute('points', pathPoints(line));
+        node.setAttribute('fill', 'none');
+        node.setAttribute('stroke', stroke);
+        node.setAttribute('stroke-width', width);
+        node.setAttribute('stroke-linecap', 'butt');
+        node.setAttribute('stroke-linejoin', 'round');
+        layer.appendChild(node);
+    }
+}
+
+function drawMapWall(layer, wall, riverWidth, riverNodeKeys) {
+    if (!wall || !wall.shape || wall.shape.length < 2) return;
+    const thickness = MAP_CITY_WALL_WIDTH;
+    const outlineThickness = thickness + MAP_BUILDING_OUTLINE_WIDTH;
+    const n = wall.shape.length;
+    const segments = wall.segments;
+    const halfRiver = (riverWidth || 0) / 2;
+    const endpointAt = new Map();
+    const isRiverNode = (point) => riverNodeKeys && riverNodeKeys.has(mapPointKey(point));
+    for (let i = 0; i < n; i++) {
+        if (segments && segments[i] === false) continue;
+        let a = wall.shape[i];
+        let b = wall.shape[(i + 1) % n];
+        if (halfRiver > 0 && segments) {
+            const dx = b.x - a.x, dy = b.y - a.y;
+            const len = Math.hypot(dx, dy) || 1;
+            const ux = dx / len, uy = dy / len;
+            let ax = a.x, ay = a.y, bx = b.x, by = b.y;
+            if (segments[(i + n - 1) % n] === false || isRiverNode(a)) { ax = a.x + ux * halfRiver; ay = a.y + uy * halfRiver; }
+            if (segments[(i + 1) % n] === false || isRiverNode(b)) { bx = b.x - ux * halfRiver; by = b.y - uy * halfRiver; }
+            a = { x: ax, y: ay };
+            b = { x: bx, y: by };
+        }
+        endpointAt.set(i, a);
+        endpointAt.set((i + 1) % n, b);
+        for (const [stroke, width] of [[MAP_PALETTE.wallOutline, outlineThickness], [MAP_PALETTE.wall, thickness]]) {
+            const segment = el('line');
+            segment.setAttribute('x1', a.x);
+            segment.setAttribute('y1', a.y);
+            segment.setAttribute('x2', b.x);
+            segment.setAttribute('y2', b.y);
+            segment.setAttribute('stroke', stroke);
+            segment.setAttribute('stroke-width', width);
+            segment.setAttribute('stroke-linecap', 'butt');
+            segment.setAttribute('stroke-linejoin', 'round');
+            layer.appendChild(segment);
+        }
+    }
+    const towerR = thickness * MAP_WALL_TOWER_DIAMETER_SCALE / 2;
+    for (const towerPoint of wall.towers || []) {
+        const ti = wall.shape.findIndex((p) => Math.abs(p.x - towerPoint.x) < 1e-6 && Math.abs(p.y - towerPoint.y) < 1e-6);
+        const pos = (ti !== -1 && endpointAt.get(ti)) || towerPoint;
+        drawCircle(layer, pos, towerR, MAP_PALETTE.wall, MAP_PALETTE.wallOutline, MAP_BUILDING_OUTLINE_WIDTH);
+    }
+    for (const gate of wall.gates || []) {
+        if (isRiverNode(gate)) continue;
+        const idx = wall.shape.findIndex((p) => Math.abs(p.x - gate.x) < 1e-6 && Math.abs(p.y - gate.y) < 1e-6);
+        const pos = (idx !== -1 && endpointAt.get(idx)) || gate;
+        drawCircle(layer, pos, towerR, MAP_PALETTE.gateTower, MAP_PALETTE.wallOutline, MAP_GATE_TOWER_OUTLINE_WIDTH);
+    }
+}
+
+function drawMapFeatures(layer, features) {
+    const r = 0.5;
+    for (const feature of features || []) {
+        if (!Number.isFinite(feature.x) || !Number.isFinite(feature.y)) continue;
+        const isTree = feature.kind === 'tree';
+        drawCircle(
+            layer,
+            feature,
+            isTree ? 0.67 * r : r,
+            isTree ? MAP_PALETTE.featureTree : 'none',
+            isTree ? 'none' : feature.kind === 'object' ? MAP_PALETTE.featureObject : MAP_PALETTE.featureFountain,
+            isTree ? 0 : 0.2,
+        );
+    }
+}
+
 function drawCity(city) {
     mapLayer.replaceChildren();
     if (!city) return;
@@ -155,37 +705,19 @@ function drawCity(city) {
 
     for (const ward of city.wards || []) {
         if (ward.water) continue;
-        const fill = ward.inner || ward.type === 'outerGarden' || ward.type === 'outerHighrise'
-            ? '#e4d7b6'
-            : '#cdd6ac';
-        drawPolygon(mapLayer, ward.polygon, fill);
+        if (!ward.polygon || ward.polygon.length < 3) continue;
+        drawPolygon(mapLayer, ward.polygon, mapWardBaseFill(ward));
     }
-    for (const ward of city.wards || []) {
-        if (ward.water) drawPolygon(mapLayer, ward.polygon, '#00adef', '#004f8a', 0.25);
-    }
-    for (const building of city.buildings || []) {
-        const polygon = Array.isArray(building) ? building : building.polygon;
-        if (!polygon) continue;
-        let fill = '#888';
-        let stroke = '#000';
-        if (building.class === 'park' || building.class === 'outerHighrisePark') {
-            fill = '#fdc01d';
-            stroke = '#000';
-        } else if (building.class === 'outerGarden') {
-            fill = '#a6b93c';
-            stroke = '#a6b93c';
-        } else if (building.class === 'outerHighrisePath') {
-            fill = '#a99d77';
-            stroke = 'none';
-        }
-        drawPolygon(mapLayer, polygon, fill, stroke, 0.18);
-    }
-    for (const hedge of city.hedges || []) drawPolyline(mapLayer, hedge, '#009218', 0.5);
-    for (const hedge of city.cathedralHedges || []) drawPolyline(mapLayer, hedge, '#000', 0.5);
-    for (const feature of city.features || []) {
-        const isTree = feature.kind === 'tree';
-        drawCircle(mapLayer, feature, isTree ? 0.34 : 0.5, isTree ? '#009218' : 'none', isTree ? 'none' : '#2b7fc4', 0.2);
-    }
+    const riverGeometry = mapRiverRenderGeometry(city.river);
+    drawMapBlocks(mapLayer, city.blocks);
+    drawMapBuildings(mapLayer, city.buildings);
+    drawMapLines(mapLayer, city.hedges, MAP_PALETTE.hedge, MAP_HEDGE_WIDTH);
+    drawMapLines(mapLayer, city.cathedralHedges, MAP_PALETTE.cathedralWall, MAP_HEDGE_WIDTH);
+    drawMapWaterBody(mapLayer, city.wards, city.river, riverGeometry);
+    if (riverGeometry) drawMapBridges(mapLayer, city.river, riverGeometry.visualCourse);
+    drawMapDocks(mapLayer, city.docks);
+    drawMapWall(mapLayer, city.wall, city.river && city.river.width, mapPointSet(city.river?.course));
+    drawMapFeatures(mapLayer, city.features);
 }
 
 function routePoints(route) {
@@ -194,6 +726,7 @@ function routePoints(route) {
 
 function drawReport(report, city) {
     currentReport = report;
+    deleteReportBtn.disabled = false;
     drawCity(city);
     routeLayer.replaceChildren();
     controlLayer.replaceChildren();
@@ -204,6 +737,21 @@ function drawReport(report, city) {
         drawPolyline(routeLayer, routePoints(route), '#fff', 4, 0.9);
         drawPolyline(routeLayer, routePoints(route), color, 2, 1);
     }
+    // Blocking bars, drawn like infinite_play's drawRouteBlocks. They live in
+    // the control layer (not the route layer) so they stay visible when the
+    // route overlay is toggled off — they are part of the scene, not a route.
+    for (const b of report.skipped_barriers || []) {
+        if (![b?.ax, b?.ay, b?.bx, b?.by].every(Number.isFinite)) continue;
+        const line = el('line');
+        line.setAttribute('x1', b.ax);
+        line.setAttribute('y1', b.ay);
+        line.setAttribute('x2', b.bx);
+        line.setAttribute('y2', b.by);
+        line.setAttribute('stroke', CONTROL_COLOR);
+        line.setAttribute('stroke-width', ROUTE_BARRIER_DRAW_WIDTH);
+        line.setAttribute('stroke-linecap', 'butt');
+        controlLayer.appendChild(line);
+    }
     drawCircle(controlLayer, report.start, CONTROL_RADIUS, 'none', CONTROL_COLOR, 0.45);
     drawCircle(controlLayer, report.goal, CONTROL_RADIUS, 'none', CONTROL_COLOR, 0.45);
     drawCircle(controlLayer, report.goal, 0.75, CONTROL_COLOR, CONTROL_COLOR, 0);
@@ -212,7 +760,7 @@ function drawReport(report, city) {
     setViewBox(paddedBounds(city?.bounds || report.client_state?.cityBounds, [report.start, report.goal, ...routePts]));
     titleEl.textContent = `Report #${report.id} | seed ${report.seed} | pair ${report.pair_index ?? '-'}`;
     setStatus(
-        'Reports created under an older generator version may not reproduce their city after generation changes.',
+        'Report data',
         JSON.stringify({
             id: report.id,
             user: report.user,
@@ -285,6 +833,27 @@ async function runDeterminismCheck() {
     setStatus('Determinism hashes', lines.join('\n'));
 }
 
+async function deleteCurrentReport() {
+    if (!currentReport) return;
+    const report = currentReport;
+    const confirmed = window.confirm(`Delete report #${report.id}?`);
+    if (!confirmed) return;
+
+    deleteReportBtn.disabled = true;
+    setStatus(`Deleting report #${report.id}...`);
+    const response = await fetch(`${root.dataset.reportBaseUrl}${report.id}/`, {
+        method: 'DELETE',
+        credentials: 'same-origin',
+        headers: { 'X-CSRFToken': csrfToken() },
+    });
+    if (!response.ok) {
+        deleteReportBtn.disabled = false;
+        throw new Error(`Delete failed (${response.status})`);
+    }
+    clearReport(`Deleted report #${report.id}.`);
+    await loadReports();
+}
+
 function initPanZoom() {
     let drag = null;
     mapWrap.addEventListener('pointerdown', (event) => {
@@ -333,6 +902,9 @@ document.getElementById('di-refresh').addEventListener('click', () => {
 });
 document.getElementById('di-determinism').addEventListener('click', () => {
     runDeterminismCheck().catch((err) => setStatus(err.message));
+});
+deleteReportBtn.addEventListener('click', () => {
+    deleteCurrentReport().catch((err) => setStatus(err.message));
 });
 toggleRoutesBtn.addEventListener('click', () => {
     routesVisible = !routesVisible;

@@ -167,6 +167,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initStatsPanel();
     initReportButton();
     renderHud();
+    refreshInfiniteUserStats();
 });
 
 function initInput() {
@@ -3549,7 +3550,8 @@ async function reportCurrentRoute() {
     reportingRoute = true;
     updateReportButton();
     try {
-        await submitRouteReport(payload);
+        const data = await submitRouteReport(payload);
+        applyServerChoiceCount(data?.choice_count);
         showReportSentModal();
         await new Promise(resolve => window.setTimeout(resolve, 1000));
         next();
@@ -3640,7 +3642,6 @@ function pickSide(idx) {
     animateRoutes(idx);
 
     // Stats update — flame goes orange when a new record is set
-    stats.attempts++;
     let newRecord = false;
     if (isCorrect) {
         stats.correct++;
@@ -3798,7 +3799,7 @@ function loadStats() {
     try {
         const o = JSON.parse(localStorage.getItem('rpStats') || '{}');
         return {
-            attempts:   o.attempts   || 0,
+            attempts:   0,
             correct:    o.correct    || 0,
             streak:     o.streak     || 0,
             bestStreak: o.bestStreak || 0,
@@ -3831,13 +3832,40 @@ function renderHud(opts = {}) {
     }
 }
 
+function applyServerChoiceCount(choiceCount) {
+    const count = Number(choiceCount);
+    if (!Number.isFinite(count)) return;
+    stats.attempts = Math.max(0, Math.trunc(count));
+    renderHud();
+}
+
+async function refreshInfiniteUserStats() {
+    try {
+        const res = await fetch('/play/infinity/user-stats/', {
+            method: 'GET',
+            headers: { 'Accept': 'application/json' },
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        applyServerChoiceCount(data?.choice_count);
+    } catch (err) {
+        console.warn('failed to load infinite user stats:', err);
+    }
+}
+
 function submitChoice(payload) {
     const csrf = document.cookie.match(/csrftoken=([^;]+)/)?.[1] ?? '';
     fetch('/play/infinity/submit-choice/', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf },
         body:    JSON.stringify(payload),
-    }).catch(err => console.error('submit-infinite-choice failed:', err));
+    })
+        .then(async res => {
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const data = await res.json();
+            applyServerChoiceCount(data?.choice_count);
+        })
+        .catch(err => console.error('submit-infinite-choice failed:', err));
 }
 
 async function submitRouteReport(payload) {

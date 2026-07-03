@@ -8,7 +8,10 @@ export const ROUTE_VISIBILITY_GRAPH_OPTIONS = {
 	neighborRing: 8,
 };
 
-export const ROUTE_BARRIER_DRAW_WIDTH = 0.8;
+// Rendered stroke width of blocking bars (scene units). Single source: the
+// play renderer draws bars this wide and the visibility graph blocks the
+// full drawn rectangle, so visuals and routing cannot drift apart.
+export const ROUTE_BARRIER_DRAW_WIDTH = 1;
 const ROUTE_BARRIER_SLIDE_FRACTION = 0.05;
 const ROUTE_INSIGNIFICANT_BARRIER_KINDS = new Set(['hedge']);
 
@@ -103,12 +106,29 @@ function findSmartBarrier(path, visGraph) {
 		}
 		return null;
 	};
-	const wallAt = (p) => ({
-		mx: p.mx, my: p.my,
-		ax: p.mx + p.px * (p.leftDist + MARGIN), ay: p.my + p.py * (p.leftDist + MARGIN),
-		bx: p.mx - p.px * (p.rightDist + MARGIN), by: p.my - p.py * (p.rightDist + MARGIN),
-		len: p.leftDist + p.rightDist + MARGIN * 2,
-	});
+	// Build the final wall from the winning probe. Ends that stopped in open
+	// space (no obstacle hit within MAX_HALF) are extended along the same
+	// direction until they anchor inside an obstacle, so the drawn bar
+	// connects two closed features instead of dangling. Runs only for the one
+	// chosen probe, and only for its open ends — a few extra point tests.
+	const EXTEND_MAX_HALF = 24;
+	const extendToObstacle = (p, sign, dist, hit) => {
+		if (hit) return dist;
+		for (let d = dist + STEP; d <= EXTEND_MAX_HALF; d += STEP) {
+			if (routePointInSignificantRawObstacle(p.mx + sign * p.px * d, p.my + sign * p.py * d, visGraph)) return d;
+		}
+		return dist;
+	};
+	const wallAt = (p) => {
+		const leftDist = extendToObstacle(p, 1, p.leftDist, p.leftHit);
+		const rightDist = extendToObstacle(p, -1, p.rightDist, p.rightHit);
+		return {
+			mx: p.mx, my: p.my,
+			ax: p.mx + p.px * (leftDist + MARGIN), ay: p.my + p.py * (leftDist + MARGIN),
+			bx: p.mx - p.px * (rightDist + MARGIN), by: p.my - p.py * (rightDist + MARGIN),
+			len: leftDist + rightDist + MARGIN * 2,
+		};
+	};
 	const isClearOfRouteNodes = (p) =>
 		Math.min(p.distFromPrev, p.distToNext) >= ROUTE_BARRIER_DRAW_WIDTH;
 
@@ -127,19 +147,19 @@ function findSmartBarrier(path, visGraph) {
 			const score = width + centerPenalty;
 			if (isClearOfRouteNodes(p) && score < bestClearScore) {
 				bestClearScore = score;
-				bestClearEnclosed = wallAt(p);
+				bestClearEnclosed = p;
 			}
 			if (score < bestEnclosedScore) {
 				bestEnclosedScore = score;
-				bestEnclosed = wallAt(p);
+				bestEnclosed = p;
 			}
 		}
 		if (width + centerPenalty < bestFallbackScore) {
 			bestFallbackScore = width + centerPenalty;
-			bestFallback = wallAt(p);
+			bestFallback = p;
 		}
 	}
-	if (bestClearEnclosed || bestEnclosed) return bestClearEnclosed || bestEnclosed;
+	if (bestClearEnclosed || bestEnclosed) return wallAt(bestClearEnclosed || bestEnclosed);
 
 	let broadEnclosed = null, broadEnclosedScore = Infinity;
 	let broadFallback = null, broadFallbackScore = Infinity;
@@ -150,11 +170,12 @@ function findSmartBarrier(path, visGraph) {
 		const width = p.leftDist + p.rightDist;
 		if (p.leftHit && p.rightHit) {
 			const score = Math.abs(frac - CENTER_FRACTION);
-			if (score < broadEnclosedScore) { broadEnclosedScore = score; broadEnclosed = wallAt(p); }
+			if (score < broadEnclosedScore) { broadEnclosedScore = score; broadEnclosed = p; }
 		}
-		if (width < broadFallbackScore) { broadFallbackScore = width; broadFallback = wallAt(p); }
+		if (width < broadFallbackScore) { broadFallbackScore = width; broadFallback = p; }
 	}
-	return broadEnclosed || bestFallback || broadFallback;
+	const pick = broadEnclosed || bestFallback || broadFallback;
+	return pick ? wallAt(pick) : null;
 }
 
 function routePathSignature(path) {
@@ -227,7 +248,7 @@ export function computeRouteOptions(startPt, goalPt, visGraph) {
 		barrier.attemptIndex = attempt + 1;
 		pathRecord.barrier = barrier;
 		barriers.push(barrier);
-		visGraph.addTempBlocker(barrier.ax, barrier.ay, barrier.bx, barrier.by);
+		visGraph.addTempBlocker(barrier.ax, barrier.ay, barrier.bx, barrier.by, ROUTE_BARRIER_DRAW_WIDTH / 2);
 	}
 
 	if (visGraph.clearTempBlockers) visGraph.clearTempBlockers();
@@ -326,7 +347,7 @@ export function computeManualSingleRoute(startPt, goalPt, visGraph) {
 		});
 		const barrier = findSmartBarrier(candidate.path, visGraph);
 		if (!barrier) break;
-		visGraph.addTempBlocker(barrier.ax, barrier.ay, barrier.bx, barrier.by);
+		visGraph.addTempBlocker(barrier.ax, barrier.ay, barrier.bx, barrier.by, ROUTE_BARRIER_DRAW_WIDTH / 2);
 	}
 	if (visGraph.clearTempBlockers) visGraph.clearTempBlockers();
 	const dt = performance.now() - t0;

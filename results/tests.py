@@ -1,9 +1,11 @@
 import json
+from datetime import timedelta
 
 from django.contrib.auth.models import Group, User
 from django.core.cache import cache
 from django.test import TestCase
 from django.urls import reverse
+from django.utils import timezone
 
 from account.models import Profile, Team
 from project.models import ControlPair, File, Route
@@ -210,6 +212,153 @@ class PlaySubmissionSecurityTests(TestCase):
         self.assertFalse(Choice.objects.filter(user=self.user, control_pair=cp).exists())
 
 
+class InfinityReportSubmissionTests(TestCase):
+    def setUp(self):
+        self.team = Team.objects.create(name='Team A')
+        self.user = User.objects.create_user(username='athlete', password='pw')
+        profile = Profile.objects.create(user=self.user, active_team=self.team)
+        profile.teams.add(self.team)
+        self.client.force_login(self.user)
+
+    def report_payload(self, route_runtimes=(13.0, 10.0)):
+        return {
+            'seed': 12345,
+            'pair_index': 2,
+            'start': {'x': 1, 'y': 2},
+            'goal': {'x': 10, 'y': 20},
+            'map_metres_per_unit': 1.5,
+            'settings': {'size': 25},
+            'route_indexes': [0, 1],
+            'routes': [
+                {
+                    'points': [{'x': 1, 'y': 2}, {'x': 10, 'y': 20}],
+                    'run_time': route_runtimes[0],
+                },
+                {
+                    'points': [{'x': 1, 'y': 2}, {'x': 12, 'y': 22}],
+                    'run_time': route_runtimes[1],
+                },
+            ],
+            'skipped_barriers': [],
+            'route_result': {'ok': True},
+            'client_state': {'sceneIndex': 4},
+        }
+
+    def test_reporting_infinite_route_deletes_users_latest_infinite_choice(self):
+        other_user = User.objects.create_user(username='other-athlete')
+        older = InfiniteChoice.objects.create(
+            user=self.user,
+            team=self.team,
+            correct=True,
+            choice_time=1,
+            shorter_time=10,
+            longer_time=12,
+        )
+        latest = InfiniteChoice.objects.create(
+            user=self.user,
+            team=self.team,
+            correct=False,
+            choice_time=2,
+            shorter_time=10,
+            longer_time=13,
+        )
+        other_choice = InfiniteChoice.objects.create(
+            user=other_user,
+            team=self.team,
+            correct=False,
+            choice_time=3,
+            shorter_time=10,
+            longer_time=14,
+        )
+        now = timezone.now()
+        InfiniteChoice.objects.filter(id=older.id).update(timestamp=now - timedelta(minutes=2))
+        InfiniteChoice.objects.filter(id=latest.id).update(timestamp=now - timedelta(minutes=1))
+        InfiniteChoice.objects.filter(id=other_choice.id).update(timestamp=now)
+
+        response = self.client.post(
+            reverse('report_infinity_route'),
+            data=json.dumps(self.report_payload()),
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()['choice_count'], 1)
+        self.assertTrue(ReportedInfinity.objects.filter(user=self.user, seed=12345).exists())
+        self.assertTrue(InfiniteChoice.objects.filter(id=older.id).exists())
+        self.assertFalse(InfiniteChoice.objects.filter(id=latest.id).exists())
+        self.assertTrue(InfiniteChoice.objects.filter(id=other_choice.id).exists())
+
+    def test_reporting_infinite_route_keeps_latest_choice_when_runtimes_do_not_match(self):
+        latest = InfiniteChoice.objects.create(
+            user=self.user,
+            team=self.team,
+            correct=False,
+            choice_time=2,
+            shorter_time=10,
+            longer_time=13,
+        )
+
+        response = self.client.post(
+            reverse('report_infinity_route'),
+            data=json.dumps(self.report_payload(route_runtimes=(10, 12))),
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()['choice_count'], 1)
+        self.assertTrue(ReportedInfinity.objects.filter(user=self.user, seed=12345).exists())
+        self.assertTrue(InfiniteChoice.objects.filter(id=latest.id).exists())
+
+
+class InfinityUserStatsTests(TestCase):
+    def setUp(self):
+        self.team = Team.objects.create(name='Team A')
+        self.user = User.objects.create_user(username='athlete', password='pw')
+        profile = Profile.objects.create(user=self.user, active_team=self.team)
+        profile.teams.add(self.team)
+        self.other_user = User.objects.create_user(username='other-athlete')
+        other_profile = Profile.objects.create(user=self.other_user, active_team=self.team)
+        other_profile.teams.add(self.team)
+        self.client.force_login(self.user)
+
+    def create_choice(self, user):
+        return InfiniteChoice.objects.create(
+            user=user,
+            team=self.team,
+            correct=True,
+            choice_time=1,
+            shorter_time=10,
+            longer_time=12,
+        )
+
+    def test_infinite_user_stats_counts_only_requesting_users_choices(self):
+        self.create_choice(self.user)
+        self.create_choice(self.user)
+        self.create_choice(self.other_user)
+
+        response = self.client.get(reverse('infinity_user_stats'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {'choice_count': 2})
+
+    def test_submit_infinite_choice_returns_requesting_users_db_count(self):
+        self.create_choice(self.other_user)
+
+        response = self.client.post(
+            reverse('submit_infinity_choice'),
+            data=json.dumps({
+                'correct': True,
+                'choice_time': 1.5,
+                'shorter_time': 10,
+                'longer_time': 12,
+            }),
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {'status': 'saved', 'choice_count': 1})
+
+
 class InfinityDebugSecurityTests(TestCase):
     def setUp(self):
         self.team = Team.objects.create(name='Team A')
@@ -237,9 +386,11 @@ class InfinityDebugSecurityTests(TestCase):
             self.client.get(reverse('debug_infinity')),
             self.client.get(reverse('debug_infinity_reports')),
             self.client.get(reverse('debug_infinity_report_detail', args=[self.report.id])),
+            self.client.delete(reverse('debug_infinity_report_detail', args=[self.report.id])),
         ]
 
         self.assertTrue(all(response.status_code in (403, 404) for response in responses))
+        self.assertTrue(ReportedInfinity.objects.filter(id=self.report.id).exists())
 
     def test_superuser_can_list_and_load_infinity_reports(self):
         superuser = User.objects.create_superuser(username='admin', password='pw')
@@ -254,6 +405,18 @@ class InfinityDebugSecurityTests(TestCase):
         self.assertEqual(list_response.json()['reports'][0]['id'], self.report.id)
         self.assertEqual(detail_response.status_code, 200)
         self.assertEqual(detail_response.json()['report']['seed'], 12345)
+
+    def test_superuser_can_delete_infinity_report(self):
+        superuser = User.objects.create_superuser(username='admin', password='pw')
+        self.client.force_login(superuser)
+
+        delete_response = self.client.delete(reverse('debug_infinity_report_detail', args=[self.report.id]))
+        detail_response = self.client.get(reverse('debug_infinity_report_detail', args=[self.report.id]))
+
+        self.assertEqual(delete_response.status_code, 200)
+        self.assertEqual(delete_response.json(), {'deleted': True, 'id': self.report.id})
+        self.assertFalse(ReportedInfinity.objects.filter(id=self.report.id).exists())
+        self.assertEqual(detail_response.status_code, 404)
 
 
 class StatsSecurityTests(TestCase):

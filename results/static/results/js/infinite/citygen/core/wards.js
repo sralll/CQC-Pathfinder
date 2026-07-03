@@ -1890,7 +1890,7 @@ function createHighriseBuildings(block, axis) {
 	if (length < 3.8 || width < 1.8) return [];
 
 	const target = highriseTargetCount(usable, axis);
-	const minGap = 0.55;
+	const minGap = 1.10;
 	const profile = createHighriseWardProfile(length, width, target, minGap);
 	const opts = { length, width, minGap, minHalfWid: 0.70 * OUTER_HIGHRISE_WIDTH_SCALE, maxAspect: 4.2 / OUTER_HIGHRISE_WIDTH_SCALE, profile, placementAttempts: 72 };
 

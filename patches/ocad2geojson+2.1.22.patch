@@ -1,0 +1,46 @@
+diff --git a/node_modules/ocad2geojson/src/ocad-to-svg.js b/node_modules/ocad2geojson/src/ocad-to-svg.js
+index 2f78ff9..9cd538e 100644
+--- a/node_modules/ocad2geojson/src/ocad-to-svg.js
++++ b/node_modules/ocad2geojson/src/ocad-to-svg.js
+@@ -551,12 +551,13 @@ const elementToSvg = (symbol, name, index, element, c, angle, options) => {
+       node = areaToPath(translatedCoords, null, options.colors[element.color])
+       break
+     case CircleElementType:
+-    case DotElementType:
++    case DotElementType: {
++      const center = translatedCoords.length > 0 ? translatedCoords[0] : c
+       node = {
+         type: 'circle',
+         attrs: {
+-          cx: c[0],
+-          cy: -c[1],
++          cx: center[0],
++          cy: -center[1],
+           r: element.diameter / 2,
+         },
+         order: options.colors[element.color].renderOrder,
+@@ -569,6 +570,7 @@ const elementToSvg = (symbol, name, index, element, c, angle, options) => {
+       }
+ 
+       break
++    }
+   }
+ 
+   return node
+diff --git a/node_modules/ocad2geojson/src/transform-features.js b/node_modules/ocad2geojson/src/transform-features.js
+index f1d3eaa..8b91bb7 100644
+--- a/node_modules/ocad2geojson/src/transform-features.js
++++ b/node_modules/ocad2geojson/src/transform-features.js
+@@ -205,9 +205,11 @@ const generateSymbolElements = (
+         )
+       }
+ 
+-      return elements
++      break
+   }
+ 
++  return elements
++
+   /**
+    * @param {import('./ocad-reader/td-poly')[]} coords
+    * @param {import('./ocad-reader/symbol').LineSymbol} symbol

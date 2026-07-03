@@ -1,4 +1,5 @@
 import traceback
+from math import isfinite
 
 from django.contrib.auth.decorators import login_required
 from django.db.models import Count, Q, Prefetch
@@ -91,6 +92,19 @@ def infinite_play(request):
     return render(request, 'results/infinite_play.html')
 
 
+def _infinite_choice_count_for_user(user):
+    from .models import InfiniteChoice
+    return InfiniteChoice.objects.filter(user=user).count()
+
+
+@login_required
+@require_GET
+def infinite_user_stats(request):
+    return JsonResponse({
+        'choice_count': _infinite_choice_count_for_user(request.user),
+    })
+
+
 @login_required
 @require_POST
 def submit_infinite_choice(request):
@@ -115,7 +129,10 @@ def submit_infinite_choice(request):
             _clear_stats_cache_for_team(request.user.profile.active_team)
         except Exception:
             pass
-        return JsonResponse({'status': 'saved'})
+        return JsonResponse({
+            'status': 'saved',
+            'choice_count': _infinite_choice_count_for_user(request.user),
+        })
     except Exception as e:
         traceback.print_exc()
         return JsonResponse({'error': str(e)}, status=500)
@@ -133,6 +150,57 @@ def _point_coord(point, key):
     if not isinstance(point, dict):
         raise ValueError('Invalid point payload')
     return float(point[key])
+
+
+def _float_close(a, b, tolerance=1e-6):
+    try:
+        a = float(a)
+        b = float(b)
+    except (TypeError, ValueError):
+        return False
+    return isfinite(a) and isfinite(b) and abs(a - b) <= tolerance
+
+
+def _reported_route_runtime_pair(routes):
+    runtimes = []
+    for route in _json_list(routes):
+        try:
+            runtime = float(route.get('run_time'))
+        except (AttributeError, TypeError, ValueError):
+            continue
+        if isfinite(runtime):
+            runtimes.append(runtime)
+
+    if len(runtimes) != 2:
+        return None
+    return min(runtimes), max(runtimes)
+
+
+def _delete_latest_infinite_choice_for_user(user, reported_routes):
+    reported_pair = _reported_route_runtime_pair(reported_routes)
+    if reported_pair is None:
+        return False
+
+    from .models import InfiniteChoice
+
+    latest_choice = (
+        InfiniteChoice.objects
+        .filter(user=user)
+        .order_by('-timestamp', '-id')
+        .first()
+    )
+    if not latest_choice:
+        return False
+
+    reported_shorter, reported_longer = reported_pair
+    if (
+        not _float_close(latest_choice.shorter_time, reported_shorter)
+        or not _float_close(latest_choice.longer_time, reported_longer)
+    ):
+        return False
+
+    latest_choice.delete()
+    return True
 
 
 @login_required
@@ -172,11 +240,17 @@ def report_infinite_route(request):
             client_state=_json_obj(data.get('client_state')),
             user_agent=(request.META.get('HTTP_USER_AGENT') or '')[:512],
         )
-        try:
-            _clear_stats_cache_for_team(active_team)
-        except Exception:
-            pass
-        return JsonResponse({'status': 'reported', 'id': report.id})
+        deleted_latest_choice = _delete_latest_infinite_choice_for_user(request.user, data.get('routes'))
+        if deleted_latest_choice:
+            try:
+                _clear_stats_cache_for_team(active_team)
+            except Exception:
+                pass
+        return JsonResponse({
+            'status': 'reported',
+            'id': report.id,
+            'choice_count': _infinite_choice_count_for_user(request.user),
+        })
     except Exception as e:
         traceback.print_exc()
         return JsonResponse({'error': str(e)}, status=500)

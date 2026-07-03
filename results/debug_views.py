@@ -1,7 +1,7 @@
 from django.contrib.auth.decorators import user_passes_test
 from django.http import HttpResponseForbidden, JsonResponse
 from django.shortcuts import get_object_or_404, render
-from django.views.decorators.http import require_GET
+from django.views.decorators.http import require_GET, require_http_methods
 
 from .models import ReportedInfinity
 
@@ -77,10 +77,13 @@ def debug_infinity_reports(request):
 
 
 @superuser_required
-@require_GET
+@require_http_methods(["GET", "DELETE"])
 def debug_infinity_report_detail(request, report_id):
     report = get_object_or_404(
         ReportedInfinity.objects.select_related("user", "team"),
         id=report_id,
     )
+    if request.method == "DELETE":
+        report.delete()
+        return JsonResponse({"deleted": True, "id": report_id})
     return JsonResponse({"report": _report_detail(report)})

@@ -30,6 +30,12 @@ import { GeomUtils } from './GeomUtils.js';
 import { Random } from './Random.js';
 import { recordRemovedTriangle } from './features.js';
 
+// drawMapFeatures renders fountain symbols with radius 0.5 map units. Post-slice
+// chamfers should leave a visible bevel edge big enough to hold that symbol.
+const FEATURE_FOUNTAIN_DIAMETER = 1.0;
+const POST_SLICE_CHAMFER_MIN_EDGE = FEATURE_FOUNTAIN_DIAMETER * 1.5;
+const POST_SLICE_CHAMFER_EDGE_FILL = 0.94;
+
 // --- small geometry helpers (ports of Gb / Sa / wd / Yc / I used by the Bisector) ---
 
 class Circle {
@@ -727,7 +733,9 @@ export function sliceWard(block, params) {
 	if (params.chamfer !== false) {
 		const chamferAngle = params.chamferAngle != null ? params.chamferAngle : Math.PI / 6;
 		const chamferSize = params.chamferSize != null ? params.chamferSize : (gap > 0 ? gap : minFront * 0.5);
-		lots = chamferLots(lots, chamferAngle, chamferSize, params.chamferEdgeFrac);
+		const chamferEdgeFrac = params.chamferEdgeFrac != null ? params.chamferEdgeFrac : POST_SLICE_CHAMFER_EDGE_FILL;
+		const chamferMinEdge = params.chamferMinEdgeLength != null ? params.chamferMinEdgeLength : POST_SLICE_CHAMFER_MIN_EDGE;
+		lots = chamferLots(lots, chamferAngle, chamferSize, chamferEdgeFrac, chamferMinEdge);
 	}
 
 	if (emptyProb > 0) lots = lots.filter(() => Random.bool(1 - emptyProb));
@@ -816,14 +824,13 @@ function minAngle(poly) {
 }
 
 // Chamfer (bevel off) any corner whose interior angle is below `minAngle`. The sharp tip
-// is replaced by two vertices, each moved back along an adjacent edge by `size`. The cut is
-// clamped per-corner to `edgeFrac` of the SHORTER adjacent edge, so a chamfer never overruns
-// a short edge nor collides with the chamfer of an adjacent sharp corner (2*edgeFrac < 1).
-// New vertices are computed from the original geometry, so adjacent corners don't interfere.
-function chamferSharpCorners(poly, minAngle, size, edgeFrac = 0.4) {
+// is replaced by two vertices moved back along adjacent edges. When `minEdgeLength` is set,
+// the along-edge distance is enlarged from the actual corner angle so the new bevel edge
+// is about that long, then scaled down only when short adjacent edges would be overrun.
+function chamferSharpCorners(poly, minAngle, size, edgeFrac = 0.4, minEdgeLength = 0) {
 	if (!poly || poly.length < 3 || !(size > 0)) return poly;
 	const n = poly.length;
-	const out = [];
+	const cuts = new Array(n).fill(0);
 	let changed = false;
 	for (let i = 0; i < n; i++) {
 		const v = poly[i];
@@ -833,29 +840,61 @@ function chamferSharpCorners(poly, minAngle, size, edgeFrac = 0.4) {
 		const w = next.subtract(v); // v -> next
 		const lu = u.length;
 		const lw = w.length;
-		if (lu < 1e-9 || lw < 1e-9) { out.push(v); continue; }
+		if (lu < 1e-9 || lw < 1e-9) continue;
 		const cos = Math.max(-1, Math.min(1, u.dot(w) / (lu * lw)));
-		if (Math.acos(cos) >= minAngle) { out.push(v); continue; }
-		const d = Math.min(size, Math.min(lu, lw) * edgeFrac);
-		if (!(d > 1e-9)) { out.push(v); continue; }
+		const angle = Math.acos(cos);
+		if (angle >= minAngle) continue;
+		const sinHalf = Math.sin(angle / 2);
+		const edgeTargetDistance = minEdgeLength > 0 && sinHalf > 1e-6 ? minEdgeLength / (2 * sinHalf) : 0;
+		const d = Math.min(Math.max(size, edgeTargetDistance), Math.min(lu, lw) * edgeFrac);
+		if (!(d > 1e-9)) continue;
+		cuts[i] = d;
+		changed = true;
+	}
+	if (!changed) return poly;
+
+	// Let isolated sharp tips take a large, visible bevel, but keep paired chamfers on the
+	// same original edge from crossing each other.
+	for (let i = 0; i < n; i++) {
+		const edgeLen = Point.distance(poly[i], poly[(i + 1) % n]);
+		const total = cuts[i] + cuts[(i + 1) % n];
+		const limit = edgeLen * edgeFrac;
+		if (total > limit && limit > 1e-9) {
+			const scale = limit / total;
+			cuts[i] *= scale;
+			cuts[(i + 1) % n] *= scale;
+		}
+	}
+
+	const out = [];
+	for (let i = 0; i < n; i++) {
+		const v = poly[i];
+		const d = cuts[i];
+		if (!(d > 1e-9)) {
+			out.push(v);
+			continue;
+		}
+		const prev = poly[(i + n - 1) % n];
+		const next = poly[(i + 1) % n];
+		const u = prev.subtract(v); // v -> prev
+		const w = next.subtract(v); // v -> next
 		const p1 = v.add(u.norm(d)); // back toward prev
 		const p2 = v.add(w.norm(d)); // back toward next
 		out.push(p1);
 		out.push(p2);
 		// The beveled-off sharp tip (v, p1, p2) becomes a tree/fountain.
 		recordRemovedTriangle(v, p1, p2);
-		changed = true;
 	}
-	return changed ? new Polygon(out) : poly;
+	return new Polygon(out);
 }
 
 // Apply chamferSharpCorners to every lot, falling back to the original lot on any failure.
-function chamferLots(lots, minAngle, size, edgeFrac) {
+function chamferLots(lots, minAngle, size, edgeFrac, minEdgeLength) {
 	if (!(size > 0)) return lots;
 	return lots.map((lot) => {
 		if (!lot || lot.length < 3) return lot;
 		try {
-			const c = chamferSharpCorners(lot, minAngle, size, edgeFrac);
+			const c = chamferSharpCorners(lot, minAngle, size, edgeFrac, minEdgeLength);
 			if (c && c.length >= 3) return c;
 		} catch (e) { /* fall back to un-chamfered lot */ }
 		return lot;
@@ -1287,7 +1326,9 @@ export function sliceWardEdgeElbows(block, params = {}) {
 		const chamferAngle = params.chamferAngle != null ? params.chamferAngle : Math.PI / 6;
 		const charLen = Math.sqrt(params.minLotArea || 40);
 		const chamferSize = params.chamferSize != null ? params.chamferSize : (gap > 0 ? gap : charLen * 0.5);
-		lots = chamferLots(lots, chamferAngle, chamferSize, params.chamferEdgeFrac);
+		const chamferEdgeFrac = params.chamferEdgeFrac != null ? params.chamferEdgeFrac : POST_SLICE_CHAMFER_EDGE_FILL;
+		const chamferMinEdge = params.chamferMinEdgeLength != null ? params.chamferMinEdgeLength : POST_SLICE_CHAMFER_MIN_EDGE;
+		lots = chamferLots(lots, chamferAngle, chamferSize, chamferEdgeFrac, chamferMinEdge);
 	}
 
 	if (params.emptyProb > 0) lots = lots.filter(() => Random.bool(1 - params.emptyProb));

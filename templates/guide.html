@@ -429,7 +429,7 @@
             <ul class="guide-detail-list">
                 <li><strong>Wettkampf <x-icon name="trophy" size="0.9em"></x-icon>:</strong> die Resultate, die in Rangliste und Statistik zählen.</li>
                 <li><strong>Training <x-icon name="book-open" size="0.9em"></x-icon>:</strong> funktioniert fast gleich, aber ohne Druck. Getrennt geführt, weil es bereits viele Trainingsresultate gibt.</li>
-                <li><strong>Infinity <x-icon name="infinity" size="0.9em"></x-icon>:</strong> Endlos-Modus mit L/R-Entscheidungen am Stück. Eine Serie richtiger Wahlen treibt den Streak <x-icon name="flame" size="0.9em"></x-icon> hoch; die richtige Route wird danach mit der Krone <x-icon name="crown" size="0.9em"></x-icon> markiert. Dieser Modus ist noch nicht zugänglich.</li>
+                <li><strong>Infinity <x-icon name="infinity" size="0.9em"></x-icon>:</strong> Endlos-Modus mit generierten Karten und demselben L/R-Mechanismus. Eine Serie richtiger Wahlen treibt den Streak <x-icon name="flame" size="0.9em"></x-icon> hoch; die richtige Route wird danach mit der Krone <x-icon name="crown" size="0.9em"></x-icon> markiert. Falls bei einem generierten Posten ein grosser Fehler auffällt, kann er gemeldet werden; bitte nur bei deutlichen Fehlern benutzen, da jede Meldung von Hand geprüft wird.</li>
             </ul>
 
             <h3>Wiederholung</h3>
@@ -557,6 +557,13 @@
                     <h2>Version</h2>
                 </div>
             </div>
+            <h3>July 2026, CQC-Pathfinder 2.1 Infinity</h3>
+            <ul class="guide-detail-list">
+                <li>Added city generation: Phyllotaxis spiral seeding, Voronoi-Dirichlet patching, ward separation, ISSprOM rendering</li>
+                <li>Sparse visibility graph pathfinding with intelligent route rejection</li>
+                <li>Performance optimizations (direct DB indexing, parallelization)</li>
+                <li>Security hardening</li>
+            </ul>
             <h3>June 2026, CQC-Pathfinder 2.0</h3>
             <ul class="guide-detail-list">
                 <li>Full Postgres class refactorization with deep dynamic FK linkage for direct SQL queries.</li>
