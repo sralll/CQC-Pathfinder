@@ -3,5 +3,8 @@
   "provider": "python",
   "packages": {
     "node": "22"
+  },
+  "deploy": {
+    "aptPackages": ["postgresql-client"]
   }
 }
