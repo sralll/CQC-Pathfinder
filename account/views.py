@@ -89,7 +89,10 @@ def forum_index(request):
 @login_required
 def forum_thread(request, pk):
     """Single thread with its comments. POST adds a comment."""
-    thread = get_object_or_404(ForumThread.objects.select_related('author'), pk=pk)
+    thread = get_object_or_404(
+        ForumThread.objects.select_related('author').annotate(n_upvotes=Count('upvotes', distinct=True)),
+        pk=pk,
+    )
 
     if request.method == "POST":
         body = (request.POST.get('body') or '').strip()
@@ -106,7 +109,7 @@ def forum_thread(request, pk):
     return render(request, 'forum/thread.html', {
         'thread': thread,
         'comments': comments,
-        'n_upvotes': thread.upvotes.count(),
+        'n_upvotes': thread.n_upvotes,
         'n_comments': comments.count(),
         'thread_voted': thread.upvotes.filter(pk=request.user.pk).exists(),
         'voted_comment_ids': set(request.user.upvoted_comments.values_list('id', flat=True)),

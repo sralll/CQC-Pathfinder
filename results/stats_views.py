@@ -1,7 +1,7 @@
 from django.conf import settings
 from django.contrib.auth.decorators import login_required
 from django.core.cache import cache
-from django.db.models import Avg, Count, F, FloatField, IntegerField, Min, OuterRef, Q, Subquery, Sum
+from django.db.models import Avg, Count, F, FloatField, IntegerField, OuterRef, Q, Subquery, Sum
 from django.db.models import ExpressionWrapper
 from django.http import JsonResponse
 from django.shortcuts import render
@@ -148,17 +148,37 @@ def _choice_stats_queryset(qs, competition_flag):
     )
 
 
-def _min_time_per_cp(cp_ids):
+def _cp_runtimes_by_cp(cp_ids):
+    """Fetch (control_pair_id -> [run_time, ...]) once for the given CPs.
+
+    Shared by `_min_time_per_cp` and `_route_runtime_stats_for_cp` so callers
+    that need both (the common case) only hit the DB once instead of running
+    two near-identical `Route` queries over the same `cp_ids`.
+    """
     if not cp_ids:
         return {}
+    runtimes_by_cp = {}
+    for cp_id, run_time in (
+        Route.objects
+        .filter(control_pair_id__in=cp_ids, run_time__isnull=False)
+        .order_by('control_pair_id', 'run_time')
+        .values_list('control_pair_id', 'run_time')
+    ):
+        runtimes_by_cp.setdefault(cp_id, []).append(run_time)
+    return runtimes_by_cp
+
+
+def _min_time_per_cp(cp_ids, runtimes_by_cp=None):
+    """Min run_time per CP, including zero/negative run_times (unlike the
+    positive-only filtering used for the error-potential stats below)."""
+    if not cp_ids:
+        return {}
+    if runtimes_by_cp is None:
+        runtimes_by_cp = _cp_runtimes_by_cp(cp_ids)
     return {
-        row['control_pair_id']: row['min_time']
-        for row in (
-            Route.objects
-            .filter(control_pair_id__in=cp_ids, run_time__isnull=False)
-            .values('control_pair_id')
-            .annotate(min_time=Min('run_time'))
-        )
+        cp_id: min(runtimes)
+        for cp_id, runtimes in runtimes_by_cp.items()
+        if runtimes
     }
 
 
@@ -173,7 +193,7 @@ def _median(values):
     return (values[mid - 1] + values[mid]) / 2
 
 
-def _route_runtime_stats_for_cp(cp_ids):
+def _route_runtime_stats_for_cp(cp_ids, runtimes_by_cp=None):
     """Return per-CP runtime stats used by the decision/error scatter plot.
 
     For two-route legs the error potential is the direct slower-fastest gap.
@@ -185,20 +205,12 @@ def _route_runtime_stats_for_cp(cp_ids):
     if not cp_ids:
         return {}
 
-    runtimes_by_cp = {}
-    for cp_id, run_time in (
-        Route.objects
-        .filter(control_pair_id__in=cp_ids, run_time__isnull=False)
-        .order_by('control_pair_id', 'run_time')
-        .values_list('control_pair_id', 'run_time')
-    ):
-        if run_time is None or run_time <= 0:
-            continue
-        runtimes_by_cp.setdefault(cp_id, []).append(float(run_time))
+    if runtimes_by_cp is None:
+        runtimes_by_cp = _cp_runtimes_by_cp(cp_ids)
 
     stats = {}
-    for cp_id, runtimes in runtimes_by_cp.items():
-        runtimes = sorted(runtimes)
+    for cp_id, raw_runtimes in runtimes_by_cp.items():
+        runtimes = sorted(float(rt) for rt in raw_runtimes if rt is not None and rt > 0)
         if len(runtimes) < 2:
             continue
         fastest = runtimes[0]
@@ -584,7 +596,7 @@ def _cached_team_error_potential_fit(active_team, competition_flag):
     from .models import Choice
     from django.contrib.auth.models import User
 
-    member_user_ids = list(
+    member_user_ids = (
         User.objects
         .filter(profile__teams=active_team)
         .exclude(groups__name='Trainer')
@@ -714,8 +726,9 @@ def get_user_stats(request):
     )
 
     cp_ids = {c['control_pair_id'] for c in user_choices if c['control_pair_id']}
-    min_time_per_cp = _min_time_per_cp(cp_ids)
-    runtime_stats = _route_runtime_stats_for_cp(cp_ids)
+    runtimes_by_cp = _cp_runtimes_by_cp(cp_ids)
+    min_time_per_cp = _min_time_per_cp(cp_ids, runtimes_by_cp)
+    runtime_stats = _route_runtime_stats_for_cp(cp_ids, runtimes_by_cp)
     error_points = _choice_error_potential_points(user_choices, runtime_stats)
     time_sensitivity_points = _choice_time_sensitivity_points(
         user_choices,
@@ -941,7 +954,8 @@ def get_stats_table(request):
             per_user.setdefault(c['user_id'], []).append(c)
 
         cp_ids = {c['control_pair_id'] for c in choices if c['control_pair_id']}
-        min_time_per_cp = _min_time_per_cp(cp_ids)
+        runtimes_by_cp = _cp_runtimes_by_cp(cp_ids)
+        min_time_per_cp = _min_time_per_cp(cp_ids, runtimes_by_cp)
 
         def classify(c):
             cp_min = min_time_per_cp.get(c['control_pair_id'])
@@ -966,7 +980,7 @@ def get_stats_table(request):
         # plain GROUP BY queries. Because a least-squares line's component sums are
         # additive, the team-average fit is just the element-wise sum of the
         # per-athlete sums — no separate query needed.
-        runtime_stats   = _route_runtime_stats_for_cp(cp_ids)
+        runtime_stats   = _route_runtime_stats_for_cp(cp_ids, runtimes_by_cp)
         time_benchmarks = _choice_time_benchmarks_per_cp(choices_qs, cp_ids)
 
         error_sums_by_user = {

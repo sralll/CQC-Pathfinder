@@ -40,6 +40,9 @@ class File(models.Model):
 
     class Meta:
         unique_together = ('name', 'team')
+        indexes = [
+            models.Index(fields=['team', 'deleted', '-last_edited'], name='file_team_deleted_edited_idx'),
+        ]
 
     def __str__(self):
         return f"{self.name} ({self.team})"

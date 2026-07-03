@@ -130,7 +130,10 @@ def get_file_results(request, file_id):
         )
     }
 
-    # Load all choices for these CPs
+    # Phase 2.3 sizing check (2026-07-03): the largest live file was 1,319
+    # Choice rows (42 CPs, 35 athletes). Keep the all-at-once payload so the
+    # ranking table and comparison chart can compare the full completed field;
+    # revisit pagination if files grow beyond a few thousand choices.
     choices = (
         Choice.objects
         .filter(control_pair_id__in=cp_ids)
