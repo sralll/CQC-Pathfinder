@@ -8,8 +8,8 @@ def create_settings(apps, schema_editor):
 
 class Migration(migrations.Migration):
     dependencies = [
-        ('project', '0002_migrate_data_from_publishedfile'),
-        ('account', '0002_migrate_data_from_accounts'),
+        ('project', '0001_initial'),
+        ('account', '0001_initial'),
     ]
     operations = [
         migrations.RunPython(create_settings, migrations.RunPython.noop),
