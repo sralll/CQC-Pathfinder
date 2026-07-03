@@ -33,4 +33,13 @@ ldd /opt/pgclient/bin/pg_dump /opt/pgclient/bin/pg_restore \
   | grep -vE '/(libc|libm|libpthread|libdl|librt|libresolv|ld-linux)' \
   | xargs -I{} cp -Lv {} /opt/pgclient/lib/
 
-patchelf --set-rpath '$ORIGIN/../lib' /opt/pgclient/bin/pg_dump /opt/pgclient/bin/pg_restore
+# --force-rpath writes legacy DT_RPATH instead of DT_RUNPATH: RUNPATH only
+# covers a binary's direct deps, so transitive deps (e.g. libpq ->
+# libgssapi_krb5) would fail to resolve in the deploy image.
+patchelf --force-rpath --set-rpath '$ORIGIN/../lib' /opt/pgclient/bin/pg_dump /opt/pgclient/bin/pg_restore
+for lib in /opt/pgclient/lib/*; do
+  patchelf --force-rpath --set-rpath '$ORIGIN' "$lib"
+done
+
+/opt/pgclient/bin/pg_dump --version
+/opt/pgclient/bin/pg_restore --version
