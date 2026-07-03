@@ -1,8 +1,8 @@
 """Internal endpoints triggered by Railway sidecar services.
 
 Currently exposes a single webhook used by the volume-sync CRON service to kick
-off the sync_volume_to_r2 management command on this (the main Django) service,
-which is the only one with the Railway media volume mounted.
+off sync commands on this (the main Django) service, which is the only one with
+the Railway media volume mounted.
 """
 import hmac
 import logging
@@ -19,6 +19,11 @@ from django.views.decorators.http import require_POST
 logger = logging.getLogger(__name__)
 
 
+def _db_backup_enabled() -> bool:
+    value = os.environ.get("DB_BACKUP_ENABLED", "false").lower()
+    return value in ("1", "true", "yes", "on")
+
+
 def _run_sync(direction: str) -> None:
     buf = StringIO()
     try:
@@ -28,6 +33,17 @@ def _run_sync(direction: str) -> None:
         logger.exception(
             "[volume-sync %s] failed; output so far:\n%s", direction, buf.getvalue()
         )
+        return
+
+    if direction != "push" or not _db_backup_enabled():
+        return
+
+    buf = StringIO()
+    try:
+        call_command("backup_database_to_r2", stdout=buf, stderr=buf)
+        logger.info("[db-backup] succeeded:\n%s", buf.getvalue())
+    except Exception:
+        logger.exception("[db-backup] failed; output so far:\n%s", buf.getvalue())
 
 
 @login_not_required

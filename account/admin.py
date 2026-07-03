@@ -2,7 +2,7 @@ from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin, GroupAdmin
 from django.contrib.auth.models import User, Group
 from django.contrib.auth.forms import UserCreationForm
-from .models import Role, Team, Profile, Device, Feedback, ForumThread, ForumComment
+from .models import Role, Team, Profile, Device, ForumThread, ForumComment
 from .admin_access import StaffHiddenAdmin
 
 admin.site.site_header = 'CQC Pathfinder Admin'
@@ -164,39 +164,6 @@ class DeviceAdmin(admin.ModelAdmin):
         return request.user.is_superuser
     def has_delete_permission(self, request, obj=None):
         return request.user.is_superuser
-
-# --- Feedback admin ---
-@admin.register(Feedback)
-class FeedbackAdmin(admin.ModelAdmin):
-    list_display = ('user_full_name', 'user_active_team', 'created_at', 'short_comment')
-
-    def user_full_name(self, obj):
-        if obj.user:
-            return obj.user.get_full_name() or obj.user.username
-        return '-'
-    user_full_name.short_description = "User"
-
-    def user_active_team(self, obj):
-        if obj.user and hasattr(obj.user, 'profile'):
-            return obj.user.profile.active_team or '-'
-        return '-'
-    user_active_team.short_description = "Team"
-
-    def short_comment(self, obj):
-        return obj.comment[:100] + ('...' if len(obj.comment) > 100 else '')
-    short_comment.short_description = "Comment"
-
-    def has_module_permission(self, request):
-        return request.user.is_superuser
-    def has_view_permission(self, request, obj=None):
-        return request.user.is_superuser
-    def has_add_permission(self, request):
-        return False
-    def has_change_permission(self, request, obj=None):
-        return False
-    def has_delete_permission(self, request, obj=None):
-        return request.user.is_superuser
-
 
 # --- Forum admin (superuser-only, for moderation) ---
 class ForumCommentInline(admin.TabularInline):

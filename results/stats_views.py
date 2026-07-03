@@ -75,7 +75,7 @@ def _team_random_cache_key(team_id):
 
 
 def _stats_table_cache_key(team_id, mode):
-    return f"stats:table:v5:{team_id}:{mode}"
+    return f"stats:table:v6:{team_id}:{mode}"
 
 
 def _team_progress_cache_key(team_id):
@@ -86,12 +86,17 @@ def _team_error_fit_cache_key(team_id, competition_flag):
     return f"stats:team-error-fit:v1:{team_id}:{int(competition_flag)}"
 
 
+def _team_random_error_fit_cache_key(team_id):
+    return f"stats:team-random-error-fit:v1:{team_id}"
+
+
 def _clear_stats_cache_for_team(team):
     if not team:
         return
     cache.delete(_team_choice_cache_key(team.id, True))
     cache.delete(_team_choice_cache_key(team.id, False))
     cache.delete(_team_random_cache_key(team.id))
+    cache.delete(_team_random_error_fit_cache_key(team.id))
     cache.delete(_team_progress_cache_key(team.id))
     cache.delete(_team_error_fit_cache_key(team.id, True))
     cache.delete(_team_error_fit_cache_key(team.id, False))
@@ -388,6 +393,26 @@ def _choice_error_potential_fit(qs):
     return _linear_fit_from_sums(_linear_fit_sums(_error_potential_fit_queryset(qs)))
 
 
+def _random_error_potential_fit_queryset(qs):
+    return (
+        qs
+        .filter(
+            choice_time__isnull=False,
+            shorter_time__isnull=False,
+            longer_time__isnull=False,
+        )
+        .annotate(
+            fit_x=ExpressionWrapper(F('longer_time') - F('shorter_time'), output_field=FloatField()),
+            fit_y=ExpressionWrapper(F('choice_time'), output_field=FloatField()),
+        )
+        .filter(fit_x__gte=0)
+    )
+
+
+def _random_error_potential_fit(qs):
+    return _linear_fit_from_sums(_linear_fit_sums(_random_error_potential_fit_queryset(qs)))
+
+
 def _time_benchmark_subqueries(benchmark_qs):
     benchmark = (
         benchmark_qs
@@ -611,6 +636,23 @@ def _cached_team_error_potential_fit(active_team, competition_flag):
     return fit
 
 
+def _cached_team_random_error_potential_fit(active_team):
+    cache_key = _team_random_error_fit_cache_key(active_team.id)
+    fit = cache.get(cache_key)
+    if fit is not None:
+        return fit
+
+    from .models import InfiniteChoice
+
+    fit = _random_error_potential_fit(
+        InfiniteChoice.objects
+        .filter(_team_choice_filter(active_team))
+        .exclude(user__groups__name='Trainer')
+    )
+    cache.set(cache_key, fit, STATS_TEAM_CACHE_TIMEOUT)
+    return fit
+
+
 def _bucket_random(rc):
     """Classify an InfiniteChoice the same way the donut buckets Choices."""
     if rc.correct:
@@ -671,7 +713,8 @@ def get_user_stats(request):
         # Send raw timestamps; the client bins them dynamically (~50 bars)
         activity = [rc.timestamp.isoformat() for rc in target_rcs if rc.timestamp]
         activity_quality = _random_activity_quality_events(target_rcs)
-        error_potential = {'points': _random_error_potential_points(target_rcs)}
+        error_points = _random_error_potential_points(target_rcs)
+        team_error_fit = _cached_team_random_error_potential_fit(active_team) if active_team else None
 
         longest_streak = 0
         current_run    = 0
@@ -688,7 +731,11 @@ def get_user_stats(request):
             'team':        team_stats,
             'activity':    activity,
             'activity_quality': activity_quality,
-            'error_potential': {**error_potential, 'user_fit': None, 'team_fit': None},
+            'error_potential': {
+                'points': error_points,
+                'user_fit': _linear_fit(error_points),
+                'team_fit': team_error_fit,
+            },
             'time_sensitivity': {'points': [], 'fit': None},
             'facts': {
                 'total_cp':       user_stats['total'],
@@ -909,6 +956,10 @@ def get_stats_table(request):
             'gt10':            round(counts['more_10']       / total * 100, 1),
         }
 
+    def _sensitivity_ms(sums):
+        fit = _linear_fit_from_sums(sums)
+        return fit['sensitivity_ms'] if fit else None
+
     # ── Mode-specific data + classifier ────────────────────────────────
     if mode == 'random':
         rcs = list(
@@ -932,9 +983,14 @@ def get_stats_table(request):
 
         all_rows  = rcs
         get_rows  = lambda uid: per_user.get(uid, [])
-        sensitivity_by_user = {}
+
+        error_sums_by_user = {
+            uid: _fit_sums_from_points(_random_error_potential_points(rows))
+            for uid, rows in per_user.items()
+        }
+        sensitivity_by_user = {uid: _sensitivity_ms(s) for uid, s in error_sums_by_user.items()}
         time_sensitivity_by_user = {}
-        summary_error_sensitivity = None
+        summary_error_sensitivity = _sensitivity_ms(_combine_fit_sums(error_sums_by_user.values()))
         summary_time_sensitivity = None
     else:
         competition_flag = (mode == 'competition')
@@ -993,10 +1049,6 @@ def get_stats_table(request):
             )
             for uid, rows in per_user.items()
         }
-
-        def _sensitivity_ms(sums):
-            fit = _linear_fit_from_sums(sums)
-            return fit['sensitivity_ms'] if fit else None
 
         sensitivity_by_user      = {uid: _sensitivity_ms(s) for uid, s in error_sums_by_user.items()}
         time_sensitivity_by_user = {uid: _sensitivity_ms(s) for uid, s in time_sums_by_user.items()}

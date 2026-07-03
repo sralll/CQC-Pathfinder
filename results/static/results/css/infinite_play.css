@@ -4,6 +4,10 @@
    Built on shared theme tokens.
 ========================================================= */
 
+body.mobile #navbar {
+    display: none !important;
+}
+
 /* HUD strip on top */
 #rp-hud {
     flex-shrink: 0;

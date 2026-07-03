@@ -19,6 +19,7 @@ from .stats_views import (
     _cp_runtimes_by_cp,
     _linear_fit,
     _min_time_per_cp,
+    _random_error_potential_fit,
     _route_runtime_stats_for_cp,
 )
 
@@ -110,6 +111,27 @@ class ErrorPotentialStatsTests(TestCase):
         fit = _choice_error_potential_fit(Choice.objects.filter(user=user))
 
         self.assertEqual(fit['sensitivity_ms'], 200)
+
+    def test_random_error_potential_fit_uses_infinite_choice_times(self):
+        user = User.objects.create_user(username='random-athlete')
+        InfiniteChoice.objects.create(
+            user=user,
+            correct=True,
+            choice_time=1.0,
+            shorter_time=10.0,
+            longer_time=12.0,
+        )
+        InfiniteChoice.objects.create(
+            user=user,
+            correct=True,
+            choice_time=3.0,
+            shorter_time=10.0,
+            longer_time=16.0,
+        )
+
+        fit = _random_error_potential_fit(InfiniteChoice.objects.filter(user=user))
+
+        self.assertEqual(fit['sensitivity_ms'], 500)
 
     def test_min_time_and_runtime_stats_agree_with_shared_runtimes_by_cp(self):
         """_min_time_per_cp and _route_runtime_stats_for_cp can share one
@@ -358,6 +380,31 @@ class InfinityUserStatsTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {'status': 'saved', 'choice_count': 1})
 
+    def test_random_stats_response_includes_error_potential_fits(self):
+        InfiniteChoice.objects.create(
+            user=self.user,
+            team=self.team,
+            correct=True,
+            choice_time=1.0,
+            shorter_time=10.0,
+            longer_time=12.0,
+        )
+        InfiniteChoice.objects.create(
+            user=self.user,
+            team=self.team,
+            correct=True,
+            choice_time=3.0,
+            shorter_time=10.0,
+            longer_time=16.0,
+        )
+
+        response = self.client.get(reverse('stats_get_stats'), {'mode': 'random'})
+
+        self.assertEqual(response.status_code, 200)
+        error_potential = response.json()['error_potential']
+        self.assertEqual(error_potential['user_fit']['sensitivity_ms'], 500)
+        self.assertEqual(error_potential['team_fit']['sensitivity_ms'], 500)
+
 
 class InfinityDebugSecurityTests(TestCase):
     def setUp(self):
@@ -521,3 +568,110 @@ class StatsQueryCountTests(TestCase):
             response = self.client.get(reverse('stats_get_stats'), {'mode': 'competition'})
 
         self.assertEqual(response.status_code, 200)
+
+
+class ResultsAdminTests(TestCase):
+    def setUp(self):
+        self.team = Team.objects.create(name='Team A')
+        self.other_team = Team.objects.create(name='Team B')
+        self.staff = User.objects.create_user(username='trainer', password='pw', is_staff=True)
+        profile = Profile.objects.create(user=self.staff, active_team=self.team)
+        profile.teams.add(self.team)
+        self.athlete = User.objects.create_user(username='athlete')
+        athlete_profile = Profile.objects.create(user=self.athlete, active_team=self.team)
+        athlete_profile.teams.add(self.team)
+        self.other_athlete = User.objects.create_user(username='other-athlete')
+        other_profile = Profile.objects.create(user=self.other_athlete, active_team=self.other_team)
+        other_profile.teams.add(self.other_team)
+        self.client.force_login(self.staff)
+
+    def make_choice(self, user, team):
+        file = File.objects.create(name=f'{team.name} course', team=team)
+        cp = ControlPair.objects.create(file=file, order=1)
+        route = Route.objects.create(control_pair=cp, order=1, run_time=10)
+        return Choice.objects.create(
+            user=user,
+            team=team,
+            control_pair=cp,
+            selected_route=route,
+            choice_time=2.5,
+        )
+
+    def test_staff_can_filter_infinite_choices_by_user_with_active_team_scope(self):
+        InfiniteChoice.objects.create(
+            user=self.athlete,
+            team=self.team,
+            correct=True,
+            choice_time=1,
+            shorter_time=10,
+            longer_time=12,
+        )
+        InfiniteChoice.objects.create(
+            user=self.other_athlete,
+            team=self.other_team,
+            correct=False,
+            choice_time=2,
+            shorter_time=10,
+            longer_time=14,
+        )
+
+        response = self.client.get(
+            reverse('admin:results_infinitechoice_changelist'),
+            {'user__id__exact': self.athlete.id},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'athlete')
+        self.assertNotContains(response, 'other-athlete')
+
+    def test_staff_can_download_filtered_choices_csv(self):
+        choice = self.make_choice(self.athlete, self.team)
+        self.make_choice(self.other_athlete, self.other_team)
+
+        response = self.client.post(
+            reverse('admin:results_choice_changelist'),
+            {
+                'action': 'export_choices_csv',
+                '_selected_action': [choice.id],
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response['Content-Type'], 'text/csv')
+        content = response.content.decode()
+        self.assertIn('id,user,team,file,control_pair_id,selected_route_id', content)
+        self.assertIn('athlete,Team A', content)
+        self.assertNotIn('other-athlete', content)
+
+    def test_staff_can_download_filtered_infinite_choices_csv(self):
+        choice = InfiniteChoice.objects.create(
+            user=self.athlete,
+            team=self.team,
+            correct=True,
+            choice_time=1,
+            shorter_time=10,
+            longer_time=12,
+        )
+        InfiniteChoice.objects.create(
+            user=self.other_athlete,
+            team=self.other_team,
+            correct=False,
+            choice_time=2,
+            shorter_time=10,
+            longer_time=14,
+        )
+
+        response = self.client.post(
+            reverse('admin:results_infinitechoice_changelist'),
+            {
+                'action': 'export_infinite_choices_csv',
+                '_selected_action': [choice.id],
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response['Content-Type'], 'text/csv')
+        content = response.content.decode()
+        self.assertIn('id,user,team,correct,choice_time,shorter_time', content)
+        self.assertIn('athlete,Team A,True', content)
+        self.assertNotIn('other-athlete', content)

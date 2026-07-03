@@ -62,9 +62,16 @@ html, body {
 
 .play-header-end {
     flex: 1;
+    display: flex;
+    justify-content: flex-end;
+    min-width: 0;
 }
 
-#play-infinity-btn {
+.play-mobile-nav-left {
+    display: none;
+}
+
+.play-infinity-btn {
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -79,9 +86,14 @@ html, body {
     transition: background var(--t-fast), transform var(--t-fast);
     -webkit-tap-highlight-color: transparent;
 }
-#play-infinity-btn:hover { background: var(--brand-hover); }
-#play-infinity-btn:active { transform: translateY(1px); }
-#play-infinity-btn x-icon { display: inline-flex; }
+.play-infinity-btn:hover { background: var(--brand-hover); }
+.play-infinity-btn:active { transform: translateY(1px); }
+.play-infinity-btn x-icon { display: inline-flex; }
+
+.play-infinity-btn-nav {
+    display: none;
+    margin-left: 8px;
+}
 
 .mode-icon-tip {
     position: relative;
@@ -595,12 +607,15 @@ html, body {
     }
     #play-wrap { padding: 0; }
 
-    #play-mode-actions { flex: 0 0 100%; width: 100%; order: 1; justify-content: flex-start; }
+    #play-mode-actions { flex: 0 0 auto; width: auto; order: 2; justify-content: flex-end; }
     #play-mode-toggle { flex: 0 0 auto; }
-    #play-search-wrap { order: 2; }
+    #play-search-wrap { order: 1; }
     .play-header-end  { display: none; }
+    .play-mobile-nav-left { display: flex; }
+    .play-infinity-btn-nav { display: inline-flex; }
+    .play-infinity-btn-header { display: none; }
 
-    #play-search-wrap { flex: 0 0 100%; min-width: 0; width: 100%; }
+    #play-search-wrap { flex: 1 1 0; min-width: 0; width: auto; }
 
     #play-mobile-controls { width: 100%; order: 3; }
 
@@ -616,7 +631,7 @@ html, body {
     .mode-icon-tip:hover .mode-tip-box { display: none; }
     .mode-icon-tip.tip-open .mode-tip-box { display: block; }
 
-    #play-header { background: var(--bg-1); border-bottom-color: var(--border-soft); }
+    #play-header { background: var(--bg-1); border-bottom-color: var(--border-soft); flex-wrap: wrap; }
 }
 
 /* =========================================================
@@ -658,7 +673,9 @@ body.mobile .play-card-cp         { font-size: var(--font-md); }
 body.mobile .play-card-row2       { font-size: var(--font-md); }
 body.mobile .play-card-date       { font-size: var(--font-sm); }
 body.mobile .play-ctrl-btn        { font-size: var(--font-md); padding: 11px 16px; min-height: var(--touch-target); box-sizing: border-box; }
-body.mobile #play-infinity-btn    { width: 54px; min-height: var(--touch-target); font-size: var(--font-lg); }
+body.mobile .play-mobile-nav-left { display: flex; }
+body.mobile .play-infinity-btn-nav { display: inline-flex; width: 54px; min-height: var(--touch-target); font-size: var(--font-lg); }
+body.mobile .play-infinity-btn-header { display: none; }
 body.mobile .mode-icon-tip        { padding: 8px; }
 body.mobile .mode-icon-tip x-icon { font-size: 22px; }
 body.mobile .mode-switch          { width: 44px; height: 26px; }

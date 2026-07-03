@@ -45,15 +45,6 @@ class Device(models.Model):
     def __str__(self):
         return f"{self.team.name} - Mobile: {self.mobile}, Desktop: {self.desktop}"
     
-class Feedback(models.Model):
-    user = models.ForeignKey('auth.User', on_delete=models.SET_NULL, null=True, blank=True, related_name='feedback')
-    comment = models.TextField(max_length=1000)
-    created_at = models.DateTimeField(auto_now_add=True)
-
-    def __str__(self):
-        return f"{self.user} - {self.created_at}"
-
-
 class ForumThread(models.Model):
     """A discussion topic on the feedback forum."""
     author = models.ForeignKey('auth.User', on_delete=models.SET_NULL, null=True, blank=True,

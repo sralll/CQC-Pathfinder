@@ -1,235 +1,122 @@
-# CQC Pathfinder — Optimization & Cleanup Plan
+# CQC Pathfinder — Memory Cost Reduction Plan (Railway)
 
-> **For executing agents:** work through the phases in the order given under "Suggested execution order & commits" at the bottom. Tick the checkboxes as tasks complete. Read the Ground rules before touching anything.
-
-## Execution log (orchestrator state — update on every wave change)
-
-- **ALL PHASES DONE** — reviewed by the orchestrator (2026-07-03) and committed to `staging` in per-phase chunks: Phase 2 `3b8c80e`, Phase 3 `b84637e` + bench harness `daa4946`, Phase 4 `00b7f16`, Phase 5.1 `741b675`, Phase 5.2 `864bb22`, plus an out-of-plan homepage animation tweak `70bcb94`. Verified: system check clean, migration graph consistent, 22/22 tests green, index migration applied to staging. Agent worktrees pruned (only salvage was the bench harness, cherry-picked).
-- ⚠️ **Prod deploy ordering:** `80655ad` (drops legacy app tables) must deploy in a deploy of its own before later commits, or the legacy tables stay orphaned in prod.
-- **Still pending (manual, human):** editor drag/auto-pathfind session; infinite-mode playthrough incl. mobile/60fps check (4.6); real `.ocd` upload through the UI; review the homepage animation tweak visually. Run `collectstatic` before local preview.
-- **Deliberately skipped (profile-gated, revisit only if slow):** 3.1 galloping scan, 3.2 LOS cache scope, 3.4 edge-table fill, 3.5 spatial hash, 3.6 RAF consolidation, 4.5 typed-array port. The Node bench harness at `project/static/project/js/pathing/dev/bench.mjs` is the tool for re-evaluating the Phase 3 ones.
-- **Test tip:** always `python manage.py test --noinput` (plain `test` hangs on a stale test-DB prompt).
+> **For executing agents:** work through phases in order; tick checkboxes as tasks complete. Read the Ground rules first. This plan replaces the completed optimization plan (all phases of which were committed to `staging` by 2026-07-03; see git history around `b1edaef`).
 
 ## Context
 
-The app is functionally complete with no significant known bugs, but has not been optimized for efficiency. The heavy computational parts are (a) editor pathfinding (`project/static/project/js/editor.js` + `pathing/` modules, running in a Web Worker) and (b) infinite-mode map generation + route computation (`results/static/results/js/infinite_play.js` + `infinite/` citygen modules, also worker-based). Infinite mode is about to be linked into the play menu, so its cold-start and per-scene performance will soon be user-facing (including mobile). Additionally, three deprecated Django apps and various dev artifacts remain in the codebase.
+The app runs on Railway as three services: the main Django web service (gunicorn + 4 uvicorn workers, `scripts/start.sh`), a staging DB-mirror cron (`scripts/mirror_prod_to_staging.sh`), and a volume-sync cron (`scripts/sync_volume_r2.sh`, direction=push on prod) that only curls the web service — the actual sync + optional DB backup run **inside the web service** (`CQCPathfinder/internal_views.py` → `sync_volume_to_r2` / `backup_database_to_r2` management commands).
 
-Goal: optimize the hot compute paths, clean out dead code, harden the backend, fix one known OCAD renderer bug, and add a superuser debug page for reported infinity scenes.
+Railway bills GB-hours of the cgroup memory metric, **which counts OS page cache** (documented in `CQCPathfinder/management/commands/sync_volume_to_r2.py:11-21`). The user already halved memory cost by running `--max-requests 50` across 4 workers to contain leaks. Goal: lower steady-state and peak memory further, and remove the need for such aggressive worker recycling by fixing the leak sources instead of masking them.
 
----
+Audit conclusions (2026-07-03):
+- **Stats/results views are efficient** — `results/stats_views.py` uses `values()` row dicts, per-team caching, and additive fit-sums; `results/results_views.py::get_file_results` has a documented sizing check (~1.3k rows max). No action needed.
+- **The volume-sync push path is already memory-tuned** (size+mtime comparison, capped TransferConfig, explicit client release + gc). No leak found in the cron trigger path; sidecar curl containers are one-shot and negligible.
+- **The real memory hogs:** (a) 4 non-preloaded workers each carrying a full private copy of Django+deps, (b) UNet mask generation allocating a float32 full-map array + several full-map temporaries inside a web worker (onnxruntime arena + glibc fragmentation then keep that worker's RSS elevated — this is almost certainly the "leak" the low max-requests is fighting), (c) the nightly DB backup writing the full pg_dump to a temp file inside the web container (page cache spike).
 
-## Ground rules for executing agents
+## Ground rules
 
-- Work on the `staging` branch. There are uncommitted changes from the infinity-mode port — do not revert or clobber them.
-- **Static files are manifest-hashed via servestatic.** After editing any CSS/JS run `python manage.py collectstatic` and restart the dev server or changes won't show.
-- **No unintended behavior changes.** JS optimizations must be verified against baselines (per-phase verification). Backend changes must keep identical JSON responses.
-- **Infinite-mode determinism policy:** infinite mode is seed-deterministic (`ReportedInfinity` stores `seed`, `pair_index`; the city is regenerated client-side from the seed). There are **no production results yet**, so breaking seed-compatibility is currently ALLOWED — e.g. porting geometry math to `Float32Array` is fine if it wins performance. However: (1) every generation change must be deliberate — run the determinism harness (task 4.0) before/after and re-baseline when output legitimately changes; (2) once infinite mode is live in the play menu and real `ReportedInfinity`/`InfiniteChoice` rows exist, the generator output is frozen — land all generation-changing optimizations BEFORE that launch.
-- Editor live previews must reuse SVG nodes — per-frame DOM add/remove triggers password-manager (Bitwarden) lag.
-- The existing tests are valuable — keep them green: `project/tests.py` (auth surface + cross-team editor security), `results/tests.py` (stats math unit tests + submission/stats authorization). Run `python manage.py test` after every backend phase. When a phase touches secured endpoints, add matching tests in the same style (see per-phase notes).
-
----
-
-## Phase 1 — Dead code & artifact cleanup (low risk, do first)
-
-### 1.1 Remove the three deprecated apps: `accounts`, `coursesetter`, `play`
-- [x] Done
-
-User confirmed these are dead (kept only for a past data migration, now complete) and approved **full removal including dropping DB tables**. Cross-references: `coursesetter/models.py:10` and `play/models.py:18` reference `accounts.Kader` by string.
-
-Safe removal order (tables must be dropped by migration before the code disappears):
-1. Empty `models.py` in all three apps (delete all model classes; keep the files).
-2. `python manage.py makemigrations accounts coursesetter play` — Django generates `DeleteModel` migrations and handles the cross-app FK ordering.
-3. Verify with `python manage.py migrate --plan`, then `migrate` locally/staging.
-4. Commit. **Prod must deploy this commit once (preDeploy runs migrate) before the follow-up commit that deletes the app directories.**
-5. Follow-up commit: delete the three app directories, remove the three entries from `INSTALLED_APPS` in `CQCPathfinder/settings.py` (~lines 39–54).
-
-### 1.2 Update the prod→staging DB mirror script
-- [x] Done
-
-`scripts/mirror_prod_to_staging.sh:69-81` runs `manage.py migrate` after restoring the prod dump. Per user: prod now has the account-migration in place, so the nightly mirror should be a **plain copy — no migration run**. Flip the default at line 69 from `:-true` to `:-false` (keep the `RUN_DJANGO_MIGRATIONS_AFTER_RESTORE` env override). ⚠️ Caveat to document in the script comment: while staging code carries migrations not yet deployed to prod (e.g. Phase 1.1 / 2.1 of this plan), the nightly mirror will restore a schema that's behind staging's code — either temporarily set the env var to `true` on the Railway CRON service or redeploy staging after the mirror (preDeploy migrate) during that window.
-
-### 1.3 Settings cleanup
-- [x] Done
-
-Remove commented-out `admin_reorder` lines: `settings.py:53-54` (INSTALLED_APPS), `:74` (MIDDLEWARE), and the unused `ADMIN_REORDER` config block (~lines 77–97).
-
-### 1.4 File artifacts
-- [x] Done
-
-- Delete `media/maps/debug_ocad_upload_test.png` (1.3 MB debug upload).
-- Delete `docs/debug/infinite-CONTRACTS.md` and `docs/debug/infinite-REFERENCE_NOTES.md` (user is done developing this mode; notes no longer needed).
-- Orphaned compiled assets in `staticfiles/`: `staticfiles/results/css/random_play.*` and `staticfiles/results/js/random_play.*` (+ hashed/.gz variants) have no source files and no references. Delete if git-tracked; run `collectstatic --clear` to regenerate clean output (also clears stale `staticfiles/results/infinite/test.html`).
-
-### 1.5 requirements.txt pruning (verify each before removing)
-- [x] Done
-
-Likely-unused (grep for imports before deleting each): `yarg`, `django-storages` (not configured in settings; R2 sync uses boto3 directly), and the "transitive leftovers" blocks (~lines 38–50). Remove only entries that aren't transitive deps of kept packages; verify with a clean venv: `pip install -r requirements.txt` then `python manage.py check` + smoke-run.
-
-### Phase 1 verification
-`python manage.py check`, `python manage.py test`, `migrate --plan` clean, app boots, admin/editor/play/stats pages load.
+- Work on `staging`. No behavior changes: identical JSON responses, identical mask PNG pixel values (verify byte-for-byte or pixel-diff before/after Phase B changes).
+- `python manage.py test --noinput` after every backend phase (plain `test` hangs on a stale test-DB prompt).
+- Static files are manifest-hashed via servestatic — run `collectstatic` after any CSS/JS edit (none expected in this plan).
+- Anything marked **[Railway console]** is a dashboard/env change the human must apply; record what was set in this file.
+- Measure before/after: Railway memory graph over ≥24h per change batch; don't stack multiple phases into one deploy window or attribution is lost.
 
 ---
 
-## Phase 2 — Backend quick wins
+## Phase A — start.sh / gunicorn (biggest, cheapest win)
 
-### 2.1 Database indexes (approved; migrations required)
-- [x] Done
+### A.1 Add `--preload`
+- [ ] Done
 
-- `project/models.py` `File`: queries filter by `team` + `deleted` and order by `-last_edited` (`project/views.py:144-161`) — add a composite `models.Index(fields=['team', 'deleted', '-last_edited'])` to `File.Meta.indexes`. Add plain `db_index=True` on `last_edited` only if other query paths order on it without the team filter.
-- `account/models.py:21` `Profile.active_team`: FKs get an index automatically in Django — **verify via `sqlmigrate`/DB inspection first**; likely a false positive from exploration. Only act if genuinely missing.
-- `makemigrations`, review with `sqlmigrate`, migrate.
+`scripts/start.sh`: add `--preload` so the master imports Django once and workers fork with copy-on-write pages. Today each of the 4 workers holds a fully private interpreter+Django+boto3 image, and every `max-requests` recycle re-imports from scratch (CPU spike + no page sharing). Verified safe for this codebase: the module-level `ThreadPoolExecutor` in `project/views.py:27` spawns threads lazily (master never submits), `UNet.py` job dict is empty at fork, DB connections are lazy, onnxruntime/numpy are imported inside functions. Expect the largest single RSS reduction of this plan.
 
-### 2.2 N+1 fixes
-- [x] Done
+### A.2 Set `MALLOC_ARENA_MAX=2` **[Railway console]**
+- [ ] Done
 
-- `account/views.py:109` (`forum_thread`): `thread.upvotes.count()` — annotate the queryset (`Count('upvotes', distinct=True)`) reusing the pattern from `forum_index` at `account/views.py:67-69`. The single post-write counts in the vote endpoints (`:127`, `:141`) are acceptable; fix only if trivial.
-- `results/stats_views.py:578-599` (`_cached_team_error_potential_fit`): replace the two-step "fetch member user IDs as list, then filter" with an unevaluated subquery (`user_id__in=User.objects.filter(...)`).
-- `results/stats_views.py:709-724` (`get_user_stats`): `_min_time_per_cp()`, `_route_runtime_stats_for_cp()`, `_choice_time_benchmarks_per_cp()` each query separately over the same `cp_ids`. Consolidate where the aggregations can share a pass; response JSON must stay identical (the stats unit tests in `results/tests.py:22-137` guard the math — keep them passing).
+Env var on the web service. The process is thread-heavy (per-request sync executor, SSE mask threads, boto3 transfer threads, ONNX intra-op threads) and glibc creates up to 8×cores malloc arenas — a classic source of "leaking" RSS that is actually fragmentation. `MALLOC_ARENA_MAX=2` typically cuts steady RSS noticeably at negligible perf cost.
 
-### 2.3 Unbounded result loading (assess, then fix if warranted)
-- [x] Done
+### A.3 Re-evaluate worker count **[Railway console + measurement]**
+- [ ] Done
 
-`results/results_views.py:~136` (`get_file_results`) loads all choices for a file with no limit. Measure realistic sizes first (CPs × athletes for the largest team); if payloads can exceed a few thousand rows, add limit/offset params and update `results/static/results/js/file_results.js`. If sizes are small in practice, document that and skip.
+Under ASGI, Django sync views serialize onto one thread per worker, so 4 workers ≈ 4 concurrent sync requests. For the current user base, check Railway's concurrent-request reality (access logs) and try `--workers 2` or `3`. Each dropped worker is a full worker-RSS saving. Keep 4 only if p95 latency degrades.
 
-### Phase 2 verification
-`python manage.py test`; diff JSON responses of forum/stats/results endpoints before/after (identical); add `assertNumQueries` tests to lock in the improved query counts.
+### A.4 Raise `--max-requests` AFTER Phase B lands
+- [ ] Done
 
----
+Once the mask-generation footprint is fixed (Phase B), raise to `--max-requests 500 --max-requests-jitter 50` and watch the memory graph for a week. The current value of 50 wipes per-worker locmem stats caches constantly (recompute cost) and, combined with `--graceful-timeout 900`, creates old+new worker overlap windows (a recycled worker with a running mask thread stays alive as a 5th process for up to 15 min). Do not raise before B — verify with the graph, not hope.
 
-## Phase 3 — Editor pathfinding JS optimizations
-
-Files under `project/static/project/js/pathing/` unless noted. The pipeline already uses a Web Worker, typed arrays (`Float32Array` gScore, `Int32Array` parent, `Uint8Array` grid/closed), and a binary min-heap — the architecture is sound; these are targeted hot-loop fixes.
-
-### 3.0 Behavior baseline (do first)
-- [x] Done
-
-Run auto-pathfind on a known file and capture the produced route polylines (temporary debug flag logging JSON of waypoints per CP from `pipeline.js`). After each change, re-run with identical inputs and diff. A*/θ* are deterministic given the same grid, so output must be identical unless a change intentionally alters simplification. Also wrap `runPipeline` stages in `performance.now()` timings and record before/after numbers.
-
-### 3.1 `simplify.js:125+` — `simplifyAStarSameTerrainPath` backward-scan
-- [x] Done
-
-Scans backwards from the goal (`j = n-1` down to `i`) for every output point → worst-case O(path²) with a Bresenham LOS+terrain check per step. Fix: galloping start — track the previous successful jump length and begin the scan near `i + lastJump*2` instead of `n-1`, falling back to the full scan if needed so the selected `j` (furthest LOS) is unchanged. The sibling `simplifyAStarPath` (`simplify.js:81-118`) has the same pattern — check callers first (its header says it's a kept-around candidate and may not be on the hot path).
-
-### 3.2 θ* LOS cache — `theta_star.js:62-74` + `worker.js`
-- [x] Done
-
-`losCache` is per-request; LOS results depend on the per-request subgrid (margin cropping + corridor mask), so a naive persistent cache is wrong. **Profile first** — only if LOS checks dominate, consider a flat keying scheme or full-grid-coordinate cache restricted to corridor-independent checks.
-
-### 3.3 `pipeline.js:108-137` — margin-growth retry loop
-- [x] Done
-
-Each failed A* attempt re-extracts the subgrid and re-runs A* at a larger margin. Improvements: start margin at a heuristic based on straight-line start→ziel distance (e.g. `max(100px, 0.5 * dist)`); reuse `gScore`/`parent`/`closed` allocations across attempts (allocate once at max expected size).
-
-### 3.4 `preprocess.js:39-63` — scanline polygon fill
-- [x] Done
-
-Per-y sort of x-intersections. Replace with edge-table + active-edge-list scanline. Only matters for large blocked areas on big maps — measure with a 3000×2000 mask + complex polygon first; skip if fill time is <10 ms.
-
-### 3.5 `distinct.js` — route distinctness check
-- [x] Done
-
-O(routes² × waypoints) but max 4 routes per CP — likely cheap in absolute terms. **Profile before optimizing**; if hot, spatial-hash existing routes' waypoints once per CP.
-
-### 3.6 `editor.js` — RAF consolidation (optional, lowest priority)
-- [x] Done
-
-Six `requestAnimationFrame` call sites (~lines 1775, 1922, 3127, 4195-4198, 6252, 7269-7272). Only consolidate if frame profiling shows overlapping RAF work; respect the no-DOM-churn rule.
-
-### Phase 3 verification
-Synthetic route diff identical; stage timings remain logged by the worker. `collectstatic`, `manage.py check`, and local SQLite-backed `manage.py test --noinput` passed. Manual editor session was not run in this environment.
+### Phase A verification
+Deploy, then compare Railway memory graph 24h before/after. `railway ssh` (or shell) → `ps -o rss,cmd` to record per-worker RSS with/without preload.
 
 ---
 
-## Phase 4 — Infinite mode: debug page + citygen/route optimizations
+## Phase B — UNet mask generation footprint (`project/UNet.py`)
 
-Files: `results/static/results/js/infinite_play.js` (3,768 lines), `results/static/results/js/infinite/infinite_batch_worker.js` (521 lines), `results/static/results/js/infinite/citygen/core/{CityGen,Voronoi,Random,Noise}.js`.
+The mask run allocates, for an H×W map (cap 16000×16000): `output_img` float32 (H·W·4 bytes — up to 1 GB at cap), `vis` uint8 H×W×1, two padded bool arrays for dilation, and `np.repeat(vis, 3)` for the final RGB PNG (3× copy). Plus the onnxruntime session arena, which by default does not return freed memory to the OS.
 
-### 4.0 NEW FEATURE (user-requested): superuser debug page at `/debug/infinity`
-- [x] Done
+### B.1 Disable the ONNX CPU memory arena + cap intra-op threads
+- [ ] Done
 
-A permanent, hidden page (no nav buttons anywhere) for inspecting `ReportedInfinity` reports (`results/models.py:76-112`: stores `seed`, `pair_index`, `start_x/y`, `goal_x/y`, `routes` JSON, `route_indexes`, `settings`, `client_state`).
+`UNet.py:104`: create the session with options —
+```python
+so = ort.SessionOptions()
+so.enable_cpu_mem_arena = False
+so.intra_op_num_threads = 2  # Railway shared vCPU; also fewer malloc arenas
+ort_session = ort.InferenceSession("best_model_300dpi.onnx", sess_options=so)
+```
+Arena-off means tile buffers are freed back to the allocator after each run instead of being hoarded until worker death. Benchmark one mask generation before/after (per-tile time is logged already); accept up to ~15% slowdown — this endpoint is rare and background.
 
-- **Access:** superuser only — `@user_passes_test(lambda u: u.is_superuser)` (LoginRequiredMiddleware already forces auth; return 404 or 403 for non-superusers).
-- **Backend:** new `results/debug_views.py` + URL `debug/infinity/` wired in `CQCPathfinder/urls.py`; JSON endpoints: (a) list reports (id, user, team, timestamp, seed, pair_index — newest first, simple limit), (b) report detail (full JSON fields).
-- **Frontend:** template `results/templates/results/debug_infinity.html` + JS. Reuse the existing citygen modules/worker to regenerate the city from the stored `seed` (check how `infinite_play.js` drives `infinite_batch_worker.js`; add a targeted "generate single scene for seed/pair_index" worker message if the batch protocol doesn't support it). Draw the map SVG using the same layer-building code as `infinite_play.js` (`getLayerElements`) where reusable, plus the routes of the reported control pair from the stored `routes` JSON and start/goal markers from stored coords.
-- **UI requirements:** report selector (list → click to load); **no camera animation** — static view; **zoomable** (wheel zoom + drag pan via SVG viewBox manipulation); **toggle button to show/hide the routes layer**.
-- **Determinism harness lives here too:** add a "determinism check" button that, for a fixed list of ~20 seeds, runs generation in the worker and prints a hash of the serialized scene output (city geometry + route choices + NoA/runtime values). Record baseline hashes in `docs/debug/infinite-determinism-baseline.txt`. Re-run after every citygen change; re-baseline deliberately when output legitimately changes (allowed pre-launch, see ground rules). Note on the page: reports created under an older generator version may not reproduce their city after generation changes.
-- Add a small test in `results/tests.py`: non-superuser gets 403/404 on the page and both endpoints (follow the existing security-test style).
+### B.2 Shrink the working arrays
+- [ ] Done
 
-### 4.1 `Voronoi.js:~114` — point location in Bowyer–Watson insertion
-- [x] Done
+- `output_img`: values are class indices (0–34) after argmax — use `np.uint8` instead of `float32` (4× smaller; the threshold comparisons at lines 145–153 work unchanged on integers; `tile_pred` cast becomes `.astype(np.uint8)`). Watch the `out.shape[0] > 1` branch: argmax output is integer already; the single-channel branch (`out` float) needs a safe cast — clip/round before uint8.
+- Save the final PNG as grayscale (`mode="L"`) instead of `np.repeat(...)` to RGB — **only if** every consumer reads it channel-agnostically. Check consumers first: the editor/pathfinding JS reads mask pixels via canvas (`getImageData` returns RGBA regardless of source PNG mode, values identical) and `preprocess.js` grid building. If any consumer compares per-channel, skip this sub-item and just drop the intermediate: `np.repeat` can be replaced by `Image.fromarray(vis_2d, mode="L").convert("RGB")` done via PIL streaming… simplest safe form: keep RGB output but build it with `np.broadcast_to` (view, no copy) passed through `np.ascontiguousarray` only at save time — measure which variant actually reduces peak.
+- Free `img` (the resized PIL RGB, up to H·W·3) explicitly right after the tile loop — it's only needed for `crop()`.
 
-`addPoint(p)` scans ALL triangles for the circumcircle test → O(n²) total; the single biggest citygen cost. Fix options in order of safety: (1) circumcircle bounding-box prefilter per triangle — pure lookup acceleration, zero output change; (2) walk-based point location starting from the last insertion. Preserve iteration order when collecting "bad" triangles so serialized output is unchanged (verify with harness).
+Verification: run mask generation on 2–3 real maps before/after; output PNGs must be pixel-identical (`PIL.ImageChops.difference` all-zero). Peak RSS measured with `tracemalloc` or `/proc/self/status` VmHWM logging around the run.
 
-### 4.2 `Voronoi.js:166-172` — full region-map rebuild on dirty
-- [x] Done
+### B.3 (Gated) subprocess isolation
+- [ ] Done / consciously skipped
 
-`.regions` rebuilds the whole Map whenever `_regionsDirty`. Check call sites in `CityGen.js`: defer the rebuild until insertion batches complete, or update incrementally for affected points only.
-
-### 4.3 Time-to-first-scene: stream scene generation
-- [x] Done
-
-`infinite_play.js:~70-71`: `CITY_SCENE_ATTEMPTS = 12`, `CITY_ROUTE_RETRIES = 240` — the worker generates the full batch before the player sees anything. Change the worker protocol to post each accepted scene as ready (`{type:'scene', index, scene}`) + final `{type:'batch_done'}`; start play once scene 0 arrives, fill the rest in the background. No generation-math changes. Directly improves the play-menu entry experience. Keep the existing `_renderCache` idle pre-render (`infinite_play.js:2097-2118`).
-
-### 4.4 Route-retry cost in the worker
-- [x] Done
-
-`infinite_batch_worker.js`: up to 240 route retries per scene. Profile which computations are invariant across retries within one scene (city geometry is; routes vary) and hoist them out of the retry loop. If hoisting changes RNG draw order, that's a generation change — harness + deliberate re-baseline.
-
-### 4.5 Typed-array port for geometry (optional, profiler-gated)
-- [x] Skipped (profiler-gated; 4.1/4.3 were prioritized and no allocation/GC evidence justified the riskier generation-changing port)
-
-Plain `{x,y}` objects for thousands of points cause GC churn. If allocation profiling shows GC pauses during generation, port hot geometry to flat typed arrays. **User has approved Float32Array** (no production results yet, so seed-output changes are acceptable — re-baseline the harness). Prefer 4.1/4.3 first; they may make this unnecessary.
-
-### 4.6 Rendering check
-- [ ] Manual verification pending
-
-SVG layers are cached per scene. Verify with DevTools that scene transitions (camera lerp, `infinite_play.js:2240-2293`) hold 60fps on a mid-range/mobile device after the other changes. No DOM churn.
-
-### Phase 4 verification
-Debug page/backend tests added in `results/tests.py`: non-superuser blocked from the page and both JSON endpoints; superuser can render the page, list reports, and load report detail. Determinism harness added to the debug page/worker and baseline recorded in `docs/debug/infinite-determinism-baseline.txt`; rerun matched baseline after the pure-lookup Voronoi changes and streaming protocol change. `node --check` passed for changed JS, `manage.py check` passed, full local SQLite-backed `manage.py test --noinput` passed, and `collectstatic --noinput` was run. Manual playthrough of ~10 scenes and DevTools/mobile 60fps rendering verification are still pending.
+If, after B.1+B.2 and a week of metrics, mask runs still ratchet worker RSS: move `_run_mask_generation` into a `subprocess` (own Python, line-based progress on stdout parsed into `job.publish`, mirroring the OCAD node-subprocess pattern in `project/ocad_tools/ocad.py`). 100% of the memory returns on exit and `--max-requests` could be raised further or dropped. Skip if B.1/B.2 suffice — it complicates the SSE relay.
 
 ---
 
-## Phase 5 — OCAD: renderer bug fix + async conversion
+## Phase C — DB backup page-cache spike (web service)
 
-### 5.1 BUG FIX (user-reported): point objects ignored by the map renderer
-- [x] Done
+### C.1 Stream pg_dump → R2 without a temp file
+- [ ] Done
 
-Some OCAD point objects don't appear in the rendered map PNG. The object categorization was tightened to keep labels out and now excludes too much. Where to look: `project/ocad_tools/convert_ocad.js` — `makeRenderableObjectFilter` (lines 151–159: drops course-display syms, "actual route" objects, and any object whose symbol `status != 0`) and `COURSE_DISPLAY_EXCLUDED_SYMS` (lines 28–41).
+`CQCPathfinder/management/commands/backup_database_to_r2.py:81-103` writes the full dump to a temp file (page cache = full DB size, counted by Railway) then uploads. Replace with: `subprocess.Popen(["pg_dump", "--format=custom", ...], stdout=PIPE)` and `client.upload_fileobj(proc.stdout, bucket, key, ExtraArgs=..., Config=_TRANSFER_CONFIG)` — boto3 handles non-seekable streams via multipart, buffering only ~chunksize×concurrency (≤16 MB with the existing config). Check `proc.wait()` returncode after upload and fail loudly (delete the incomplete R2 object) on nonzero. `copy_object` for `latest.dump` is server-side and stays as is. Keep the size log via the multipart response or a `CountingReader` wrapper.
 
-Task: **widen the categorization — render basically everything except labels/text.** Approach:
-1. Diagnose: with a sample file, log excluded objects grouped by symbol number, symbol `type`, and `status` to see exactly which point symbols get dropped and by which condition.
-2. Rework the filter to exclusion-by-kind: drop text/label objects (OCAD symbol type for text — verify the type constant against the `ocad2geojson` package docs/source in `node_modules`) and the course-overprint symbols (control numbers 704000/704001, course title/description 720000/721000, etc. — keep the existing set), but stop dropping non-text objects on other grounds (e.g. reconsider the blanket `status != 0` exclusion — check what statuses the missing point objects carry; genuinely hidden symbols should presumably stay hidden).
-3. **Test files: the user has OCAD files in `C:\Users\larsb\Downloads`** (glob for `*.ocd` there). Convert before/after and compare rendered PNGs — missing point objects appear, no label/text objects appear.
+### C.2 (Optional, low value) stream the staging mirror
+- [ ] Done / consciously skipped
 
-### 5.2 Async OCAD/UNet conversion (approved scope)
-- [x] Done
-
-`project/views.py:~1028-1070` runs `convert_ocad_map_to_editor_assets()` (node/resvg subprocess via `project/ocad_tools/ocad.py`, 180 s timeout + ONNX UNet mask inference in `project/UNet.py`) synchronously inside the upload request — can hit gunicorn timeouts and blocks a worker.
-
-Approach — no new infrastructure (no Celery; Railway single service):
-1. Module-level `concurrent.futures.ThreadPoolExecutor(max_workers=1)` singleton — serializing conversions avoids memory spikes from concurrent UNet sessions; subprocess + ONNX release the GIL.
-2. Reuse the existing progress pattern: `File.batch_progress` JSONField (`project/models.py:30`) — check how the editor already polls it (search `batch_progress` in `project/views.py` and `editor.js`) and reuse that endpoint/mechanism for conversion status (`pending → converting → done/failed` + error message).
-3. Upload view returns immediately (202-style JSON); `editor.js` polls until done, then loads the map/mask.
-4. Robustness: try/except that always writes a terminal status; on poll, treat "converting" states older than N minutes as failed (thread dies on dyno restart — acceptable at this scale; Celery is the upgrade path if it ever isn't; document this in a code comment).
-5. Add a test: upload endpoint returns immediately and status endpoint transitions (mock the converter).
-
-### Phase 5 verification
-5.1: convert the Downloads OCAD files; previously-missing point objects render; labels don't. 5.2: upload a real OCAD file on the preview server — response immediate, progress advances, mask appears; corrupt file → `failed` status with message shown in UI; `python manage.py test`.
+`scripts/mirror_prod_to_staging.sh:48-67`: `pg_dump -Fc "$PROD_URL" | pg_restore --no-owner --no-acl --dbname="$TARGET_URL"` removes the `/tmp` dump file (custom format from stdin is supported when not using `-j`). This cron bills only while running, so the win is small — do it only if touching the file anyway. Keep the schema-reset step before the pipe.
 
 ---
 
-## Suggested execution order & commits
+## Phase D — Cache backend (conditional)
 
-1. Phase 1 (cleanup + mirror script) — 2 commits: (a) model-deletion migrations, (b) app/file removal + settings + requirements + mirror script.
-2. Phase 2 (backend) — 1–2 commits.
-3. Phase 4.0 + 4.3 (debug page + determinism harness + scene streaming) — early, since infinite mode ships to the play menu soon and generation-changing work must land before launch.
-4. Phase 4.1/4.2/4.4/4.5 (citygen) and Phase 3 (editor pathing) — profile-first items, separate commits per optimization with timings in the commit message.
-5. Phase 5 (OCAD fix + async upload) — 5.1 is independent and can land anytime; 5.2 last, most invasive backend change.
+### D.1 Check prod cache config **[Railway console]**
+- [ ] Done
 
-## Explicitly out of scope (user decision)
-- Migrating Python stats aggregation to PostgreSQL window functions (stats are cached; revisit if stats pages get slow).
-- Celery/queue infrastructure.
-- `home_infinity.js` particle animation (capped at 128 particles, RAF + reduced-motion aware — not a bottleneck).
-- Console/print logging cleanup — audited; all intentional error handling or profiling.
+If `CACHE_URL`/`REDIS_URL` **is** set on prod: a Redis service costs its own memory — evaluate whether the stats cache justifies it; the DatabaseCache below is the frugal alternative.
+If it is **not** set: prod falls back to per-worker locmem (`settings.py:160-166`), which is duplicated ×4 workers and wiped every `max-requests` recycle — the team-stats caching (`STATS_TEAM_CACHE_TIMEOUT=600`) barely ever hits.
+
+### D.2 Switch the no-Redis fallback to DatabaseCache
+- [ ] Done
+
+`django.core.cache.backends.db.DatabaseCache` with a `createcachetable` step (add to `preDeployCommand` after `migrate`, or a migration-style release note). Shared across workers, survives recycling, zero extra memory. Entries here are small dicts (team stats/fit sums) — DB round-trip cost is fine. Keep the Redis branch untouched.
+
+---
+
+## Phase E — Measurement & wrap-up
+
+- [ ] Record in this file: Railway memory graph averages (web service GB) for: baseline week, post-Phase-A, post-Phase-B/C. Include the `ps` RSS snapshots.
+- [ ] After 2 stable weeks at raised `--max-requests`, decide whether `--graceful-timeout 900` is still the right trade (it exists for in-flight mask SSE runs; with B.3 subprocess isolation it could drop to ~60s).
+
+## Explicitly out of scope
+- Celery/queue infrastructure (unchanged decision from the previous plan).
+- Moving media to R2-served URLs (media is streamed via `FileResponse` — chunked, no full-file buffering; page cache from media reads is real but small at current traffic).
+- Changing the ASGI/uvicorn worker class — required by the SSE mask-progress endpoint.

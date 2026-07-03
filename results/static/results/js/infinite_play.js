@@ -48,7 +48,7 @@ const CONTROL_OPACITY = 0.8;
 const ROUTE_BACKGROUND_STROKE_WIDTH = 2;
 const ROUTE_FOREGROUND_STROKE_WIDTH = 1;
 const ROUTE_DOT_SURFACE_RADIUS = 1;
-const ROUTE_HIT_WIDTH = 28;
+const ROUTE_HIT_WIDTH = 40;
 const ROUTE_STROKE_MULTIPLIER       = 2.5;
 const ROUTE_STROKE_SCALE_EXPONENT   = 0.33;
 const ROUTE_STROKE_MIN_CAMERA_SCALE = 0.05;
@@ -298,6 +298,15 @@ function routeChoiceSuppressedByPan() {
     return performance.now() < suppressMapClickUntil;
 }
 
+function routesAtPoint(clientX, clientY) {
+    const idxs = new Set();
+    document.elementsFromPoint(clientX, clientY).forEach(el => {
+        const idx = el.dataset?.routeIdx;
+        if (idx !== undefined) idxs.add(idx);
+    });
+    return idxs;
+}
+
 function addRouteHitArea(layer, route, routeIdx) {
     const hit = createRoutePolyline(route, {
         stroke: 'transparent',
@@ -311,6 +320,7 @@ function addRouteHitArea(layer, route, routeIdx) {
     hit.addEventListener('click', e => {
         e.stopPropagation();
         if (routeChoiceSuppressedByPan()) return;
+        if (routesAtPoint(e.clientX, e.clientY).size !== 1) return;
         selectVisibleRouteFromMap(routeIdx);
     });
     layer.appendChild(hit);
