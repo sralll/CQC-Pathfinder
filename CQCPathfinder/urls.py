@@ -10,6 +10,7 @@ from account.views import set_language
 
 from CQCPathfinder import views
 from CQCPathfinder import internal_views
+from results import debug_views
 
 urlpatterns = [
     path('editor/', include('project.urls')),
@@ -30,6 +31,9 @@ urlpatterns = [
     path('results/', include('results.results_urls')),
     path('stats/', include('results.stats_urls')),
     path('forum/', include('account.forum_urls')),
+    path('debug/infinity/', debug_views.debug_infinity, name='debug_infinity'),
+    path('debug/infinity/api/reports/', debug_views.debug_infinity_reports, name='debug_infinity_reports'),
+    path('debug/infinity/api/reports/<int:report_id>/', debug_views.debug_infinity_report_detail, name='debug_infinity_report_detail'),
 
     # Login must stay public, otherwise redirect-to-login would loop forever.
     path('login/', login_not_required(

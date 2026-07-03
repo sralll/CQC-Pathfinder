@@ -38,6 +38,10 @@ export class Triangle {
 
 		this.c = new Point(x2 + dx2 * t2, y2 + dy2 * t2);
 		this.r = Point.distance(this.c, p1);
+		this._circleMinX = this.c.x - this.r;
+		this._circleMaxX = this.c.x + this.r;
+		this._circleMinY = this.c.y - this.r;
+		this._circleMaxY = this.c.y + this.r;
 	}
 
 	hasEdge(a, b) {
@@ -104,14 +108,16 @@ export class Voronoi {
 		this.triangles.push(new Triangle(c1, c2, c3));
 		this.triangles.push(new Triangle(c2, c3, c4));
 
-		this._regions = new Map();
-		for (const p of this.points) this._regions.set(p, this.buildRegion(p));
-		this._regionsDirty = false;
+		this._regions = null;
+		this._regionsDirty = true;
 	}
 
 	addPoint(p) {
 		const toSplit = [];
-		for (const tr of this.triangles) if (Point.distance(p, tr.c) < tr.r) toSplit.push(tr);
+		for (const tr of this.triangles) {
+			if (p.x <= tr._circleMinX || p.x >= tr._circleMaxX || p.y <= tr._circleMinY || p.y >= tr._circleMaxY) continue;
+			if (Point.distance(p, tr.c) < tr.r) toSplit.push(tr);
+		}
 
 		if (toSplit.length > 0) {
 			this.points.push(p);
@@ -164,7 +170,7 @@ export class Voronoi {
 	}
 
 	get regions() {
-		if (this._regionsDirty) {
+		if (!this._regions || this._regionsDirty) {
 			this._regions = new Map();
 			this._regionsDirty = false;
 			for (const p of this.points) this._regions.set(p, this.buildRegion(p));

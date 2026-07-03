@@ -1,4 +1,5 @@
 import { generateWards } from './citygen/core/CityGen.js';
+import { Random } from './citygen/core/Random.js';
 import {
     buildRouteVisibilityGraph,
     computeRouteOptions,
@@ -38,8 +39,24 @@ const CITY_SETTINGS = {
     gates: -1,
 };
 
-function randInt(min, max) {
-    return Math.floor(min + Math.random() * (max - min + 1));
+function createRng(seed = null) {
+    if (!(Number.isFinite(seed) && seed > 0)) {
+        return {
+            float: () => Math.random(),
+            int: (min, max) => Math.floor(min + Math.random() * (max - min + 1)),
+        };
+    }
+    const saved = Random.getSeed();
+    Random.reset(seed);
+    return {
+        float: () => Random.float(),
+        int: (min, max) => Math.floor(min + Random.float() * (max - min + 1)),
+        restore: () => Random.reset(saved),
+    };
+}
+
+function randInt(min, max, rng = null) {
+    return rng ? rng.int(min, max) : Math.floor(min + Math.random() * (max - min + 1));
 }
 
 function mapMetresPerUnit() {
@@ -330,10 +347,10 @@ function routePickPointAllowed(pt, ward, wall) {
     return null;
 }
 
-function routePickWeightedPoint(pool) {
+function routePickWeightedPoint(pool, rng) {
     let total = 0;
     for (const p of pool) total += p.weight;
-    let r = Math.random() * total;
+    let r = rng.float() * total;
     for (const p of pool) {
         r -= p.weight;
         if (r <= 0) return p;
@@ -341,15 +358,15 @@ function routePickWeightedPoint(pool) {
     return pool[pool.length - 1] || null;
 }
 
-function routePickPoint(candidates, visGraph, wall = null) {
+function routePickPoint(candidates, visGraph, wall = null, rng = createRng()) {
     const pool = [];
     for (let attempt = 0; attempt < 500; attempt++) {
-        const item = candidates[(Math.random() * candidates.length) | 0];
+        const item = candidates[(rng.float() * candidates.length) | 0];
         const b = item.bbox;
         for (let local = 0; local < 20; local++) {
             const pt = {
-                x: b.minX + Math.random() * (b.maxX - b.minX),
-                y: b.minY + Math.random() * (b.maxY - b.minY),
+                x: b.minX + rng.float() * (b.maxX - b.minX),
+                y: b.minY + rng.float() * (b.maxY - b.minY),
             };
             if (!routePickPointInPolygon(pt, item.ward.polygon)) continue;
             const area = routePickPointAllowed(pt, item.ward, wall);
@@ -365,23 +382,23 @@ function routePickPoint(candidates, visGraph, wall = null) {
                 weight: Math.pow(biasedDist, ROUTE_PICK_INTERIOR_BIAS_POWER),
             });
             if (pool.length >= ROUTE_PICK_POINT_POOL_SIZE) {
-                const picked = routePickWeightedPoint(pool);
+                const picked = routePickWeightedPoint(pool, rng);
                 if (!picked) return null;
                 const { weight, ...out } = picked;
                 return out;
             }
         }
     }
-    const picked = routePickWeightedPoint(pool);
+    const picked = routePickWeightedPoint(pool, rng);
     if (!picked) return null;
     const { weight, ...out } = picked;
     return out;
 }
 
-function routePickPair(candidates, visGraph, wall = null) {
+function routePickPair(candidates, visGraph, wall = null, rng = createRng()) {
     for (let attempt = 0; attempt < 1000; attempt++) {
-        const start = routePickPoint(candidates, visGraph, wall);
-        const goal = routePickPoint(candidates, visGraph, wall);
+        const start = routePickPoint(candidates, visGraph, wall, rng);
+        const goal = routePickPoint(candidates, visGraph, wall, rng);
         if (!start || !goal) return null;
         const straightLine = Math.hypot(goal.x - start.x, goal.y - start.y);
         if (straightLine >= ROUTE_PICK_MIN_DIST && straightLine <= ROUTE_PICK_MAX_DIST) return { start, goal, straightLine };
@@ -397,16 +414,41 @@ function routePairTooCloseToUsed(pair, usedEndpoints) {
     return false;
 }
 
-function buildSceneBatchCandidate(pairCount) {
-    const seed = Math.floor(Math.random() * 2147483646) + 1;
-    const settings = {
+function normalizeSettings(settings = {}, rng = createRng()) {
+    const seed = Number.isFinite(Number(settings.seed)) && Number(settings.seed) > 0
+        ? Math.trunc(Number(settings.seed))
+        : Math.floor(rng.float() * 2147483646) + 1;
+    return {
         ...CITY_SETTINGS,
+        ...settings,
         seed,
-        size: randInt(25, 40),
-        river: Math.random() >= 0.45,
-        coast: Math.random() >= 0.45,
-        walls: Math.random() >= 0.20,
+        size: Number.isFinite(Number(settings.size)) ? Math.trunc(Number(settings.size)) : randInt(25, 40, rng),
+        river: settings.river != null ? !!settings.river : rng.float() >= 0.45,
+        coast: settings.coast != null ? !!settings.coast : rng.float() >= 0.45,
+        walls: settings.walls != null ? !!settings.walls : rng.float() >= 0.20,
     };
+}
+
+function makeBatchSkeleton(city, settings, generationMs, graphMs, rejectionCounts) {
+    return {
+        kind: 'city-batch',
+        city,
+        scenes: [],
+        index: 0,
+        meta: {
+            seed: settings.seed,
+            settings,
+            generationMs,
+            graphMs,
+            routeCount: 0,
+            rejectionCounts,
+        },
+    };
+}
+
+function buildSceneBatchCandidate(pairCount, options = {}) {
+    const rng = options.rng || createRng(options.seed || options.settings?.seed || null);
+    const settings = normalizeSettings(options.settings || { seed: options.seed }, rng);
 
     const generationStart = performance.now();
     const city = generateWards(settings);
@@ -422,12 +464,13 @@ function buildSceneBatchCandidate(pairCount) {
     if (candidates.length === 0) throw new Error('Generated city has no traversable wards');
 
     const rejectionCounts = { distinct: 0, distance: 0, side: 0, routeside: 0, timeout: 0 };
-    const scenes = [];
+    const batch = makeBatchSkeleton(city, settings, generationMs, graphMs, rejectionCounts);
+    const scenes = batch.scenes;
     const usedEndpoints = [];
     const maxRetries = CITY_ROUTE_RETRIES * pairCount;
 
     for (let retries = 0; retries < maxRetries && scenes.length < pairCount; retries++) {
-        const pair = routePickPair(candidates, visibilityGraph, city.wall);
+        const pair = routePickPair(candidates, visibilityGraph, city.wall, rng);
         if (!pair) {
             rejectionCounts.distance++;
             continue;
@@ -441,7 +484,7 @@ function buildSceneBatchCandidate(pairCount) {
         if (runtimeResult.ok) {
             const scene = buildSceneFromRouteResult(city, pair, runtimeResult);
             scene.meta = {
-                seed,
+                seed: settings.seed,
                 settings,
                 generationMs,
                 graphMs,
@@ -451,6 +494,8 @@ function buildSceneBatchCandidate(pairCount) {
                 rejectionCounts,
             };
             scenes.push(scene);
+            batch.meta.routeCount = scenes.length;
+            options.onScene?.(scene, scenes.length - 1, batch);
             usedEndpoints.push(pair.start, pair.goal);
             continue;
         }
@@ -462,22 +507,8 @@ function buildSceneBatchCandidate(pairCount) {
         else rejectionCounts.side++;
     }
 
-    if (scenes.length < pairCount) throw new Error(`Only found ${scenes.length}/${pairCount} route pairs for seed ${seed}`);
+    if (scenes.length < pairCount) throw new Error(`Only found ${scenes.length}/${pairCount} route pairs for seed ${settings.seed}`);
 
-    const batch = {
-        kind: 'city-batch',
-        city,
-        scenes,
-        index: 0,
-        meta: {
-            seed,
-            settings,
-            generationMs,
-            graphMs,
-            routeCount: scenes.length,
-            rejectionCounts,
-        },
-    };
     scenes.forEach((batchScene, batchIndex) => {
         batchScene.batch = batch;
         batchScene.batchIndex = batchIndex;
@@ -485,11 +516,11 @@ function buildSceneBatchCandidate(pairCount) {
     return batch;
 }
 
-function generateSceneBatch(pairCount) {
+function generateSceneBatch(pairCount, options = {}) {
     let lastError = null;
     for (let i = 0; i < CITY_SCENE_ATTEMPTS; i++) {
         try {
-            return buildSceneBatchCandidate(pairCount);
+            return buildSceneBatchCandidate(pairCount, options);
         } catch (err) {
             lastError = err;
         }
@@ -497,15 +528,114 @@ function generateSceneBatch(pairCount) {
     throw lastError || new Error('No routable city batch generated');
 }
 
-self.addEventListener('message', (event) => {
+function stableStringify(value) {
+    if (value === null || typeof value !== 'object') return JSON.stringify(value);
+    if (Array.isArray(value)) return '[' + value.map(stableStringify).join(',') + ']';
+    return '{' + Object.keys(value).sort().map((key) => JSON.stringify(key) + ':' + stableStringify(value[key])).join(',') + '}';
+}
+
+function hashString(str) {
+    let h = 2166136261;
+    for (let i = 0; i < str.length; i++) {
+        h ^= str.charCodeAt(i);
+        h = Math.imul(h, 16777619);
+    }
+    return (h >>> 0).toString(16).padStart(8, '0');
+}
+
+export function determinismHashForSeed(seed, pairCount = 3) {
+    const batch = generateSceneBatch(pairCount, {
+        seed,
+        settings: {
+            ...CITY_SETTINGS,
+            seed,
+            size: 32,
+            river: true,
+            coast: true,
+            walls: true,
+        },
+    });
+    const summary = {
+        city: batch.city,
+        scenes: batch.scenes.map((scene) => ({
+            start: scene.start,
+            ziel: scene.ziel,
+            routes: scene.routes.map((route) => ({
+                points: route.points,
+                length: route.length,
+                noA: route.noA,
+                run_time: route.run_time,
+                side: route.side,
+            })),
+            routeIndexes: scene.routeResult?.routeIndexes || [],
+            routeRuntimeSlots: scene.routeResult?.routeRuntimeSlots || [],
+            routeNoASlots: scene.routeResult?.routeNoASlots || [],
+        })),
+    };
+    return hashString(stableStringify(summary));
+}
+
+export function runDeterminismCheck(seeds, pairCount = 3) {
+    return seeds.map((seed) => ({ seed, hash: determinismHashForSeed(seed, pairCount) }));
+}
+
+function generateCity(settings) {
+    const normalized = normalizeSettings(settings || {}, createRng(settings?.seed || null));
+    return {
+        city: generateWards(normalized),
+        settings: normalized,
+    };
+}
+
+if (typeof self !== 'undefined' && self.addEventListener) self.addEventListener('message', (event) => {
     const msg = event.data;
-    if (!msg || msg.type !== 'generateBatch') return;
+    if (!msg) return;
 
     const startTime = performance.now();
     try {
-        const batch = generateSceneBatch(msg.pairCount || 5);
+        if (msg.type === 'generateCity') {
+            const result = generateCity(msg.settings || { seed: msg.seed });
+            self.postMessage({
+                type: 'city',
+                msgId: msg.msgId,
+                ...result,
+                elapsedMs: performance.now() - startTime,
+            });
+            return;
+        }
+
+        if (msg.type === 'determinism') {
+            self.postMessage({
+                type: 'determinism',
+                msgId: msg.msgId,
+                hashes: runDeterminismCheck(msg.seeds || [], msg.pairCount || 3),
+                elapsedMs: performance.now() - startTime,
+            });
+            return;
+        }
+
+        if (msg.type !== 'generateBatch') return;
+
+        const stream = msg.stream !== false;
+        const batch = generateSceneBatch(msg.pairCount || 5, {
+            seed: msg.seed,
+            settings: msg.settings,
+            onScene: stream
+                ? (scene, index, batchRef) => {
+                    const { batch: _batch, ...scenePayload } = scene;
+                    self.postMessage({
+                        type: 'scene',
+                        msgId: msg.msgId,
+                        index,
+                        scene: scenePayload,
+                        batchMeta: batchRef.meta,
+                        elapsedMs: performance.now() - startTime,
+                    });
+                }
+                : null,
+        });
         self.postMessage({
-            type: 'batch',
+            type: stream ? 'batch_done' : 'batch',
             msgId: msg.msgId,
             batch,
             elapsedMs: performance.now() - startTime,

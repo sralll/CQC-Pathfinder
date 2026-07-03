@@ -147,6 +147,7 @@ let prepareTimer = null;
 let _batchWorker = null;
 let _batchWorkerMsgId = 1;
 let _pendingBatchPromise = null;
+let _streamingBatch = null;
 let _prerenderTimer = null;
 let _renderTarget = null;
 let reportingRoute = false;
@@ -525,6 +526,13 @@ function beginChoice() {
 }
 
 async function takeNextScene() {
+    if (currentBatch && currentBatch.index >= currentBatch.scenes.length && currentBatch.donePromise && !currentBatch.done) {
+        try {
+            await currentBatch.donePromise;
+        } catch (err) {
+            console.warn('current infinite batch did not finish streaming:', err);
+        }
+    }
     if (!currentBatch || currentBatch.index >= currentBatch.scenes.length) {
         currentBatch = preparedBatch || await generateSceneBatchAsync();
         preparedBatch = null;
@@ -539,6 +547,10 @@ async function takeNextScene() {
 
 function scheduleBatchPreparation() {
     if (preparedBatch || preparingBatch || prepareTimer) return;
+    if (currentBatch?.donePromise && !currentBatch.done) {
+        currentBatch.donePromise.finally(() => window.setTimeout(scheduleBatchPreparation, 0));
+        return;
+    }
 
     const run = async () => {
         prepareTimer = null;
@@ -589,36 +601,114 @@ function generateSceneBatchAsync(pairCount = CONTROL_PAIRS_PER_MAP) {
     if (!worker) return Promise.resolve(generateSceneBatch(pairCount));
 
     const msgId = _batchWorkerMsgId++;
+    let streamedBatch = null;
+    let resolveDone = null;
+    let rejectDone = null;
+    const donePromise = new Promise((resolve, reject) => {
+        resolveDone = resolve;
+        rejectDone = reject;
+    });
+    donePromise.catch(() => {});
+    const finishBatch = (batch, batchMeta = null) => {
+        if (!streamedBatch) {
+            streamedBatch = batch || {
+                kind: 'city-batch',
+                city: null,
+                scenes: [],
+                index: 0,
+                meta: batchMeta || {},
+            };
+            streamedBatch.donePromise = donePromise;
+            streamedBatch.done = false;
+        }
+        if (batch) {
+            streamedBatch.city = batch.city;
+            streamedBatch.meta = batch.meta || streamedBatch.meta;
+            streamedBatch.scenes = batch.scenes || streamedBatch.scenes;
+            streamedBatch.index = streamedBatch.index || 0;
+        } else if (batchMeta) {
+            streamedBatch.meta = batchMeta;
+        }
+        for (let i = 0; i < streamedBatch.scenes.length; i++) {
+            streamedBatch.scenes[i].batch = streamedBatch;
+            streamedBatch.scenes[i].batchIndex = i;
+        }
+        return streamedBatch;
+    };
     _pendingBatchPromise = new Promise((resolve, reject) => {
+        let resolvedFirstScene = false;
         const cleanup = () => {
             worker.removeEventListener('message', onMessage);
             worker.removeEventListener('error', onWorkerError);
             worker.removeEventListener('messageerror', onMessageError);
             _pendingBatchPromise = null;
+            if (_streamingBatch === streamedBatch) _streamingBatch = null;
         };
         const onMessage = (event) => {
             const msg = event.data;
-            if (!msg || msg.type !== 'batch' || msg.msgId !== msgId) return;
-            cleanup();
-            if (msg.error) reject(new Error(msg.error));
-            else resolve(msg.batch);
+            if (!msg || msg.msgId !== msgId) return;
+            if (msg.error) {
+                const err = new Error(msg.error);
+                cleanup();
+                rejectDone(err);
+                reject(err);
+                return;
+            }
+            if (msg.type === 'scene') {
+                const batch = finishBatch(null, msg.batchMeta);
+                if (!batch.city && msg.scene?.city) batch.city = msg.scene.city;
+                const sceneFromWorker = msg.scene;
+                sceneFromWorker.batch = batch;
+                sceneFromWorker.batchIndex = msg.index;
+                batch.scenes[msg.index] = sceneFromWorker;
+                _streamingBatch = batch;
+                if (!resolvedFirstScene && msg.index === 0) {
+                    resolvedFirstScene = true;
+                    resolve(batch);
+                }
+                return;
+            }
+            if (msg.type === 'batch_done') {
+                const batch = finishBatch(msg.batch);
+                batch.done = true;
+                cleanup();
+                resolveDone(batch);
+                if (!resolvedFirstScene) {
+                    resolvedFirstScene = true;
+                    resolve(batch);
+                }
+                return;
+            }
+            if (msg.type === 'batch') {
+                const batch = finishBatch(msg.batch);
+                batch.done = true;
+                cleanup();
+                resolveDone(batch);
+                resolve(batch);
+                return;
+            }
         };
         const onMessageError = () => {
+            const err = new Error('batch worker message error');
             cleanup();
-            reject(new Error('batch worker message error'));
+            rejectDone(err);
+            reject(err);
         };
         const onWorkerError = (event) => {
+            const err = new Error(event.message || 'batch worker error');
             cleanup();
-            reject(new Error(event.message || 'batch worker error'));
+            rejectDone(err);
+            reject(err);
         };
         worker.addEventListener('message', onMessage);
         worker.addEventListener('error', onWorkerError);
         worker.addEventListener('messageerror', onMessageError);
-        worker.postMessage({ type: 'generateBatch', msgId, pairCount });
+        worker.postMessage({ type: 'generateBatch', msgId, pairCount, stream: true });
     }).catch((err) => {
         console.warn('falling back to main-thread infinite generation:', err);
         try { _batchWorker?.terminate(); } catch (_) {}
         _batchWorker = null;
+        _streamingBatch = null;
         return generateSceneBatch(pairCount);
     });
     return _pendingBatchPromise;

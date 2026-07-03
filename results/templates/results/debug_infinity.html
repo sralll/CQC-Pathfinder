@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block styles %}
+<link rel="stylesheet" href="{% static 'results/css/debug_infinity.css' %}">
+{% endblock %}
+
+{% block scripts %}
+<script type="module" src="{% static 'results/js/debug_infinity.js' %}"></script>
+{% endblock %}
+
+{% block content %}
+<main id="debug-infinity"
+      data-reports-url="{% url 'debug_infinity_reports' %}"
+      data-report-base-url="/debug/infinity/api/reports/">
+    <aside class="di-sidebar">
+        <div class="di-toolbar">
+            <h1>Infinity reports</h1>
+            <button id="di-refresh" type="button" title="Refresh reports" aria-label="Refresh reports">
+                Reload
+            </button>
+        </div>
+        <div id="di-report-list" class="di-report-list"></div>
+    </aside>
+
+    <section class="di-stage">
+        <div class="di-stage-toolbar">
+            <div id="di-report-title" class="di-report-title">Select a report</div>
+            <div class="di-actions">
+                <button id="di-toggle-routes" type="button" title="Show or hide routes" aria-pressed="true">
+                    <x-icon name="route" size="18px"></x-icon>
+                </button>
+                <button id="di-determinism" type="button" title="Run determinism check">
+                    Hash
+                </button>
+            </div>
+        </div>
+
+        <div class="di-map-wrap" id="di-map-wrap">
+            <svg id="di-map" viewBox="-100 -100 200 200" aria-label="Infinity debug map">
+                <g id="di-map-layer"></g>
+                <g id="di-route-layer"></g>
+                <g id="di-control-layer"></g>
+            </svg>
+        </div>
+
+        <pre id="di-output" class="di-output"></pre>
+    </section>
+</main>
+{% endblock %}
