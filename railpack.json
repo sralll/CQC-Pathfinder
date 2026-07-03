@@ -7,7 +7,11 @@
   "steps": {
     "pgclient16": {
       "commands": [
-        "apt-get update && apt-get install -y --no-install-recommends ca-certificates curl gnupg patchelf && install -d /usr/share/postgresql-common/pgdg && curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc && . /etc/os-release && echo \"=== pgdg setup: codename=${VERSION_CODENAME} arch=$(dpkg --print-architecture) ===\" && echo \"deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt ${VERSION_CODENAME}-pgdg main\" > /etc/apt/sources.list.d/pgdg.list && cat /etc/apt/sources.list.d/pgdg.list && apt-get update && apt-get install -y --no-install-recommends postgresql-client-16 && mkdir -p /opt/pgclient/bin /opt/pgclient/lib && install -m755 /usr/lib/postgresql/16/bin/pg_dump /opt/pgclient/bin/pg_dump && install -m755 /usr/lib/postgresql/16/bin/pg_restore /opt/pgclient/bin/pg_restore && ldd /opt/pgclient/bin/pg_dump /opt/pgclient/bin/pg_restore | awk '$2==\"=>\"{print $3}' | sort -u | grep -vE '/(libc|libm|libpthread|libdl|librt|libresolv|ld-linux)' | xargs -I{} cp -Lv {} /opt/pgclient/lib/ && patchelf --set-rpath '$ORIGIN/../lib' /opt/pgclient/bin/pg_dump /opt/pgclient/bin/pg_restore"
+        {
+          "src": "scripts/build_pgclient16.sh",
+          "dest": "build_pgclient16.sh"
+        },
+        "bash build_pgclient16.sh"
       ]
     }
   },
