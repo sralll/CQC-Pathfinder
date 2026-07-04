@@ -39,11 +39,17 @@ msgstr "Aux postes Gauche/Droite, touche soit directement les boutons, soit le c
 msgid "Author"
 msgstr "Auteur"
 
+msgid "Automatic route"
+msgstr "Choix automatique"
+
 msgid "Autosave is not finished yet. Please stay on the page."
 msgstr "L'autosave n'est pas encore terminé. Reste sur la page."
 
 msgid "Back one anchor"
 msgstr "Ancre précédente"
+
+msgid "Batch pathing"
+msgstr "Calcul automatique des choix"
 
 msgid "Block area added"
 msgstr "Zone interdite ajoutée"
@@ -249,6 +255,9 @@ msgstr "Gauche/Droite"
 msgid "Line"
 msgstr "Ligne"
 
+msgid "Loaded"
+msgstr "Chargé"
+
 msgid "Loading athletes…"
 msgstr "Chargement des athlètes…"
 
@@ -327,17 +336,20 @@ msgstr "Aucune version"
 msgid "OCAD analysis failed."
 msgstr "L'analyse OCAD a échoué."
 
-msgid "OCAD course aligned"
-msgstr "OCAD course import"
+msgid "OCAD conversion failed."
+msgstr "La conversion OCAD a échoué."
+
+msgid "OCAD conversion status failed."
+msgstr "Impossible de récupérer l'état de la conversion OCAD."
+
+msgid "OCAD conversion timed out."
+msgstr "La conversion OCAD a expiré."
 
 msgid "OCAD course import"
-msgstr "OCAD course import"
+msgstr "Import du parcours OCAD"
 
 msgid "OCAD course import failed."
 msgstr "L'import du parcours OCAD a échoué."
-
-msgid "OCAD course imported"
-msgstr "OCAD course import"
 
 msgid "Obstacle changed"
 msgstr "Obstacle modifié"
@@ -383,6 +395,9 @@ msgstr "Lecture seule :"
 
 msgid "Ready?"
 msgstr "Prêt ?"
+
+msgid "Redo"
+msgstr "Rétablir"
 
 msgid "Reload"
 msgstr "Recharger"
@@ -540,6 +555,9 @@ msgstr "Dépublier"
 msgid "Upload failed."
 msgstr "Le téléversement a échoué."
 
+msgid "Waiting to rasterize map…"
+msgstr "En attente de la rastérisation…"
+
 msgid "You"
 msgstr "Toi"
 
@@ -551,9 +569,6 @@ msgstr "Tu peux zoomer avec la molette ou le pavé tactile."
 
 msgid "You have 0.5s to decide; after that every extra second counts fivefold!"
 msgstr "Tu as 0,5 s pour décider ; ensuite chaque seconde supplémentaire compte cinq fois !"
-
-msgid "automatic route"
-msgstr "choix automatique"
 
 msgid "current streak"
 msgstr "série actuelle"
@@ -571,7 +586,7 @@ msgid "extra time due to stairs or other obstacles"
 msgstr "temps supplémentaire dû aux escaliers ou autres obstacles"
 
 msgid "fastest route chosen"
-msgstr "choix le plus rapide s?lectionn?"
+msgstr "choix le plus rapide sélectionné"
 
 msgid "including a fivefold penalty for choosing the route too late"
 msgstr "y compris une pénalité quintuple pour un choix trop tardif"

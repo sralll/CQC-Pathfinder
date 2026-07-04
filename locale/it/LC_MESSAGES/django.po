@@ -204,8 +204,8 @@ msgstr "Credenziali non valide"
 msgid "Italiano"
 msgstr "Italiano"
 
-msgid "June 2026: Version 2.0"
-msgstr "Giugno 2026: versione 2.0"
+msgid "July 2026: Version 2.1"
+msgstr "Luglio 2026: versione 2.1"
 
 msgid "Label already exists"
 msgstr "Label già esistente"
@@ -287,6 +287,9 @@ msgstr "Analisi OCAD non riuscita: %(error)s"
 
 msgid "OCAD conversion failed: %(error)s"
 msgstr "Conversione OCAD non riuscita: %(error)s"
+
+msgid "OCAD conversion stopped before it finished. Please upload the file again."
+msgstr "La conversione OCAD si è interrotta prima della fine. Carica di nuovo il file."
 
 msgid "OCAD course import failed: %(error)s"
 msgstr "Importazione del percorso OCAD non riuscita: %(error)s"

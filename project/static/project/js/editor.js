@@ -364,7 +364,7 @@ function captureState(label = "") {
     };
 }
 
-function pushUndoState(label = "Loaded") {
+function pushUndoState(label = gettext("Loaded")) {
     undoStack.push(captureState(label));
     if (undoStack.length > UNDO_MAX) undoStack.shift();
     redoStack = [];
@@ -398,13 +398,13 @@ function undo() {
     if (!undoStack.length) return;
     cancelAllPathing();
     if (undoStack[undoStack.length - 1].isMaskUndo) {
-        redoStack.push({ label: "Mask edited", isMaskUndo: true });
+        redoStack.push({ label: gettext("Mask edited"), isMaskUndo: true });
         undoStack.pop();
         undoMask();
         updateUndoMenu();
         return;
     }
-    redoStack.push(captureState("Undo"));
+    redoStack.push(captureState(gettext("Undo")));
     restoreState(undoStack.pop());
     saveFile("undo");
     updateUndoMenu();
@@ -416,13 +416,13 @@ function redo() {
     if (!redoStack.length) return;
     cancelAllPathing();
     if (redoStack[redoStack.length - 1].isMaskUndo) {
-        undoStack.push({ label: "Mask edited", isMaskUndo: true });
+        undoStack.push({ label: gettext("Mask edited"), isMaskUndo: true });
         redoStack.pop();
         redoMask();
         updateUndoMenu();
         return;
     }
-    undoStack.push(captureState("Redo"));
+    undoStack.push(captureState(gettext("Redo")));
     restoreState(redoStack.pop());
     saveFile("redo");
     updateUndoMenu();
@@ -1082,7 +1082,7 @@ function deleteRoute(cp, route) {
 
 function deleteControlPairFromProject(cp) {
     if (readOnly || !cp) return false;
-    pushUndoState("Control deleted");
+    pushUndoState(gettext("Control deleted"));
     deleteControlPair(cp);
     project.control_pairs = project.control_pairs.filter(c => c !== cp);
     project.control_pairs.forEach((c, i) => { c.order = i; });
@@ -1095,7 +1095,7 @@ function deleteControlPairFromProject(cp) {
 
 function deleteRouteFromProject(cp, route) {
     if (readOnly || !cp || !route) return false;
-    pushUndoState("Route deleted");
+    pushUndoState(gettext("Route deleted"));
     deleteRoute(cp, route);
     cp.routes = cp.routes.filter(r => r !== route);
     cp.routes.forEach((r, i) => { r.order = i; });
@@ -1367,7 +1367,7 @@ const ControlPairTool = (() => {
             originX: point.x,
             originY: point.y,
         };
-        pushUndoState("Control moved");
+        pushUndoState(gettext("Control moved"));
         setRouteDeletePreview(null);
         mapContainer.classList.add("dragging");
         mapContainer.style.cursor = "grabbing";
@@ -1622,7 +1622,7 @@ const RouteEditTool = (() => {
             route       = r;
             cpRef       = cp;
             originalPts = structuredClone(r.rP);
-            pushUndoState("Route edited");
+            pushUndoState(gettext("Route edited"));
 
             r.rP.splice(segmentIndex + 1, 0, { x: insertPoint.x, y: insertPoint.y });
             continuation = r.rP.slice(segmentIndex + 1);
@@ -1754,7 +1754,7 @@ const NewRouteTool = (() => {
     const scheduleDraw = makeRafScheduler(drawPreview);   // PERF-FIX #2
 
     function completeRoute() {
-        pushUndoState("Route created");
+        pushUndoState(gettext("Route created"));
         calcRouteLength(route);
         route.elevation = 0;
         calcRouteNoA(route);
@@ -2408,7 +2408,7 @@ function pushMaskDiff(diff) {
     if (maskUndoStack.length > MASK_UNDO_MAX) maskUndoStack.shift();
     maskRedoStack = [];
     // Mirror into main undo stack so it appears in the dropdown
-    undoStack.push({ label: "Mask edited", isMaskUndo: true });
+    undoStack.push({ label: gettext("Mask edited"), isMaskUndo: true });
     if (undoStack.length > UNDO_MAX) undoStack.shift();
     redoStack = [];
     updateUndoMenu();
@@ -2694,7 +2694,7 @@ const BlockTool = (() => {
         ensureBlockedTerrain();
         const list = target.type === "line" ? project.blocked_terrain.lines : project.blocked_terrain.areas;
         if (!list?.[target.idx]) return false;
-        pushUndoState("Block element deleted");
+        pushUndoState(gettext("Block element deleted"));
         list.splice(target.idx, 1);
         hoverBlockTarget = null;
         drawBlockedTerrain();
@@ -2803,7 +2803,7 @@ const BlockTool = (() => {
             if (!lineStart) {
                 lineStart = { x: pt.x, y: pt.y };
             } else {
-                pushUndoState("Block line added");
+                pushUndoState(gettext("Block line added"));
                 project.blocked_terrain.lines.push({ start: lineStart, end: { x: pt.x, y: pt.y } });
                 lineStart = null;
                 clearEditLayer();
@@ -2814,7 +2814,7 @@ const BlockTool = (() => {
 
         if (S === "polygon") {
             if (polyPoints.length >= 3 && pt === polyPoints[0]) {
-                pushUndoState("Block area added");
+                pushUndoState(gettext("Block area added"));
                 project.blocked_terrain.areas.push({ points: [...polyPoints] });
                 polyPoints = [];
                 clearEditLayer();
@@ -3090,7 +3090,7 @@ const PlaceControlTool = (() => {
                 updateCPList();
             } else {
                 const snapped = _movePointToNearestPassableIfImpassable(snapToControlPoints(pt));
-                pushUndoState(isOverwrite ? "Control redrawn" : "Control created");
+                pushUndoState(isOverwrite ? gettext("Control redrawn") : gettext("Control created"));
                 cp.start = tempStart;
                 cp.ziel  = { x: snapped.x, y: snapped.y };
                 if (!isOverwrite) {
@@ -4726,7 +4726,7 @@ function applyImportedCourses(controlPairs, mode = "append") {
     }
 
     cancelAllPathing();
-    pushUndoState("OCAD course import");
+    pushUndoState(gettext("OCAD course import"));
     if (mode === "replace") {
         project.control_pairs = [];
         selection.ncp = 0;
@@ -5339,8 +5339,8 @@ async function waitForOcadConversion(fileId, uploadGeneration) {
 
         setRasterizingStatus(
             progress.status === "pending"
-                ? gettext("Waiting to rasterize map...")
-                : gettext("Rasterizing map...")
+                ? gettext("Waiting to rasterize map…")
+                : gettext("Rasterizing map…")
         );
         await _sleep(1000);
     }
@@ -6162,7 +6162,7 @@ function initMenus() {
 
     document.getElementById("batch-switch-lr")?.addEventListener("click", () => {
         if (readOnly || !project?.control_pairs?.length) return;
-        pushUndoState("Control types adjusted");
+        pushUndoState(gettext("Control types adjusted"));
         let changed = 0;
         project.control_pairs.forEach(cp => {
             if (cp.complex && cp.routes.length == 2) {
@@ -6180,7 +6180,7 @@ function initMenus() {
 
     document.getElementById("batch-auto-pathfind")?.addEventListener("click", () => {
         if (readOnly || !project?.control_pairs?.length) return;
-        pushUndoState("Batch pathing");
+        pushUndoState(gettext("Batch pathing"));
         const batchTargets = project.control_pairs.filter(cp => (
             cp.start && cp.ziel && project.map_file && _canAutoPathfindCP(cp)
         ));
@@ -6851,7 +6851,7 @@ async function thetaCPClient(cp, source = "editor_auto", options = {}) {
 
     if (gen !== _pathfindGeneration) return { error: "cancelled" };
 
-    pushUndoState("Automatic route");
+    pushUndoState(gettext("Automatic route"));
     _appendRouteObject(cp, candidateRoute, { animate: true });
     selection.nr = cp.routes.length - 1;
     drawRoutes();
@@ -6961,7 +6961,7 @@ function updateCPList() {
                     }
                     return;
                 }
-                pushUndoState("Control type changed");
+                pushUndoState(gettext("Control type changed"));
                 cp.complex = complex;
                 saveControlPair(cp);
                 updateCPList();
@@ -7050,7 +7050,7 @@ function updateCPList() {
                     const parsed = Number(val);
                     route.elevation = (val === "" || isNaN(parsed)) ? 0 : parsed;
                     calcRouteRunTime(route);
-                    pushUndoState("Elevation changed");
+                    pushUndoState(gettext("Elevation changed"));
                     saveRoute(cp, route);
                     updateCPList();
                 });
@@ -7061,7 +7061,7 @@ function updateCPList() {
                     const parsed = Number(val);
                     route.obstacle = (val === "" || isNaN(parsed)) ? 0 : parsed;
                     calcRouteRunTime(route);
-                    pushUndoState("Obstacle changed");
+                    pushUndoState(gettext("Obstacle changed"));
                     saveRoute(cp, route);
                     updateCPList();
                 });
@@ -7230,7 +7230,7 @@ function onCPDragEnd() {
     arr.splice(insertIndex, 0, cp);
     arr.forEach((c, i) => { c.order = i; });
 
-    if (fromIndex !== insertIndex) pushUndoState("Control order changed");
+    if (fromIndex !== insertIndex) pushUndoState(gettext("Control order changed"));
 
     // Bulk-reorder atomically (sequential saves would clash on the unique constraint)
     const orderPairs = arr.filter(c => c.id).map(c => ({ db_id: c.id, order: c.order }));

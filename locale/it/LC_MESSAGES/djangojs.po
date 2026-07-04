@@ -39,11 +39,17 @@ msgstr "Ai punti Sinistra/Destra, tocca direttamente i pulsanti o il percorso ne
 msgid "Author"
 msgstr "Autore"
 
+msgid "Automatic route"
+msgstr "Percorso automatico"
+
 msgid "Autosave is not finished yet. Please stay on the page."
 msgstr "L'autosave non è ancora finito. Rimani sulla pagina."
 
 msgid "Back one anchor"
 msgstr "Ancoraggio indietro"
+
+msgid "Batch pathing"
+msgstr "Calcolo automatico dei percorsi"
 
 msgid "Block area added"
 msgstr "Area vietata aggiunta"
@@ -249,6 +255,9 @@ msgstr "Sinistra/Destra"
 msgid "Line"
 msgstr "Linea"
 
+msgid "Loaded"
+msgstr "Caricato"
+
 msgid "Loading athletes…"
 msgstr "Caricamento atleti…"
 
@@ -327,17 +336,20 @@ msgstr "Nessuna versione"
 msgid "OCAD analysis failed."
 msgstr "Analisi OCAD non riuscita."
 
-msgid "OCAD course aligned"
-msgstr "OCAD course import"
+msgid "OCAD conversion failed."
+msgstr "Conversione OCAD non riuscita."
+
+msgid "OCAD conversion status failed."
+msgstr "Impossibile recuperare lo stato della conversione OCAD."
+
+msgid "OCAD conversion timed out."
+msgstr "Tempo scaduto per la conversione OCAD."
 
 msgid "OCAD course import"
-msgstr "OCAD course import"
+msgstr "Importazione del percorso OCAD"
 
 msgid "OCAD course import failed."
 msgstr "Importazione del percorso OCAD non riuscita."
-
-msgid "OCAD course imported"
-msgstr "OCAD course import"
 
 msgid "Obstacle changed"
 msgstr "Ostacolo modificato"
@@ -383,6 +395,9 @@ msgstr "Sola lettura:"
 
 msgid "Ready?"
 msgstr "Pronto?"
+
+msgid "Redo"
+msgstr "Ripristina"
 
 msgid "Reload"
 msgstr "Ricarica"
@@ -540,6 +555,9 @@ msgstr "Annulla pubblicazione"
 msgid "Upload failed."
 msgstr "Upload non riuscito."
 
+msgid "Waiting to rasterize map…"
+msgstr "In attesa della rasterizzazione…"
+
 msgid "You"
 msgstr "Tu"
 
@@ -551,9 +569,6 @@ msgstr "Puoi ingrandire con la rotellina del mouse o il trackpad."
 
 msgid "You have 0.5s to decide; after that every extra second counts fivefold!"
 msgstr "Hai 0,5 s per decidere; dopodiché ogni secondo in più conta cinque volte!"
-
-msgid "automatic route"
-msgstr "percorso automatico"
 
 msgid "current streak"
 msgstr "serie attuale"

@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.contrib import admin
 from django.urls import path, include
 
@@ -50,3 +51,10 @@ urlpatterns = [
 
     path('favicon.ico', RedirectView.as_view(url='/static/favicon.ico', permanent=True)),
 ]
+
+# DEBUG-only: one-request agent login (see CLAUDE.md). Registered conditionally
+# so the route does not exist at all on deployed instances (DEBUG=False).
+if settings.DEBUG:
+    urlpatterns.append(
+        path('dev/agent-login/', login_not_required(views.dev_agent_login), name='dev_agent_login')
+    )

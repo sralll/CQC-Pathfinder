@@ -204,8 +204,8 @@ msgstr "Identifiants incorrects"
 msgid "Italiano"
 msgstr "Italien"
 
-msgid "June 2026: Version 2.0"
-msgstr "Juin 2026 : version 2.0"
+msgid "July 2026: Version 2.1"
+msgstr "Juillet 2026 : version 2.1"
 
 msgid "Label already exists"
 msgstr "Ce label existe déjà"
@@ -287,6 +287,9 @@ msgstr "L'analyse OCAD a échoué : %(error)s"
 
 msgid "OCAD conversion failed: %(error)s"
 msgstr "La conversion OCAD a échoué : %(error)s"
+
+msgid "OCAD conversion stopped before it finished. Please upload the file again."
+msgstr "La conversion OCAD s'est interrompue avant la fin. Téléverse à nouveau le fichier."
 
 msgid "OCAD course import failed: %(error)s"
 msgstr "L'import du parcours OCAD a échoué : %(error)s"

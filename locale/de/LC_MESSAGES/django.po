@@ -204,8 +204,8 @@ msgstr "Falsche Benutzerdaten"
 msgid "Italiano"
 msgstr "Italienisch"
 
-msgid "June 2026: Version 2.0"
-msgstr "Juni 2026: Version 2.0"
+msgid "July 2026: Version 2.1"
+msgstr "Juli 2026: Version 2.1"
 
 msgid "Label already exists"
 msgstr "Label existiert bereits"
@@ -287,6 +287,9 @@ msgstr "OCAD-Analyse fehlgeschlagen: %(error)s"
 
 msgid "OCAD conversion failed: %(error)s"
 msgstr "OCAD-Konvertierung fehlgeschlagen: %(error)s"
+
+msgid "OCAD conversion stopped before it finished. Please upload the file again."
+msgstr "Die OCAD-Konvertierung wurde vorzeitig abgebrochen. Bitte die Datei erneut hochladen."
 
 msgid "OCAD course import failed: %(error)s"
 msgstr "OCAD-Bahn-Import fehlgeschlagen: %(error)s"

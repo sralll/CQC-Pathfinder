@@ -1,8 +1,9 @@
 from django.conf import settings
-from django.contrib.auth import logout
+from django.contrib.auth import login, logout
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.views import LoginView
 from django.core.cache import cache
+from django.http import Http404
 from django.shortcuts import redirect, render
 from django.utils import translation
 from django.views.decorators.http import require_POST
@@ -70,6 +71,26 @@ class LocaleLoginView(LoginView):
                 samesite=settings.LANGUAGE_COOKIE_SAMESITE,
             )
         return response
+
+
+def dev_agent_login(request):
+    """One-request login for AI agents in local dev. See CLAUDE.md.
+
+    GET /dev/agent-login/[?next=/path/] provisions the agent test account
+    (Trainer role) and starts a session — no form, no CSRF, immune to the
+    nightly staging reseed. The URL is only registered when DEBUG=True
+    (see urls.py); the guard below is defense in depth in case the view is
+    ever wired up elsewhere.
+    """
+    if not settings.DEBUG:
+        raise Http404
+    from account.dev import ensure_agent_user
+    user = ensure_agent_user()
+    login(request, user, backend='django.contrib.auth.backends.ModelBackend')
+    next_url = request.GET.get('next', '/')
+    if not next_url.startswith('/') or next_url.startswith('//'):
+        next_url = '/'
+    return redirect(next_url)
 
 
 @login_required
