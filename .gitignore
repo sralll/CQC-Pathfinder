@@ -30,6 +30,4 @@ changes.txt
 
 *.ocd
 
-reference/
-
-*.md
+CLAUDE.md
