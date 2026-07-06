@@ -12,6 +12,7 @@ let activeLabelFilter = null;
 let activeAuthorFilters = [];
 let activeTeamFilters = [];
 let activePublishFilter = null;
+let activeInfinityFilter = null;
 let sortState = { key: "last_edited", dir: -1 };
 
 /* =========================================================
@@ -97,6 +98,12 @@ function renderTableHeader() {
                     <span class="active-filter-icon">${icon("filter", "0.8em")}</span>
                 </span>
             </th>
+            <th class="col-infinity">
+                <span class="filterable" id="infinity-filter-btn" title="${gettext('Infinite play')}">
+                    ${icon("infinity", "0.9em")}
+                    <span class="active-filter-icon">${icon("filter", "0.8em")}</span>
+                </span>
+            </th>
             <th class="col-name" data-sort="name">
                 <span class="sortable">${gettext("Project")} <span id="sort-name" class="sort-indicator"></span></span>
             </th>
@@ -142,6 +149,7 @@ function attachHeaderEvents() {
         el.onclick = () => setSort(el.dataset.sort);
     });
     document.getElementById("publish-filter-btn")?.addEventListener("click", togglePublishFilter);
+    document.getElementById("infinity-filter-btn")?.addEventListener("click", toggleInfinityFilter);
     document.getElementById("label-filter-btn")?.addEventListener("click", toggleLabelFilter);
     document.getElementById("author-filter-btn")?.addEventListener("click", toggleAuthorFilter);
     document.getElementById("team-filter-btn")?.addEventListener("click", toggleTeamFilter);
@@ -213,7 +221,8 @@ function applyFilters() {
         const matchesAuthor = activeAuthorFilters.length === 0 || activeAuthorFilters.includes((f.author || "").trim());
         const matchesTeam = activeTeamFilters.length === 0 || activeTeamFilters.includes((f.team_name || "").trim());
         const matchesPublish = activePublishFilter === null || (activePublishFilter === true ? !!f.published : !f.published);
-        return matchesSearch && matchesLabel && matchesAuthor && matchesTeam && matchesPublish;
+        const matchesInfinity = activeInfinityFilter === null || (activeInfinityFilter === true ? !!f.infinite_enabled : !f.infinite_enabled);
+        return matchesSearch && matchesLabel && matchesAuthor && matchesTeam && matchesPublish && matchesInfinity;
     });
     filteredFiles = applySorting(filteredFiles);
     table.setFiles(filteredFiles);
@@ -262,6 +271,45 @@ window.setPublishFilter = function(val) {
     applyFilters(); renderPublishFilterDropdown();
 };
 window.clearPublishFilter = function() { activePublishFilter = null; applyFilters(); closeAllFilters(); };
+
+/* =========================================================
+    INFINITY FILTER  (mirrors the publish filter)
+========================================================= */
+
+function toggleInfinityFilter(event) {
+    const dropdown = document.getElementById("infinity-filter-dropdown");
+    if (dropdown.classList.contains("open")) { dropdown.classList.remove("open"); return; }
+    closeAllFilters();
+    renderInfinityFilterDropdown();
+    positionFilterDropdown(dropdown, event.currentTarget);
+    dropdown.classList.add("open");
+}
+
+function renderInfinityFilterDropdown() {
+    const dropdown = document.getElementById("infinity-filter-dropdown");
+    dropdown.innerHTML = `
+        <div class="filter-clear">
+            <div class="filter-clear-left" onclick="event.stopPropagation(); clearInfinityFilter()"><b>${gettext('All')}</b></div>
+            <button class="filter-close-btn" onclick="event.stopPropagation(); closeAllFilters()" type="button"><x-icon name="xmark" size="1em"></x-icon></button>
+        </div>
+        <div class="filter-options-list">
+            <div class="filter-option" onclick="event.stopPropagation(); setInfinityFilter(true)">
+                ${gettext('Infinite play on')}
+                ${activeInfinityFilter === true ? icon("square-check") : icon("square")}
+            </div>
+            <div class="filter-option" onclick="event.stopPropagation(); setInfinityFilter(false)">
+                ${gettext('Infinite play off')}
+                ${activeInfinityFilter === false ? icon("square-check") : icon("square")}
+            </div>
+        </div>
+    `;
+}
+
+window.setInfinityFilter = function(val) {
+    activeInfinityFilter = activeInfinityFilter === val ? null : val;
+    applyFilters(); renderInfinityFilterDropdown();
+};
+window.clearInfinityFilter = function() { activeInfinityFilter = null; applyFilters(); closeAllFilters(); };
 
 /* =========================================================
     LABEL FILTER
@@ -403,6 +451,7 @@ function getAllAuthors() {
 
 function updateFilterIcons() {
     document.querySelector(".col-publish .active-filter-icon")?.classList.toggle("active", activePublishFilter !== null);
+    document.querySelector(".col-infinity .active-filter-icon")?.classList.toggle("active", activeInfinityFilter !== null);
     document.querySelector(".col-author .active-filter-icon")?.classList.toggle("active", activeAuthorFilters.length > 0);
     document.querySelector(".col-label .active-filter-icon")?.classList.toggle("active", !!activeLabelFilter);
     document.querySelector(".col-team .active-filter-icon")?.classList.toggle("active", activeTeamFilters.length > 0);
@@ -442,6 +491,7 @@ function clearSearch() {
     activeAuthorFilters = [];
     activeTeamFilters = [];
     activePublishFilter = null;
+    activeInfinityFilter = null;
     sortState = { key: "last_edited", dir: -1 };
     applyFilters();
 }
@@ -450,7 +500,7 @@ function updateClearButton() {
     const input = document.getElementById("project-search");
     const clearBtn = document.querySelector(".search-clear");
     const hasSearch = !!input.value.trim();
-    const hasFilters = activeLabelFilter !== null || activeAuthorFilters.length > 0 || activeTeamFilters.length > 0 || activePublishFilter !== null;
+    const hasFilters = activeLabelFilter !== null || activeAuthorFilters.length > 0 || activeTeamFilters.length > 0 || activePublishFilter !== null || activeInfinityFilter !== null;
     clearBtn.classList.toggle("visible", hasSearch || hasFilters);
 }
 
@@ -530,6 +580,14 @@ function renderCards() {
                 ? `<span class="file-card-publish file-card-publish-active file-card-publish-disabled">${icon("globe", "1em")}</span>`
                 : '');
 
+        const infinityBtn = f.can_edit && !f.is_locked && f.has_mask
+            ? `<button class="file-card-publish infinity-card-btn ${f.infinite_enabled ? 'file-card-publish-active' : ''}"
+                       title="${f.infinite_enabled ? gettext('Infinite play is on — click to turn off') : gettext('Turn on infinite play for this map')}"
+                       data-infinity-id="${f.id}">${icon("infinity", "1em")}</button>`
+            : (f.infinite_enabled
+                ? `<span class="file-card-publish file-card-publish-active file-card-publish-disabled">${icon("infinity", "1em")}</span>`
+                : '');
+
         const labelHtml = f.label
             ? `<span style="background:${f.label.color}22;color:${f.label.color};
                 border:1px solid ${f.label.color}55;border-radius:3px;
@@ -551,6 +609,7 @@ function renderCards() {
         card.innerHTML = `
             <div class="file-card-row1">
                 ${publishBtn}
+                ${infinityBtn}
                 <span class="file-card-name">${f.name}</span>
                 <span class="file-card-cp">${f.cp_count} ${f.cp_count === 1 ? gettext('Control') : gettext('Controls')}</span>
             </div>
@@ -582,6 +641,54 @@ function renderCards() {
                 }
                 renderCards();
                 table.setFiles(filteredFiles);
+            });
+        }
+
+        const infEl = card.querySelector('.infinity-card-btn[data-infinity-id]');
+        if (infEl) {
+            infEl.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                const desired = !f.infinite_enabled;
+                const res  = await fetch(`/editor/toggle-infinite/${f.id}/`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCSRFToken() },
+                    body: JSON.stringify({ enabled: desired }),
+                });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok || data.error) {
+                    await showModal({ message: data.error || gettext('Could not enable infinite play.') });
+                    return;
+                }
+                if (!desired) {                         // retreat — instant
+                    f.infinite_enabled = false;
+                    if (f.id === project?.id) { project.infinite_enabled = false; window.updateNavInfinityBtn?.(); }
+                    renderCards();
+                    table.setFiles(filteredFiles);
+                    return;
+                }
+                if (data.status !== 'building') return;
+                // Release — navgraph build in background; spin until done, then ripple.
+                infEl.innerHTML = `<x-icon name="spinner" class="spin" size="1em"></x-icon>`;
+                const fileId = f.id;
+                const tick = async () => {
+                    try {
+                        const r = await fetch(`/editor/region-build-status/${fileId}/`);
+                        const p = (await r.json()).progress;
+                        if (!p || p.status === 'building') { setTimeout(tick, 1500); return; }
+                        if (p.status === 'done') {
+                            f.infinite_enabled = true;
+                            if (fileId === project?.id) { project.infinite_enabled = true; window.updateNavInfinityBtn?.(); }
+                            renderCards();
+                            table.setFiles(filteredFiles);
+                            const nb = document.querySelector(`.infinity-card-btn[data-infinity-id="${fileId}"]`);
+                            if (nb) window.emitPublishWave?.(nb);
+                        } else {
+                            infEl.innerHTML = icon('infinity', '1em');
+                            await showModal({ message: p.error || gettext('Building the map failed.') });
+                        }
+                    } catch (e2) { setTimeout(tick, 2500); }
+                };
+                setTimeout(tick, 1200);
             });
         }
 
@@ -634,6 +741,12 @@ function renderMobileControls() {
     publishBtn.innerHTML = icon('globe', '1em');
     publishBtn.addEventListener('click', e => { e.stopPropagation(); togglePublishFilter(e); });
     filterRow.appendChild(publishBtn);
+
+    const infinityFilterBtn = document.createElement('button');
+    infinityFilterBtn.className = 'file-ctrl-btn' + (activeInfinityFilter !== null ? ' active' : '');
+    infinityFilterBtn.innerHTML = icon('infinity', '1em');
+    infinityFilterBtn.addEventListener('click', e => { e.stopPropagation(); toggleInfinityFilter(e); });
+    filterRow.appendChild(infinityFilterBtn);
 
     const filterFields = [
         { field: 'label',  label: gettext('Label'),  toggle: toggleLabelFilter  },

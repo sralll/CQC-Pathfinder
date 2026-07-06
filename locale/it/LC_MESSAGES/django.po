@@ -18,6 +18,9 @@ msgstr "Una sensibilità negativa significa che le tue scelte di percorso divent
 msgid "A positive sensitivity means you intuitively make the right decision and thinking longer does not help you compared to other athletes."
 msgstr "Una sensibilità positiva significa che prendi intuitivamente la decisione giusta e che riflettere più a lungo non ti aiuta rispetto agli altri atleti."
 
+msgid "A region needs at least 3 points."
+msgstr "Una regione richiede almeno 3 punti."
+
 msgid "Activity"
 msgstr "Attività"
 
@@ -48,11 +51,20 @@ msgstr "Auto-Pathfind"
 msgid "Auto-Pathfind routes"
 msgstr "Percorsi Auto-Pathfind"
 
+msgid "Auto-suggest"
+msgstr "Suggerisci automaticamente"
+
 msgid "Average decision time"
 msgstr "Tempo di decisione medio"
 
 msgid "Average route-choice error"
 msgstr "Errore medio di scelta del percorso"
+
+msgid "Avg. retries"
+msgstr "Tentativi medi"
+
+msgid "Avg. time"
+msgstr "Tempo medio"
 
 msgid "Back to forum"
 msgstr "Torna al forum"
@@ -126,6 +138,18 @@ msgstr "Tedesco"
 msgid "Distance"
 msgstr "Distanza"
 
+msgid "Done"
+msgstr "Fatto"
+
+msgid "Drag points to move · click an edge to add · right-click or Del to remove"
+msgstr "Trascina i punti per spostare · clicca un bordo per aggiungere · tasto destro o Canc per rimuovere"
+
+msgid "Draw a map region before enabling infinite play."
+msgstr "Disegna una regione della mappa prima di abilitare la modalità infinita."
+
+msgid "Draw and save a map region before enabling infinite play."
+msgstr "Disegna e salva una regione della mappa prima di abilitare la modalità infinita."
+
 msgid "Drop map here"
 msgstr "Trascina qui la mappa"
 
@@ -135,8 +159,17 @@ msgstr "Duplica"
 msgid "Edit"
 msgstr "Modifica"
 
+msgid "Edit map region"
+msgstr "Modifica regione mappa"
+
+msgid "Edit points"
+msgstr "Modifica punti"
+
 msgid "Editor"
 msgstr "Editor"
+
+msgid "Enable infinite play"
+msgstr "Abilita modalità infinita"
 
 msgid "English"
 msgstr "Inglese"
@@ -189,6 +222,9 @@ msgstr "Includi i risultati di allenamento"
 msgid "Infinity"
 msgstr "Infinity"
 
+msgid "Infinity Mode"
+msgstr "Modalità infinita"
+
 msgid "Information about error potential detection"
 msgstr "Informazioni sul rilevamento del potenziale di errore"
 
@@ -201,11 +237,17 @@ msgstr "Colore non valido"
 msgid "Invalid credentials"
 msgstr "Credenziali non valide"
 
+msgid "Invalid region point."
+msgstr "Punto della regione non valido."
+
 msgid "Italiano"
 msgstr "Italiano"
 
 msgid "July 2026: Version 2.1"
 msgstr "Luglio 2026: versione 2.1"
+
+msgid "Keep the selection tight and well inside the map edge, so generated routes can never run around the map."
+msgstr "Mantieni la selezione stretta e ben all'interno del bordo della mappa, così i percorsi generati non possano mai aggirare la mappa."
 
 msgid "Label already exists"
 msgstr "Label già esistente"
@@ -233,6 +275,9 @@ msgstr "Mappa"
 
 msgid "Map too large for the neural network. Check the scale."
 msgstr "La mappa è troppo grande per la rete neurale. Controlla la scala."
+
+msgid "Mark the area athletes may be sent between. Start from the four map corners and drag them inward."
+msgstr "Segna l'area entro cui gli atleti possono essere inviati. Parti dai quattro angoli della mappa e trascinali verso l'interno."
 
 msgid "Measure the distance"
 msgstr "Misura la distanza"
@@ -339,6 +384,9 @@ msgstr "Pubblica"
 msgid "Recent actions"
 msgstr "Azioni recenti"
 
+msgid "Remove point"
+msgstr "Rimuovi punto"
+
 msgid "Reply"
 msgstr "Rispondi"
 
@@ -359,6 +407,12 @@ msgstr "Percorsi"
 
 msgid "Save"
 msgstr "Salva"
+
+msgid "Save a map region first"
+msgstr "Salva prima una regione della mappa"
+
+msgid "Save region"
+msgstr "Salva regione"
 
 msgid "Scale"
 msgstr "Scala"
@@ -408,8 +462,20 @@ msgstr "Il rilevamento del potenziale di errore mostra quanto reagisci quando un
 msgid "The first attempt of a project in competition mode is listed in the ranking. The decision time and the extra time for non-ideal routes are measured."
 msgstr "Il primo tentativo di un progetto in modalità gara compare in classifica. Vengono misurati il tempo di decisione e il tempo aggiuntivo per i percorsi non ottimali."
 
+msgid "The region still covers the whole map. Tighten it inward so routes cannot go around the map."
+msgstr "La regione copre ancora l'intera mappa. Restringila verso l'interno così i percorsi non possono aggirare la mappa."
+
 msgid "This analysis should be taken with caution."
 msgstr "Questa analisi va presa con cautela."
+
+msgid "This map has no mask yet."
+msgstr "Questa mappa non ha ancora una maschera."
+
+msgid "This map will be ready for infinity mode soon…"
+msgstr "Questa mappa sarà presto pronta per la modalità infinita…"
+
+msgid "This region may struggle to generate pairs reliably — consider drawing a tighter or more structured region."
+msgstr "Questa regione potrebbe avere difficoltà a generare coppie in modo affidabile — valuta di disegnare una regione più ristretta o più strutturata."
 
 msgid "Time"
 msgstr "Tempo"
@@ -447,6 +513,9 @@ msgstr "Allenamento"
 msgid "Training mode"
 msgstr "Modalità allenamento"
 
+msgid "Turn on infinite play for this map"
+msgstr "Attiva la modalità infinita per questa mappa"
+
 msgid "Unknown"
 msgstr "Sconosciuto"
 
@@ -461,6 +530,9 @@ msgstr "Upvote"
 
 msgid "Username"
 msgstr "Nome utente"
+
+msgid "Valid rate"
+msgstr "Tasso di validità"
 
 msgid "View"
 msgstr "Vista"
@@ -479,6 +551,12 @@ msgstr "risposta"
 
 msgid "answers"
 msgstr "risposte"
+
+msgid "click a point to delete it (at least 3 remain)."
+msgstr "clicca un punto per eliminarlo (ne restano almeno 3)."
+
+msgid "drag a corner to move it, or click an edge to add a point."
+msgstr "trascina un angolo per spostarlo, o clicca un bordo per aggiungere un punto."
 
 msgid "e.g. 1234 m"
 msgstr "es. 1234 m"

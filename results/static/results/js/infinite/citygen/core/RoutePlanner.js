@@ -17,7 +17,6 @@ const ROUTE_INSIGNIFICANT_BARRIER_KINDS = new Set(['hedge']);
 
 const ROUTE_LATERAL_ASTAR_OPTIONS = { maxStartGoalPerpendicularFactor: 1 };
 const ROUTE_ASTAR_OPTIONS = ROUTE_LATERAL_ASTAR_OPTIONS;
-const ROUTE_EXTRA_ASTAR_OPTIONS = { ...ROUTE_ASTAR_OPTIONS, timeBudgetMs: 200 };
 const ROUTE_MANUAL_ASTAR_OPTIONS = ROUTE_LATERAL_ASTAR_OPTIONS;
 
 export const ROUTE_STRESS_ALTERNATE_ATTEMPTS = 4;
@@ -208,7 +207,17 @@ function failedRoute(reason, paths, selected, extras) {
 	};
 }
 
-export function computeRouteOptions(startPt, goalPt, visGraph) {
+export function computeRouteOptions(startPt, goalPt, visGraph, options = {}) {
+	// How many routes to explore (each after the first is forced around the
+	// previous route's barrier). Defaults to the production value.
+	const maxRoutes = Number.isFinite(options.maxRoutes) && options.maxRoutes > 0
+		? Math.trunc(options.maxRoutes)
+		: ROUTE_STRESS_ALTERNATE_ATTEMPTS;
+	// A* time budgets. A route whose search exceeds its budget times out and is
+	// dropped ("kicked"). `null` = no budget (current default for the first two
+	// routes). Extras default to 200ms, matching current production.
+	const primaryBudgetMs = Number.isFinite(options.primaryBudgetMs) ? options.primaryBudgetMs : null;
+	const extraBudgetMs = Number.isFinite(options.extraBudgetMs) ? options.extraBudgetMs : 200;
 	const t0 = performance.now();
 	if (!visGraph) return {
 		ok: false,
@@ -232,8 +241,13 @@ export function computeRouteOptions(startPt, goalPt, visGraph) {
 	let timeout = false;
 	let lateralRejected = false;
 
-	for (let attempt = 0; attempt < ROUTE_STRESS_ALTERNATE_ATTEMPTS; attempt++) {
-		const astarOptions = attempt >= 2 ? ROUTE_EXTRA_ASTAR_OPTIONS : ROUTE_ASTAR_OPTIONS;
+	for (let attempt = 0; attempt < maxRoutes; attempt++) {
+		// First two routes get the primary budget; every extra route gets the
+		// smaller one.
+		const budgetMs = attempt < 2 ? primaryBudgetMs : extraBudgetMs;
+		const astarOptions = budgetMs != null
+			? { ...ROUTE_ASTAR_OPTIONS, timeBudgetMs: budgetMs }
+			: ROUTE_ASTAR_OPTIONS;
 		const result = visGraph.astar(startPt, goalPt, astarOptions);
 		if (visGraph.lastAstarTimedOut) timeout = true;
 		if (!result && visGraph.lastAstarRejectedByLateralLimit) lateralRejected = true;
@@ -242,7 +256,7 @@ export function computeRouteOptions(startPt, goalPt, visGraph) {
 		const len = routePathLength(path);
 		const pathRecord = { path, len, routeIndex: attempt + 1, attemptIndex: attempt + 1, barrier: null };
 		paths.push(pathRecord);
-		if (attempt >= ROUTE_STRESS_ALTERNATE_ATTEMPTS - 1) break;
+		if (attempt >= maxRoutes - 1) break;
 		const barrier = findSmartBarrier(path, visGraph);
 		if (!barrier) break;
 		barrier.attemptIndex = attempt + 1;

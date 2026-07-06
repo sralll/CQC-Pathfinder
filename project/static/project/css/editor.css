@@ -118,6 +118,24 @@ html, body {
 .nav-publish-btn.publish-btn-active:hover { color: var(--brand-hover); }
 .nav-publish-btn:disabled { opacity: 0.25; cursor: default; pointer-events: none; }
 
+/* Navbar infinity toggle (left of Publish) */
+.nav-infinity-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 3px 5px;
+    border-radius: 4px;
+    color: #555;
+    display: flex;
+    align-items: center;
+    transition: color 0.15s, background 0.15s;
+}
+.nav-infinity-btn:hover { color: #888; background: #1e1e1e; }
+.nav-infinity-btn.infinity-btn-active { color: var(--brand); }
+.nav-infinity-btn.infinity-btn-active:hover { color: var(--brand-hover); }
+.nav-infinity-btn.infinity-btn-building { color: var(--brand); }
+.nav-infinity-btn:disabled { opacity: 0.25; cursor: default; pointer-events: none; }
+
 /* Navbar label slot */
 .nav-label-slot {
     cursor: pointer;
@@ -640,7 +658,8 @@ body.mobile .search-wrapper:focus-within .search-clear.visible {
 }
 
 /* Centre the square button vertically in its table cell */
-.col-publish {
+.col-publish,
+.col-infinity {
     text-align: center;
     vertical-align: middle;
 }
@@ -818,6 +837,7 @@ body.mobile .search-wrapper:focus-within .search-clear.visible {
 #file-table.hide-team-column .col-team { display: none; }
 
 .col-publish  { width: 40px; }
+.col-infinity { width: 40px; }
 .col-cp       { width: 70px; }
 .col-history  { width: 40px; }
 .col-date     { width: 145px; }
@@ -1134,7 +1154,8 @@ x-icon.spin svg { animation: spin 1s linear infinite; }
    MASK GENERATION PROGRESS BAR
 ========================================================= */
 
-#mask-gen-bar {
+#mask-gen-bar,
+#infinity-gen-bar {
     position: absolute;
     top: 14px;
     left: 50%;
@@ -1151,6 +1172,15 @@ x-icon.spin svg { animation: spin 1s linear infinite; }
     gap: 10px;
     font-size: 12px;
     color: #ccc;
+}
+
+/* Infinity-mode "map is being prepared" box reuses the mask-gen box chrome. */
+.infinity-gen-text {
+    font-size: 11px;
+    color: #aaa;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 #mask-gen-content {
@@ -1881,6 +1911,137 @@ x-icon.spin svg { animation: spin 1s linear infinite; }
 }
 
 .mask-slider-row input[type="range"]:active { cursor: grabbing; }
+
+/* --- Infinity map region editor (WP 4.1) ------------------------------- */
+.region-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 6px;
+    padding-top: 8px;
+    border-top: 1px solid #2e2e2e;
+}
+.region-panel-row {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+.region-btn {
+    flex: 1;
+    min-height: 30px;
+    padding: 6px 10px;
+    font-size: 14px;
+    color: #eee;
+    background: var(--brand, #e07020);
+    border: 1px solid transparent;
+    border-radius: 5px;
+    cursor: pointer;
+    white-space: nowrap;
+}
+.region-btn:hover { filter: brightness(1.08); }
+.region-btn:disabled { opacity: .5; cursor: default; }
+.region-btn-ghost {
+    background: #1d1d1d;
+    border-color: #2e2e2e;
+    color: #ccc;
+}
+.region-edit-tools {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.region-hint {
+    font-size: 12px;
+    line-height: 1.35;
+    color: #888;
+}
+.region-status {
+    font-size: 13px;
+    color: #9ac;
+    min-height: 16px;
+}
+.region-status.region-status-error { color: #ff6666; }
+
+/* --- Infinity tool-mode side panel ------------------------------------ */
+.infinity-title {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+    color: #eee;
+}
+.infinity-explain {
+    margin: 0;
+    font-size: 13px;
+    line-height: 1.45;
+    color: #bbb;
+}
+.infinity-explain-list {
+    margin: 0;
+    padding-left: 18px;
+    font-size: 13px;
+    line-height: 1.5;
+    color: #bbb;
+}
+.infinity-explain-list b { color: #eee; }
+.infinity-warn-hint {
+    margin: 0;
+    padding: 8px 10px;
+    font-size: 12px;
+    line-height: 1.45;
+    color: #ffb347;
+    background: rgba(255, 179, 71, 0.1);
+    border: 1px solid rgba(255, 179, 71, 0.35);
+    border-radius: 5px;
+}
+.region-btn.region-active {
+    background: var(--brand, #e07020);
+    color: #fff;
+}
+
+/* --- Infinity play opt-in toggle (WP 4.2) ------------------------------ */
+.region-infinite-row {
+    align-items: center;
+    gap: 10px;
+    padding-top: 4px;
+    border-top: 1px solid #2e2e2e;
+}
+.region-infinite-label {
+    font-size: 14px;
+    color: #eee;
+}
+#infinite-toggle-label.toggle-switch:has(input:disabled) {
+    cursor: default;
+    opacity: .5;
+}
+
+/* --- Suitability report (WP 4.3) --------------------------------------- */
+.suitability-report {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-top: 2px;
+    padding-top: 8px;
+    border-top: 1px solid #2e2e2e;
+}
+.suitability-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    font-size: 13px;
+}
+.suitability-label { color: #999; }
+.suitability-value { color: #eee; font-variant-numeric: tabular-nums; }
+.suitability-value.suitability-value-warn { color: #ffb347; }
+.suitability-warning {
+    margin-top: 4px;
+    padding: 6px 8px;
+    font-size: 12px;
+    line-height: 1.4;
+    color: #ffb347;
+    background: rgba(255, 179, 71, 0.1);
+    border: 1px solid rgba(255, 179, 71, 0.35);
+    border-radius: 5px;
+}
 
 .cp-add-btn {
     width: 100%;

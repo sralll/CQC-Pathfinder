@@ -88,8 +88,51 @@ def tutorial_complete(request):
 
 @login_required
 def infinite_play(request):
-    """Procedurally-generated single-obstacle scenarios."""
+    """Procedurally-generated single-obstacle scenarios (city mode), or —
+    when ?source=mask&file=<id> is passed — infinite play on a real uploaded
+    map mask via the server-built navgraph (WP 3.x)."""
     return render(request, 'results/infinite_play.html')
+
+
+@login_required
+@require_GET
+def infinite_mask_maps(request):
+    """List maps opted in to infinite play (`File.infinite_enabled=True`)
+    that also have a navgraph artifact on disk (the opt-in toggle triggers a
+    rebuild, but this existence check keeps the picker from ever offering a
+    map whose build hasn't finished/failed). Team-scoped exactly like the
+    existing map-serving endpoints."""
+    import os
+    from django.conf import settings
+
+    try:
+        active_team = request.user.profile.active_team
+    except Exception:
+        active_team = None
+
+    qs = File.objects.filter(deleted=False, infinite_enabled=True).exclude(map_file='')
+    if not request.user.is_superuser:
+        if not active_team:
+            return JsonResponse({'maps': []})
+        if active_team.shared_pool:
+            qs = qs.filter(Q(team=active_team) | Q(team__shared_pool=True)).distinct()
+        else:
+            qs = qs.filter(team=active_team)
+    qs = qs.select_related('team').order_by('-last_edited')
+
+    masks_dir = os.path.join(settings.MEDIA_ROOT, 'masks')
+    maps = []
+    for f in qs:
+        stem, _ext = os.path.splitext(f.map_file)
+        bin_path = os.path.join(masks_dir, f'mask_{stem}.navgraph.bin')
+        if not os.path.isfile(bin_path):
+            continue
+        maps.append({
+            'id': f.id,
+            'filename': f.map_file,
+            'name': f.name or f.map_file,
+        })
+    return JsonResponse({'maps': maps})
 
 
 def _infinite_choice_count_for_user(user):

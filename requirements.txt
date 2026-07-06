@@ -26,9 +26,14 @@ resvg_py==0.3.2  # project app: OCAD SVG-to-PNG rendering
 Pillow==11.2.1  # project app: OCAD rendering and UNet image handling
 numpy==2.2.4  # project app: UNet mask generation arrays
 onnxruntime==1.22.0  # project app: UNet model inference
-# scipy==1.14.1  # no direct import found after UNet dilation moved to numpy
+scipy==1.15.3  # project app: navgraph builder (labels, distance transform)
+scikit-image==0.26.0  # project app: navgraph builder (skeletonize)
 
 # Pinned transitive dependencies of the packages above.
+networkx==3.4.2  # scikit-image dependency
+imageio==2.37.3  # scikit-image dependency
+tifffile==2026.6.1  # scikit-image dependency
+lazy_loader==0.5  # scikit-image dependency
 urllib3==2.4.0  # botocore dependency
 python-dateutil==2.9.0.post0  # botocore dependency
 six==1.17.0  # python-dateutil dependency

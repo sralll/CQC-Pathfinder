@@ -40,6 +40,57 @@ const CITY_SETTINGS = {
     gates: -1,
 };
 
+// Balance reject (route-choice difficulty tuning).
+//
+// The two served routes are always the closest pair in runtime. When they are
+// *too* close the fastest choice is essentially a coin-flip and does not train
+// the player's route-choice skill. `probability` is the chance we reject an
+// otherwise-valid problem whose runtime relative gap is within `maxRelativeGap`
+// and retry with new endpoints — this shifts the served distribution toward
+// clearer left/right decisions without dropping to fewer explored routes.
+//
+// TUNE HERE:
+//   maxRelativeGap — the "within X%" band that counts as too balanced (0.05 = 5%).
+//   probability    — reject chance inside that band (0 disables; 1 removes the
+//                    band entirely). Uses the per-batch seeded RNG so a given
+//                    seed stays reproducible.
+//
+// This object is mutable so scripts/balance_harness.mjs can sweep it; edit the
+// defaults below to change production behaviour.
+export const balanceRejectConfig = {
+    maxRelativeGap: 0.05,
+    probability: 0.8,
+};
+
+// Route-selection strategy (experimental — see scripts/selection_harness.mjs).
+//
+//   'closest'  — production default. Serve the two routes with the SMALLEST
+//                runtime gap (subject to balanceRejectConfig).
+//   'extremes' — serve the geographic extremes: the left-most route (min side)
+//                and the right-most route (max side). These naturally differ
+//                more, so the left/right decision is clearer. The pair is only
+//                accepted when its runtime gap is *below* `extremesMaxRelativeGap`
+//                (too-lopsided pairs are no real decision and get retried).
+//
+// TUNE HERE:
+//   strategy              — 'closest' | 'extremes'.
+//   maxRoutes             — routes explored per problem (4 or 5). Each extra
+//                           route is forced around the previous route's barrier.
+//   primaryRouteBudgetMs  — A* budget for the first two routes (null = none).
+//   extraRouteBudgetMs    — A* budget for routes 3+. A route exceeding its
+//                           budget is dropped ("kicked").
+//   extremesMaxRelativeGap— accept an extremes pair only when its runtime gap is
+//                           below this (0.30 = 30%).
+//
+// Mutable so the harness can sweep it; edit the defaults to change production.
+export const selectionConfig = {
+    strategy: 'extremes',
+    maxRoutes: 5,
+    primaryRouteBudgetMs: 400,
+    extraRouteBudgetMs: 200,
+    extremesMaxRelativeGap: 0.30,
+};
+
 function createRng(seed = null) {
     if (!(Number.isFinite(seed) && seed > 0)) {
         return {
@@ -190,7 +241,7 @@ function runtimeSlotsFor(paths, field) {
     return slots;
 }
 
-function selectRuntimeRouteOptions(pair, routeResult) {
+function selectRuntimeRouteOptions(pair, routeResult, rng = null) {
     const paths = (routeResult.paths || []).map(enrichRuntimePath);
     const base = {
         ...routeResult,
@@ -256,9 +307,108 @@ function selectRuntimeRouteOptions(pair, routeResult) {
         selected.some((p) => Math.abs(p.side) < routeSideMin)
     ) return { ...base, reason: 'routeside' };
 
+    // Balance reject: probabilistically drop problems whose two routes are too
+    // close in runtime (see balanceRejectConfig). Uses the seeded per-batch RNG
+    // so a given seed stays reproducible; falls back to Math.random if unseeded.
+    if (
+        bestPair.relativeGap <= balanceRejectConfig.maxRelativeGap &&
+        (rng ? rng.float() : Math.random()) < balanceRejectConfig.probability
+    ) return { ...base, reason: 'balanced' };
+
     const selectedFastest = Math.min(selected[0].run_time, selected[1].run_time);
     const skippedBarriers = paths
         .filter((p) => p.run_time < selectedFastest && p.barrier)
+        .map((p) => p.barrier);
+
+    return {
+        ...base,
+        ok: true,
+        reason: 'ok',
+        selected,
+        routeIndexes: selected.map((p) => p.routeIndex),
+        routeLengthSlots: runtimeSlotsFor(paths, 'length'),
+        routeSideSlots: runtimeSlotsFor(paths, 'side'),
+        routeSideLabelSlots: runtimeSlotsFor(paths, 'sideLabel'),
+        routeRuntimeSlots: runtimeSlotsFor(paths, 'run_time'),
+        routeNoASlots: runtimeSlotsFor(paths, 'noA'),
+        routeElevationSlots: runtimeSlotsFor(paths, 'elevation'),
+        skippedBarriers,
+        blockFastest: skippedBarriers.length > 0,
+    };
+}
+
+// Extremes strategy: serve the left-most and right-most routes (see
+// selectionConfig). Mirrors selectRuntimeRouteOptions for enrichment, side
+// computation and blocking, but selects by side extremity instead of the
+// smallest runtime gap, and accepts only when the runtime gap is below
+// selectionConfig.extremesMaxRelativeGap.
+function selectExtremeRouteOptions(pair, routeResult, rng = null) {
+    const paths = (routeResult.paths || []).map(enrichRuntimePath);
+    const base = {
+        ...routeResult,
+        paths,
+        selected: null,
+        routeIndexes: [],
+        routeLengthSlots: runtimeSlotsFor(paths, 'length'),
+        routeSideSlots: runtimeSlotsFor(paths, 'side'),
+        routeSideLabelSlots: runtimeSlotsFor(paths, 'sideLabel'),
+        routeRuntimeSlots: runtimeSlotsFor(paths, 'run_time'),
+        routeNoASlots: runtimeSlotsFor(paths, 'noA'),
+        routeElevationSlots: runtimeSlotsFor(paths, 'elevation'),
+        blockFastest: false,
+        ok: false,
+    };
+
+    if (paths.length === 0) return { ...base, reason: routeResult.reason || 'timeout' };
+    if (paths.length === 1) return { ...base, reason: 'distinct', routeIndexes: [paths[0].routeIndex] };
+
+    const sgDx = pair.goal.x - pair.start.x;
+    const sgDy = pair.goal.y - pair.start.y;
+    const sgLen = Math.hypot(sgDx, sgDy) || 1;
+    for (const p of paths) {
+        if (Number.isFinite(p.side)) continue;
+        let sum = 0;
+        for (const pt of p.path) sum += sgDx * (pt.y - pair.start.y) - sgDy * (pt.x - pair.start.x);
+        p.side = (sum / p.path.length) / sgLen;
+        p.sideLabel = p.side > 0 ? 'R' : p.side < 0 ? 'L' : 'C';
+    }
+
+    // routeIndex by run_time (fastest = 1) so blocking/visualisation is stable.
+    paths.sort((a, b) => (a.run_time ?? Infinity) - (b.run_time ?? Infinity));
+    for (let i = 0; i < paths.length; i++) paths[i].routeIndex = i + 1;
+
+    const withRun = paths.filter((p) => Number.isFinite(p.run_time) && p.run_time > 0);
+    if (withRun.length < 2) return { ...base, reason: 'distinct' };
+
+    // Left-most (min side) and right-most (max side).
+    let leftmost = withRun[0], rightmost = withRun[0];
+    for (const p of withRun) {
+        if (p.side < leftmost.side) leftmost = p;
+        if (p.side > rightmost.side) rightmost = p;
+    }
+    if (leftmost === rightmost) return { ...base, reason: 'routeside' };
+
+    const selected = [leftmost, rightmost];
+    const sideGap = Math.abs(leftmost.side - rightmost.side);
+    const routeSideMin = sideGap / 4;
+    // Sign must invert (one L, one R), minimum side gap respected, and each route
+    // far enough to its own side (a quarter of the gap from centre).
+    if (
+        sideGap < ROUTE_RUNTIME_MIN_SIDE_GAP ||
+        leftmost.side * rightmost.side >= 0 ||
+        selected.some((p) => Math.abs(p.side) < routeSideMin)
+    ) return { ...base, reason: 'routeside' };
+
+    const faster = Math.min(leftmost.run_time, rightmost.run_time);
+    const slower = Math.max(leftmost.run_time, rightmost.run_time);
+    const relativeGap = faster > 0 ? (slower - faster) / faster : Infinity;
+    // Accept only a genuine-but-decidable difference: below the cap. Above it the
+    // choice is obvious (no training value) — retry with new endpoints.
+    if (relativeGap >= selectionConfig.extremesMaxRelativeGap) return { ...base, reason: 'runtime' };
+
+    // Block every route that is not one of the two served (left-most/right-most).
+    const skippedBarriers = paths
+        .filter((p) => p !== leftmost && p !== rightmost && p.barrier)
         .map((p) => p.barrier);
 
     return {
@@ -466,7 +616,7 @@ function buildSceneBatchCandidate(pairCount, options = {}) {
         .map((ward) => ({ ward, bbox: routePickWardBbox(ward) }));
     if (candidates.length === 0) throw new Error('Generated city has no traversable wards');
 
-    const rejectionCounts = { distinct: 0, distance: 0, side: 0, routeside: 0, timeout: 0 };
+    const rejectionCounts = { distinct: 0, distance: 0, side: 0, routeside: 0, balanced: 0, timeout: 0 };
     const batch = makeBatchSkeleton(city, settings, generationMs, graphMs, rejectionCounts);
     const scenes = batch.scenes;
     const usedEndpoints = [];
@@ -482,8 +632,14 @@ function buildSceneBatchCandidate(pairCount, options = {}) {
             rejectionCounts.distance++;
             continue;
         }
-        const routeResult = computeRouteOptions(pair.start, pair.goal, visibilityGraph);
-        const runtimeResult = selectRuntimeRouteOptions(pair, routeResult);
+        const routeResult = computeRouteOptions(pair.start, pair.goal, visibilityGraph, {
+            maxRoutes: selectionConfig.maxRoutes,
+            primaryBudgetMs: selectionConfig.primaryRouteBudgetMs,
+            extraBudgetMs: selectionConfig.extraRouteBudgetMs,
+        });
+        const runtimeResult = selectionConfig.strategy === 'extremes'
+            ? selectExtremeRouteOptions(pair, routeResult, rng)
+            : selectRuntimeRouteOptions(pair, routeResult, rng);
         if (runtimeResult.ok) {
             const scene = buildSceneFromRouteResult(city, pair, runtimeResult);
             scene.meta = {
@@ -507,6 +663,7 @@ function buildSceneBatchCandidate(pairCount, options = {}) {
         else if (rejectionReason === 'distinct') rejectionCounts.distinct++;
         else if (rejectionReason === 'runtime') rejectionCounts.distance++;
         else if (rejectionReason === 'routeside') rejectionCounts.routeside++;
+        else if (rejectionReason === 'balanced') rejectionCounts.balanced++;
         else rejectionCounts.side++;
     }
 
@@ -519,7 +676,7 @@ function buildSceneBatchCandidate(pairCount, options = {}) {
     return batch;
 }
 
-function generateSceneBatch(pairCount, options = {}) {
+export function generateSceneBatch(pairCount, options = {}) {
     let lastError = null;
     for (let i = 0; i < CITY_SCENE_ATTEMPTS; i++) {
         try {

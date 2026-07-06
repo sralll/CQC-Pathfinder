@@ -18,6 +18,7 @@ from .media_access import (
     safe_media_filename,
     serve_map_file,
     serve_mask_file,
+    serve_navgraph_file,
     user_can_access_file,
     user_can_access_map_file,
 )
@@ -204,6 +205,8 @@ def get_files(request):
                 'last_edited': obj.last_edited.isoformat() if obj.last_edited else '',
                 'cp_count': obj.cp_count,
                 'published': obj.published,
+                'infinite_enabled': obj.infinite_enabled,
+                'has_mask': obj.has_mask,
                 'author': obj.author or '',
                 'team': obj.team.name if obj.team else '',
                 'editable': obj.team == active_team,
@@ -301,6 +304,10 @@ def open_file(request, file_id):
                 'scaled': file.scaled,
                 'map_file': file.map_file,
                 'has_mask': file.has_mask,
+                'infinite_enabled': file.infinite_enabled,
+                'infinite_region_set': bool(
+                    isinstance(file.infinite_region, list) and len(file.infinite_region) >= 3
+                ),
                 'blocked_terrain': file.blocked_terrain,
                 'control_pairs': [
                     {
@@ -348,6 +355,309 @@ def get_mask(request, file_id):
     if not user_can_access_file(request, file):
         return HttpResponseNotFound("Mask not found.")
     return serve_mask_file(file)
+
+
+@role_required('Trainer')
+@require_GET
+def get_navgraph(request, file_id):
+    file = get_object_or_404(File, id=file_id, deleted=False)
+    if not user_can_access_file(request, file):
+        return HttpResponseNotFound("Navgraph not found.")
+    return serve_navgraph_file(file)
+
+
+def _mask_path_for_file(file):
+    """Resolve a File's full-res mask path (mirrors serve_mask_file)."""
+    filename = safe_media_filename(file.map_file)
+    if not filename:
+        return None
+    stem, _ext = os.path.splitext(filename)
+    return os.path.join(settings.MEDIA_ROOT, 'masks', f'mask_{stem}.png')
+
+
+def _mask_dimensions(mask_path):
+    """Return (W, H) of the full-res mask in pixels without decoding it fully."""
+    from PIL import Image
+    Image.MAX_IMAGE_PIXELS = None
+    with Image.open(mask_path) as img:
+        return int(img.width), int(img.height)
+
+
+def _default_frame_polygon(W, H):
+    """Base region for a fresh map: the four corners of the whole mask.
+
+    Coaches tighten this inward; it is intentionally *not* auto-detected (the
+    old fine contour detector added far too many vertices to edit by hand)."""
+    return [[0, 0], [W, 0], [W, H], [0, H]]
+
+
+def _region_is_full_frame(region, W, H, eps=2):
+    """True when ``region`` is still exactly the whole-map frame corners.
+
+    Enabling infinite play on the untouched frame is refused (routes could run
+    around the map edge), so the toggle uses this to warn the coach to tighten
+    the region first. A region whose corners have been dragged inward — even by
+    a couple of pixels — is no longer the frame and passes."""
+    if not isinstance(region, list) or len(region) != 4:
+        return False
+    corners = {(0, 0), (W, 0), (W, H), (0, H)}
+    matched = set()
+    for pt in region:
+        if not isinstance(pt, (list, tuple)) or len(pt) != 2:
+            return False
+        best = min(corners, key=lambda c: abs(c[0] - pt[0]) + abs(c[1] - pt[1]))
+        if abs(best[0] - pt[0]) > eps or abs(best[1] - pt[1]) > eps:
+            return False
+        matched.add(best)
+    return matched == corners
+
+
+def _validate_region_polygon(polygon):
+    """Return (cleaned, error). Polygon must be a list of >=3 numeric [x, y]
+    pairs; an empty list / None clears the region (returns [])."""
+    if polygon in (None, []):
+        return [], None
+    if not isinstance(polygon, list) or len(polygon) < 3:
+        return None, _('A region needs at least 3 points.')
+    cleaned = []
+    for pt in polygon:
+        if (not isinstance(pt, (list, tuple)) or len(pt) != 2):
+            return None, _('Invalid region point.')
+        try:
+            x = float(pt[0])
+            y = float(pt[1])
+        except (TypeError, ValueError):
+            return None, _('Invalid region point.')
+        cleaned.append([int(round(x)), int(round(y))])
+    return cleaned, None
+
+
+@role_required('Trainer')
+@require_GET
+def region_suggest(request, file_id):
+    """Return the coach-drawn region if set, else the whole-map frame corners.
+
+    JSON: ``{polygon: [[x,y],...], source: 'saved'|'frame'}`` in full-res
+    mask-pixel coords (same space as the navgraph ``nodes``). There is no
+    automatic zone detection any more — a fresh map starts as the four map
+    corners, which the coach drags inward."""
+    file = get_object_or_404(File, id=file_id, deleted=False)
+    if not user_can_access_file(request, file):
+        return HttpResponseNotFound("Not found.")
+
+    if isinstance(file.infinite_region, list) and len(file.infinite_region) >= 3:
+        return JsonResponse({'polygon': file.infinite_region, 'source': 'saved'})
+
+    mask_path = _mask_path_for_file(file)
+    if not mask_path or not os.path.isfile(mask_path):
+        return JsonResponse({'error': _('This map has no mask yet.')}, status=404)
+
+    try:
+        W, H = _mask_dimensions(mask_path)
+    except Exception as exc:
+        traceback.print_exc()
+        return JsonResponse({'error': str(exc)}, status=500)
+    return JsonResponse({'polygon': _default_frame_polygon(W, H), 'source': 'frame'})
+
+
+def _rebuild_navgraph_for_file(file_id, enable_on_success=False):
+    """Background rebuild of a File's navgraph honouring its saved region.
+
+    Surfaces state in ``File.batch_progress`` (type ``navgraph_build``) so the
+    editor can poll ``navgraph_build_status``. When ``enable_on_success`` is set
+    (the coach activated infinite play), ``File.infinite_enabled`` is flipped on
+    only *after* the graph is built — never before — so a half-built map can
+    never be served to players."""
+    from django.db import close_old_connections
+    close_old_connections()
+    try:
+        file = File.objects.filter(id=file_id, deleted=False).first()
+        if not file:
+            return
+        mask_path = _mask_path_for_file(file)
+        if not mask_path or not os.path.isfile(mask_path):
+            File.objects.filter(id=file_id).update(batch_progress={
+                'type': 'navgraph_build', 'status': 'failed',
+                'error': str(_('This map has no mask yet.')),
+                'updated_at': timezone.now().isoformat(),
+            })
+            return
+        File.objects.filter(id=file_id).update(batch_progress={
+            'type': 'navgraph_build', 'status': 'building',
+            'updated_at': timezone.now().isoformat(),
+        })
+        from .navgraph import build_navgraph, save_navgraph
+        region = file.infinite_region if isinstance(file.infinite_region, list) else None
+        artifact = build_navgraph(mask_path, region_polygon=region)
+        save_navgraph(artifact, mask_path)
+        if enable_on_success:
+            File.objects.filter(id=file_id).update(infinite_enabled=True)
+        File.objects.filter(id=file_id).update(batch_progress={
+            'type': 'navgraph_build', 'status': 'done',
+            'infinite_enabled': bool(enable_on_success),
+            'hitzone_source': artifact['stats'].get('hitzone_source'),
+            'n_nodes': artifact['stats'].get('n_nodes'),
+            'n_edges': artifact['stats'].get('n_edges'),
+            'updated_at': timezone.now().isoformat(),
+        })
+    except Exception as exc:
+        logger.exception("navgraph rebuild failed for file %s", file_id)
+        File.objects.filter(id=file_id).update(batch_progress={
+            'type': 'navgraph_build', 'status': 'failed',
+            'error': str(exc), 'updated_at': timezone.now().isoformat(),
+        })
+    finally:
+        close_old_connections()
+
+
+@role_required('Trainer')
+@require_POST
+def save_region(request, file_id):
+    """Persist the coach-drawn map-region polygon (autosave).
+
+    Body JSON: ``{polygon: [[x,y],...]}`` in full-res mask-pixel coords. An empty
+    list clears the region. This is a cheap persist only — the expensive navgraph
+    rebuild is deferred until the coach activates infinite play (see
+    ``toggle_infinite``), so dragging vertices never triggers a build."""
+    import json as _json
+    from django.utils import timezone as tz
+    try:
+        data = _json.loads(request.body or '{}')
+        polygon, error = _validate_region_polygon(data.get('polygon'))
+        if error:
+            return JsonResponse({'error': error}, status=400)
+
+        file = get_object_or_404(File, id=file_id, deleted=False)
+        if not request.user.is_superuser and file.team != request.user.profile.active_team:
+            return JsonResponse({'error': 'Permission denied'}, status=403)
+
+        file.infinite_region = polygon or None
+        file.last_edited = tz.now()
+        file.save(update_fields=['infinite_region', 'last_edited'])
+
+        return JsonResponse({
+            'status': 'ok',
+            'polygon': file.infinite_region or [],
+        })
+    except Exception as e:
+        traceback.print_exc()
+        return JsonResponse({'error': str(e)}, status=500)
+
+
+@role_required('Trainer')
+@require_GET
+def navgraph_build_status(request, file_id):
+    """Poll the navgraph rebuild state set by save_region."""
+    file = get_object_or_404(File, id=file_id, deleted=False)
+    if not user_can_access_file(request, file):
+        return JsonResponse({'error': 'File not found'}, status=404)
+    progress = file.batch_progress
+    if not isinstance(progress, dict) or progress.get('type') != 'navgraph_build':
+        return JsonResponse({'status': 'idle'})
+    return JsonResponse({'progress': progress})
+
+
+@role_required('Trainer')
+@require_GET
+def region_suitability(request, file_id):
+    """Return the build-time infinite-play suitability estimate (WP 4.3).
+
+    Reads the ``suitability`` block navgraph builds stash in
+    ``stats`` inside the ``.navgraph.npz`` (see ``navgraph.build_navgraph`` /
+    ``navgraph_suitability.simulate_suitability``) — a lightweight pair-
+    generation simulation run at build time, not computed on request.
+
+    JSON: ``{suitability: {valid_rate, mean_retries, mean_ms, n_attempts,
+    n_valid, reasons, warn} | null}``. ``null`` when the map has no mask, no
+    navgraph has been built yet, or the build's simulation failed."""
+    file = get_object_or_404(File, id=file_id, deleted=False)
+    if not user_can_access_file(request, file):
+        return HttpResponseNotFound("Not found.")
+
+    mask_path = _mask_path_for_file(file)
+    if not mask_path:
+        return JsonResponse({'suitability': None})
+    base, _ext = os.path.splitext(mask_path)
+    npz_path = base + '.navgraph.npz'
+    if not os.path.isfile(npz_path):
+        return JsonResponse({'suitability': None})
+
+    try:
+        import json as _json
+        import numpy as _np
+        data = _np.load(npz_path, allow_pickle=True)
+        stats = _json.loads(str(data['stats'])) if 'stats' in data else {}
+        suitability = stats.get('suitability')
+    except Exception:
+        traceback.print_exc()
+        return JsonResponse({'suitability': None})
+    return JsonResponse({'suitability': suitability})
+
+
+@role_required('Trainer')
+@require_POST
+def toggle_infinite(request, file_id):
+    """Activate / deactivate infinite play for a map.
+
+    Body JSON: ``{enabled: bool}``.
+
+    * **Enable** — validates the coach-drawn region (must exist and must be
+      tightened in from the whole-map frame, else routes could run around the
+      edge), then kicks off the navgraph build in the background. The
+      ``infinite_enabled`` flag is *not* flipped here — the build thread flips it
+      only on success (see ``_rebuild_navgraph_for_file``). Returns
+      ``{status:'building'}``; the editor polls ``navgraph_build_status``.
+    * **Disable** — clears the flag immediately, no build."""
+    import json as _json
+    from django.utils import timezone as tz
+    try:
+        data = _json.loads(request.body or '{}')
+        enabled = bool(data.get('enabled'))
+
+        file = get_object_or_404(File, id=file_id, deleted=False)
+        if not request.user.is_superuser and file.team != request.user.profile.active_team:
+            return JsonResponse({'error': 'Permission denied'}, status=403)
+
+        if not enabled:
+            file.infinite_enabled = False
+            file.save(update_fields=['infinite_enabled'])
+            return JsonResponse({'status': 'ok', 'infinite_enabled': False})
+
+        # --- Enabling: validate the region before building --------------------
+        region = file.infinite_region
+        has_region = isinstance(region, list) and len(region) >= 3
+        mask_path = _mask_path_for_file(file)
+        if not mask_path or not os.path.isfile(mask_path):
+            return JsonResponse({'error': _('This map has no mask yet.')}, status=400)
+        if not has_region:
+            return JsonResponse({
+                'error': _('Draw a map region before enabling infinite play.'),
+            }, status=400)
+        try:
+            W, H = _mask_dimensions(mask_path)
+            full_frame = _region_is_full_frame(region, W, H)
+        except Exception:
+            full_frame = False
+        if full_frame:
+            return JsonResponse({
+                'error': _('The region still covers the whole map. Tighten it inward so routes cannot go around the map.'),
+            }, status=400)
+
+        # Build the navgraph in the background; the flag flips on success only.
+        import threading
+        File.objects.filter(id=file.id).update(batch_progress={
+            'type': 'navgraph_build', 'status': 'building',
+            'updated_at': tz.now().isoformat(),
+        })
+        threading.Thread(
+            target=_rebuild_navgraph_for_file, args=(file.id,),
+            kwargs={'enable_on_success': True}, daemon=True,
+        ).start()
+
+        return JsonResponse({'status': 'building', 'infinite_enabled': False})
+    except Exception as e:
+        traceback.print_exc()
+        return JsonResponse({'error': str(e)}, status=500)
 
 
 @role_required('Trainer')

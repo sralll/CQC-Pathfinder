@@ -36,6 +36,20 @@ Polygonizing black pixels = visibility graph = uniform-cost assumption → would
 2. Distance transform + medial-axis skeleton of (filtered) passable space **at full resolution** → nodes at junctions, sampled along corridors, at terrain-class boundaries, plus sparse lattice over large open areas. Narrow alleys survive — a 3-px passage is a skeleton branch. (Fallback v1: pruned uniform node lattice every ~32–64 px.)
 3. Edges between skeleton-adjacent / mutually-near nodes; **weight = actual full-res weighted A\* cost** on a small subgrid (same `dist × (255 − value)` model, unfiltered mask); drop edges whose detour ≫ straight distance. Terrain respected twice: node placement + measured edge costs.
 
+### Map region (hit zone) — coach-drawn polygon
+
+A mask is a full rectangle but the map fills only part of it; the surrounding margin (white
+paper, title banner, sponsor logos, scale text) is classified as ordinary open/fast terrain
+and is **indistinguishable from real open ground by pixel value**. Random endpoints placed
+there would be off-map and rejected en masse. Automatic detection (class-boundary density —
+see the WP 1.1 refinement note) is too fragile to trust across the map variety, so the
+**authoritative** map region is a **polygon a coach draws in the editor** (WP 4.1). It is
+stored on the map's model, rasterized into the navgraph artifact's `coarse_hitzone` at build
+time, and is the region within which route **endpoints** are sampled. The automatic detector
+remains as a fallback for un-annotated masks and to pre-fill the editor polygon as an initial
+suggestion. The region gates endpoint *placement*, not graph topology — the graph keeps
+nodes everywhere so island-type maps (only linked across the open margin) stay connected.
+
 ### Client flow (scene source inside infinite_play, per Lars)
 
 Per attempt: sample pair with prefilters → snap endpoints to graph (bucketed lookup + tiny local full-res A* stubs) → graph A* → alternates 2–4 via `findSmartBarrier` port blocking crossed graph edges → existing selection (runtime gap ≤ 0.5, side split; graph cost = runtime, no NoA needed). For the accepted pair only: corridor + guided theta* at full res, re-check gap, serve. Prefetch buffer generates pairs in the worker while the user plays.
@@ -52,9 +66,66 @@ Client holds navgraph (<1 MB) + coarse sampling grid (median ~0.5 MB); full-res 
 
 Each package is self-contained with acceptance criteria. "Model" = suggested agent capability (Opus = complex/algorithmic, Sonnet = well-specified/simpler). Execute in order; packages within a phase can sometimes parallelize (noted).
 
-## Phase 1 — Server-side navgraph builder (Python)
+## Phase 1 — Server-side navgraph builder (Python) — ✅ DONE (2026-07-04)
 
-### WP 1.1 — `project/navgraph.py` core builder — **Opus**
+Implemented: `project/navgraph.py` (WP 1.1), `project/management/commands/build_navgraph.py`
+(WP 1.2), `scripts/navgraph_debug.py` (WP 1.3). All acceptance criteria met on 5+
+validated masks (1.7 → 75 Mpx, old & new schemes): build < 60 s each, main-component
+graph connectivity ≥ 0.95, zero nodes on impassable pixels, `.navgraph.bin` round-trips.
+`scipy` + `scikit-image` added to `requirements.txt`.
+
+Deviations from the original spec, forced by measured performance (documented in the
+`navgraph.py` module docstring):
+- Full-res `skeletonize` was ~224 s / 94 k junctions on the 75 Mpx mask → the **skeleton
+  stage runs on an adaptively block-downsampled passability grid**; mask, EDT, labels,
+  edge A* and sampling grids stay full-resolution (legality/weights exact).
+- Edge weighting uses a **straight-line cost integral fast-path with A* fallback only for
+  the skeleton backbone** (per-edge A* everywhere was too slow); k-NN shortcuts whose
+  straight line is blocked are dropped, and a **connectivity-repair pass** bridges
+  fragments that share a free-space component.
+- Detour rejection compares geometric path length (not weighted cost) to straight
+  distance, so genuinely slow terrain isn't wrongly dropped.
+
+⚠ **Open item for Phase 3:** the ÷4 `coarse_labels` (int32) grid makes the `.bin` ~28 MB
+on the 75 Mpx map (~3 MB on median) — contradicts the "<1 MB client artifact" goal.
+Fine server-side; Phase 3 should ship a compacter sampling grid (main-component bit +
+uint8 clearance) or the deferred tiling.
+
+⏳ **WP 1.3 checkpoint pending:** Lars to review the `.navgraph.debug.png` overlays in
+`media/masks/` before relying on the graphs.
+
+### Refinements (2026-07-05, Lars-directed) — supersede parts of WP 1.1/1.3 below
+- **Blob prefilter removed.** It filtered almost nothing and modified topology; the graph
+  now builds directly on the true free space (steps 2–3 below no longer apply).
+- **Map region is coach-drawn (authoritative); automatic detection is only a fallback.**
+  Auto hit-zone detection proved too fragile across the map variety (decorated margins,
+  sparse maps, banners/logos indistinguishable from open ground by value). The relevant map
+  region will be a **polygon a coach draws in the editor** (see new **WP 4.1**). *Phase-1
+  prep implemented now:* `build_navgraph(mask_path, region_polygon=...)` rasterizes the
+  polygon (`_rasterize_region`) into the stored ÷16 `coarse_hitzone` and confines the
+  open-area lattice to it; `stats.hitzone_source` = `polygon`|`auto`, `stats.region_polygon`
+  records the vertices. When no polygon is set it falls back to automatic detection so
+  existing masks still build. Artifact `version` → 2; `.bin`/`.npz` gain `hitzone_scale` +
+  `coarse_hitzone`.
+- **Automatic `_hitzone` kept as fallback + editor seed.** Class-boundary density on a
+  coarse grid (a real map changes class often over short distances; a margin/logo/big field
+  is one class over a large area) yields a **footprint** (map body) and a **sample** mask
+  (the ÷16 `coarse_hitzone`). The editor pre-fills the coach polygon from this suggestion
+  so drawing is a quick correction, not from scratch.
+- **Hit zone gates endpoints, not topology.** Hard-pruning off-map nodes dropped
+  connectivity to ~0.85 (island-type maps are only linked *across* the open margin), so the
+  graph is **not** pruned. Only the dense open-area **lattice is confined to the region**
+  (the sparse skeleton still spans the margin for connectivity). Boring uniform fields stay
+  crossable but are never sampled as endpoints. Preventing routes from *traversing* the
+  margin is deferred (it would disconnect some maps).
+- **Denser, more uniform open-field lattice** (`OPEN_CLEARANCE_PX` 40→24,
+  `LATTICE_SPACING_PX` 64→40) so plazas/fields get straight crossings instead of skeleton
+  corner-bends. ~1.5–2× nodes inside the region.
+- Re-validated on 7 size-varied masks (0.3–75 Mpx incl. decorated Monopoli): build < 60 s,
+  main-component connectivity ≥ 0.95 (min 0.953 @ 75 Mpx), zero nodes on impassable, v2
+  `.bin` round-trips. Debug overlay tints red = off-map, yellow = in-map-but-boring.
+
+### WP 1.1 — `project/navgraph.py` core builder — **Opus** — ✅ DONE
 Create `project/navgraph.py` with a function `build_navgraph(mask_path) -> artifact dict` implementing:
 1. Load mask PNG → `np.uint8` grayscale (values as in [UNet.py](project/UNet.py) `mo` namespace; support old scheme 100/150/200/230 too — derive "impassable"=0, everything else passable with weight).
 2. Blob prefilter (see Architecture): label impassable components (8-conn, `scipy.ndimage.label`); drop components with `area < T_area` (start T_area ≈ 200 px) AND elongation below threshold (e.g. `max(bbox_w,bbox_h)² / area < 8` keeps thin walls). Make thresholds module constants. Produce `topo_mask` (filtered) alongside the true mask.
@@ -67,19 +138,27 @@ Create `project/navgraph.py` with a function `build_navgraph(mask_path) -> artif
 
 Acceptance: builds on 5 sample masks incl. `mask_20260422_134232.png` (75 Mpx) in < 60 s each; graph on main component is connected (single graph-component covering ≥ 95 % of nodes whose free-space component is the main one); README-style docstring at top of module.
 
-### WP 1.2 — Management command + backfill — **Sonnet**
+### WP 1.2 — Management command + backfill — **Sonnet** — ✅ DONE
 `project/management/commands/build_navgraph.py`: args `--file <mask path or File id>`, `--all` (iterate masks in `media/masks/`), `--force`; skip if artifact newer than mask; print per-map timing + node/edge counts; `--limit N` for testing. Follow existing management-command style in the repo (see `account/management/` and `results/management/`).
 Acceptance: `python manage.py build_navgraph --limit 5` produces artifacts; re-run skips them; `--force` rebuilds.
+**Follow-up (with WP 4.1):** once the map region field exists, the command must load it and pass `region_polygon=` to `build_navgraph`, and treat a region edit as a reason to rebuild (region is part of the skip/`--force` staleness check). Until then it builds with automatic detection.
 
-### WP 1.3 — Debug overlay visualizer — **Sonnet**
+### WP 1.3 — Debug overlay visualizer — **Sonnet** — ✅ DONE (Lars review pending)
 Script `scripts/navgraph_debug.py`: renders mask (dimmed) + nodes/edges (colored by weight/px) + filtered blobs highlighted, saves PNG next to artifact (`.navgraph.debug.png`). Optionally a `--pair y1,x1,y2,x2` flag drawing the graph A* path.
 Acceptance: overlays generated for 8–10 varied staging masks (small/large, old/new scheme); visually: alleys have edges, trees filtered, thin walls respected. **Lars reviews these overlays — checkpoint.**
 
 ## Phase 2 — Headless validation harness (Node) — go/no-go gate
 
-### WP 2.1 — Node harness implementing the client algorithm — **Opus**
+### WP 2.1 — Node harness implementing the client algorithm — **Opus** — ✅ DONE (2026-07-05)
+`scripts/navgraph_harness.mjs` implements the full pipeline as importable functions
+(reused by Phase 3) + a CLI. Mask decode via `sharp` (already a dep — no `pngjs`
+added). Validated end-to-end on 3 size-varied v2 masks (1.7 / 8 / 75 Mpx): CSV +
+PNG spot-checks produced, zero legality violations, rendered pairs show clean
+left/right route splits. Note: the harness requires **v2** `.navgraph.bin`
+artifacts (with `coarse_hitzone`) and rejects v1 with a rebuild hint.
+
 Script `scripts/navgraph_harness.mjs` (Node, no browser). Loads `.navgraph.bin` + coarse grids + full-res mask (add `pngjs` as devDependency or decode via a small Python-exported raw file). Implements, as importable functions (they will be reused in Phase 3):
-1. Pair sampling + prefilters: uniform over main-component coarse cells with clearance ≥ ~3 (coarse px) and terrain not very_slow; distance band (mirror ROUTE_PICK_MIN/MAX_DIST=40/120 map-units scaled to px via map scale — start with 500–1500 px, tune later); map-edge margin ~100 px; straight-line raycast must cross an impassable component with area above threshold.
+1. Pair sampling + prefilters: uniform over main-component coarse cells **restricted to the `coarse_hitzone`** (the coach-drawn region, or the automatic fallback) with clearance ≥ ~3 (coarse px) and terrain not very_slow; distance band (mirror ROUTE_PICK_MIN/MAX_DIST=40/120 map-units scaled to px via map scale — start with 500–1500 px, tune later); straight-line raycast must cross an impassable component with area above threshold. (The hit zone replaces the old fixed "map-edge margin ~100 px" — the polygon defines the true boundary.)
 2. Endpoint snapping: bucket grid over nodes; connect endpoint to ≤3 nearest nodes with local full-res weighted A* on a ~200 px subgrid.
 3. Graph A* (binary heap, heuristic = euclid × min_cost_per_px).
 4. Alternates: port `findSmartBarrier` semantics from [RoutePlanner.js:71](results/static/results/js/infinite/citygen/core/RoutePlanner.js) — find perpendicular barrier near route midpoint, temporarily remove graph edges crossing it, re-run A*; up to 4 routes total.
@@ -87,37 +166,211 @@ Script `scripts/navgraph_harness.mjs` (Node, no browser). Loads `.navgraph.bin` 
 6. CSV output matching the route-stress format (retries, per-attempt ms, rejection reasons, route lengths/sides) + optional SVG/PNG dump of accepted pairs for spot-checks.
 Acceptance: runs end-to-end on 3 masks, produces CSV + a handful of rendered pairs.
 
-### WP 2.2 — Batch run + analysis — **Sonnet**
+### WP 2.2 — Batch run + analysis — **Sonnet** — ✅ DONE (2026-07-05) — **GO**
+Batch driver `scripts/navgraph_batch.mjs`; summary `scratch/wp2_2_summary.md`. Built
+26 v2 artifacts (33 total) and ran 33 masks (0.26–75 Mpx; 100 pairs, largest 4 maps
+reduced to 30–50). Result: **zero legality violations** across all 2,980 accepted
+pairs / 5,960 refined routes; gate (mean retries ≤ 5 AND mean ms/valid ≤ 1 s) met on
+**30/33 maps (90.9 % ≥ 70 %)**; aggregate mean-of-mean retries 3.42, mean ms/valid
+2.5 (laptop Node). `side` dominates rejections (30.6 %), as expected from the city-gen
+reference. The 3 gate misses are explainable outliers, not harness bugs:
+`mask_20260612_091525` (0.26 Mpx, diagonal 719 px < the 500–1500 band → all `distance`
+rejects), and two large obstacle-dense maps (`_20260604_191144` 46.8 % impassable;
+`_20260421_092111` 50 Mpx, `unreachable`-heavy). Tuning of `sideGapMinPx` / distance
+band / `obstacleMinRunPx` deferred to Phase 5 (no algorithm changes made). ⚠ Lars
+review of the go/no-go summary is the gate before Phase 3.
+
 Run harness on ≥ 20 staging masks × 100 pairs. Summarize per map: valid-pair rate, mean/median/p90 retries, mean ms/valid pair, rejection breakdown. Assert **zero route segments crossing impassable pixels of the true mask** (sample points along polylines). Write summary markdown to `docs/` or scratch for review.
 Acceptance criteria (go/no-go, reviewed by Lars): mean retries ≤ ~5 and mean time-to-valid-pair ≤ ~1 s laptop-Node on ≥ 70 % of urban maps; zero legality violations. If side-rejections dominate, tune prefilter thresholds before proceeding.
 
-## Phase 3 — Client integration
+## Phase 3 — Client integration — ✅ DONE (2026-07-05)
 
-### WP 3.1 — Artifact serving — **Sonnet**
+All three WPs implemented + verified on the data path. `.navgraph.bin` is served over an
+authed endpoint (3.1); the tested Phase-2 harness is ported into the pathing worker with a
+`navgraphReady`/`generatePair`→`pair` protocol and per-accepted-pair legal refinement (3.2,
+Node parity, legality=0); infinite_play gains a scene-source switch + mask provider + prefetch
+buffer + raster background (3.3, live-verified on staging File 25: nav ack 4019 nodes/9275
+edges, legal pairs, buffer held at 3, map image loads). Refinement stays at `refineRouteLegal`
+(theta* deferred to Phase 5, plan's low-risk rec).
+
+⚠ **Not yet confirmable end-to-end** (two known gates, both expected):
+- **Real map-region testing awaits WP 4.1** (coach-drawn polygon). Until then endpoint sampling
+  uses the *automatic* hit-zone fallback, so "works" ≠ "validated on true regions" (Lars).
+- The map picker + `/play/infinity/mask-maps/` listing are a **temporary disk-scan placeholder**
+  marked `TODO(WP 4.2)` (opt-in model/flag not built). The `Agents` team has no artifact-bearing
+  maps, so live play needs an opt-in map (WP 4.2) or a navgraph map assigned to the agent's team.
+- Live *animated* frames were not screenshot-verifiable (hidden-preview-tab rAF freeze, documented);
+  render inputs proven valid instead.
+
+### WP 3.1 — Artifact serving — **Sonnet** — ✅ DONE (2026-07-05)
 Serve `.navgraph.bin` alongside masks via the same authenticated path as `serve_mask_file()` in [media_access.py](project/media_access.py) (new endpoint or extend existing, mirroring its permission checks). Add URL in the relevant urls.py.
 Acceptance: logged-in fetch returns the binary with correct content-type; anonymous fetch is rejected. Verify via `/dev/agent-login/` + fetch.
+Implemented: `serve_navgraph_file()` in `media_access.py`, `get_navgraph()` view, URL
+`navgraph/<int:file_id>/` (name `get_navgraph`). **Endpoint is `/editor/navgraph/<file_id>/`**
+(project urls mounted under `editor/`, same as `/editor/mask/<id>/`). Verified live on staging
+File 23: authed → 200 `application/octet-stream` bytes `NVG1\x02…`; anonymous → 302; team-scoped
+permission parity with the mask endpoint confirmed.
 
-### WP 3.2 — Mask scene provider in the pathing worker — **Opus**
-Port the WP 2.1 functions into `project/static/project/js/pathing/` (new `navgraph_router.js` + additions to `worker.js`): load/cache artifact per map (existing worker cache pattern, keyed like the grid cache at worker.js:36-51), pair generation, graph A*, barriers, selection. For the accepted pair only: corridor + guided theta* refinement reusing `corridor.js`, `theta_star.js`, `simplify.js` on full-res subgrids along the graph path (mask decoded lazily, subgrid extraction via `preprocess.js`); recompute runtimes from refined paths and re-check the gap (re-reject if now > 0.5). Message protocol: `generatePair(mapId) → {start, goal, routes[2], runtimes, meta}`.
+### WP 3.2 — Mask scene provider in the pathing worker — **Opus** — ✅ DONE (2026-07-05)
+Ported the WP 2.1 harness functions verbatim into new `project/static/project/js/pathing/navgraph_router.js`
+(pure ES module, Node+browser importable). Added `navgraphReady` (build+cache scene per map, keyed like the
+grid cache) and `generatePair`→`pair` handlers to `worker.js` alongside the **untouched** editor pathfind path.
+Accepted pair's two routes refined to legal full-res polylines via `refineRouteLegal` (Phase-2-validated;
+theta* deliberately NOT layered — plan's explicit low-risk recommendation), runtimes recomputed from the
+refined terrain-weighted cost and the relative gap re-checked (re-reject if now > 0.5). Per-stage
+`[theta-client]` timings logged. Node parity: 8/8 pairs on `mask_20250602_081036` + `mask_20250715_092410`,
+**zero legality violations**, mean retries 2.25 / 3.25 (matches Phase-2 harness). Exact `pair` protocol
+recorded in `scratch/phase3_progress.md` for WP 3.3. `collectstatic` + restart needed before browser testing.
+
+Port the WP 2.1 functions into `project/static/project/js/pathing/` (new `navgraph_router.js` + additions to `worker.js`): load/cache artifact per map (existing worker cache pattern, keyed like the grid cache at worker.js:36-51), pair generation (endpoints sampled only inside the artifact's `coarse_hitzone` = coach region), graph A*, barriers, selection. For the accepted pair only: corridor + guided theta* refinement reusing `corridor.js`, `theta_star.js`, `simplify.js` on full-res subgrids along the graph path (mask decoded lazily, subgrid extraction via `preprocess.js`); recompute runtimes from refined paths and re-check the gap (re-reject if now > 0.5). Message protocol: `generatePair(mapId) → {start, goal, routes[2], runtimes, meta}`.
 Acceptance: from a test page or console, worker returns valid pairs on a staging mask; timings logged per stage like the existing `[theta-client]` logs.
 
-### WP 3.3 — infinite_play wiring + prefetch buffer — **Opus**
-In [infinite_play.js](results/static/results/js/infinite_play.js): introduce a scene-source abstraction (city generator = existing path; mask provider = new). Mask scenes: map raster as background (however the normal play view renders map images), pair + 2 routes from WP 3.2, same play/scoring flow (`scene.meta` fields mirrored). Prefetch buffer of ≥ 2 validated pairs filled during play; map picker listing only opt-in maps (endpoint from WP 4.1). New user-facing strings go through `locale/source_messages.py` + `python scripts/manage_translations.py --check && --build` (djangojs domain).
+### WP 3.3 — infinite_play wiring + prefetch buffer — **Opus** — ✅ DONE (2026-07-05)
+Implemented: scene-source switch in [infinite_play.js](results/static/results/js/infinite_play.js)
+(`?source=mask&file=<id>&filename=<name>` at play start; city path is the untouched
+default/fallback). New module `results/static/results/js/infinite/mask_scene_source.js`
+owns the pathing worker, fetches `/editor/navgraph/<id>/` (ArrayBuffer) + decodes
+`/editor/mask/<id>/` (createImageBitmap + OffscreenCanvas, channel 0 → greyscale
+Uint8Array), posts `navgraphReady`, and drives `generatePair`→`pair` (WP 3.2 protocol),
+keeping a prefetch buffer (target 3, ≥ 2 kept full). `buildMaskScene(pair)` produces a
+scene mirroring the city scene shape (`kind:'mask'`, start/ziel, two routes with
+run_time/side/length/noA); `renderScene`/`buildRenderedScene` branch on `kind` to draw the
+real map raster as an SVG `<image>` (`/editor/map/<filename>`; mask px × TRAIN_SCALE_VALUE)
+with routes/endpoints overlaid. Map picker: temporary authed `/play/infinity/mask-maps/`
+listing files with a `.navgraph.bin` on disk + an in-page picker overlay, both clearly
+marked `TODO(WP 4.2)`. New JS strings via `locale/source_messages.py` (djangojs) + built.
+Verified live on staging File 25 via `/dev/agent-login/`: navgraph ack (4019 nodes / 9275
+edges / 27785 sample cells), legal pairs (`legality==0`), coord conversion correct, prefetch
+buffer stayed at 3, map raster loads. rAF-frozen hidden preview tab prevented live animated
+frame capture (documented limitation) — data path proven, live rendering awaits a foreground
+tab / WP 4.1 real-region testing.
+
+Original spec: In [infinite_play.js](results/static/results/js/infinite_play.js): introduce a scene-source abstraction (city generator = existing path; mask provider = new). Mask scenes: map raster as background (however the normal play view renders map images), pair + 2 routes from WP 3.2, same play/scoring flow (`scene.meta` fields mirrored). Prefetch buffer of ≥ 2 validated pairs filled during play; map picker listing only opt-in maps (endpoint from WP 4.2). New user-facing strings go through `locale/source_messages.py` + `python scripts/manage_translations.py --check && --build` (djangojs domain).
 Acceptance: playable end-to-end on staging via `/dev/agent-login/`; buffer hides generation latency (no visible wait at 2 s cadence). Run `collectstatic` + restart before browser verification.
 
-## Phase 4 — Opt-in + suitability
+## Phase 4 — Map region, opt-in + suitability — ✅ DONE (2026-07-05)
 
-### WP 4.1 — Opt-in flag — **Sonnet** *(⚠ model change — get Lars's explicit approval first)*
-Add `File.infinite_enabled = BooleanField(default=False)` (project app model that owns masks) + migration; editor UI toggle (visible when `has_mask`); endpoint listing enabled maps for the picker.
+All three WPs implemented + verified (model change approved by Lars). Coaches can
+draw/drag/insert/delete the authoritative map-region polygon over the mask (4.1,
+persisted to `File.infinite_region`, save→async navgraph rebuild); opt-in is gated
+behind a set region and flips `File.infinite_enabled`, which drives the mask-map
+picker (4.2); a build-time Python pair simulation (`navgraph_suitability.py`, mirror
+of the Phase-2 harness) writes `{valid_rate, mean_retries, mean_ms}` into the `.npz`
+and the editor renders it with a soft warning below thresholds (4.3), matching the
+WP 2.2 harness ballpark on 3 test masks. **Outstanding for Lars:** hands-on click-test
+of the region editor's mouse feel, then a real end-to-end infinite-play session on a
+coach-drawn region (the gate the whole effort was waiting on). Phase 5 (tuning + phone
+verification) is the remaining phase.
+
+### Phase 4 UI REVISION — ✅ DONE (2026-07-05, Lars-directed) — READ BEFORE RE-IMPLEMENTING 4.1–4.3
+
+> **For a future completeness check:** WP 4.1–4.3 below are the *original* specs and
+> are kept for context, but the **UI and build flow were deliberately reworked by Lars
+> after first implementation**. The items marked "superseded" here are **intentionally
+> gone — do not restore them**. The underlying capability (draw a region, opt a map in,
+> build its navgraph) is unchanged and still complete; only the surfacing changed.
+
+**What changed and why (Lars's reasoning):**
+
+1. **Infinity is now a first-class editor tool mode**, not buttons bolted into the mask
+   panel. Added `ToolMode.INFINITY` + `InfinityTool`, one slice in the sidebar tool-wheel
+   (now **6 segments / 60°**, was 5/72°) and one in the right-click radial menu (RCM
+   generalised to N slices). *Why: separate the UI properly — region editing is its own
+   activity, not a sub-feature of masking.*
+2. **Subtools `edit` (drag / edge-insert) and `remove` (click a vertex to delete, min-3
+   guard).** The old **right-click-to-delete and Del-key handlers were removed**
+   (`RegionEditor.onRightDown` / `onKeyDown` / `trackHover` gone). *Why: deletion should
+   be an explicit, discoverable subtool, not a hidden mouse/keyboard gesture.*
+3. **Side panel = `#infinity-controls`** (shown in `body.mode-infinity`): "Infinity Mode"
+   title, explanation of the two subtools, and a highlighted note to keep the selection
+   tight so routes can't run around the map. **No auto-suggest / save / finish buttons —
+   editing autosaves** on every drag/insert/delete. *Superseded:* `#region-panel` inside
+   `#mask-controls`, the Edit/Auto-suggest/Save/Done buttons.
+4. **Base region = the four map corners** (the coach drags them inward). The **automatic
+   zone detector `suggest_region_polygon()` was fully removed** from `navgraph.py`, and
+   `region_suggest` now returns the saved region or the frame corners (`source:'frame'`).
+   *Why: the marching-squares contour produced far too many vertices — unusable for a real
+   coach to hand-edit.* `_hitzone` stays (it's still the builder's internal fallback, not
+   user-facing). *Superseded:* `suggest_region_polygon`, the `?fresh=1` re-suggest branch.
+5. **Activation toggle moved to the navbar (left of Publish)** as `NavInfinity` (button
+   `#nav-infinity-btn`), replacing the in-panel `InfiniteToggle` checkbox. Enabling on a
+   region that is still exactly the map-frame corners (or absent) shows a **publish-style
+   warning modal** — same pattern as "Controls without routes" — and is blocked
+   (`_region_is_full_frame` in `views.py`). *Why: if the region isn't tightened, generated
+   routes can run around the map edge.* *Superseded:* `InfiniteToggle`, the
+   `#infinite-enabled-toggle` checkbox + its `#region-panel` row.
+6. **Navgraph build is deferred to activation time**, not on region save and not on every
+   mask edit. `save-region` now only persists (cheap). `toggle-infinite` (enable) validates
+   the region then builds in a background thread via
+   `_rebuild_navgraph_for_file(enable_on_success=True)`, showing a **spinner in the navbar
+   button**; **`File.infinite_enabled` flips only after the build succeeds** (never before —
+   a half-built map can't be served). *Why Lars asked: don't rebuild on every mask/region
+   edit — only build once the coach "releases" the file for infinity.*
+7. **`region-build-status` is polled only while an activation build is in flight**
+   (`NavInfinity.pollBuild`), then stops. *Why: it was previously firing on basically every
+   editor action (the old `save-region`→poll path).* Verified: no build-status calls during
+   open / save-region / tool-switching.
+8. **Suitability report removed from the UI** (`SuitabilityReport` module + `#suitability-*`
+   markup gone). The **backend is intentionally kept** — `project/navgraph_suitability.py`,
+   the `stats["suitability"]` in the `.npz`, and `GET /editor/region-suitability/<id>/` all
+   still exist and still run at build time; they're just not surfaced. *Lars's call.*
+9. **Editing the region after enabling stays enabled** (autosave only). Re-toggling rebuilds
+   the navgraph fresh, which covers both mask and region changes since the last build.
+
+**Net endpoint/flow after the revision:** `region-suggest` = saved-or-frame; `save-region`
+= persist only (no build); `toggle-infinite` enable = validate (region present + not full
+frame) → background build → flag flips on success; disable = immediate. New i18n strings
+built for DE/FR/IT. Verified live on a masked file via `/dev/agent-login/` (frame default,
+both warnings fire, deferred build + spinner + flag flip, autosave persists, min-3 guard),
+then the test file was reverted. Left as harmless dead code: old `.region-*`/`.suitability-*`
+CSS and now-unused translation rows (flagged "unused" by `manage_translations --check`, not
+errors).
+
+### WP 4.1 — Map-region polygon editor — **Opus** — ✅ DONE (2026-07-05)
+Implemented: `suggest_region_polygon()` (marching-squares contour of `_hitzone`
+footprint → skimage `approximate_polygon` DP simplify to 10–40 verts, bbox
+fallback) in `project/navgraph.py`; authed endpoints `GET /editor/region-suggest/
+<id>/` (saved region or auto/`?fresh=1` suggestion), `POST /editor/save-region/
+<id>/` (validate + persist `File.infinite_region` + async navgraph rebuild),
+`GET /editor/region-build-status/<id>/` (poll rebuild state); `RegionEditor`
+module in `project/static/project/js/editor.js` (draggable closed polygon in the
+overlay `#ui-layer`, edge-click insert, right-click/Del delete, persistent SVG
+nodes per the no-DOM-churn convention); controls in `#region-panel` inside
+`#mask-controls`; `build_navgraph` command loads the region + treats a region
+change as a rebuild reason. Coord map: world(SVG) = maskPx ×
+PATHING_MASK_TRAIN_SCALE (0.710). Verified on File 25 (suggest/save/rebuild →
+`coarse_hitzone` matches polygon bbox, `hitzone_source=polygon`; UI drag/insert/
+delete + save-rebuild-poll). *(⚠ model change was approved by Lars 2026-07-05.)*
+
+Original spec:
+The coach draws the relevant map area as a polygon over the map image; this is the authoritative hit zone consumed by the navgraph builder (Phase-1 prep already done: `build_navgraph(region_polygon=…)` + `_rasterize_region`; `coarse_hitzone` in the artifact).
+1. **Model/storage:** add `File.infinite_region = JSONField(null=True, blank=True)` (project app model that owns masks) storing polygon vertices as `[[x,y],…]` in full-res mask pixel coords (same space as `nodes`). One migration; can share the migration with WP 4.2's opt-in flag.
+2. **Editor UI** (in the existing map editor where the mask/preview renders): an SVG overlay on the map raster with a draggable closed polygon. Interactions required: **drag a vertex** to move it; **click on a polygon edge to insert a new vertex** there; delete a vertex (right-click / Del). Reuse-node rendering per the "editor live previews reuse SVG nodes (no per-frame add/remove)" convention to avoid password-manager reflow lag. Handle display↔pixel coordinate mapping (map image may be scaled/rotated in the editor).
+3. **Initial suggestion:** pre-fill the polygon from the automatic detector so the coach corrects rather than draws from scratch — add a server helper `suggest_region_polygon(mask)` (marching-squares contour of `_hitzone`'s footprint → `simplify`/Douglas–Peucker to ~10–40 vertices), exposed via a small authenticated endpoint. Fallback: mask bounding box.
+4. **Save → rebuild:** persisting the region triggers a navgraph rebuild (or a lighter re-rasterize-hitzone path) so `coarse_hitzone` reflects the polygon; surface build state in the editor. New user-facing strings via `locale/source_messages.py` + `manage_translations.py --check && --build`.
+Acceptance: coach can draw/drag/insert/delete polygon points on a staging map via `/dev/agent-login/`; region persists; rebuilt artifact's `coarse_hitzone` (and debug overlay) matches the drawn polygon; endpoints then sample only inside it.
+
+### WP 4.2 — Opt-in flag — **Sonnet** — ✅ DONE (2026-07-05) *(model change approved; shared migration with WP 4.1)*
+Implemented: `InfiniteToggle` in `editor.js` + toggle row in `#region-panel`; endpoint
+`POST /editor/toggle-infinite/<id>/` (`{enabled}`→persist; 400 if enabling with no region, 403
+off-team); `open_file()` JSON now returns `infinite_enabled`+`infinite_region_set`. Toggle is
+**disabled until a region is set** (client UX gate seeded from `infinite_region_set`, flipped on
+`RegionEditor.save()`; server re-validates region ≥3 pts). `infinite_mask_maps` now lists
+`infinite_enabled=True` (+ existing team-scope & `.navgraph.bin`-on-disk check); all `TODO(WP 4.2)`
+markers removed. Verified on File 25: toggle gates + persists, listing includes/excludes correctly,
+400/403 guards fire. i18n strings built.
+Add `File.infinite_enabled = BooleanField(default=False)` + migration (bundle with WP 4.1's `infinite_region`); editor UI toggle (visible when `has_mask`; ideally disabled until a region is set); endpoint listing enabled maps for the picker (referenced by WP 3.3).
 Acceptance: toggle persists; picker shows only enabled maps.
 
-### WP 4.2 — Suitability report at opt-in — **Sonnet**
-At navgraph build time (extend WP 1.1/1.2), run a lightweight pair-generation simulation in Python (mirror of the sampling+graph-A*+selection logic; N≈50 pairs) and store `{valid_rate, mean_retries, mean_ms}` in the artifact. Editor shows these next to the opt-in toggle with a soft warning below thresholds (no hard block).
+### WP 4.3 — Suitability report at opt-in — **Sonnet** — ✅ DONE (2026-07-05)
+At navgraph build time (extend WP 1.1/1.2), run a lightweight pair-generation simulation in Python (mirror of the sampling+graph-A*+selection logic; N≈50 pairs, **sampling within the region hit zone**) and store `{valid_rate, mean_retries, mean_ms}` in the artifact. Editor shows these next to the opt-in toggle with a soft warning below thresholds (no hard block).
 Acceptance: report visible in editor for 3 test maps; warning appears on a known-bad (e.g. park) map.
+
+Implemented in `project/navgraph_suitability.py` (mirrors `scripts/navgraph_harness.mjs`: sample→snap→graph-A*→barrier alternates→`selectRuntimeRouteOptions` port), called from `build_navgraph` (try/except-guarded — a sim failure never breaks a build) and stashed in `stats["suitability"]`, which already rides along in the `.npz` (no `.bin` format/version change). Endpoint `GET /editor/region-suitability/<file_id>/`; editor `SuitabilityReport` module (`editor.js`) renders in `#region-panel` below the opt-in toggle, with a soft warning driven by a server-computed `warn` flag. Verified on 3 masks: tiny/weak (0.26 Mpx) → 0% valid, warn; small (1.7 Mpx) → 18%, no warn; mid urban (8 Mpx) → 26%, no warn — same ballpark as the WP 2.2 harness numbers for the same masks.
 
 ## Phase 5 — Tuning + phone verification — **Opus**
 
-- Re-run WP 2.2 batch after any threshold changes; tune: blob-filter thresholds, node spacing, distance band, sideGap scaling, barrier length.
+- Re-run WP 2.2 batch after any threshold changes; tune: hit-zone/region handling, node spacing, distance band, sideGap scaling, barrier length.
 - Browser verification with 4–6× CPU throttling (phone proxy): time-to-valid-pair distribution over 50 pairs on median + large maps; memory snapshot (heap < ~150 MB on median maps).
 - Edge cases: old-scheme masks, masks with several large free components (islands across a river without bridge portals), degenerate tiny masks.
 Acceptance: phone-proxy average generation ≤ 2 s with buffer never empty during a 5-min session; documented tuning constants.

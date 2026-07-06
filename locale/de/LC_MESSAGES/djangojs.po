@@ -15,6 +15,12 @@ msgstr "+ automatische Route"
 msgid "A project with this name already exists."
 msgstr "Ein Projekt mit diesem Namen existiert bereits."
 
+msgid "A region needs at least 3 points."
+msgstr "Eine Region braucht mindestens 3 Punkte."
+
+msgid "Add a mask to this map first."
+msgstr "Füge dieser Karte zuerst eine Maske hinzu."
+
 msgid "Additionally"
 msgstr "Zusätzlich"
 
@@ -39,6 +45,9 @@ msgstr "Bei Links/Rechts-Posten entweder direkt die Knöpfe antippen oder die Ro
 msgid "Author"
 msgstr "Autor"
 
+msgid "Auto-suggested region — adjust and save."
+msgstr "Automatisch vorgeschlagene Region — anpassen und speichern."
+
 msgid "Automatic route"
 msgstr "Automatische Route"
 
@@ -60,8 +69,14 @@ msgstr "Sperrelement gelöscht"
 msgid "Block line added"
 msgstr "Sperrlinie hinzugefügt"
 
+msgid "Building the map failed."
+msgstr "Aufbau der Karte fehlgeschlagen."
+
 msgid "Cancel"
 msgstr "Abbrechen"
+
+msgid "Choose a map"
+msgstr "Karte wählen"
 
 msgid "Choose color"
 msgstr "Farbe wählen"
@@ -132,6 +147,12 @@ msgstr "Posten absolviert"
 msgid "Copy of"
 msgstr "Kopie von"
 
+msgid "Could not enable infinite play."
+msgstr "Infinity-Modus konnte nicht aktiviert werden."
+
+msgid "Could not load region."
+msgstr "Region konnte nicht geladen werden."
+
 msgid "Created"
 msgstr "Erstellt"
 
@@ -162,17 +183,29 @@ msgstr "Route löschen"
 msgid "Deleting failed."
 msgstr "Löschen fehlgeschlagen."
 
+msgid "Disabling…"
+msgstr "Wird deaktiviert…"
+
 msgid "Distance-based time"
 msgstr "Distanz-basierte Zeit"
 
 msgid "Done"
 msgstr "Fertig"
 
+msgid "Drag the corners inward to mark the map area."
+msgstr "Ziehe die Ecken nach innen, um den Kartenbereich zu markieren."
+
+msgid "Edit points"
+msgstr "Punkte bearbeiten"
+
 msgid "Editor is not ready yet — please try again."
 msgstr "Editor noch nicht bereit — bitte erneut versuchen."
 
 msgid "Elevation changed"
 msgstr "Höhe geändert"
+
+msgid "Enabling…"
+msgstr "Wird aktiviert…"
 
 msgid "Enlarge"
 msgstr "Vergrössern"
@@ -240,6 +273,21 @@ msgstr "Routen importieren"
 msgid "Individual"
 msgstr "Individuell"
 
+msgid "Infinite play"
+msgstr "Infinity-Modus"
+
+msgid "Infinite play enabled."
+msgstr "Infinity-Modus aktiviert."
+
+msgid "Infinite play is on — click to turn off"
+msgstr "Infinity-Modus ist an — zum Ausschalten klicken"
+
+msgid "Infinite play off"
+msgstr "Infinity-Modus aus"
+
+msgid "Infinite play on"
+msgstr "Infinity-Modus an"
+
 msgid "Label"
 msgstr "Label"
 
@@ -258,8 +306,17 @@ msgstr "Linie"
 msgid "Loaded"
 msgstr "Geladen"
 
+msgid "Loaded saved region."
+msgstr "Gespeicherte Region geladen."
+
 msgid "Loading athletes…"
 msgstr "Athleten werden geladen…"
+
+msgid "Loading maps…"
+msgstr "Karten werden geladen…"
+
+msgid "Loading region…"
+msgstr "Region wird geladen…"
 
 msgid "Mask edited"
 msgstr "Maske bearbeitet"
@@ -317,6 +374,9 @@ msgstr "Kein Label"
 
 msgid "No labels yet"
 msgstr "Keine Labels vorhanden"
+
+msgid "No maps are enabled for infinite play yet."
+msgstr "Es sind noch keine Karten für Infinity-Modus freigeschaltet."
 
 msgid "No matching OCAD controls found in this file."
 msgstr "Keine passenden OCAD-Posten in dieser Datei gefunden."
@@ -396,14 +456,29 @@ msgstr "Schreibgeschützt:"
 msgid "Ready?"
 msgstr "Bereit?"
 
+msgid "Rebuild failed."
+msgstr "Neuaufbau fehlgeschlagen."
+
+msgid "Rebuilding graph…"
+msgstr "Graph wird neu aufgebaut…"
+
 msgid "Redo"
 msgstr "Wiederherstellen"
+
+msgid "Region saved & graph rebuilt."
+msgstr "Region gespeichert & Graph neu aufgebaut."
+
+msgid "Region saved."
+msgstr "Region gespeichert."
 
 msgid "Reload"
 msgstr "Neu laden"
 
 msgid "Remove label"
 msgstr "Label entfernen"
+
+msgid "Remove point"
+msgstr "Punkt entfernen"
 
 msgid "Replace"
 msgstr "Ersetzen"
@@ -459,8 +534,20 @@ msgstr "Routenwahlfehler"
 msgid "Routes"
 msgstr "Routen"
 
+msgid "Save a map region first"
+msgstr "Zuerst eine Kartenregion speichern"
+
+msgid "Save failed."
+msgstr "Speichern fehlgeschlagen."
+
 msgid "Saved"
 msgstr "Gespeichert"
+
+msgid "Saved region loaded."
+msgstr "Gespeicherte Region geladen."
+
+msgid "Saving & rebuilding…"
+msgstr "Speichern & neu aufbauen…"
 
 msgid "Select and drag point 1"
 msgstr "1. Punkt wählen und ziehen"
@@ -500,6 +587,12 @@ msgstr "Statistik"
 
 msgid "Status"
 msgstr "Status"
+
+msgid "Suggesting…"
+msgstr "Wird vorgeschlagen…"
+
+msgid "Suggestion failed."
+msgstr "Vorschlag fehlgeschlagen."
 
 msgid "Tap the buttons to see a detailed evaluation."
 msgstr "Tippe die Knöpfe an, um eine detaillierte Auswertung zu sehen."
@@ -542,6 +635,9 @@ msgstr "Training"
 
 msgid "Training short"
 msgstr "T"
+
+msgid "Turn on infinite play for this map"
+msgstr "Infinity-Modus für diese Karte aktivieren"
 
 msgid "Tutorial completed"
 msgstr "Tutorial abgeschlossen"

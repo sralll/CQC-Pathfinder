@@ -12,6 +12,8 @@ let project = {
     scaled: false,
     map_file: '',
     has_mask: false,
+    infinite_enabled: false,
+    infinite_region_set: false,
     blocked_terrain: null,
     control_pairs: []
 };
@@ -40,6 +42,7 @@ function setReadOnly(isReadOnly, lockedByName, reason) {
     // Keep filename input and nav buttons in sync with read-only state
     updateFilenameInput();
     updateNavPublishBtn();
+    window.updateNavInfinityBtn?.();
     updateNavLabel();
 
     // Fade and disable write-only menu items in Projekte dropdown
@@ -3212,11 +3215,49 @@ const PlaceControlTool = (() => {
     the HTML toolbar segments.
 ========================================================= */
 
+/* =========================================================
+    TOOL: INFINITY (map-region editor for infinite play)
+    A thin tool wrapper around RegionEditor — the actual
+    vertex drag/insert/remove interaction lives there and is
+    dispatched via RegionEditor.isActive(). This tool just
+    owns enter/exit (mode class + region load) and panning of
+    empty space. Subtools: "edit" (drag / edge-insert) and
+    "remove" (click a vertex to delete). RegionEditor is a
+    later `const`, but these methods only run at call time so
+    the forward reference resolves fine.
+========================================================= */
+const InfinityTool = (() => {
+    const gesture = makePendingGesture({
+        onDrag(downEvent) { pan.start(downEvent.clientX, downEvent.clientY); },
+        onClick(e) {},
+    });
+    return {
+        defaultCursor: "default",
+        onEnter() {
+            mapContainer.style.cursor = this.defaultCursor;
+            mapContainer.classList.add("mode-infinity");
+            document.body.classList.add("mode-infinity");
+            RegionEditor.enter();
+        },
+        onExit() {
+            mapContainer.classList.remove("mode-infinity");
+            document.body.classList.remove("mode-infinity");
+            RegionEditor.exit();
+            gesture.cancel();
+        },
+        onMouseDown(e, pt) { gesture.down(e, pt); },
+        onMouseUp(e, pt)   { gesture.up(e, pt); },
+        onMouseMove(e, pt) { gesture.move(pt); },
+        onKeyDown(e) {},
+    };
+})();
+
 const ToolMode = {
     CONTROL_PAIR: "control_pair",
     ROUTE:        "route",
     MASK:         "mask",
     BLOCK:        "block",
+    INFINITY:     "infinity",
     NONE:         "no_tool",
 };
 
@@ -3225,6 +3266,7 @@ const TOOLS = {
     [ToolMode.ROUTE]:        RouteTool,
     [ToolMode.MASK]:         MaskTool,
     [ToolMode.BLOCK]:        BlockTool,
+    [ToolMode.INFINITY]:     InfinityTool,
     [ToolMode.NONE]:         ViewTool,
 };
 
@@ -3261,17 +3303,16 @@ const RCM = (() => {
     const OR1 = IR2, OR2 = 130;          // outer ring directly attached (OR1 == IR2)
     const CLICK_MS = 200, MOVE_PX = 8;
 
-    const MENU_TOOLS = [ToolMode.CONTROL_PAIR, ToolMode.ROUTE, ToolMode.MASK, ToolMode.BLOCK];
-    // Clockwise from North: CP(N) Route(E) Mask(S) Block(W)
+    const MENU_TOOLS = [ToolMode.CONTROL_PAIR, ToolMode.ROUTE, ToolMode.MASK, ToolMode.BLOCK, ToolMode.INFINITY];
+    // Clockwise from North, evenly spaced (one slice per tool).
     const TOOL_ICON  = {
         [ToolMode.CONTROL_PAIR]: "control_pair",
         [ToolMode.ROUTE]:        "route",
         [ToolMode.MASK]:         "mask",
         [ToolMode.BLOCK]:        "block",
+        [ToolMode.INFINITY]:     "infinity",
     };
-    const N = 4, SECTOR = 90;
-    // Segments start at -135° so each midpoint is exactly N/E/S/W
-    // N mid=-90°, E mid=0°, S mid=90°, W mid=180°
+    const N = MENU_TOOLS.length, SECTOR = 360 / N;
 
     let menuEl = null, overlayEl = null;
     let downAt = 0, downPos = null;
@@ -3282,9 +3323,11 @@ const RCM = (() => {
     const DBLCLICK_MS = 400;
 
     const rad    = d => d * Math.PI / 180;
-    // Segments start at -135° → midpoints at -90(N), 0(E), 90(S), 180(W)
-    const segA1  = i => -135 + i * SECTOR;
+    // First slice is centred on North (-90°); the rest follow clockwise.
+    const segA1  = i => -90 - SECTOR / 2 + i * SECTOR;
     const segMid = i => segA1(i) + SECTOR / 2;
+    // Angle offset that maps atan2 output to "0 = start of slice 0".
+    const HIT_OFFSET = 90 + SECTOR / 2;
 
     // Colors matching the sidebar tool wheel
     const COL_DARK   = "#252525";
@@ -3411,7 +3454,7 @@ const RCM = (() => {
         const r    = menuEl.getBoundingClientRect();
         const dx   = cx-(r.left+r.width/2), dy = cy-(r.top+r.height/2);
         const dist = Math.hypot(dx, dy);
-        const norm = ((Math.atan2(dy,dx)*180/Math.PI)+135+360)%360; // offset so 0 = start of N segment
+        const norm = ((Math.atan2(dy,dx)*180/Math.PI)+HIT_OFFSET+360)%360; // 0 = start of slice 0
 
         // Centre circle → no_tool
         if (dist < IR1) return { ring:"center", mode: ToolMode.NONE, sub: null };
@@ -3695,13 +3738,400 @@ function initTouchInput() {
     });
 }
 
+/* =========================================================
+    MAP-REGION POLYGON EDITOR  (WP 4.1)
+
+    Coaches draw the authoritative infinity map region as a closed polygon over
+    the map raster. The polygon is stored server-side in FULL-RES MASK PIXELS
+    (File.infinite_region, same space as the navgraph nodes). In the editor SVG
+    the viewport works in WORLD units, and world = maskPx * PATHING_MASK_TRAIN_SCALE
+    (identical to how routes are lifted from the pathing worker), so we convert
+    on load/save only.
+
+    Rendering follows the persistent-SVG-node convention (memory
+    editor-preview-no-dom-churn): a pool of vertex-handle circles and an
+    edge-hit polyline are created once and reused — dragging only mutates
+    attributes, never adds/removes DOM nodes, so password-manager MutationObservers
+    aren't woken per frame. Vertices are stored in world coords internally.
+========================================================= */
+const RegionEditor = (() => {
+    const HANDLE_R = 6;                 // vertex handle radius (screen px via non-scaling)
+    const EDGE_INSERT_DIST = 10;        // world-unit tolerance to hit an edge
+    let editing = false;
+    let verts = [];                     // [{x,y}, ...] in WORLD coords, closed ring
+    let dragIdx = -1;
+    let moved = false;
+    // Persistent SVG nodes.
+    let gRoot = null, outline = null;
+    const handlePool = [];              // reusable <circle> handles
+
+    function m2w(p) { return { x: p[0] * PATHING_MASK_TRAIN_SCALE, y: p[1] * PATHING_MASK_TRAIN_SCALE }; }
+    function w2m(v) {
+        return [Math.round(v.x / PATHING_MASK_TRAIN_SCALE), Math.round(v.y / PATHING_MASK_TRAIN_SCALE)];
+    }
+
+    function ensureNodes() {
+        if (gRoot && gRoot.isConnected) return;
+        const layer = document.getElementById("ui-layer");
+        if (!layer) return;
+        gRoot = svgNode("g", { class: "region-overlay" });
+        outline = svgNode("polygon", {
+            fill: "rgba(224,112,32,0.12)", stroke: "#e07020",
+            "stroke-width": "2", "vector-effect": "non-scaling-stroke",
+            "stroke-linejoin": "round",
+        });
+        outline.style.cursor = "copy";      // clicking an edge inserts a vertex
+        gRoot.appendChild(outline);
+        layer.appendChild(gRoot);
+    }
+
+    function handleAt(i) {
+        while (handlePool.length <= i) {
+            const c = svgNode("circle", {
+                r: HANDLE_R, fill: "#fff", stroke: "#e07020",
+                "stroke-width": "2", "vector-effect": "non-scaling-stroke",
+            });
+            c.style.cursor = "grab";
+            c.dataset.regionHandle = handlePool.length;
+            gRoot.appendChild(c);
+            handlePool.push(c);
+        }
+        return handlePool[i];
+    }
+
+    // Update attributes only — no node churn.
+    function render() {
+        if (!editing) return;
+        ensureNodes();
+        if (!gRoot) return;
+        outline.setAttribute("points", verts.map(v => `${v.x},${v.y}`).join(" "));
+        showNode(outline);
+        // Adaptive handle size: keep ~HANDLE_R screen px regardless of zoom.
+        const r = HANDLE_R / (camera.zoom || 1);
+        for (let i = 0; i < verts.length; i++) {
+            const c = handleAt(i);
+            c.setAttribute("cx", verts[i].x);
+            c.setAttribute("cy", verts[i].y);
+            c.setAttribute("r", r);
+            showNode(c);
+        }
+        for (let i = verts.length; i < handlePool.length; i++) hideNode(handlePool[i]);
+    }
+
+    function clearRender() {
+        hideNode(outline);
+        for (const c of handlePool) hideNode(c);
+    }
+
+    function setStatus(msg, isError) {
+        const el = document.getElementById("region-status");
+        if (!el) return;
+        el.textContent = msg || "";
+        el.classList.toggle("region-status-error", !!isError);
+    }
+
+    // ---- Public: enter/exit edit mode -----------------------------------
+    // Driven by InfinityTool.onEnter/onExit (the tool owns the mode class).
+    async function enter() {
+        // Note: no readOnly guard — the region is editable regardless of publish
+        // state (autosave is allowed server-side; only team membership is checked).
+        if (!project.id || !project.has_mask) {
+            setStatus(gettext("Add a mask to this map first."), true);
+            return;
+        }
+        editing = true;
+        setStatus(gettext("Loading region…"));
+        await loadFromServer();
+        render();
+    }
+
+    function exit() {
+        editing = false;
+        dragIdx = -1;
+        clearRender();
+    }
+
+    // Fetch the saved region, or the whole-map frame for a fresh map.
+    async function loadFromServer() {
+        try {
+            const res = await fetch(`/editor/region-suggest/${project.id}/`);
+            const data = await res.json();
+            if (data.error) { setStatus(data.error, true); verts = []; return; }
+            verts = (data.polygon || []).map(m2w);
+            setStatus(data.source === "saved"
+                ? gettext("Saved region loaded.")
+                : gettext("Drag the corners inward to mark the map area."));
+        } catch (e) {
+            setStatus(gettext("Could not load region."), true);
+            verts = [];
+        }
+    }
+
+    // ---- Autosave (persist only — the navgraph build is deferred until the
+    // coach activates infinite play from the navbar). Coalesces rapid edits:
+    // if a save is in flight, one more save runs after it finishes.
+    let _saving = false, _saveAgain = false;
+    async function autosave() {
+        if (verts.length < 3) { setStatus(gettext("A region needs at least 3 points."), true); return; }
+        if (_saving) { _saveAgain = true; return; }
+        _saving = true;
+        const polygon = verts.map(w2m);
+        try {
+            const csrf = document.cookie.match(/csrftoken=([^;]+)/)?.[1] ?? "";
+            const res = await fetch(`/editor/save-region/${project.id}/`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json", "X-CSRFToken": csrf },
+                body: JSON.stringify({ polygon }),
+            });
+            const data = await res.json();
+            if (data.error) { setStatus(data.error, true); return; }
+            project.infinite_region_set = true;
+            setStatus(gettext("Region saved."));
+        } catch (e) {
+            setStatus(gettext("Save failed."), true);
+        } finally {
+            _saving = false;
+            if (_saveAgain) { _saveAgain = false; autosave(); }
+        }
+    }
+
+    // ---- Interaction (called from the input dispatcher) -----------------
+    function isActive() { return editing; }
+
+    function hitHandle(e) {
+        const h = e.target?.dataset?.regionHandle;
+        return h !== undefined ? Number(h) : -1;
+    }
+
+    function subtool() { return getSubtool(ToolMode.INFINITY); }
+
+    // Insert a vertex on the nearest edge if the world point is close enough.
+    function tryInsertOnEdge(pt) {
+        let bestI = -1, bestD = EDGE_INSERT_DIST / (camera.zoom || 1), bestPt = null;
+        for (let i = 0; i < verts.length; i++) {
+            const a = verts[i], b = verts[(i + 1) % verts.length];
+            const r = pointToSegmentDistance(pt.x, pt.y, a.x, a.y, b.x, b.y);
+            if (r.distance < bestD) { bestD = r.distance; bestI = i; bestPt = { x: r.closestX, y: r.closestY }; }
+        }
+        if (bestI >= 0) { verts.splice(bestI + 1, 0, bestPt); return true; }
+        return false;
+    }
+
+    function onMouseDown(e, pt) {
+        if (!editing) return false;
+        const hi = hitHandle(e);
+
+        // "Remove point" subtool: clicking a vertex deletes it (min 3 kept).
+        if (subtool() === "remove") {
+            if (hi < 0) return false;   // empty space → let pan handle it
+            if (verts.length <= 3) {
+                setStatus(gettext("A region needs at least 3 points."), true);
+                return true;
+            }
+            verts.splice(hi, 1);
+            render();
+            autosave();
+            return true;
+        }
+
+        // "Edit" subtool: drag an existing vertex, or click an edge to insert.
+        if (hi >= 0) {
+            dragIdx = hi; moved = false;
+            return true;
+        }
+        if (tryInsertOnEdge(pt)) {
+            render();
+            // Newly inserted vertex is the one after the hit edge — find it by proximity.
+            dragIdx = verts.findIndex(v => Math.abs(v.x - pt.x) < 1e-6 && Math.abs(v.y - pt.y) < 1e-6);
+            moved = false;
+            autosave();     // persist the inserted point immediately
+            return true;
+        }
+        return false;   // let pan / tool handle it
+    }
+
+    function onMouseMove(e, pt) {
+        if (!editing || dragIdx < 0) return false;
+        verts[dragIdx] = { x: pt.x, y: pt.y };
+        moved = true;
+        render();
+        return true;
+    }
+
+    function onMouseUp(e, pt) {
+        if (!editing || dragIdx < 0) return false;
+        if (moved) autosave();   // persist the moved vertex on release
+        dragIdx = -1;
+        return true;
+    }
+
+    function onProjectChanged() {
+        if (editing) exit();
+        verts = [];
+        setStatus("");
+    }
+
+    function onCameraChanged() { if (editing) render(); }
+
+    return {
+        isActive, enter, exit,
+        onMouseDown, onMouseMove, onMouseUp,
+        onProjectChanged, onCameraChanged,
+    };
+})();
+window.RegionEditor = RegionEditor;
+
+/* =========================================================
+    NAVBAR INFINITY TOGGLE
+    --------------------------------------------------------
+    The infinite-play activation lives in the navbar (left of
+    Publish), not in the tool panel. Enabling it:
+      1. POSTs to toggle-infinite, which validates the region
+         (must exist and be tightened in from the map frame —
+         else a publish-style warning modal is shown, exactly
+         like "Controls without routes");
+      2. builds the navgraph in the background while a spinner
+         replaces the infinity icon in the button;
+      3. flips project.infinite_enabled only once the build is
+         done (server flips File.infinite_enabled server-side).
+    Disabling is immediate (no build). The build-status poll only
+    runs while a build is in flight — never on idle editor actions.
+========================================================= */
+const NavInfinity = (() => {
+    let pending = false;      // a build is in flight
+    let pollTimer = null;
+    const ICON = `<x-icon name="infinity" size="12px"></x-icon>`;
+    // A slightly larger spinner than the icon it replaces — the build is the one
+    // slow step here, so make it clearly visible in the button.
+    const SPINNER = `<x-icon name="spinner" class="spin" size="15px"></x-icon>`;
+
+    function btn() { return document.getElementById("nav-infinity-btn"); }
+
+    // Floating "map is being prepared" info box (mirrors the mask-generation bar).
+    function showGenBar() {
+        const bar = document.getElementById("infinity-gen-bar");
+        if (bar) bar.style.display = "flex";
+    }
+    function hideGenBar() {
+        const bar = document.getElementById("infinity-gen-bar");
+        if (bar) bar.style.display = "none";
+    }
+
+    function updateBtn() {
+        const b = btn();
+        if (!b) return;
+        b.classList.toggle("infinity-btn-active", !!(project.id && project.infinite_enabled));
+        b.classList.toggle("infinity-btn-building", pending);
+        // No readOnly gating — release/retreat works regardless of publish state.
+        b.disabled = pending || !project.id || !project.has_mask;
+        b.innerHTML = pending ? SPINNER : ICON;
+        b.title = !project.has_mask
+            ? gettext("Add a mask to this map first.")
+            : project.infinite_enabled
+                ? gettext("Infinite play is on — click to turn off")
+                : gettext("Turn on infinite play for this map");
+    }
+
+    function stopPoll() { if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; } }
+
+    // Poll the navgraph build kicked off by enabling. Guarded by the file id so
+    // navigating to another file mid-build simply drops the stale callback.
+    function pollBuild(fileId) {
+        stopPoll();
+        const tick = async () => {
+            try {
+                const res = await fetch(`/editor/region-build-status/${fileId}/`);
+                const data = await res.json();
+                const p = data.progress;
+                if (!p || p.status === "building") { pollTimer = setTimeout(tick, 1500); return; }
+                // Build finished (done | failed | idle) — settle, if still on this file.
+                pending = false;
+                hideGenBar();
+                if (project.id === fileId) {
+                    if (p.status === "done") project.infinite_enabled = true;
+                    updateBtn();
+                    if (p.status === "done") {
+                        const b = btn();
+                        if (b) window.emitPublishWave?.(b);   // same ripple as publish
+                    }
+                    if (p.status === "failed") {
+                        window.showModal?.({ message: p.error || gettext("Building the map failed.") });
+                    }
+                }
+            } catch (e) { pollTimer = setTimeout(tick, 2500); }
+        };
+        pollTimer = setTimeout(tick, 1200);
+    }
+
+    async function toggle() {
+        if (pending || !project.id) return;
+        if (!project.has_mask) {
+            await window.showModal?.({ message: gettext("Add a mask to this map first.") });
+            return;
+        }
+        const desired = !project.infinite_enabled;
+        const csrf = document.cookie.match(/csrftoken=([^;]+)/)?.[1] ?? "";
+        try {
+            const res = await fetch(`/editor/toggle-infinite/${project.id}/`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json", "X-CSRFToken": csrf },
+                body: JSON.stringify({ enabled: desired }),
+            });
+            const data = await res.json();
+            if (!res.ok || data.error) {
+                // Publish-style warning (e.g. region still covers the whole map).
+                await window.showModal?.({ message: data.error || gettext("Could not enable infinite play.") });
+                return;
+            }
+            if (!desired) {                         // disabled immediately
+                project.infinite_enabled = false;
+                hideGenBar();
+                updateBtn();
+                return;
+            }
+            if (data.status === "building") {       // enabling → build in background
+                pending = true;
+                updateBtn();
+                showGenBar();
+                pollBuild(project.id);
+            }
+        } catch (e) {
+            await window.showModal?.({ message: gettext("Could not enable infinite play.") });
+        }
+    }
+
+    // Called on every project load/replace (file_table.js _applyProject).
+    function onProjectChanged() {
+        stopPoll();
+        pending = false;
+        hideGenBar();
+        updateBtn();
+    }
+
+    return { onProjectChanged, toggle, updateBtn };
+})();
+window.NavInfinity = NavInfinity;
+window.updateNavInfinityBtn = NavInfinity.updateBtn;
+
+// Wire the navbar infinity button once the DOM is ready.
+(function wireNavInfinity() {
+    const bind = () => {
+        document.getElementById("nav-infinity-btn")?.addEventListener("click", () => NavInfinity.toggle());
+    };
+    if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", bind);
+    else bind();
+})();
+
 let _scaleDownPos    = null;   // screen pos at mousedown
 let _scalePanStarted = false;  // true once pan.start() has been called in this gesture
 const SCALE_PAN_THRESHOLD = 5;
 
 function onMouseDown(e) {
     invalidateMapRect();   // PERF-FIX #1: refresh cached rect at the start of every gesture
-    if (e.button === 2) { if (mapContainer.contains(e.target)) RCM.onDown(e); return; }
+    if (e.button === 2) {
+        if (mapContainer.contains(e.target)) RCM.onDown(e);
+        return;
+    }
     if (e.button !== 0) return;
     if (!mapContainer.contains(e.target)) return;
     // Prevent the browser from selecting text in the navbar or elsewhere when
@@ -3716,6 +4146,7 @@ function onMouseDown(e) {
         if (_scaleDragIdx) mapContainer.style.cursor = "grabbing";
         return;
     }
+    if (RegionEditor.isActive() && RegionEditor.onMouseDown(e, screenToWorld(e.clientX, e.clientY))) return;
     if (CourseAlignMode.isActive() && CourseAlignMode.onMouseDown(e, screenToWorld(e.clientX, e.clientY))) return;
     activeTool.onMouseDown(e, screenToWorld(e.clientX, e.clientY));
 }
@@ -3740,6 +4171,7 @@ function onMouseMove(e) {
     }
 
     if (pan.update(e)) return;
+    if (RegionEditor.isActive() && RegionEditor.onMouseMove(e, screenToWorld(e.clientX, e.clientY))) return;
     if (CourseAlignMode.isActive() && CourseAlignMode.onMouseMove(e, screenToWorld(e.clientX, e.clientY))) return;
     activeTool.onMouseMove(e, screenToWorld(e.clientX, e.clientY));
 }
@@ -3766,6 +4198,7 @@ function onMouseUp(e) {
     }
 
     if (pan.stop()) return;
+    if (RegionEditor.isActive() && RegionEditor.onMouseUp(e, screenToWorld(e.clientX, e.clientY))) return;
     if (CourseAlignMode.isActive() && CourseAlignMode.onMouseUp(e, screenToWorld(e.clientX, e.clientY))) return;
     activeTool.onMouseUp(e, screenToWorld(e.clientX, e.clientY));
 }
@@ -5391,6 +5824,8 @@ function resetProjectForOcadUpload() {
         scaled: false,
         map_file: "",
         has_mask: false,
+        infinite_enabled: false,
+        infinite_region_set: false,
         blocked_terrain: null,
         control_pairs: [],
     };
@@ -5410,6 +5845,7 @@ function resetProjectForOcadUpload() {
     updateNavLabel();
     updateCPList();
     _updateScalePanel();
+    window.InfiniteToggle?.onProjectChanged?.();
 
     activeSubtool[ToolMode.CONTROL_PAIR] = "add";
     setTool(ToolMode.CONTROL_PAIR);
@@ -6202,6 +6638,7 @@ function updateCameraTransform({ x = camera.x, y = camera.y, zoom = camera.zoom 
     document.getElementById("camera").style.transform =
         `translate(${x}px, ${y}px) scale(${zoom})`;
     updateRouteStrokeWidths();
+    window.RegionEditor?.onCameraChanged?.();
 
     const bg       = document.getElementById("map-background");
     const major    = 250 * zoom;
@@ -7688,6 +8125,7 @@ const TOOL_ORDER = [
     ToolMode.ROUTE,
     ToolMode.MASK,
     ToolMode.BLOCK,
+    ToolMode.INFINITY,
     ToolMode.NONE,
 ];
 
@@ -7699,6 +8137,7 @@ const TOOL_CONFIG = {
     "route":        { tx: 37, ty: 0 },
     "mask":         { tx: 40, ty: 0 },
     "block":        { tx: 40, ty: 0 },
+    "infinity":     { tx: 40, ty: 0 },
     "no_tool":      { tx: 40, ty: 0 },
 };
 
@@ -7728,6 +8167,10 @@ const SUBTOOL_DEFS = {
         { id: "polygon", icon: "draw-polygon", title: "Polygon" },
         { id: "erase",   icon: "eraser",       title: "Erase" },
     ],
+    [ToolMode.INFINITY]: [
+        { id: "edit",   icon: "pencil", title: gettext("Edit points") },
+        { id: "remove", icon: "eraser", title: gettext("Remove point") },
+    ],
 };
 
 const activeSubtool = {
@@ -7735,6 +8178,7 @@ const activeSubtool = {
     [ToolMode.ROUTE]:        "new",
     [ToolMode.MASK]:         "pan",
     [ToolMode.BLOCK]:        "line",
+    [ToolMode.INFINITY]:     "edit",
 };
 
 function getSubtool(mode) {
@@ -7754,7 +8198,9 @@ function setSubtool(mode, id) {
 
 function updateSubtoolPanel(mode) {
     subtoolPanel.innerHTML = "";
-    if (readOnly) return;           // no subtools in locked/published files
+    // No subtools in locked/published files — except infinity, which stays
+    // editable independent of publish state.
+    if (readOnly && mode !== ToolMode.INFINITY) return;
     const defs = SUBTOOL_DEFS[mode];
     if (!defs) return;
 
@@ -7821,7 +8267,10 @@ subtoolPanel.addEventListener("wheel", e => {
 }, { passive: false });
 
 function setTool(mode) {
-    if (readOnly && mode !== ToolMode.NONE) return;
+    // Infinity mode is deliberately available even on read-only (published or
+    // locked) files: coaches must be able to mark a region and release/retreat
+    // infinite play regardless of publish state.
+    if (readOnly && mode !== ToolMode.NONE && mode !== ToolMode.INFINITY) return;
     const prevMode  = currentToolMode;
     currentToolMode = mode;
     // Auto-activate the default "add" subtool when switching INTO these modes

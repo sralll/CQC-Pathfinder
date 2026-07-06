@@ -39,6 +39,9 @@
     </div>
 
     <div class="nav-center">
+        <button id="nav-infinity-btn" class="nav-infinity-btn" title="{% trans 'Turn on infinite play for this map' %}" disabled>
+            <x-icon name="infinity" size="12px"></x-icon>
+        </button>
         <button id="nav-publish-btn" class="nav-publish-btn" title="{% trans 'Publish' %}" onclick="toggleNavPublish()">
             <x-icon name="globe" size="12px"></x-icon>
         </button>
@@ -162,6 +165,19 @@
                     <input type="range" id="mask-size-slider" min="1" max="15" step="1" value="5">
                 </div>
             </div>
+            <!-- Infinity tool-mode panel (shown in body.mode-infinity). The
+                 activation toggle lives in the navbar (left of Publish), not
+                 here. Editing autosaves; there is no save/finish button. -->
+            <div id="infinity-controls">
+                <h2 class="infinity-title">{% trans "Infinity Mode" %}</h2>
+                <p class="infinity-explain">{% trans "Mark the area athletes may be sent between. Start from the four map corners and drag them inward." %}</p>
+                <ul class="infinity-explain-list">
+                    <li><b>{% trans "Edit points" %}</b> — {% trans "drag a corner to move it, or click an edge to add a point." %}</li>
+                    <li><b>{% trans "Remove point" %}</b> — {% trans "click a point to delete it (at least 3 remain)." %}</li>
+                </ul>
+                <p class="infinity-warn-hint">{% trans "Keep the selection tight and well inside the map edge, so generated routes can never run around the map." %}</p>
+                <div id="region-status" class="region-status"></div>
+            </div>
         </div>
 
         <div id="sidebar-bottom">
@@ -227,8 +243,20 @@
                             </g>
 
                         <g class="tool-segment"
-                            data-tool="no_tool"
+                            data-tool="infinity"
                             data-index="5">
+
+                                <path class="segment-bg"></path>
+
+                                <g class="label-wrap">
+
+                                    <path class="tool-icon"/>
+                                </g>
+                            </g>
+
+                        <g class="tool-segment"
+                            data-tool="no_tool"
+                            data-index="6">
 
                                 <path class="segment-bg"></path>
 
@@ -255,6 +283,10 @@
                 <progress id="mask-gen-progress" value="0" max="100"></progress>
             </div>
             <button id="mask-gen-cancel" title="{% trans 'Cancel' %}"><x-icon name="xmark" size="11px"></x-icon></button>
+        </div>
+        <div id="infinity-gen-bar" style="display:none">
+            <x-icon name="spinner" class="spin" size="14px"></x-icon>
+            <span class="infinity-gen-text">{% trans "This map will be ready for infinity mode soon…" %}</span>
         </div>
         <div id="map-background"></div>
         <div id="camera">
@@ -357,6 +389,7 @@
             <table id="file-table">
                 <colgroup>
                     <col class="col-publish">
+                    <col class="col-infinity">
                     <col class="col-name">
                     <col class="col-label">
                     <col class="col-cp">
@@ -371,6 +404,7 @@
             </table>
             <div id="file-cards"></div>
             <div id="publish-filter-dropdown" class="table-filter-dropdown"></div>
+            <div id="infinity-filter-dropdown" class="table-filter-dropdown"></div>
             <div id="label-filter-dropdown" class="table-filter-dropdown"></div>
             <div id="author-filter-dropdown" class="table-filter-dropdown"></div>
             <div id="team-filter-dropdown" class="table-filter-dropdown"></div>

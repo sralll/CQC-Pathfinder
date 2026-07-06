@@ -26,6 +26,12 @@ class File(models.Model):
     map_file = models.CharField(max_length=255, blank=True)
     has_mask = models.BooleanField(default=False)
     blocked_terrain = models.JSONField(null=True, blank=True)
+    # Infinity-on-masks (plan.md Phase 4). infinite_region = coach-drawn map-region
+    # polygon [[x,y],...] in full-res mask pixel coords (same space as navgraph
+    # nodes); authoritative hit zone for endpoint sampling (WP 4.1). infinite_enabled
+    # = coach opt-in gating the mask-mode map picker (WP 4.2).
+    infinite_region = models.JSONField(null=True, blank=True)
+    infinite_enabled = models.BooleanField(default=False)
     last_edited = models.DateTimeField(default=timezone.now)
     batch_progress = models.JSONField(null=True, blank=True)
     locked_by  = models.ForeignKey('auth.User', on_delete=models.SET_NULL,

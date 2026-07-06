@@ -3,6 +3,7 @@ import {
     buildRouteVisibilityGraph,
     computeRouteOptions,
 } from './infinite/citygen/core/RoutePlanner.js';
+import { MaskSceneSource } from './infinite/mask_scene_source.js';
 
 /* =========================================================
    INFINITE PLAY — procedurally-generated sprint route-choice
@@ -29,6 +30,17 @@ const NOA_EPSILON_DEG            = 2;
 const NOA_MIN_EFFECT_DEG         = 45;
 const NOA_COUNTER_MIN_DEG        = 45;
 const ROUTE_RUNTIME_MAX_RELATIVE_GAP = 0.5;
+const ROUTE_RUNTIME_MIN_SIDE_GAP = 10;
+
+// Main-thread fallback selection config — must mirror selectionConfig in
+// infinite/infinite_batch_worker.js (the worker path used in production).
+const selectionConfig = {
+    strategy: 'extremes',
+    maxRoutes: 5,
+    primaryRouteBudgetMs: 400,
+    extraRouteBudgetMs: 200,
+    extremesMaxRelativeGap: 0.30,
+};
 
 const ROUTE_COLORS  = ['#DD0011', '#CC6000'];   // play.js's first two route colours
 const CONTROL_COLOR = '#a033f0';                // standard orienteering pink/purple
@@ -215,11 +227,122 @@ let _routeAnim  = null;
 let _camAnim    = null;
 let stats       = loadStats();
 
+/* ── Scene source (city vs mask) ──────────────────────────
+   City mode is the default and leaves the existing code path fully intact.
+   Mask mode (WP 3.3) draws problems from a real uploaded map's server-built
+   navgraph via the pathing worker (see infinite/mask_scene_source.js). It is
+   selected at play start with ?source=mask&file=<id>&filename=<name>. */
+let sceneSource = 'city';           // 'city' | 'mask'
+let maskSource  = null;             // MaskSceneSource instance (mask mode)
+let maskSourceReady = null;         // Promise, resolves once navgraph is loaded
+let suppressPlay = false;           // true while the map picker is open
+
+function detectSceneSource() {
+    try {
+        const params = new URLSearchParams(window.location.search);
+        if (params.get('source') !== 'mask') return;
+        const fileId = params.get('file');
+        const filename = params.get('filename') || '';
+        if (!fileId) {
+            // ?source=mask without a chosen map → show the (temporary) picker.
+            showMaskMapPicker();
+            return;
+        }
+        sceneSource = 'mask';
+        maskSource = new MaskSceneSource({
+            fileId,
+            filename,
+            buildScene: buildMaskScene,
+        });
+        // Kick off the (async) navgraph + mask load right away so the buffer is
+        // warm by the time the first scene is requested.
+        maskSourceReady = maskSource.ready().catch((err) => {
+            console.error('mask scene source failed to initialise; falling back to city:', err);
+            sceneSource = 'city';
+            maskSource = null;
+            return null;
+        });
+    } catch (err) {
+        console.warn('failed to detect scene source:', err);
+    }
+}
+
+// Map picker for mask-mode infinite play. Lists maps a coach has opted in to
+// infinite play (File.infinite_enabled, set from the editor region panel —
+// see WP 4.2) that also have a built .navgraph.bin artifact, via
+// /play/infinity/mask-maps/ (results/play_views.py: infinite_mask_maps).
+function showMaskMapPicker() {
+    suppressPlay = true;
+    hideMapSpinner();
+
+    const hasGettext = typeof gettext === 'function';
+    const chooseMapLabel = hasGettext ? gettext('Choose a map') : 'Choose a map';
+    const loadingLabel = hasGettext ? gettext('Loading maps…') : 'Loading maps…';
+    const emptyLabel = hasGettext
+        ? gettext('No maps are enabled for infinite play yet.')
+        : 'No maps are enabled for infinite play yet.';
+    const errorLabel = hasGettext ? gettext('Error loading data') : 'Error loading data';
+
+    const overlay = document.createElement('div');
+    overlay.id = 'rp-mask-picker';
+    overlay.className = 'rp-modal open';
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-modal', 'true');
+
+    const card = document.createElement('div');
+    card.className = 'rp-modal-card';
+
+    const title = document.createElement('h2');
+    title.textContent = chooseMapLabel;
+    card.appendChild(title);
+
+    const status = document.createElement('p');
+    status.textContent = loadingLabel;
+    card.appendChild(status);
+
+    const list = document.createElement('div');
+    list.className = 'rp-mask-picker-list';
+    card.appendChild(list);
+
+    overlay.appendChild(card);
+    document.body.appendChild(overlay);
+
+    fetch('/play/infinity/mask-maps/', { credentials: 'same-origin', headers: { Accept: 'application/json' } })
+        .then((res) => { if (!res.ok) throw new Error(`HTTP ${res.status}`); return res.json(); })
+        .then((data) => {
+            const maps = data?.maps || [];
+            if (!maps.length) {
+                status.textContent = emptyLabel;
+                return;
+            }
+            status.remove();
+            for (const m of maps) {
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'rp-modal-btn rp-modal-btn-primary';
+                btn.textContent = m.name || m.filename;
+                btn.addEventListener('click', () => {
+                    const q = new URLSearchParams({
+                        source: 'mask',
+                        file: String(m.id),
+                        filename: m.filename || '',
+                    });
+                    window.location.search = `?${q.toString()}`;
+                });
+                list.appendChild(btn);
+            }
+        })
+        .catch((err) => {
+            status.textContent = `${errorLabel}: ${err.message || err}`;
+        });
+}
+
 document.addEventListener('DOMContentLoaded', () => {
     SVG('rp-svg').setAttribute('viewBox', `0 0 ${VB_W} ${VB_H}`);
     SVG('rp-svg').setAttribute('preserveAspectRatio', 'none');
     document.body.classList.add('has-prior-results'); // grey progress bar (visual hint: no project)
     initCamera();
+    detectSceneSource();
     showMapSpinner();
     requestAnimationFrame(() => requestAnimationFrame(next));
     initInput();
@@ -578,6 +701,7 @@ function hideMapSpinner() {
 ========================================================= */
 
 async function next() {
+    if (suppressPlay) return;   // map picker open — do not start play
     phase = 'transition';
     if (_routeAnim) { cancelAnimationFrame(_routeAnim); _routeAnim = null; }
     if (_camAnim) { cancelAnimationFrame(_camAnim); _camAnim = null; }
@@ -622,6 +746,16 @@ function beginChoice() {
 }
 
 async function takeNextScene() {
+    if (sceneSource === 'mask' && maskSource) {
+        // Mask mode: the MaskSceneSource keeps a prefetch buffer (≥ 2) of
+        // validated pairs and returns a ready scene, awaiting only if the
+        // buffer is momentarily starved (typically just the first take).
+        if (maskSourceReady) { await maskSourceReady; maskSourceReady = null; }
+        if (sceneSource === 'mask' && maskSource) {
+            return maskSource.takeScene();
+        }
+        // else: init failed and fell back to city — drop through.
+    }
     if (currentBatch && currentBatch.index >= currentBatch.scenes.length && currentBatch.donePromise && !currentBatch.done) {
         try {
             await currentBatch.donePromise;
@@ -642,6 +776,8 @@ async function takeNextScene() {
 }
 
 function scheduleBatchPreparation() {
+    // Mask mode manages its own prefetch buffer inside MaskSceneSource.
+    if (sceneSource === 'mask') return;
     if (preparedBatch || preparingBatch || prepareTimer) return;
     if (currentBatch?.donePromise && !currentBatch.done) {
         currentBatch.donePromise.finally(() => window.setTimeout(scheduleBatchPreparation, 0));
@@ -1472,8 +1608,14 @@ function buildSceneBatchCandidate(pairCount = CONTROL_PAIRS_PER_MAP) {
             rejectionCounts.distance++;
             continue;
         }
-        const routeResult = computeRouteOptions(pair.start, pair.goal, visibilityGraph);
-        const runtimeResult = selectRuntimeRouteOptions(pair, routeResult);
+        const routeResult = computeRouteOptions(pair.start, pair.goal, visibilityGraph, {
+            maxRoutes: selectionConfig.maxRoutes,
+            primaryBudgetMs: selectionConfig.primaryRouteBudgetMs,
+            extraBudgetMs: selectionConfig.extraRouteBudgetMs,
+        });
+        const runtimeResult = selectionConfig.strategy === 'extremes'
+            ? selectExtremeRouteOptions(pair, routeResult)
+            : selectRuntimeRouteOptions(pair, routeResult);
         if (runtimeResult.ok) {
             const scene = buildSceneFromRouteResult(city, visibilityGraph, pair, runtimeResult);
             scene.meta = {
@@ -1671,6 +1813,89 @@ function runtimeSlotsFor(paths, field) {
     return slots;
 }
 
+// Extremes strategy — mirror of selectExtremeRouteOptions in the worker. Serves
+// the left-most (min side) and right-most (max side) routes, accepting only when
+// their runtime gap is below selectionConfig.extremesMaxRelativeGap.
+function selectExtremeRouteOptions(pair, routeResult) {
+    const paths = (routeResult.paths || []).map(enrichRuntimePath);
+    const base = {
+        ...routeResult,
+        paths,
+        selected: null,
+        routeIndexes: [],
+        routeLengthSlots: runtimeSlotsFor(paths, 'length'),
+        routeSideSlots: runtimeSlotsFor(paths, 'side'),
+        routeSideLabelSlots: runtimeSlotsFor(paths, 'sideLabel'),
+        routeRuntimeSlots: runtimeSlotsFor(paths, 'run_time'),
+        routeNoASlots: runtimeSlotsFor(paths, 'noA'),
+        routeElevationSlots: runtimeSlotsFor(paths, 'elevation'),
+        blockFastest: false,
+        ok: false,
+    };
+
+    if (paths.length === 0) return { ...base, reason: routeResult.reason || 'timeout' };
+    if (paths.length === 1) return { ...base, reason: 'distinct', routeIndexes: [paths[0].routeIndex] };
+
+    const sgDx = pair.goal.x - pair.start.x;
+    const sgDy = pair.goal.y - pair.start.y;
+    const sgLen = Math.hypot(sgDx, sgDy) || 1;
+    for (const p of paths) {
+        if (Number.isFinite(p.side)) continue;
+        let sum = 0;
+        for (const pt of p.path) sum += sgDx * (pt.y - pair.start.y) - sgDy * (pt.x - pair.start.x);
+        p.side = (sum / p.path.length) / sgLen;
+        p.sideLabel = p.side > 0 ? 'R' : p.side < 0 ? 'L' : 'C';
+    }
+
+    paths.sort((a, b) => (a.run_time ?? Infinity) - (b.run_time ?? Infinity));
+    for (let i = 0; i < paths.length; i++) paths[i].routeIndex = i + 1;
+
+    const withRun = paths.filter((p) => Number.isFinite(p.run_time) && p.run_time > 0);
+    if (withRun.length < 2) return { ...base, reason: 'distinct' };
+
+    let leftmost = withRun[0], rightmost = withRun[0];
+    for (const p of withRun) {
+        if (p.side < leftmost.side) leftmost = p;
+        if (p.side > rightmost.side) rightmost = p;
+    }
+    if (leftmost === rightmost) return { ...base, reason: 'routeside' };
+
+    const selected = [leftmost, rightmost];
+    const sideGap = Math.abs(leftmost.side - rightmost.side);
+    const routeSideMin = sideGap / 4;
+    if (
+        sideGap < ROUTE_RUNTIME_MIN_SIDE_GAP ||
+        leftmost.side * rightmost.side >= 0 ||
+        selected.some((p) => Math.abs(p.side) < routeSideMin)
+    ) return { ...base, reason: 'routeside' };
+
+    const faster = Math.min(leftmost.run_time, rightmost.run_time);
+    const slower = Math.max(leftmost.run_time, rightmost.run_time);
+    const relativeGap = faster > 0 ? (slower - faster) / faster : Infinity;
+    if (relativeGap >= selectionConfig.extremesMaxRelativeGap) return { ...base, reason: 'runtime' };
+
+    // Block every route that is not one of the two served (left-most/right-most).
+    const skippedBarriers = paths
+        .filter((p) => p !== leftmost && p !== rightmost && p.barrier)
+        .map((p) => p.barrier);
+
+    return {
+        ...base,
+        ok: true,
+        reason: 'ok',
+        selected,
+        routeIndexes: selected.map((p) => p.routeIndex),
+        routeLengthSlots: runtimeSlotsFor(paths, 'length'),
+        routeSideSlots: runtimeSlotsFor(paths, 'side'),
+        routeSideLabelSlots: runtimeSlotsFor(paths, 'sideLabel'),
+        routeRuntimeSlots: runtimeSlotsFor(paths, 'run_time'),
+        routeNoASlots: runtimeSlotsFor(paths, 'noA'),
+        routeElevationSlots: runtimeSlotsFor(paths, 'elevation'),
+        skippedBarriers,
+        blockFastest: skippedBarriers.length > 0,
+    };
+}
+
 function selectRuntimeRouteOptions(pair, routeResult) {
     const paths = (routeResult.paths || []).map(enrichRuntimePath);
     const base = {
@@ -1792,6 +2017,82 @@ function buildSceneFromRouteResult(city, visibilityGraph, pair, routeResult) {
         ziel: pair.goal,
         routes,
         mapScale: 1,
+    };
+}
+
+/* =========================================================
+   MASK SCENE BUILDER (WP 3.3)
+   Turns a pathing-worker `pair` (already converted to map units by
+   MaskSceneSource) into a scene of the SAME shape as a city scene, so
+   renderScene / buildRenderedScene / the choice + scoring + report flow all
+   work unchanged. The only structural differences: kind === 'mask', a
+   `mapImage` descriptor for the raster background instead of `scene.city`,
+   and no `visibilityGraph`/`routeResult` (the worker already selected + refined
+   the two routes).
+========================================================= */
+
+function maskRouteSide(points, start, goal) {
+    const sgDx = goal.x - start.x;
+    const sgDy = goal.y - start.y;
+    const sgLen = Math.hypot(sgDx, sgDy) || 1;
+    let sum = 0;
+    for (const pt of points) sum += sgDx * (pt.y - start.y) - sgDy * (pt.x - start.x);
+    return (sum / points.length) / sgLen;
+}
+
+function buildMaskScene(pair) {
+    const start = pair.start;
+    const ziel = pair.goal;
+
+    // Worker guarantees routes[0]=left, routes[1]=right. Compute the signed
+    // side value the same way selectRuntimeRouteOptions does so the stats panel
+    // ordering (sort by pos) and report payload match the city path.
+    const routes = pair.routes.map((r) => {
+        const points = r.points;
+        const side = maskRouteSide(points, start, ziel);
+        const length = calcRuntimeRouteLength(points);
+        const noA = calcRuntimeRouteNoA(points);
+        const runTime = Number.isFinite(r.runtime) ? r.runtime : null;
+        return {
+            points,
+            length,
+            noA,
+            elevation: 0,
+            obstacle: 0,
+            run_time: runTime,
+            time: runTime,
+            routeIndex: r.index + 1,
+            pos: side,
+            side,
+            sideLabel: side > 0 ? 'R' : side < 0 ? 'L' : 'C',
+        };
+    });
+
+    return {
+        kind: 'mask',
+        start,
+        ziel,
+        routes,
+        mapScale: 1,
+        // Raster background descriptor. Full-res mask dims × TRAIN_SCALE_VALUE =
+        // map-image px, which is exactly the map-unit space start/ziel/routes
+        // live in, so the <image> at (0,0) with these dims aligns pixel-exact.
+        mapImage: {
+            href: pair.source.mapImageUrl,
+            width: pair.source.mapWidth,
+            height: pair.source.mapHeight,
+        },
+        meta: {
+            source: 'mask',
+            fileId: pair.source.fileId,
+            filename: pair.source.filename,
+            retries: pair.meta?.retries ?? null,
+            attempts: pair.meta?.attempts ?? null,
+            sideGap: pair.meta?.sideGap ?? null,
+            relGap: pair.meta?.relGap ?? null,
+            legality: pair.meta?.legality ?? null,
+            timings: pair.meta?.timings ?? null,
+        },
     };
 }
 
@@ -2212,10 +2513,14 @@ function renderScene({ cameraDuration = 1000, onCameraReady = null } = {}) {
         clearLayer('rp-control-layer');
 
         const rotGroup = SVG('rp-rotation');
-        if (rotGroup) rotGroup.setAttribute('transform', cityFitTransform(scene.city?.bounds));
-
-        drawBackground();
-        drawCityMap(scene.city);
+        if (scene.kind === 'mask') {
+            if (rotGroup) rotGroup.setAttribute('transform', maskFitTransform(scene));
+            drawMaskBackground(scene);
+        } else {
+            if (rotGroup) rotGroup.setAttribute('transform', cityFitTransform(scene.city?.bounds));
+            drawBackground();
+            drawCityMap(scene.city);
+        }
         drawRouteHitAreas();
         drawRouteBlocks();
         drawControls(scene.start, scene.ziel);
@@ -2256,9 +2561,15 @@ function buildRenderedScene(sceneToRender) {
     if (!sceneToRender || sceneToRender._renderCache) return sceneToRender?._renderCache || null;
     const layers = createRenderLayerSet();
     const rotationTransform = withSceneAndTarget(sceneToRender, layers, () => {
-        const transform = cityFitTransform(sceneToRender.city?.bounds);
-        drawBackground();
-        drawCityMap(sceneToRender.city);
+        let transform;
+        if (sceneToRender.kind === 'mask') {
+            transform = maskFitTransform(sceneToRender);
+            drawMaskBackground(sceneToRender);
+        } else {
+            transform = cityFitTransform(sceneToRender.city?.bounds);
+            drawBackground();
+            drawCityMap(sceneToRender.city);
+        }
         drawRouteHitAreas();
         drawRouteBlocks();
         drawControls(sceneToRender.start, sceneToRender.ziel);
@@ -2282,6 +2593,12 @@ function installRenderedScene(sceneToRender) {
 }
 
 function scheduleUpcomingScenePrerender() {
+    if (sceneSource === 'mask' && maskSource) {
+        // Prerender the next buffered mask scene (if any) so the SVG cache is
+        // warm before it is served.
+        scheduleScenePrerender(maskSource.buffer?.[0]);
+        return;
+    }
     if (!currentBatch || currentBatch.index >= currentBatch.scenes.length) return;
     scheduleScenePrerender(currentBatch.scenes[currentBatch.index]);
 }
@@ -2337,6 +2654,61 @@ function cityFitTransform(bounds) {
         scene.mapTy = ty;
     }
     return `translate(${tx},${ty}) scale(${scale})`;
+}
+
+function maskSceneBounds(sc) {
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    const acc = (p) => {
+        if (p.x < minX) minX = p.x; if (p.y < minY) minY = p.y;
+        if (p.x > maxX) maxX = p.x; if (p.y > maxY) maxY = p.y;
+    };
+    acc(sc.start); acc(sc.ziel);
+    for (const r of sc.routes || []) for (const p of r.points || []) acc(p);
+    if (!Number.isFinite(minX)) return null;
+    return { minX, minY, maxX, maxY };
+}
+
+// Fit the route + endpoint bounding box (with a control-radius margin) into the
+// viewbox, mirroring cityFitTransform. The raster background lives in the same
+// map-unit space, so it is placed at (0,0) at native size and simply scaled by
+// this transform along with everything else.
+function maskFitTransform(sc) {
+    const bounds = maskSceneBounds(sc);
+    if (!bounds) {
+        if (sc) { sc.mapScale = 1; sc.mapTx = 0; sc.mapTy = 0; }
+        return '';
+    }
+    const margin = CONTROL_RADIUS * 3;
+    const minX = bounds.minX - margin, minY = bounds.minY - margin;
+    const maxX = bounds.maxX + margin, maxY = bounds.maxY + margin;
+    const bw = Math.max(1e-3, maxX - minX);
+    const bh = Math.max(1e-3, maxY - minY);
+    const scale = Math.min((VB_W * (1 - CITY_FIT_PAD * 2)) / bw, (VB_H * (1 - CITY_FIT_PAD * 2)) / bh);
+    const tx = VB_W / 2 - ((minX + maxX) / 2) * scale;
+    const ty = VB_H / 2 - ((minY + maxY) / 2) * scale;
+    sc.mapScale = scale;
+    sc.mapTx = tx;
+    sc.mapTy = ty;
+    return `translate(${tx},${ty}) scale(${scale})`;
+}
+
+function drawMaskBackground(sc) {
+    const layer = layerEl('rp-bg-layer');
+    const img = sc.mapImage;
+    if (!img || !img.href) return;
+    const image = svgEl('image');
+    image.setAttribute('x', 0);
+    image.setAttribute('y', 0);
+    if (Number.isFinite(img.width) && Number.isFinite(img.height)) {
+        image.setAttribute('width', img.width);
+        image.setAttribute('height', img.height);
+    }
+    image.setAttribute('preserveAspectRatio', 'none');
+    // href for modern browsers; xlink:href kept for older SVG image support.
+    image.setAttribute('href', img.href);
+    image.setAttributeNS('http://www.w3.org/1999/xlink', 'href', img.href);
+    image.setAttribute('pointer-events', 'none');
+    layer.appendChild(image);
 }
 
 function mapPointToSurface(p) {

@@ -88,6 +88,61 @@ export class FileTable {
         }
     }
 
+    // Release / retreat infinite play from the file table. Retreat (disable) is
+    // instant; release (enable) kicks off the background navgraph build, so the
+    // button spins until region-build-status reports done, then ripples like
+    // publish. Independent of publish/lock state (server checks team only).
+    async toggleInfinite(row) {
+        const desired = !row.file.infinite_enabled;
+        const res = await fetch(`/editor/toggle-infinite/${row.file.id}/`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCSRFToken() },
+            body: JSON.stringify({ enabled: desired }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || data.error) {
+            await showModal({ message: data.error || gettext('Could not enable infinite play.') });
+            return;
+        }
+        if (!desired) {
+            row.updateInfiniteState(false);
+            this._mirrorInfiniteToEditor(row.file.id, false);
+            return;
+        }
+        if (data.status === 'building') {
+            row.setInfinityBuilding(true);
+            this._pollInfiniteBuild(row);
+        }
+    }
+
+    _pollInfiniteBuild(row) {
+        const fileId = row.file.id;
+        const tick = async () => {
+            try {
+                const res  = await fetch(`/editor/region-build-status/${fileId}/`);
+                const data = await res.json();
+                const p    = data.progress;
+                if (!p || p.status === 'building') { setTimeout(tick, 1500); return; }
+                if (p.status === 'done') {
+                    row.updateInfiniteState(true);
+                    this._mirrorInfiniteToEditor(fileId, true);
+                } else {
+                    row.setInfinityBuilding(false);
+                    await showModal({ message: p.error || gettext('Building the map failed.') });
+                }
+            } catch (e) { setTimeout(tick, 2500); }
+        };
+        setTimeout(tick, 1200);
+    }
+
+    // Keep an open editor session in sync when the state is changed from the table.
+    _mirrorInfiniteToEditor(fileId, enabled) {
+        if (typeof project !== 'undefined' && fileId === project?.id) {
+            project.infinite_enabled = enabled;
+            window.updateNavInfinityBtn?.();
+        }
+    }
+
     async deleteFile(id) {
         if (!await showModal({ message: gettext('Delete project — are you sure?'), confirmText: gettext('Delete'), cancelText: gettext('Cancel'), danger: true })) return;
         const csrf = document.cookie.match(/csrftoken=([^;]+)/)?.[1] ?? "";
@@ -121,6 +176,7 @@ export class FileTable {
             window.checkinCurrentFile();
         }
         closeFileModal();
+        window.RegionEditor?.onProjectChanged?.();
         clearAllLayers();
         MaskLayer.clearMask();
         window.clearMaskUndoStacks?.();
@@ -132,6 +188,7 @@ export class FileTable {
         window.markProjectPersistenceIds?.(project);
         const repairedOrders = window.normalizeProjectOrders?.(project) || false;
         window.setReadOnly?.(data.project.read_only, data.project.locked_by_name, data.project.read_only_reason);
+        window.NavInfinity?.onProjectChanged?.();
         if (repairedOrders && !data.project.read_only) saveFile("repair_order");
         window.updateFilenameInput?.();
         window.updateNavPublishBtn?.();

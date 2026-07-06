@@ -91,3 +91,18 @@ def serve_mask_file(file):
     response = FileResponse(open(filepath, "rb"), content_type="image/png")
     response["X-Content-Type-Options"] = "nosniff"
     return response
+
+
+def serve_navgraph_file(file):
+    filename = safe_media_filename(file.map_file)
+    if not filename:
+        return HttpResponseNotFound("Navgraph not found.")
+
+    stem, _ = os.path.splitext(filename)
+    filepath = os.path.join(settings.MEDIA_ROOT, "masks", f"mask_{stem}.navgraph.bin")
+    if not os.path.isfile(filepath):
+        return HttpResponseNotFound("Navgraph not found.")
+
+    response = FileResponse(open(filepath, "rb"), content_type="application/octet-stream")
+    response["X-Content-Type-Options"] = "nosniff"
+    return response

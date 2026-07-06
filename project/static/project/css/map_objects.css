@@ -72,8 +72,15 @@
     pointer-events: auto;
 }
 
+/* Infinity mode shows the real map image (map-img) with the region overlay on
+   top — NOT the opaque red/black mask canvas — so coaches can see the terrain
+   they are marking. The mask is still loaded (for other tools); it just stays
+   hidden here. */
+
 #map-container.mode-mask #control-layer,
-#map-container.mode-mask #route-layer { display: none; }
+#map-container.mode-mask #route-layer,
+#map-container.mode-infinity #control-layer,
+#map-container.mode-infinity #route-layer { display: none; }
 
 body.mode-mask #cp-list,
 body.mode-mask .cp-add-btn { display: none; }
@@ -85,6 +92,12 @@ body.mode-block #block-list { display: flex; flex-direction: column; }
 
 #mask-controls { display: none; }
 body.mode-mask #mask-controls { display: flex; flex-direction: column; gap: 10px; padding: 12px 10px; }
+
+/* Infinity tool-mode side panel (region editor). */
+#infinity-controls { display: none; }
+body.mode-infinity #cp-list,
+body.mode-infinity .cp-add-btn { display: none; }
+body.mode-infinity #infinity-controls { display: flex; flex-direction: column; gap: 10px; padding: 14px 12px; }
 
 #mask-brush-cursor {
     display: none;

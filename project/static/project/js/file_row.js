@@ -21,6 +21,14 @@ export class FileRow {
                     ${icon("globe")}
                 </button>
             </td>
+            <td class="col-infinity">
+                <button id="infinity-btn-${this.file.id}"
+                    class="publish-btn infinity-toggle-btn ${this.file.infinite_enabled ? 'publish-btn-active' : ''} ${!this.file.can_edit || this.file.is_locked || !this.file.has_mask ? 'publish-btn-disabled' : ''}"
+                    ${!this.file.can_edit || this.file.is_locked || !this.file.has_mask ? 'disabled' : ''}
+                    title="${this._infinityTitle()}">
+                    ${icon("infinity")}
+                </button>
+            </td>
             <td class="file-name-cell">${this.file.name}</td>
             <td class="label-cell">${this.file.label ? `
                 <div class="label-chip-wrap">
@@ -58,6 +66,11 @@ export class FileRow {
         const publishBtn = tr.querySelector(`#publish-btn-${this.file.id}`);
         if (publishBtn && this.file.can_edit && !this.file.is_locked) {
             publishBtn.addEventListener('click', () => this.table.togglePublish(this));
+        }
+
+        const infinityBtn = tr.querySelector(`#infinity-btn-${this.file.id}`);
+        if (infinityBtn && this.file.can_edit && !this.file.is_locked && this.file.has_mask) {
+            infinityBtn.addEventListener('click', () => this.table.toggleInfinite(this));
         }
 
         const deleteBtn = tr.querySelector('.delete-btn');
@@ -227,6 +240,34 @@ export class FileRow {
             loadingRow.remove();
             console.error('Failed to load snapshots', e);
         }
+    }
+
+    _infinityTitle() {
+        if (!this.file.has_mask) return gettext('Add a mask to this map first.');
+        return this.file.infinite_enabled
+            ? gettext('Infinite play is on — click to turn off')
+            : gettext('Turn on infinite play for this map');
+    }
+
+    // Spinner while the navgraph builds (release only — retreat is instant).
+    setInfinityBuilding(building) {
+        const btn = this.element.querySelector(`#infinity-btn-${this.file.id}`);
+        if (!btn) return;
+        btn.disabled = building;
+        btn.innerHTML = building
+            ? `<x-icon name="spinner" class="spin" size="14px"></x-icon>`
+            : icon("infinity");
+    }
+
+    updateInfiniteState(enabled) {
+        this.file.infinite_enabled = enabled;
+        const btn = this.element.querySelector(`#infinity-btn-${this.file.id}`);
+        if (!btn) return;
+        btn.disabled = false;
+        btn.innerHTML = icon("infinity");
+        btn.classList.toggle('publish-btn-active', enabled);
+        btn.title = this._infinityTitle();
+        if (enabled) window.emitPublishWave?.(btn);   // same ripple as publish
     }
 
     updatePublishState(published) {

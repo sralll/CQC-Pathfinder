@@ -5,6 +5,7 @@ from . import play_views
 urlpatterns = [
     path('', play_views.index, name='results_home'),
     path('infinity/', play_views.infinite_play, name='infinity_play'),
+    path('infinity/mask-maps/', play_views.infinite_mask_maps, name='infinity_mask_maps'),
     path('infinity/user-stats/', play_views.infinite_user_stats, name='infinity_user_stats'),
     path('infinity/submit-choice/', play_views.submit_infinite_choice, name='submit_infinity_choice'),
     path('infinity/report-route/', play_views.report_infinite_route, name='report_infinity_route'),
