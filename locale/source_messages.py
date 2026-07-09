@@ -449,9 +449,17 @@ DJANGO.update({
 DJANGOJS.update({
     "Align course": ("Bahn ausrichten", "Aligner le parcours", "Allinea percorso"),
     "Add a mask to this map first.": ("Füge dieser Karte zuerst eine Maske hinzu.", "Ajoute d'abord un masque à cette carte.", "Aggiungi prima una maschera a questa mappa."),
+    "Draw a map region before enabling infinite play.": (
+        "Zeichne eine Kartenregion, bevor du den Infinity-Modus aktivierst.",
+        "Dessine une région de carte avant d'activer le mode infini.",
+        "Disegna una regione della mappa prima di attivare la modalità infinita."),
     "Loading region…": ("Region wird geladen…", "Chargement de la région…", "Caricamento della regione…"),
     "Loaded saved region.": ("Gespeicherte Region geladen.", "Région enregistrée chargée.", "Regione salvata caricata."),
     "Auto-suggested region — adjust and save.": ("Automatisch vorgeschlagene Region — anpassen und speichern.", "Région suggérée automatiquement — ajuste et enregistre.", "Regione suggerita automaticamente — modifica e salva."),
+    "Click to place the first region point.": (
+        "Klicke, um den ersten Regionspunkt zu setzen.",
+        "Clique pour placer le premier point de la région.",
+        "Clicca per posizionare il primo punto della regione."),
     "Could not load region.": ("Region konnte nicht geladen werden.", "Impossible de charger la région.", "Impossibile caricare la regione."),
     "Suggesting…": ("Wird vorgeschlagen…", "Suggestion…", "Suggerimento…"),
     "Suggestion failed.": ("Vorschlag fehlgeschlagen.", "La suggestion a échoué.", "Suggerimento non riuscito."),
@@ -473,6 +481,14 @@ DJANGOJS.update({
         "Ziehe die Ecken nach innen, um den Kartenbereich zu markieren.",
         "Fais glisser les coins vers l'intérieur pour marquer la zone de la carte.",
         "Trascina gli angoli verso l'interno per segnare l'area della mappa."),
+    "Click to add points; click the first point to finish.": (
+        "Klicke, um Punkte hinzuzufügen; klicke den ersten Punkt zum Abschliessen.",
+        "Clique pour ajouter des points ; clique le premier point pour terminer.",
+        "Clicca per aggiungere punti; clicca il primo punto per completare."),
+    "Click the first point to finish.": (
+        "Klicke den ersten Punkt zum Abschliessen.",
+        "Clique le premier point pour terminer.",
+        "Clicca il primo punto per completare."),
     "Turn on infinite play for this map": (
         "Infinity-Modus für diese Karte aktivieren",
         "Activer le mode infini pour cette carte",
@@ -490,6 +506,7 @@ DJANGOJS.update({
         "Impossible d'activer le mode infini.",
         "Impossibile abilitare la modalità infinita."),
     "Infinite play": ("Infinity-Modus", "Mode infini", "Modalità infinita"),
+    "Released": ("Freigegeben", "Validé", "Abilitato"),
     "Infinite play on": ("Infinity-Modus an", "Mode infini activé", "Modalità infinita attiva"),
     "Infinite play off": ("Infinity-Modus aus", "Mode infini désactivé", "Modalità infinita disattivata"),
     "Automatic route": ("Automatische Route", "Choix automatique", "Percorso automatico"),

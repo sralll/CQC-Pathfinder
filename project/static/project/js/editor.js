@@ -2276,6 +2276,7 @@ const MaskLayer = (() => {
             loaded        = false;
             lastMapFile   = null;
             _strokePixels = null;
+            InfinityMaskPreview?.clear?.();
         },
         loadMask,
         applyMapDimensions,
@@ -2379,12 +2380,73 @@ const MaskLayer = (() => {
                     }).catch(err => console.warn("Mask save failed:", err))
                       .finally(() => {
                           _saveInFlight = false;
+                          InfinityMaskPreview?.invalidate?.();
                           if (_saveQueued) runQueuedSave();
                       });
                 }, "image/png");
             }
         },
     };
+})();
+
+const InfinityMaskPreview = (() => {
+    let loadedFileId = null;
+    let loadToken = 0;
+
+    function el() { return document.getElementById("infinity-mask-img"); }
+
+    function setMaskDisplaySize(img) {
+        if (!img?.naturalWidth || !img?.naturalHeight) return;
+        const scale = Number(project.scale) || 1;
+        img.style.width  = `${img.naturalWidth * PATHING_MASK_TRAIN_SCALE / scale}px`;
+        img.style.height = `${img.naturalHeight * PATHING_MASK_TRAIN_SCALE / scale}px`;
+    }
+
+    function refresh({ force = false } = {}) {
+        const img = el();
+        if (!img) return;
+        if (!project.id || !project.has_mask) {
+            clear();
+            return;
+        }
+
+        if (!force && loadedFileId === project.id && img.complete && img.naturalWidth) {
+            setMaskDisplaySize(img);
+            return;
+        }
+
+        const token = ++loadToken;
+        loadedFileId = project.id;
+        img.onload = () => {
+            if (token !== loadToken) return;
+            setMaskDisplaySize(img);
+        };
+        img.onerror = () => {
+            if (token !== loadToken) return;
+            loadedFileId = null;
+            img.removeAttribute("src");
+        };
+        img.src = `/editor/mask/${project.id}/?v=${Date.now()}`;
+    }
+
+    function invalidate() {
+        loadedFileId = null;
+        if (currentToolMode === ToolMode.INFINITY) refresh({ force: true });
+    }
+
+    function clear() {
+        const img = el();
+        loadedFileId = null;
+        loadToken++;
+        if (!img) return;
+        img.onload = null;
+        img.onerror = null;
+        img.removeAttribute("src");
+        img.style.width = "";
+        img.style.height = "";
+    }
+
+    return { refresh, invalidate, clear };
 })();
 
 /* =========================================================
@@ -3237,6 +3299,7 @@ const InfinityTool = (() => {
             mapContainer.style.cursor = this.defaultCursor;
             mapContainer.classList.add("mode-infinity");
             document.body.classList.add("mode-infinity");
+            InfinityMaskPreview.refresh();
             RegionEditor.enter();
         },
         onExit() {
@@ -3759,10 +3822,12 @@ const RegionEditor = (() => {
     const EDGE_INSERT_DIST = 10;        // world-unit tolerance to hit an edge
     let editing = false;
     let verts = [];                     // [{x,y}, ...] in WORLD coords, closed ring
+    let drawing = false;                // true while creating a fresh polygon
+    let previewPt = null;               // current cursor while drawing
     let dragIdx = -1;
     let moved = false;
     // Persistent SVG nodes.
-    let gRoot = null, outline = null;
+    let gRoot = null, outline = null, draftLine = null, startCloseRing = null;
     const handlePool = [];              // reusable <circle> handles
 
     function m2w(p) { return { x: p[0] * PATHING_MASK_TRAIN_SCALE, y: p[1] * PATHING_MASK_TRAIN_SCALE }; }
@@ -3782,6 +3847,18 @@ const RegionEditor = (() => {
         });
         outline.style.cursor = "copy";      // clicking an edge inserts a vertex
         gRoot.appendChild(outline);
+        draftLine = svgNode("line", {
+            stroke: "#e07020", "stroke-width": "2",
+            "vector-effect": "non-scaling-stroke",
+            "pointer-events": "none",
+        });
+        startCloseRing = svgNode("circle", {
+            fill: "none", stroke: "#e07020", "stroke-width": "1",
+            "stroke-dasharray": "3 2", "vector-effect": "non-scaling-stroke",
+            "pointer-events": "none",
+        });
+        gRoot.appendChild(draftLine);
+        gRoot.appendChild(startCloseRing);
         layer.appendChild(gRoot);
     }
 
@@ -3804,8 +3881,26 @@ const RegionEditor = (() => {
         if (!editing) return;
         ensureNodes();
         if (!gRoot) return;
-        outline.setAttribute("points", verts.map(v => `${v.x},${v.y}`).join(" "));
-        showNode(outline);
+        const outlinePts = drawing && previewPt && verts.length >= 2
+            ? [...verts, previewPt]
+            : verts;
+        if (outlinePts.length >= 3 || (!drawing && outlinePts.length >= 2)) {
+            outline.setAttribute("points", outlinePts.map(v => `${v.x},${v.y}`).join(" "));
+            showNode(outline);
+        } else {
+            hideNode(outline);
+        }
+
+        if (drawing && previewPt && verts.length === 1) {
+            draftLine.setAttribute("x1", verts[0].x);
+            draftLine.setAttribute("y1", verts[0].y);
+            draftLine.setAttribute("x2", previewPt.x);
+            draftLine.setAttribute("y2", previewPt.y);
+            showNode(draftLine);
+        } else {
+            hideNode(draftLine);
+        }
+
         // Adaptive handle size: keep ~HANDLE_R screen px regardless of zoom.
         const r = HANDLE_R / (camera.zoom || 1);
         for (let i = 0; i < verts.length; i++) {
@@ -3816,10 +3911,21 @@ const RegionEditor = (() => {
             showNode(c);
         }
         for (let i = verts.length; i < handlePool.length; i++) hideNode(handlePool[i]);
+
+        if (drawing && verts.length) {
+            startCloseRing.setAttribute("cx", verts[0].x);
+            startCloseRing.setAttribute("cy", verts[0].y);
+            startCloseRing.setAttribute("r", r * 1.8);
+            showNode(startCloseRing);
+        } else {
+            hideNode(startCloseRing);
+        }
     }
 
     function clearRender() {
         hideNode(outline);
+        hideNode(draftLine);
+        hideNode(startCloseRing);
         for (const c of handlePool) hideNode(c);
     }
 
@@ -3847,7 +3953,10 @@ const RegionEditor = (() => {
 
     function exit() {
         editing = false;
+        drawing = false;
+        previewPt = null;
         dragIdx = -1;
+        drawGesture.cancel();
         clearRender();
     }
 
@@ -3858,12 +3967,22 @@ const RegionEditor = (() => {
             const data = await res.json();
             if (data.error) { setStatus(data.error, true); verts = []; return; }
             verts = (data.polygon || []).map(m2w);
+            drawing = data.source !== "saved";
+            previewPt = null;
+            if (drawing) {
+                project.infinite_region_set = false;
+                activeSubtool[ToolMode.INFINITY] = "edit";
+                updateSubtoolPanel(ToolMode.INFINITY);
+                window.updateNavInfinityBtn?.();
+            }
             setStatus(data.source === "saved"
                 ? gettext("Saved region loaded.")
-                : gettext("Drag the corners inward to mark the map area."));
+                : gettext("Click to place the first region point."));
         } catch (e) {
             setStatus(gettext("Could not load region."), true);
             verts = [];
+            drawing = false;
+            previewPt = null;
         }
     }
 
@@ -3886,6 +4005,7 @@ const RegionEditor = (() => {
             const data = await res.json();
             if (data.error) { setStatus(data.error, true); return; }
             project.infinite_region_set = true;
+            window.updateNavInfinityBtn?.();
             setStatus(gettext("Region saved."));
         } catch (e) {
             setStatus(gettext("Save failed."), true);
@@ -3905,6 +4025,39 @@ const RegionEditor = (() => {
 
     function subtool() { return getSubtool(ToolMode.INFINITY); }
 
+    function finishDrawing() {
+        if (verts.length < 3) {
+            setStatus(gettext("A region needs at least 3 points."), true);
+            return;
+        }
+        drawing = false;
+        previewPt = null;
+        render();
+        autosave();
+    }
+
+    function addDraftPoint(e, pt) {
+        const hi = hitHandle(e);
+        if (verts.length >= 3 && hi === 0) {
+            finishDrawing();
+            return;
+        }
+        if (hi >= 0) return;
+        verts.push({ x: pt.x, y: pt.y });
+        setStatus(verts.length === 1
+            ? gettext("Click to add points; click the first point to finish.")
+            : gettext("Click the first point to finish."));
+        render();
+    }
+
+    const drawGesture = makePendingGesture({
+        onDrag(downEvent) { pan.start(downEvent.clientX, downEvent.clientY); },
+        onClick(e, pt) {
+            if (!mapContainer.contains(e.target)) return;
+            addDraftPoint(e, pt);
+        },
+    });
+
     // Insert a vertex on the nearest edge if the world point is close enough.
     function tryInsertOnEdge(pt) {
         let bestI = -1, bestD = EDGE_INSERT_DIST / (camera.zoom || 1), bestPt = null;
@@ -3919,6 +4072,10 @@ const RegionEditor = (() => {
 
     function onMouseDown(e, pt) {
         if (!editing) return false;
+        if (drawing) {
+            drawGesture.down(e, pt);
+            return true;
+        }
         const hi = hitHandle(e);
 
         // "Remove point" subtool: clicking a vertex deletes it (min 3 kept).
@@ -3951,6 +4108,12 @@ const RegionEditor = (() => {
     }
 
     function onMouseMove(e, pt) {
+        if (drawing) {
+            if (drawGesture.move(pt)) return true;
+            previewPt = mapContainer.contains(e.target) ? pt : null;
+            render();
+            return true;
+        }
         if (!editing || dragIdx < 0) return false;
         verts[dragIdx] = { x: pt.x, y: pt.y };
         moved = true;
@@ -3959,6 +4122,10 @@ const RegionEditor = (() => {
     }
 
     function onMouseUp(e, pt) {
+        if (drawing) {
+            drawGesture.up(e, pt);
+            return true;
+        }
         if (!editing || dragIdx < 0) return false;
         if (moved) autosave();   // persist the moved vertex on release
         dragIdx = -1;
@@ -3968,6 +4135,9 @@ const RegionEditor = (() => {
     function onProjectChanged() {
         if (editing) exit();
         verts = [];
+        drawing = false;
+        previewPt = null;
+        drawGesture.cancel();
         setStatus("");
     }
 
@@ -4020,16 +4190,21 @@ const NavInfinity = (() => {
     function updateBtn() {
         const b = btn();
         if (!b) return;
+        const canToggle = !!(project.id && (
+            project.infinite_enabled || (project.has_mask && project.infinite_region_set)
+        ));
         b.classList.toggle("infinity-btn-active", !!(project.id && project.infinite_enabled));
         b.classList.toggle("infinity-btn-building", pending);
         // No readOnly gating — release/retreat works regardless of publish state.
-        b.disabled = pending || !project.id || !project.has_mask;
+        b.disabled = pending || !canToggle;
         b.innerHTML = pending ? SPINNER : ICON;
-        b.title = !project.has_mask
-            ? gettext("Add a mask to this map first.")
-            : project.infinite_enabled
-                ? gettext("Infinite play is on — click to turn off")
-                : gettext("Turn on infinite play for this map");
+        b.title = project.infinite_enabled
+            ? gettext("Infinite play is on — click to turn off")
+            : (!project.has_mask
+                ? gettext("Add a mask to this map first.")
+                : (!project.infinite_region_set
+                    ? gettext("Draw a map region before enabling infinite play.")
+                    : gettext("Turn on infinite play for this map")));
     }
 
     function stopPoll() { if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; } }
@@ -4065,11 +4240,15 @@ const NavInfinity = (() => {
 
     async function toggle() {
         if (pending || !project.id) return;
-        if (!project.has_mask) {
+        const desired = !project.infinite_enabled;
+        if (desired && !project.has_mask) {
             await window.showModal?.({ message: gettext("Add a mask to this map first.") });
             return;
         }
-        const desired = !project.infinite_enabled;
+        if (desired && !project.infinite_region_set) {
+            await window.showModal?.({ message: gettext("Draw a map region before enabling infinite play.") });
+            return;
+        }
         const csrf = document.cookie.match(/csrftoken=([^;]+)/)?.[1] ?? "";
         try {
             const res = await fetch(`/editor/toggle-infinite/${project.id}/`, {
@@ -5028,6 +5207,7 @@ async function startMaskGeneration(mapFile, scale, fileId = null) {
                                     text.textContent = gettext("Mask ready");
                                     MaskLayer.loadMask(requestedMapFile);
                                     MaskLayer.applyMapDimensions();
+                                    InfinityMaskPreview.invalidate();
                                     drainPendingAutoPathfindQueue();
                                     setTimeout(hideMaskGenBar, 1500);
                                 }

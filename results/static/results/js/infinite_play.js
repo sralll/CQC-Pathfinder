@@ -1,8 +1,3 @@
-import { generateWards } from './infinite/citygen/core/CityGen.js';
-import {
-    buildRouteVisibilityGraph,
-    computeRouteOptions,
-} from './infinite/citygen/core/RoutePlanner.js';
 import { MaskSceneSource } from './infinite/mask_scene_source.js';
 
 /* =========================================================
@@ -29,17 +24,27 @@ const NOA_CORNER_DEG             = 90;
 const NOA_EPSILON_DEG            = 2;
 const NOA_MIN_EFFECT_DEG         = 45;
 const NOA_COUNTER_MIN_DEG        = 45;
-const ROUTE_RUNTIME_MAX_RELATIVE_GAP = 0.5;
-const ROUTE_RUNTIME_MIN_SIDE_GAP = 10;
+const ROUTE_RUNTIME_MAX_RELATIVE_GAP = 0.40;
+const ROUTE_RUNTIME_MIN_SIDE_GAP = 12;
+
+let generateWards = null;
+let buildRouteVisibilityGraph = null;
+let computeRouteOptions = null;
+let ensureRouteSides = null;
+let runtimeSlotsFor = null;
+let selectWeightedRoutePair = null;
+let skippedBarriersForSelection = null;
+let _mainThreadGeneratorModulesPromise = null;
 
 // Main-thread fallback selection config — must mirror selectionConfig in
 // infinite/infinite_batch_worker.js (the worker path used in production).
 const selectionConfig = {
-    strategy: 'extremes',
+    strategy: 'weighted',
     maxRoutes: 5,
     primaryRouteBudgetMs: 400,
     extraRouteBudgetMs: 200,
     extremesMaxRelativeGap: 0.30,
+    weighted: null,
 };
 
 const ROUTE_COLORS  = ['#DD0011', '#CC6000'];   // play.js's first two route colours
@@ -827,10 +832,37 @@ function ensureBatchWorker() {
     }
 }
 
+function ensureMainThreadGeneratorModules() {
+    if (_mainThreadGeneratorModulesPromise) return _mainThreadGeneratorModulesPromise;
+    _mainThreadGeneratorModulesPromise = Promise.all([
+        import('./infinite/citygen/core/CityGen.js'),
+        import('./infinite/citygen/core/RoutePlanner.js'),
+        import('./infinite/route_pair_selection.js'),
+    ]).then(([cityGen, routePlanner, routeSelection]) => {
+        generateWards = cityGen.generateWards;
+        buildRouteVisibilityGraph = routePlanner.buildRouteVisibilityGraph;
+        computeRouteOptions = routePlanner.computeRouteOptions;
+        ensureRouteSides = routeSelection.ensureRouteSides;
+        runtimeSlotsFor = routeSelection.routeSlotsFor;
+        selectWeightedRoutePair = routeSelection.selectWeightedRoutePair;
+        skippedBarriersForSelection = routeSelection.skippedBarriersForSelection;
+        selectionConfig.weighted = { ...routeSelection.DEFAULT_ROUTE_PAIR_SELECTION };
+    }).catch((err) => {
+        _mainThreadGeneratorModulesPromise = null;
+        throw err;
+    });
+    return _mainThreadGeneratorModulesPromise;
+}
+
+async function generateSceneBatchFallback(pairCount = CONTROL_PAIRS_PER_MAP) {
+    await ensureMainThreadGeneratorModules();
+    return generateSceneBatch(pairCount);
+}
+
 function generateSceneBatchAsync(pairCount = CONTROL_PAIRS_PER_MAP) {
     if (_pendingBatchPromise) return _pendingBatchPromise;
     const worker = ensureBatchWorker();
-    if (!worker) return Promise.resolve(generateSceneBatch(pairCount));
+    if (!worker) return generateSceneBatchFallback(pairCount);
 
     const msgId = _batchWorkerMsgId++;
     let streamedBatch = null;
@@ -941,7 +973,7 @@ function generateSceneBatchAsync(pairCount = CONTROL_PAIRS_PER_MAP) {
         try { _batchWorker?.terminate(); } catch (_) {}
         _batchWorker = null;
         _streamingBatch = null;
-        return generateSceneBatch(pairCount);
+        return generateSceneBatchFallback(pairCount);
     });
     return _pendingBatchPromise;
 }
@@ -1593,19 +1625,22 @@ function buildSceneBatchCandidate(pairCount = CONTROL_PAIRS_PER_MAP) {
         .map((ward) => ({ ward, bbox: routePickWardBbox(ward) }));
     if (candidates.length === 0) throw new Error('Generated city has no traversable wards');
 
-    const rejectionCounts = { distinct: 0, distance: 0, side: 0, routeside: 0, timeout: 0 };
+    const rejectionCounts = { distinct: 0, distance: 0, side: 0, routeside: 0, lateral: 0, timeout: 0 };
     const scenes = [];
     const usedEndpoints = [];
     const maxRetries = CITY_ROUTE_RETRIES * pairCount;
+    let retriesSinceAccepted = 0;
 
     for (let retries = 0; retries < maxRetries && scenes.length < pairCount; retries++) {
         const pair = routePickPair(candidates, visibilityGraph, city.wall);
         if (!pair) {
             rejectionCounts.distance++;
+            retriesSinceAccepted++;
             continue;
         }
         if (routePairTooCloseToUsed(pair, usedEndpoints)) {
             rejectionCounts.distance++;
+            retriesSinceAccepted++;
             continue;
         }
         const routeResult = computeRouteOptions(pair.start, pair.goal, visibilityGraph, {
@@ -1623,13 +1658,14 @@ function buildSceneBatchCandidate(pairCount = CONTROL_PAIRS_PER_MAP) {
                 settings,
                 generationMs,
                 graphMs,
-                retries,
+                retries: retriesSinceAccepted,
                 pairIndex: scenes.length,
                 routeMs: routeResult.dt,
                 rejectionCounts,
             };
             scenes.push(scene);
             usedEndpoints.push(pair.start, pair.goal);
+            retriesSinceAccepted = 0;
             continue;
         }
         const rejectionReason = runtimeResult.reason || (runtimeResult.timeout ? 'timeout' : 'side');
@@ -1637,7 +1673,9 @@ function buildSceneBatchCandidate(pairCount = CONTROL_PAIRS_PER_MAP) {
         else if (rejectionReason === 'distinct') rejectionCounts.distinct++;
         else if (rejectionReason === 'runtime') rejectionCounts.distance++;
         else if (rejectionReason === 'routeside') rejectionCounts.routeside++;
+        else if (rejectionReason === 'lateral') rejectionCounts.lateral++;
         else rejectionCounts.side++;
+        retriesSinceAccepted++;
     }
 
     if (scenes.length < pairCount)
@@ -1807,12 +1845,6 @@ function enrichRuntimePath(pathRecord) {
     };
 }
 
-function runtimeSlotsFor(paths, field) {
-    const slots = [null, null, null, null];
-    for (const p of paths || []) slots[p.routeIndex - 1] = p[field] ?? null;
-    return slots;
-}
-
 // Extremes strategy — mirror of selectExtremeRouteOptions in the worker. Serves
 // the left-most (min side) and right-most (max side) routes, accepting only when
 // their runtime gap is below selectionConfig.extremesMaxRelativeGap.
@@ -1836,19 +1868,7 @@ function selectExtremeRouteOptions(pair, routeResult) {
     if (paths.length === 0) return { ...base, reason: routeResult.reason || 'timeout' };
     if (paths.length === 1) return { ...base, reason: 'distinct', routeIndexes: [paths[0].routeIndex] };
 
-    const sgDx = pair.goal.x - pair.start.x;
-    const sgDy = pair.goal.y - pair.start.y;
-    const sgLen = Math.hypot(sgDx, sgDy) || 1;
-    for (const p of paths) {
-        if (Number.isFinite(p.side)) continue;
-        let sum = 0;
-        for (const pt of p.path) sum += sgDx * (pt.y - pair.start.y) - sgDy * (pt.x - pair.start.x);
-        p.side = (sum / p.path.length) / sgLen;
-        p.sideLabel = p.side > 0 ? 'R' : p.side < 0 ? 'L' : 'C';
-    }
-
-    paths.sort((a, b) => (a.run_time ?? Infinity) - (b.run_time ?? Infinity));
-    for (let i = 0; i < paths.length; i++) paths[i].routeIndex = i + 1;
+    ensureRouteSides(paths, pair.start, pair.goal);
 
     const withRun = paths.filter((p) => Number.isFinite(p.run_time) && p.run_time > 0);
     if (withRun.length < 2) return { ...base, reason: 'distinct' };
@@ -1874,10 +1894,7 @@ function selectExtremeRouteOptions(pair, routeResult) {
     const relativeGap = faster > 0 ? (slower - faster) / faster : Infinity;
     if (relativeGap >= selectionConfig.extremesMaxRelativeGap) return { ...base, reason: 'runtime' };
 
-    // Block every route that is not one of the two served (left-most/right-most).
-    const skippedBarriers = paths
-        .filter((p) => p !== leftmost && p !== rightmost && p.barrier)
-        .map((p) => p.barrier);
+    const skippedBarriers = skippedBarriersForSelection(paths, selected);
 
     return {
         ...base,
@@ -1916,59 +1933,20 @@ function selectRuntimeRouteOptions(pair, routeResult) {
     if (paths.length === 0) return { ...base, reason: routeResult.reason || 'timeout' };
     if (paths.length === 1) return { ...base, reason: 'distinct', routeIndexes: [paths[0].routeIndex] };
 
-    const sgDx = pair.goal.x - pair.start.x;
-    const sgDy = pair.goal.y - pair.start.y;
-    const sgLen = Math.hypot(sgDx, sgDy) || 1;
-    for (const p of paths) {
-        if (Number.isFinite(p.side)) continue;
-        let sum = 0;
-        for (const pt of p.path) sum += sgDx * (pt.y - pair.start.y) - sgDy * (pt.x - pair.start.x);
-        p.side = (sum / p.path.length) / sgLen;
-        p.sideLabel = p.side > 0 ? 'R' : p.side < 0 ? 'L' : 'C';
-    }
-
-    paths.sort((a, b) => (a.run_time ?? Infinity) - (b.run_time ?? Infinity));
-    for (let i = 0; i < paths.length; i++) paths[i].routeIndex = i + 1;
-
-    const pairs = [];
-    for (let i = 0; i < paths.length; i++) {
-        for (let j = i + 1; j < paths.length; j++) {
-            const a = paths[i], b = paths[j];
-            if (!a.run_time || !b.run_time) continue;
-            const faster = Math.min(a.run_time, b.run_time);
-            const slower = Math.max(a.run_time, b.run_time);
-            const sideGap = Math.abs(a.side - b.side);
-            pairs.push({
-                i,
-                j,
-                relativeGap: faster > 0 ? (slower - faster) / faster : Infinity,
-                absGap: slower - faster,
-                total: a.run_time + b.run_time,
-                sideGap,
-            });
-        }
-    }
-    pairs.sort((a, b) => a.relativeGap - b.relativeGap || a.absGap - b.absGap || a.total - b.total);
-
-    const sideValid = pairs.filter((p) => {
-        const selected = [paths[p.i], paths[p.j]];
-        return p.sideGap >= 10 && selected[0].side * selected[1].side < 0;
+    ensureRouteSides(paths, pair.start, pair.goal);
+    const pick = selectWeightedRoutePair(paths, {
+        start: pair.start,
+        goal: pair.goal,
+        config: {
+            ...selectionConfig.weighted,
+            minSideGap: ROUTE_RUNTIME_MIN_SIDE_GAP,
+            maxRelativeGap: ROUTE_RUNTIME_MAX_RELATIVE_GAP,
+        },
     });
-    const bestPair = sideValid[0];
-    if (!bestPair) return { ...base, reason: 'side' };
+    if (!pick.ok) return { ...base, reason: pick.reason };
 
-    const selected = [paths[bestPair.i], paths[bestPair.j]];
-    const routeSideMin = bestPair.sideGap / 4;
-    if (selected.some((p) => Math.abs(p.side) < routeSideMin))
-        return { ...base, reason: 'routeside' };
-
-    if (bestPair.relativeGap > ROUTE_RUNTIME_MAX_RELATIVE_GAP)
-        return { ...base, reason: 'runtime' };
-
-    const selectedFastest = Math.min(selected[0].run_time, selected[1].run_time);
-    const skippedBarriers = paths
-        .filter((p) => p.run_time < selectedFastest && p.barrier)
-        .map((p) => p.barrier);
+    const selected = pick.selected;
+    const skippedBarriers = skippedBarriersForSelection(paths, selected);
 
     return {
         ...base,
@@ -1984,6 +1962,9 @@ function selectRuntimeRouteOptions(pair, routeResult) {
         routeElevationSlots: runtimeSlotsFor(paths, 'elevation'),
         skippedBarriers,
         blockFastest: skippedBarriers.length > 0,
+        relativeGap: pick.relativeGap,
+        sideGap: pick.sideGap,
+        pairCandidates: pick.candidates.length,
     };
 }
 

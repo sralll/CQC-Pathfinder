@@ -90,8 +90,17 @@ msgstr "Klicke die Knöpfe an, um eine detaillierte Auswertung zu sehen."
 msgid "Click the first point on the map…"
 msgstr "Klicke den ersten Punkt auf der Karte…"
 
+msgid "Click the first point to finish."
+msgstr "Klicke den ersten Punkt zum Abschliessen."
+
 msgid "Click the second point…"
 msgstr "Klicke den zweiten Punkt…"
+
+msgid "Click to add points; click the first point to finish."
+msgstr "Klicke, um Punkte hinzuzufügen; klicke den ersten Punkt zum Abschliessen."
+
+msgid "Click to place the first region point."
+msgstr "Klicke, um den ersten Regionspunkt zu setzen."
 
 msgid "Click to restore"
 msgstr "Klicken zum Wiederherstellen"
@@ -194,6 +203,9 @@ msgstr "Fertig"
 
 msgid "Drag the corners inward to mark the map area."
 msgstr "Ziehe die Ecken nach innen, um den Kartenbereich zu markieren."
+
+msgid "Draw a map region before enabling infinite play."
+msgstr "Zeichne eine Kartenregion, bevor du den Infinity-Modus aktivierst."
 
 msgid "Edit points"
 msgstr "Punkte bearbeiten"
@@ -470,6 +482,9 @@ msgstr "Region gespeichert & Graph neu aufgebaut."
 
 msgid "Region saved."
 msgstr "Region gespeichert."
+
+msgid "Released"
+msgstr "Freigegeben"
 
 msgid "Reload"
 msgstr "Neu laden"

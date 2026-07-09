@@ -1,5 +1,9 @@
 import { extractObstacles } from './Obstacles.js';
 import { buildVisibilityGraph } from './VisibilityGraph.js';
+import {
+	selectWeightedRoutePair,
+	skippedBarriersForSelection,
+} from '../../route_pair_selection.js';
 
 export const ROUTE_VISIBILITY_GRAPH_OPTIONS = {
 	// Physical runner clearance: routes keep this far from every wall.
@@ -22,8 +26,9 @@ const ROUTE_MANUAL_ASTAR_OPTIONS = ROUTE_LATERAL_ASTAR_OPTIONS;
 export const ROUTE_STRESS_ALTERNATE_ATTEMPTS = 4;
 const ROUTE_MANUAL_ALTERNATE_ATTEMPTS = 3;
 const ROUTE_PAIR_MIN_SIDE_GAP = 10;
+const ROUTE_PAIR_MAX_RELATIVE_GAP = 0.40;
 
-export const emptyRouteSlots = () => [null, null, null, null];
+export const emptyRouteSlots = () => [null, null, null, null, null];
 
 export function buildRouteVisibilityGraph(data, options = ROUTE_VISIBILITY_GRAPH_OPTIONS) {
 	return buildVisibilityGraph(extractObstacles(data), options);
@@ -274,9 +279,6 @@ export function computeRouteOptions(startPt, goalPt, visGraph, options = {}) {
 	if (paths.length === 1)
 		return failedRoute(timeout ? 'timeout' : 'distinct', paths, null, { ...baseExtras, routeIndexes: [1] });
 
-	paths.sort((a, b) => a.len - b.len);
-	for (let i = 0; i < paths.length; i++) paths[i].routeIndex = i + 1;
-
 	const sgDx = goalPt.x - startPt.x, sgDy = goalPt.y - startPt.y;
 	const sgLen = Math.hypot(sgDx, sgDy) || 1;
 	for (const p of paths) {
@@ -284,6 +286,7 @@ export function computeRouteOptions(startPt, goalPt, visGraph, options = {}) {
 		for (const pt of p.path) sum += sgDx * (pt.y - startPt.y) - sgDy * (pt.x - startPt.x);
 		p.side = (sum / p.path.length) / sgLen;
 		p.sideLabel = p.side > 0 ? 'R' : p.side < 0 ? 'L' : 'C';
+		p.run_time = p.len;
 	}
 
 	const seenPathSignatures = new Set();
@@ -293,33 +296,22 @@ export function computeRouteOptions(startPt, goalPt, visGraph, options = {}) {
 		seenPathSignatures.add(sig);
 		return true;
 	});
-	for (let i = 0; i < paths.length; i++) paths[i].routeIndex = i + 1;
 	if (paths.length < 2)
 		return failedRoute('distinct', paths, null, baseExtras);
 
-	const pairs = [];
-	for (let i = 0; i < paths.length; i++) {
-		for (let j = i + 1; j < paths.length; j++) {
-			const sideGap = Math.abs(paths[i].side - paths[j].side);
-			const shorter = paths[i].len;
-			const longer = paths[j].len;
-			pairs.push({ i, j, relativeGap: shorter > 0 ? (longer - shorter) / shorter : Infinity, total: shorter + longer, sideGap });
-		}
-	}
-	pairs.sort((a, b) => a.relativeGap - b.relativeGap || a.total - b.total);
-	const bestPair = pairs[0];
-	const selected = [paths[bestPair.i], paths[bestPair.j]];
+	const pick = selectWeightedRoutePair(paths, {
+		start: startPt,
+		goal: goalPt,
+		config: {
+			minSideGap: ROUTE_PAIR_MIN_SIDE_GAP,
+			maxRelativeGap: ROUTE_PAIR_MAX_RELATIVE_GAP,
+		},
+	});
+	if (!pick.ok)
+		return failedRoute(pick.reason === 'runtime' ? 'distance' : pick.reason, paths, null, baseExtras);
 
-	if (bestPair.relativeGap > 0.5)
-		return failedRoute('distance', paths, null, baseExtras);
-
-	if (bestPair.sideGap < ROUTE_PAIR_MIN_SIDE_GAP || selected[0].side * selected[1].side >= 0)
-		return failedRoute('side', paths, null, baseExtras);
-
-	const selectedShortest = Math.min(selected[0].len, selected[1].len);
-	const skippedBarriers = paths
-		.filter((p) => p.len < selectedShortest && p.barrier)
-		.map((p) => p.barrier);
+	const selected = pick.selected;
+	const skippedBarriers = skippedBarriersForSelection(paths, selected);
 	const blockFastest = skippedBarriers.length > 0;
 
 	const routeLengthSlots = emptyRouteSlots();
@@ -342,6 +334,9 @@ export function computeRouteOptions(startPt, goalPt, visGraph, options = {}) {
 		blockFastest,
 		barriers,
 		skippedBarriers,
+		relativeGap: pick.relativeGap,
+		sideGap: pick.sideGap,
+		pairCandidates: pick.candidates.length,
 		dt,
 		timeout,
 	};

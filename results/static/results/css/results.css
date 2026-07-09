@@ -53,12 +53,62 @@ html, body {
     min-width: 0;
 }
 
-#play-mode-toggle {
-    display: flex;
-    align-items: center;
-    gap: 6px;
+/* 3-way slider (Training | Competition | Infinity) — same look as /stats/ */
+.play-3way {
+    --thumb-w: 44px;
+    --pad: 3px;
+    position: relative;
+    display: inline-flex;
+    align-items: stretch;
+    height: 36px;
+    width: calc(var(--thumb-w) * 3 + var(--pad) * 2);
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: 18px;
+    padding: var(--pad);
+    box-sizing: border-box;
+    user-select: none;
     flex: 0 0 auto;
 }
+
+.play-3way-stop {
+    flex: 1;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    color: var(--text-faint);
+    transition: color var(--t-fast);
+    z-index: 1;
+    border-radius: 14px;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+.play-3way-stop:hover { color: var(--text-muted); }
+.play-3way-stop x-icon { display: inline-flex; }
+
+.play-3way-thumb {
+    position: absolute;
+    top:  var(--pad);
+    left: var(--pad);
+    width:  var(--thumb-w);
+    height: calc(100% - var(--pad) * 2);
+    background: var(--brand);
+    border-radius: 14px;
+    transition: transform 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-strong);
+    z-index: 2;
+    pointer-events: none;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.4);
+}
+
+.play-3way[data-mode="training"]    .play-3way-thumb { transform: translateX(0); }
+.play-3way[data-mode="competition"] .play-3way-thumb { transform: translateX(var(--thumb-w)); }
+.play-3way[data-mode="infinity"]    .play-3way-thumb { transform: translateX(calc(var(--thumb-w) * 2)); }
 
 .play-header-end {
     flex: 1;
@@ -67,34 +117,10 @@ html, body {
     min-width: 0;
 }
 
-.play-mobile-nav-left {
-    display: none;
-}
-
-.play-infinity-btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 42px;
-    height: 28px;
-    flex: 0 0 auto;
-    border-radius: 999px;
-    background: var(--brand);
-    color: var(--text-strong);
-    text-decoration: none;
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25);
-    transition: background var(--t-fast), transform var(--t-fast);
-    -webkit-tap-highlight-color: transparent;
-}
-.play-infinity-btn:hover { background: var(--brand-hover); }
-.play-infinity-btn:active { transform: translateY(1px); }
-.play-infinity-btn x-icon { display: inline-flex; }
-
-.play-infinity-btn-nav {
-    display: none;
-    margin-left: 8px;
-}
-
+/* ── Icon+switch mode toggle ──────────────────────────────
+   The play menu now uses the .play-3way slider above, but this two-state
+   icon+switch toggle is still used by file_results.html (which loads
+   results.css). Keep these rules here so that page's header keeps working. */
 .mode-icon-tip {
     position: relative;
     color: var(--text-faint);
@@ -414,6 +440,24 @@ html, body {
 }
 .play-card:active { background: var(--bg-3); }
 
+/* ── "Generated map" entry — infinity mode, pinned first ── */
+.play-generated-row { cursor: pointer; background: rgba(224, 112, 32, 0.06); }
+.play-generated-row:hover { background: rgba(224, 112, 32, 0.12); }
+.play-generated-name { font-weight: 600; }
+.play-generated-name x-icon,
+.play-generated-card .play-card-name x-icon {
+    color: var(--brand);
+    vertical-align: -1px;
+    margin-right: 3px;
+}
+.play-generated-card {
+    background: var(--bg-2);
+    color: inherit;
+    border-left: 3px solid var(--brand);
+}
+.play-generated-card:active { background: var(--bg-3); }
+.play-generated-card .play-card-name { font-weight: 600; }
+
 .play-card-row1 {
     display: flex;
     align-items: baseline;
@@ -608,17 +652,15 @@ html, body {
     #play-wrap { padding: 0; }
 
     #play-mode-actions { flex: 0 0 auto; width: auto; order: 2; justify-content: flex-end; }
-    #play-mode-toggle { flex: 0 0 auto; }
+    .play-3way { flex: 0 0 auto; }
     #play-search-wrap { order: 1; }
     .play-header-end  { display: none; }
-    .play-mobile-nav-left { display: flex; }
-    .play-infinity-btn-nav { display: inline-flex; }
-    .play-infinity-btn-header { display: none; }
 
     #play-search-wrap { flex: 1 1 0; min-width: 0; width: auto; }
 
     #play-mobile-controls { width: 100%; order: 3; }
 
+    /* .mode-tip-box overrides — used by file_results.html's toggle on mobile */
     .mode-tip-box,
     .mode-icon-tip[data-mode="competition"] .mode-tip-box {
         left: 0;
@@ -673,9 +715,10 @@ body.mobile .play-card-cp         { font-size: var(--font-md); }
 body.mobile .play-card-row2       { font-size: var(--font-md); }
 body.mobile .play-card-date       { font-size: var(--font-sm); }
 body.mobile .play-ctrl-btn        { font-size: var(--font-md); padding: 11px 16px; min-height: var(--touch-target); box-sizing: border-box; }
-body.mobile .play-mobile-nav-left { display: flex; }
-body.mobile .play-infinity-btn-nav { display: inline-flex; width: 54px; min-height: var(--touch-target); font-size: var(--font-lg); }
-body.mobile .play-infinity-btn-header { display: none; }
+body.mobile .play-3way            { height: var(--touch-target); --thumb-w: 56px; border-radius: 22px; }
+body.mobile .play-3way-thumb      { border-radius: 18px; }
+body.mobile .play-3way-thumb x-icon { font-size: 20px; }
+/* .mode-* mobile sizing — used by file_results.html's icon+switch toggle */
 body.mobile .mode-icon-tip        { padding: 8px; }
 body.mobile .mode-icon-tip x-icon { font-size: 22px; }
 body.mobile .mode-switch          { width: 44px; height: 26px; }

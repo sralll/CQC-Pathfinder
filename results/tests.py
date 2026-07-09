@@ -530,6 +530,64 @@ class StatsSecurityTests(TestCase):
         self.assertEqual(athlete_row['posten'], 1)
         self.assertEqual(athlete_row['schnellste'], 100.0)
 
+    def test_random_stats_table_requires_100_controls_for_error_potential_sensitivity(self):
+        athlete = self.make_athlete('infinity-athlete', self.team)
+        for _ in range(50):
+            InfiniteChoice.objects.create(
+                user=athlete,
+                team=self.team,
+                correct=True,
+                choice_time=1.0,
+                shorter_time=10.0,
+                longer_time=12.0,
+            )
+            InfiniteChoice.objects.create(
+                user=athlete,
+                team=self.team,
+                correct=True,
+                choice_time=3.0,
+                shorter_time=10.0,
+                longer_time=16.0,
+            )
+
+        response = self.client.get(reverse('stats_get_table'), {'mode': 'random'})
+
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        summary_row = next(row for row in data if row.get('is_summary'))
+        athlete_row = next(row for row in data if row.get('user_id') == athlete.id)
+        self.assertEqual(athlete_row['error_potential_sensitivity'], 500)
+        self.assertIsNone(athlete_row['time_sensitivity'])
+        self.assertEqual(summary_row['error_potential_sensitivity'], 500)
+
+    def test_random_stats_table_hides_error_potential_sensitivity_below_100_controls(self):
+        athlete = self.make_athlete('short-infinity-athlete', self.team)
+        InfiniteChoice.objects.create(
+            user=athlete,
+            team=self.team,
+            correct=True,
+            choice_time=1.0,
+            shorter_time=10.0,
+            longer_time=12.0,
+        )
+        InfiniteChoice.objects.create(
+            user=athlete,
+            team=self.team,
+            correct=True,
+            choice_time=3.0,
+            shorter_time=10.0,
+            longer_time=16.0,
+        )
+
+        response = self.client.get(reverse('stats_get_table'), {'mode': 'random'})
+
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        summary_row = next(row for row in data if row.get('is_summary'))
+        athlete_row = next(row for row in data if row.get('user_id') == athlete.id)
+        self.assertIsNone(athlete_row['error_potential_sensitivity'])
+        self.assertIsNone(summary_row['error_potential_sensitivity'])
+
 
 class StatsQueryCountTests(TestCase):
     """Locks in the Phase 2.2 N+1 fix: _min_time_per_cp and

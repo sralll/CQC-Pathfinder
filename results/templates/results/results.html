@@ -9,14 +9,6 @@
 <script defer src="{% static 'results/js/results.js' %}"></script>
 {% endblock %}
 
-{% block nav_content %}
-<div class="nav-left play-mobile-nav-left">
-    <a class="play-infinity-btn play-infinity-btn-nav" href="{% url 'infinity_play' %}" aria-label="{% trans 'Infinity' %}" title="{% trans 'Infinity' %}">
-        <x-icon name="infinity" size="1.25em"></x-icon>
-    </a>
-</div>
-{% endblock %}
-
 {% block content %}
 <div id="play-wrap">
 
@@ -25,26 +17,20 @@
         <!-- Search + mode toggle -->
         <div id="play-header">
 
-            <!-- Mode controls (left) -->
+            <!-- Mode controls (left): 3-way slider Training | Competition | Infinity -->
             <div id="play-mode-actions">
-                <div id="play-mode-toggle">
-                    <div class="mode-icon-tip" data-mode="training">
+                <div class="play-3way" data-mode="competition" role="radiogroup" aria-label="{% trans 'Mode' %}">
+                    <button class="play-3way-stop" data-mode="training" aria-label="{% trans 'Training' %}" title="{% trans 'Training mode' %}">
                         <x-icon name="book-open" size="14px"></x-icon>
-                        <div class="mode-tip-box">
-                            <b>{% trans "Training mode" %}</b><br>
-                            {% trans "Results are listed as training — no pressure and no late decision penalty." %}
-                        </div>
-                    </div>
-                    <label class="mode-switch">
-                        <input type="checkbox" id="mode-toggle-input" checked>
-                        <span class="mode-slider"></span>
-                    </label>
-                    <div class="mode-icon-tip" data-mode="competition">
+                    </button>
+                    <button class="play-3way-stop" data-mode="competition" aria-label="{% trans 'Competition' %}" title="{% trans 'Competition mode' %}">
                         <x-icon name="trophy" size="14px"></x-icon>
-                        <div class="mode-tip-box">
-                            <b>{% trans "Competition mode" %}</b><br>
-                            {% trans "The first attempt of a project in competition mode is listed in the ranking. The decision time and the extra time for non-ideal routes are measured." %}
-                        </div>
+                    </button>
+                    <button class="play-3way-stop" data-mode="infinity" aria-label="{% trans 'Infinity' %}" title="{% trans 'Infinity mode' %}">
+                        <x-icon name="infinity" size="14px"></x-icon>
+                    </button>
+                    <div class="play-3way-thumb" id="play-mode-thumb">
+                        <x-icon name="trophy" size="16px"></x-icon>
                     </div>
                 </div>
             </div>
@@ -57,11 +43,7 @@
             </div>
 
             <!-- Right spacer — keeps search visually centred on desktop -->
-            <div class="play-header-end">
-                <a class="play-infinity-btn play-infinity-btn-header" href="{% url 'infinity_play' %}" aria-label="{% trans 'Infinity' %}" title="{% trans 'Infinity' %}">
-                    <x-icon name="infinity" size="1.25em"></x-icon>
-                </a>
-            </div>
+            <div class="play-header-end"></div>
 
             <!-- Mobile sort/filter controls (below search row on mobile) -->
             <div id="play-mobile-controls"></div>

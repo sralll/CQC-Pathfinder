@@ -177,7 +177,7 @@ reference. The 3 gate misses are explainable outliers, not harness bugs:
 `mask_20260612_091525` (0.26 Mpx, diagonal 719 px < the 500–1500 band → all `distance`
 rejects), and two large obstacle-dense maps (`_20260604_191144` 46.8 % impassable;
 `_20260421_092111` 50 Mpx, `unreachable`-heavy). Tuning of `sideGapMinPx` / distance
-band / `obstacleMinRunPx` deferred to Phase 5 (no algorithm changes made). ⚠ Lars
+band / `obstacleMinRunPx` deferred to Phase 6 (no algorithm changes made). ⚠ Lars
 review of the go/no-go summary is the gate before Phase 3.
 
 Run harness on ≥ 20 staging masks × 100 pairs. Summarize per map: valid-pair rate, mean/median/p90 retries, mean ms/valid pair, rejection breakdown. Assert **zero route segments crossing impassable pixels of the true mask** (sample points along polylines). Write summary markdown to `docs/` or scratch for review.
@@ -259,8 +259,9 @@ of the Phase-2 harness) writes `{valid_rate, mean_retries, mean_ms}` into the `.
 and the editor renders it with a soft warning below thresholds (4.3), matching the
 WP 2.2 harness ballpark on 3 test masks. **Outstanding for Lars:** hands-on click-test
 of the region editor's mouse feel, then a real end-to-end infinite-play session on a
-coach-drawn region (the gate the whole effort was waiting on). Phase 5 (tuning + phone
-verification) is the remaining phase.
+coach-drawn region (the gate the whole effort was waiting on). Remaining phases:
+Phase 5 (refinement/selection parity/blocking) and Phase 6 (tuning + phone
+verification).
 
 ### Phase 4 UI REVISION — ✅ DONE (2026-07-05, Lars-directed) — READ BEFORE RE-IMPLEMENTING 4.1–4.3
 
@@ -368,9 +369,235 @@ Acceptance: report visible in editor for 3 test maps; warning appears on a known
 
 Implemented in `project/navgraph_suitability.py` (mirrors `scripts/navgraph_harness.mjs`: sample→snap→graph-A*→barrier alternates→`selectRuntimeRouteOptions` port), called from `build_navgraph` (try/except-guarded — a sim failure never breaks a build) and stashed in `stats["suitability"]`, which already rides along in the `.npz` (no `.bin` format/version change). Endpoint `GET /editor/region-suitability/<file_id>/`; editor `SuitabilityReport` module (`editor.js`) renders in `#region-panel` below the opt-in toggle, with a soft warning driven by a server-computed `warn` flag. Verified on 3 masks: tiny/weak (0.26 Mpx) → 0% valid, warn; small (1.7 Mpx) → 18%, no warn; mid urban (8 Mpx) → 26%, no warn — same ballpark as the WP 2.2 harness numbers for the same masks.
 
-## Phase 5 — Tuning + phone verification — **Opus**
+## Phase 5 — Editor-grade refinement, selection parity + blocking elements (masks) — **NEW 2026-07-09**
 
-- Re-run WP 2.2 batch after any threshold changes; tune: hit-zone/region handling, node spacing, distance band, sideGap scaling, barrier length.
+This phase closes the three gaps Phase 3 deliberately left open, and is the missing
+"rest of the pipeline" from the editor:
+
+1. **Refinement quality.** Served routes are currently `refineRouteLegal` output
+   (straight-segment patching with local A* detours) — legal, but not the editor's
+   any-angle, terrain-weighted polyline. The editor pipeline
+   ([pipeline.js](project/static/project/js/pathing/pipeline.js) `runPipeline`) is:
+   full-map margin-growth A* → `simplifyAStarSameTerrainPath` → `corridorMask`
+   (radius 24 @ scale 0.5) → `applyCorridor` → `guidedThetaStar` (switch radius 10)
+   → `simplifyThetaPath` (10°, 5 px). In mask mode the navgraph replaces the first
+   stage (per the Architecture section); **the corridor + guided θ* stages must now
+   be layered on top of the accepted pair's routes**, reusing the editor modules
+   as-is.
+2. **Selection/rejection parity.** The city mode's selection was refactored (commit
+   `1447d14`) into the shared module
+   [route_pair_selection.js](results/static/results/js/infinite/route_pair_selection.js)
+   (weighted pair choice targeting ~10 % runtime gap, lateral reject, route-index
+   bias, `skippedBarriersForSelection`) plus per-route **A* time budgets with
+   timeout kicks** ([RoutePlanner.js](results/static/results/js/infinite/citygen/core/RoutePlanner.js)
+   `computeRouteOptions`: `primaryBudgetMs` 400 for routes 1–2, `extraBudgetMs` 200
+   for 3+, timed-out route dropped → `timeout` rejection) and balance-reject
+   0.05/0.8 (`infinite_batch_worker.js` `balanceRejectConfig`). The mask router
+   ([navgraph_router.js](project/static/project/js/pathing/navgraph_router.js))
+   still carries the **pre-refactor** port: closest-pair selection, maxRelativeGap
+   0.5, no weighting, no budgets, balance-reject 0.5. Mask mode must use the same
+   shared module and the same rejection taxonomy — timeouts WILL trigger on masks
+   (full-res refinement is the slow stage), so the budget/kick machinery matters.
+3. **Blocking elements without a visibility graph.** In city mode, when the selected
+   pair skips a faster lower-index route, that route's barrier is *drawn* as a
+   purple blocking bar (`skippedBarriersForSelection` → `drawRouteBlocks` in
+   [infinite_play.js:3470](results/static/results/js/infinite_play.js)) and the
+   visibility graph enforces it. On masks there is no vis graph: barriers currently
+   only block navgraph edges (approximate), are never rendered, anchor on *any*
+   impassable pixel (a lone tree qualifies), and refinement ignores them entirely —
+   a refined route could legally cross a drawn bar. This phase makes barriers
+   intelligently placed (pixel-probing with obstacle-significance tests),
+   rendered, and enforced at full resolution.
+
+Execute WPs in order — 5.2 (selection + budgets) first because 5.1 and 5.3 hang
+their timeout/skipped-barrier semantics off it. Constants live in
+`DEFAULT_CONFIG` (navgraph_router.js) unless noted; every new threshold goes there
+too so Phase 6 can tune in one place.
+
+### WP 5.1 — Selection/rejection parity + time budgets — **Opus**
+
+Replace the mask router's local `selectRuntimeRouteOptions` with the shared
+weighted selection, and port the city planner's budget/kick semantics.
+
+1. **Shared module via dependency injection.** `route_pair_selection.js` is pure and
+   dependency-free, but navgraph_router.js must stay importable in Node (harness) and
+   the browser worker — a cross-app relative import works in neither. So: inject.
+   `worker.js` (browser-only) adds
+   `import { selectWeightedRoutePair, skippedBarriersForSelection, ensureRouteSides, DEFAULT_ROUTE_PAIR_SELECTION } from '/static/results/js/infinite/route_pair_selection.js';`
+   (absolute `/static/…` specifiers are the established cross-app pattern — see
+   [mask_scene_source.js:14](results/static/results/js/infinite/mask_scene_source.js))
+   and passes them into `generateOnePair(state, { selection })`. Node callers import
+   the module by file path and inject the same way. Delete the stale local
+   `selectRuntimeRouteOptions` from navgraph_router.js.
+2. **Path records get city-shape fields.** In `computeRouteOptions` (navgraph_router):
+   `routeIndex = attempt + 1`, `barrier` = the barrier placed *after* this route
+   (same convention as RoutePlanner `pathRecord.barrier`), `run_time` = graph cost.
+   Dedupe by node-path signature as today. Raise `routeAttempts` 4 → 5 to match
+   city `selectionConfig.maxRoutes` (the weighted picker's `highRouteIndexBias`
+   assumes deeper exploration).
+3. **Selection call.** `selectWeightedRoutePair(paths, { start, goal, config: {
+   ...DEFAULT_ROUTE_PAIR_SELECTION, minSideGap: cfg.sideGapMinPx /* px, 40 */,
+   maxRelativeGap: 0.40 }, rng })` — note maxRelativeGap drops 0.5 → 0.40 to match
+   `ROUTE_PAIR_MAX_RELATIVE_GAP`. Sides via the shared `ensureRouteSides` (side is
+   in px on masks because it's normalized by direct length — the scale-free
+   `lateral` check ports unchanged). Pass the seeded rng through so seeded runs
+   stay reproducible. Compute `skippedBarriers = skippedBarriersForSelection(paths,
+   selected)` and return it with the pair (WP 5.3 consumes it).
+4. **Budgets + timeout kicks.** Port RoutePlanner semantics: routes 1–2 get
+   `primaryBudgetMs` (default 400), routes 3+ `extraBudgetMs` (default 200). The
+   budget covers the whole per-route step on masks: graph A* + (for route 1) the
+   snap stubs. Implement as a deadline checked inside `graphAstar`'s pop loop and
+   `astarSubgrid` (it already has `maxExpansions`; add `deadlineMs` checked every
+   ~1024 expansions). A timed-out route is dropped; if that leaves <2 routes the
+   attempt fails with reason `timeout` — mirroring RoutePlanner's
+   `failedRoute(timeout ? 'timeout' : 'distinct', …)`.
+5. **Balance reject stays post-refinement** but syncs to `balanceRejectConfig`
+   values (maxRelativeGap 0.05, probability **0.8** — currently 0.5 here; the
+   DEFAULT_CONFIG comment already says "keep the two in sync").
+6. **Rejection taxonomy + counters.** `generateOnePair` aggregates per-call counts
+   over all attempts — `{ empty, distance, obstacle, snap, unreachable, distinct,
+   runtime, side, routeside, lateral, timeout, runtime_refined, balanced }` — and
+   returns them in `meta.rejectionCounts` (the mask analogue of the city batch's
+   `rejectionCounts`), logged in the worker's `generatePair OK/FAILED` line.
+7. **Harness de-drift.** Refactor `scripts/navgraph_harness.mjs` to import
+   navgraph_router.js and route_pair_selection.js directly (navgraph_router is
+   already Node-clean by design) instead of carrying drifted copies; re-run
+   `scripts/navgraph_batch.mjs` on the WP 2.2 mask set to re-baseline. Expect the
+   gap distribution to center near 0.10 and `side`/`balanced` rejects to rise —
+   that is the intended training-distribution change, not a regression.
+
+Acceptance: Node batch on ≥ 10 WP 2.2 masks completes with the shared selection
+(zero legality violations, mean ms/valid within ~2× of the WP 2.2 baseline);
+seeded runs reproducible; a forced tiny budget (e.g. `primaryBudgetMs: 1`) yields
+`timeout` rejections, not hangs; worker logs show the new counters.
+
+### WP 5.2 — Corridor + guided θ* refinement of served routes — **Opus**
+
+Full-quality refinement for the accepted pair only (outside the retry loop), as
+plan.md's Architecture always intended. New module
+`project/static/project/js/pathing/refine_theta.js` (same-dir relative imports of
+`preprocess.js`, `theta_star.js`, `simplify.js` work in both Node and the worker),
+exporting `refineRouteTheta(state, path, barriers, opts) → { path, cost, mode }`.
+
+Per selected route:
+1. **Legal spine first.** Run the existing `refineRouteLegal` (unchanged, Phase-2
+   validated) → a guaranteed-legal full-res polyline. This replaces the editor's
+   margin-growth A* output as the waypoint chain — it plays the exact role `wps`
+   plays in `runPipeline`, and guarantees the corridor around it contains at least
+   one legal path (itself). Do **not** feed raw graph node chains to the corridor:
+   long detour edges validated by the builder's A* can stray far from the
+   node-node straight line and a radius-24 corridor around it would sever them.
+2. **Subgrid = bbox of the legal spine** + `corridorRadius + 8` margin, extracted
+   from the true full-res mask (this is the "corridoring the relevant section of
+   the map" step; no margin-growth loop needed — the spine tells us the region).
+3. **Rasterize active barriers** (WP 5.3 interface): every barrier with
+   `attemptIndex < routeIndex` of the route being refined is stamped into the
+   subgrid as an impassable thick line (single shared width constant, see WP 5.3)
+   — the mask-mode equivalent of the editor's `applyBlockedTerrain` blocked-lines
+   overlay, which plan.md already names as the barrier mechanism.
+4. **Corridor + θ*.** `corridorMask(spineWps, sw, sh, corridorRadius)` →
+   `applyCorridor` → `guidedThetaStar(constrained, sw, sh, startSub, goalSub,
+   spineWps, THETA_SWITCH_RADIUS=10)` → `simplifyThetaPath(10°, 5 px)`.
+   `corridorRadius` = 24 mask px by default (mask px ≈ the editor's scale-0.5
+   reference frame; make it a `DEFAULT_CONFIG` entry). Add a `deadlineMs`
+   check to `guidedThetaStar`'s pop loop (new optional param; the editor path
+   passes none and is unaffected).
+5. **Runtime = Σ `lineCost`** over the final polyline segments on the **true**
+   mask (not the barrier-stamped grid — bars are virtual fences, terrain cost is
+   real). Both the relative-gap re-check and the balance reject then operate on
+   these θ*-refined runtimes, exactly where the `refineRouteLegal` costs are used
+   today.
+6. **Timeout/failure policy (recommended: consistent fallback).** If θ* fails or
+   exceeds its budget (`refineBudgetMs`, default 600/route) for *either* route,
+   serve **both** routes as plain `refineRouteLegal` output (`mode:
+   'legal-fallback'`) — the pair already passed selection, the legal polylines are
+   Phase-2-validated, and falling back for both keeps the two runtimes on the same
+   cost basis (θ* paths are systematically slightly cheaper; mixing bases would
+   bias the gap). Only if even the legal spine is unusable does the pair reject
+   (`timeout`). Expose `refineTimeoutPolicy: 'fallback' | 'reject'` in
+   DEFAULT_CONFIG so the strict city-style behaviour is one flag away; count
+   fallbacks in `meta` either way.
+
+Acceptance: Node parity run on ≥ 3 size-varied masks (small / median / 75 Mpx),
+≥ 200 accepted pairs: zero legality violations on the true mask; zero drawn-bar
+crossings; refined runtime ≤ legal-spine runtime on ≥ 95 % of routes (θ* should
+only improve); p90 refine time per pair ≤ ~800 ms laptop-Node; harness PNG
+spot-checks show smooth any-angle polylines hugging terrain (Lars eyeballs a
+handful). Per-stage `[theta-client]` timings extended with `theta` alongside
+`refine`.
+
+### WP 5.3 — Blocking elements without a visibility graph — **Opus**
+
+Make mask barriers as trustworthy as city ones: intelligently anchored, actually
+route-blocking, rendered to the player, and enforced in refinement.
+
+1. **Port the *current* `findSmartBarrier`.** The navgraph_router `findBarrier`
+   port predates RoutePlanner's newer tiers (`bestClearEnclosed` /
+   `isClearOfRouteNodes` / `broadFallback`); re-port [RoutePlanner.js:75](results/static/results/js/infinite/citygen/core/RoutePlanner.js)
+   faithfully with px-scaled constants (existing `barrier*Px` config entries).
+2. **Obstacle-significance test (the "no clean vis graph" answer).** The city
+   version anchors only in *significant* polygon obstacles (hedges excluded); the
+   mask version must not anchor a bar on a lone tree dot or map-symbol speck.
+   Replace the raw `inObstacle` probe with `inSignificantObstacle`: on a probe
+   hit, bounded flood-fill the impassable component (cap ~250 px, memoized per
+   pixel) and accept as anchor iff `area ≥ barrierAnchorMinAreaPx` (default 60)
+   **or** the component is elongated (thin walls/fences are significant at any
+   area — reuse the elongation idea from the retired blob prefilter:
+   `max(bboxW,bboxH)² / area ≥ 8`). Small compact blobs remain barriers-invisible
+   exactly like city hedges.
+3. **Effectiveness guarantee.** A bar that intersects zero navgraph edges of the
+   route it is meant to block does nothing (today the re-route dedupes and the
+   attempt silently degrades to `distinct`). After placing a candidate bar,
+   require it to intersect ≥ 1 edge of the *current route's* `nodePath`; if not,
+   slide the probe window further along the route (reuse the 0.25–0.75 fallback
+   window) until one does, else return null (no barrier — attempt ends with the
+   routes found so far). This is cheap: intersection only against the ≤ ~40 edges
+   of the current route, not all E edges.
+4. **Serve + render.** `generateOnePair` returns `barriers` (all placed) and
+   `skippedBarriers` (from WP 5.1) in mask px; `mask_scene_source._wrapPair`
+   converts to map units (× TRAIN_SCALE_VALUE); `buildMaskScene` sets
+   `scene.routeResult = { skippedBarriers, blockFastest: skippedBarriers.length > 0,
+   barriers }` so the **existing** `drawRouteBlocks` renders the purple bars on the
+   map raster with zero new drawing code (verify the mask render branch calls it;
+   wire if not).
+5. **Full-res enforcement + single width source.** One exported constant
+   `BARRIER_DRAW_WIDTH_MASK_PX` (start: `BLOCKING_STROKE_WIDTH / TRAIN_SCALE_VALUE`
+   rounded — the bar the player sees) used by (a) WP 5.2's subgrid rasterization
+   and (b) the legality assertion: extend `countLegalityViolations` for the
+   refined routes to also count intersections with barriers of lower
+   `attemptIndex` — mirrors the city invariant "the drawn rectangle is blocked,
+   visuals and routing cannot drift apart"
+   ([RoutePlanner.js:16](results/static/results/js/infinite/citygen/core/RoutePlanner.js)).
+
+Acceptance: on ≥ 3 masks × 100 pairs (Node): every served `skippedBarrier` both
+ends anchored in significant obstacles (assert via the significance test), zero
+refined-route crossings of active bars, no pair where a placed barrier
+intersected zero route edges; live on staging via `/dev/agent-login/`: a pair
+with `blockFastest` shows the purple bar exactly covering the passage, routes
+visibly detour around it.
+
+### WP 5.4 — Play wiring, stats + live verification — **Sonnet**
+
+- Thread `meta.rejectionCounts`, refine mode/fallback counts and per-stage timings
+  from the worker `pair` message through `buildMaskScene` into the same stats
+  surfaces the city mode fills (mirror the `scene.meta` fields the stats panel
+  reads; check [stats.js](results/static/results/js/stats.js) expectations).
+- Bump/verify `PAIR_TIMEOUT_MS` interplay: worker-side budgets (WP 5.1/5.2) must
+  make a `generatePair` round-trip comfortably < the 20 s outer guard even on the
+  75 Mpx map; log a warning if a single pair exceeds ~5 s.
+- Any new user-facing strings via `locale/source_messages.py` +
+  `python scripts/manage_translations.py --check && --build` (djangojs).
+- `collectstatic` + server restart, then live session on a coach-enabled map via
+  `/dev/agent-login/`: buffer stays ≥ 2 at 2 s cadence with θ* refinement on;
+  console shows the new counters; screenshot/eval-probe evidence per the
+  rAF-frozen-tab workaround.
+
+Acceptance: end-to-end staging session with all Phase-5 pieces on; no buffer
+starvation; stats panel shows mask rejection counts like city ones.
+
+## Phase 6 — Tuning + phone verification — **Opus** *(was Phase 5)*
+
+- Re-run WP 2.2 batch after any threshold changes; tune: hit-zone/region handling, node spacing, distance band, sideGap scaling, barrier length, Phase-5 additions (budgets, corridor radius, barrier significance thresholds, `refineTimeoutPolicy`).
 - Browser verification with 4–6× CPU throttling (phone proxy): time-to-valid-pair distribution over 50 pairs on median + large maps; memory snapshot (heap < ~150 MB on median maps).
 - Edge cases: old-scheme masks, masks with several large free components (islands across a river without bridge portals), degenerate tiny masks.
 Acceptance: phone-proxy average generation ≤ 2 s with buffer never empty during a 5-min session; documented tuning constants.

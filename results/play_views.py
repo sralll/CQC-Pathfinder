@@ -445,12 +445,14 @@ def get_files(request):
     files = []
     for f in file_list:
         files.append({
-            'id':          f.id,
-            'name':        f.name,
-            'author':      f.author or '',
-            'team_name':   f.team.name if f.team else '',
-            'cp_count':    f.cp_count,
-            'last_edited': f.last_edited.isoformat() if f.last_edited else '',
+            'id':               f.id,
+            'name':             f.name,
+            'author':           f.author or '',
+            'team_name':        f.team.name if f.team else '',
+            'cp_count':         f.cp_count,
+            'map_file':         f.map_file,
+            'infinite_enabled': bool(f.infinite_enabled),
+            'last_edited':      f.last_edited.isoformat() if f.last_edited else '',
             'label': (
                 {'id': f.label.id, 'name': f.label.name, 'color': f.label.color}
                 if f.label else None

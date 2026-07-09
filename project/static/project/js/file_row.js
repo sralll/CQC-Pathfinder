@@ -11,6 +11,7 @@ export class FileRow {
     createRow() {
         const tr = document.createElement('tr');
         if (!this.file.can_edit) tr.classList.add('foreign-file-row');
+        const infinityDisabled = this._infinityDisabled();
 
         tr.innerHTML = `
             <td>
@@ -23,8 +24,8 @@ export class FileRow {
             </td>
             <td class="col-infinity">
                 <button id="infinity-btn-${this.file.id}"
-                    class="publish-btn infinity-toggle-btn ${this.file.infinite_enabled ? 'publish-btn-active' : ''} ${!this.file.can_edit || this.file.is_locked || !this.file.has_mask ? 'publish-btn-disabled' : ''}"
-                    ${!this.file.can_edit || this.file.is_locked || !this.file.has_mask ? 'disabled' : ''}
+                    class="publish-btn infinity-toggle-btn ${this.file.infinite_enabled ? 'publish-btn-active' : ''} ${infinityDisabled ? 'publish-btn-disabled' : ''}"
+                    ${infinityDisabled ? 'disabled' : ''}
                     title="${this._infinityTitle()}">
                     ${icon("infinity")}
                 </button>
@@ -69,7 +70,7 @@ export class FileRow {
         }
 
         const infinityBtn = tr.querySelector(`#infinity-btn-${this.file.id}`);
-        if (infinityBtn && this.file.can_edit && !this.file.is_locked && this.file.has_mask) {
+        if (infinityBtn && !this._infinityDisabled()) {
             infinityBtn.addEventListener('click', () => this.table.toggleInfinite(this));
         }
 
@@ -243,10 +244,16 @@ export class FileRow {
     }
 
     _infinityTitle() {
+        if (this.file.infinite_enabled) return gettext('Infinite play is on — click to turn off');
         if (!this.file.has_mask) return gettext('Add a mask to this map first.');
-        return this.file.infinite_enabled
-            ? gettext('Infinite play is on — click to turn off')
-            : gettext('Turn on infinite play for this map');
+        if (!this.file.infinite_region_set) return gettext('Draw a map region before enabling infinite play.');
+        return gettext('Turn on infinite play for this map');
+    }
+
+    _infinityDisabled() {
+        return !this.file.can_edit
+            || this.file.is_locked
+            || (!this.file.infinite_enabled && (!this.file.has_mask || !this.file.infinite_region_set));
     }
 
     // Spinner while the navgraph builds (release only — retreat is instant).
@@ -263,9 +270,10 @@ export class FileRow {
         this.file.infinite_enabled = enabled;
         const btn = this.element.querySelector(`#infinity-btn-${this.file.id}`);
         if (!btn) return;
-        btn.disabled = false;
+        btn.disabled = this._infinityDisabled();
         btn.innerHTML = icon("infinity");
         btn.classList.toggle('publish-btn-active', enabled);
+        btn.classList.toggle('publish-btn-disabled', this._infinityDisabled());
         btn.title = this._infinityTitle();
         if (enabled) window.emitPublishWave?.(btn);   // same ripple as publish
     }

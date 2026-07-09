@@ -75,7 +75,7 @@ def _team_random_cache_key(team_id):
 
 
 def _stats_table_cache_key(team_id, mode):
-    return f"stats:table:v6:{team_id}:{mode}"
+    return f"stats:table:v8:{team_id}:{mode}"
 
 
 def _team_progress_cache_key(team_id):
@@ -1079,9 +1079,10 @@ def get_stats_table(request):
         s = aggregate_rows(get_rows(u.id), classify)
         if s is None:
             continue
-        show_sensitivity = s['posten'] > 100
-        error_sensitivity = sensitivity_by_user.get(u.id) if show_sensitivity else None
-        time_sensitivity = time_sensitivity_by_user.get(u.id) if show_sensitivity else None
+        show_error_sensitivity = s['posten'] >= 100
+        show_time_sensitivity = s['posten'] >= 100
+        error_sensitivity = sensitivity_by_user.get(u.id) if show_error_sensitivity else None
+        time_sensitivity = time_sensitivity_by_user.get(u.id) if show_time_sensitivity else None
         athlete_rows.append({
             'athlete':      u.get_full_name() or u.username,
             'user_id':      u.id,
@@ -1111,15 +1112,16 @@ def get_stats_table(request):
                 'total': total_cp, 'done': 0, 'training': 0, 'competition': 0,
                 'training_pct': 0, 'competition_pct': 0, 'pct': 0,
             }
-        show_summary_sensitivity = summary['posten'] > 100
+        show_summary_error_sensitivity = summary['posten'] >= 100
+        show_summary_time_sensitivity = summary['posten'] >= 100
         data.append({
             'athlete':      'Team average',
             'is_summary':   True,
             'user_id':      None,
-            'error_potential_sensitivity': summary_error_sensitivity if show_summary_sensitivity else None,
-            'time_sensitivity':            summary_time_sensitivity if show_summary_sensitivity else None,
-            'sensitivity':  summary_error_sensitivity if show_summary_sensitivity else None,
-            'roi_slope':    summary_time_sensitivity if show_summary_sensitivity else None,
+            'error_potential_sensitivity': summary_error_sensitivity if show_summary_error_sensitivity else None,
+            'time_sensitivity':            summary_time_sensitivity if show_summary_time_sensitivity else None,
+            'sensitivity':  summary_error_sensitivity if show_summary_error_sensitivity else None,
+            'roi_slope':    summary_time_sensitivity if show_summary_time_sensitivity else None,
             'progress':     summary_progress,
             **summary,
         })

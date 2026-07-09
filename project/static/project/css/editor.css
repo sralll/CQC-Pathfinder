@@ -837,7 +837,11 @@ body.mobile .search-wrapper:focus-within .search-clear.visible {
 #file-table.hide-team-column .col-team { display: none; }
 
 .col-publish  { width: 40px; }
-.col-infinity { width: 40px; }
+.col-infinity {
+    width: 28px;
+    padding-left: 0;
+    padding-right: 4px;
+}
 .col-cp       { width: 70px; }
 .col-history  { width: 40px; }
 .col-date     { width: 145px; }
@@ -1297,6 +1301,35 @@ x-icon.spin svg { animation: spin 1s linear infinite; }
     background: rgba(255, 140, 0, 0.10);
     border-color: rgba(255, 152, 0, 0.3);
     color: rgba(255, 179, 71, 1);
+}
+
+/* Infinity toggle button: always looks like a solid button (grey inactive, orange active) */
+.infinity-toggle-btn {
+    background: #333;
+    border: 1px solid #4a4a4a;
+    color: #888;
+}
+.infinity-toggle-btn:not(.publish-btn-disabled):not(.publish-btn-active):hover {
+    background: #404040;
+    border-color: #666;
+    color: #bbb;
+}
+.infinity-toggle-btn.publish-btn-active {
+    background: rgba(255, 140, 0, 0.28);
+    border-color: var(--brand);
+    color: #ffb347;
+    box-shadow: 0 0 0 1px rgba(255, 152, 0, 0.15);
+}
+.infinity-toggle-btn.publish-btn-active:hover {
+    background: rgba(255, 140, 0, 0.40);
+    border-color: #ffb347;
+    color: #ffd08a;
+}
+.infinity-toggle-btn.publish-btn-disabled {
+    background: #282828;
+    border-color: #363636;
+    color: #444;
+    opacity: 1;
 }
 
 .foreign-file-row { filter: brightness(0.67) saturate(0.67); }
@@ -2667,6 +2700,26 @@ body.auto-pathfind-busy .cp-route-theta-btn[aria-busy="true"] {
     pointer-events: none;
 }
 
+/* Infinity button on mobile cards — black border, fixed size, icon inherits font-size
+   so <button> and <span> render identically (buttons don't inherit font-size by default). */
+.infinity-card-btn {
+    font-size: inherit;
+    width: 30px;
+    height: 30px;
+    padding: 0;
+    margin-right: 4px;
+    justify-content: center;
+    border: 1.5px solid #000 !important;
+    border-radius: 5px;
+    background: rgba(0, 0, 0, 0.10);
+}
+.infinity-card-btn.file-card-publish-active {
+    background: rgba(0, 0, 0, 0.18);
+}
+.infinity-card-btn.file-card-publish-disabled {
+    opacity: 0.4;
+}
+
 .file-card-empty {
     padding: 40px;
     text-align: center;
@@ -2815,7 +2868,7 @@ body.mobile .file-card-name       { font-size: 16px; font-weight: 600; }
 body.mobile .file-card-cp         { font-size: 14px; }
 body.mobile .file-card-row2       { font-size: 14px; }
 body.mobile .file-card-date       { font-size: 12px; }
-body.mobile .file-ctrl-btn        { font-size: 14px; padding: 11px 16px; min-height: 44px; box-sizing: border-box; }
+body.mobile .file-ctrl-btn        { font-size: 14px; padding: 11px 8px; min-height: 44px; box-sizing: border-box; }
 body.mobile .file-card-empty      { font-size: 16px; }
 body.mobile .table-filter-dropdown { font-size: 16px; }
 body.mobile .filter-option        { padding: 14px 16px; min-height: 44px; box-sizing: border-box; }

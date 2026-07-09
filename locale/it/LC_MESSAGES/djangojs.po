@@ -90,8 +90,17 @@ msgstr "Clicca i pulsanti per vedere una valutazione dettagliata."
 msgid "Click the first point on the map…"
 msgstr "Clicca il primo punto sulla mappa…"
 
+msgid "Click the first point to finish."
+msgstr "Clicca il primo punto per completare."
+
 msgid "Click the second point…"
 msgstr "Clicca il secondo punto…"
+
+msgid "Click to add points; click the first point to finish."
+msgstr "Clicca per aggiungere punti; clicca il primo punto per completare."
+
+msgid "Click to place the first region point."
+msgstr "Clicca per posizionare il primo punto della regione."
 
 msgid "Click to restore"
 msgstr "Clicca per ripristinare"
@@ -194,6 +203,9 @@ msgstr "Fatto"
 
 msgid "Drag the corners inward to mark the map area."
 msgstr "Trascina gli angoli verso l'interno per segnare l'area della mappa."
+
+msgid "Draw a map region before enabling infinite play."
+msgstr "Disegna una regione della mappa prima di attivare la modalità infinita."
 
 msgid "Edit points"
 msgstr "Modifica punti"
@@ -470,6 +482,9 @@ msgstr "Regione salvata e grafo ricostruito."
 
 msgid "Region saved."
 msgstr "Regione salvata."
+
+msgid "Released"
+msgstr "Abilitato"
 
 msgid "Reload"
 msgstr "Ricarica"

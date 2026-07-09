@@ -4,6 +4,13 @@ import {
     buildRouteVisibilityGraph,
     computeRouteOptions,
 } from './citygen/core/RoutePlanner.js';
+import {
+    DEFAULT_ROUTE_PAIR_SELECTION,
+    ensureRouteSides,
+    routeSlotsFor as runtimeSlotsFor,
+    selectWeightedRoutePair,
+    skippedBarriersForSelection,
+} from './route_pair_selection.js';
 
 const RUN_SPEED = 4.75;
 const ALT_FLAT_EQUIV_M = 4;
@@ -15,8 +22,8 @@ const NOA_CORNER_DEG = 90;
 const NOA_EPSILON_DEG = 2;
 const NOA_MIN_EFFECT_DEG = 45;
 const NOA_COUNTER_MIN_DEG = 45;
-const ROUTE_RUNTIME_MAX_RELATIVE_GAP = 0.5;
-const ROUTE_RUNTIME_MIN_SIDE_GAP = 10;
+const ROUTE_RUNTIME_MAX_RELATIVE_GAP = 0.40;
+const ROUTE_RUNTIME_MIN_SIDE_GAP = 12;
 const MAP_METRES_PER_UNIT = 2.5;
 const ROUTE_PICK_MIN_DIST = 40;
 const ROUTE_PICK_MAX_DIST = 120;
@@ -84,11 +91,12 @@ export const balanceRejectConfig = {
 //
 // Mutable so the harness can sweep it; edit the defaults to change production.
 export const selectionConfig = {
-    strategy: 'extremes',
+    strategy: 'weighted',
     maxRoutes: 5,
     primaryRouteBudgetMs: 400,
     extraRouteBudgetMs: 200,
     extremesMaxRelativeGap: 0.30,
+    weighted: { ...DEFAULT_ROUTE_PAIR_SELECTION },
 };
 
 function createRng(seed = null) {
@@ -235,12 +243,6 @@ function enrichRuntimePath(pathRecord) {
     };
 }
 
-function runtimeSlotsFor(paths, field) {
-    const slots = [null, null, null, null];
-    for (const p of paths || []) slots[p.routeIndex - 1] = p[field] ?? null;
-    return slots;
-}
-
 function selectRuntimeRouteOptions(pair, routeResult, rng = null) {
     const paths = (routeResult.paths || []).map(enrichRuntimePath);
     const base = {
@@ -261,25 +263,68 @@ function selectRuntimeRouteOptions(pair, routeResult, rng = null) {
     if (paths.length === 0) return { ...base, reason: routeResult.reason || 'timeout' };
     if (paths.length === 1) return { ...base, reason: 'distinct', routeIndexes: [paths[0].routeIndex] };
 
-    const sgDx = pair.goal.x - pair.start.x;
-    const sgDy = pair.goal.y - pair.start.y;
-    const sgLen = Math.hypot(sgDx, sgDy) || 1;
-    for (const p of paths) {
-        if (Number.isFinite(p.side)) continue;
-        let sum = 0;
-        for (const pt of p.path) sum += sgDx * (pt.y - pair.start.y) - sgDy * (pt.x - pair.start.x);
-        p.side = (sum / p.path.length) / sgLen;
-        p.sideLabel = p.side > 0 ? 'R' : p.side < 0 ? 'L' : 'C';
-    }
+    ensureRouteSides(paths, pair.start, pair.goal);
+    const pick = selectWeightedRoutePair(paths, {
+        start: pair.start,
+        goal: pair.goal,
+        config: {
+            ...selectionConfig.weighted,
+            minSideGap: ROUTE_RUNTIME_MIN_SIDE_GAP,
+            maxRelativeGap: ROUTE_RUNTIME_MAX_RELATIVE_GAP,
+        },
+        rng,
+    });
+    if (!pick.ok) return { ...base, reason: pick.reason };
 
-    paths.sort((a, b) => (a.run_time ?? Infinity) - (b.run_time ?? Infinity));
-    for (let i = 0; i < paths.length; i++) paths[i].routeIndex = i + 1;
+    const selected = pick.selected;
+    const skippedBarriers = skippedBarriersForSelection(paths, selected);
 
+    return {
+        ...base,
+        ok: true,
+        reason: 'ok',
+        selected,
+        routeIndexes: selected.map((p) => p.routeIndex),
+        routeLengthSlots: runtimeSlotsFor(paths, 'length'),
+        routeSideSlots: runtimeSlotsFor(paths, 'side'),
+        routeSideLabelSlots: runtimeSlotsFor(paths, 'sideLabel'),
+        routeRuntimeSlots: runtimeSlotsFor(paths, 'run_time'),
+        routeNoASlots: runtimeSlotsFor(paths, 'noA'),
+        routeElevationSlots: runtimeSlotsFor(paths, 'elevation'),
+        skippedBarriers,
+        blockFastest: skippedBarriers.length > 0,
+        relativeGap: pick.relativeGap,
+        sideGap: pick.sideGap,
+        pairCandidates: pick.candidates.length,
+    };
+}
+
+function selectClosestRouteOptions(pair, routeResult, rng = null) {
+    const paths = (routeResult.paths || []).map(enrichRuntimePath);
+    const base = {
+        ...routeResult,
+        paths,
+        selected: null,
+        routeIndexes: [],
+        routeLengthSlots: runtimeSlotsFor(paths, 'length'),
+        routeSideSlots: runtimeSlotsFor(paths, 'side'),
+        routeSideLabelSlots: runtimeSlotsFor(paths, 'sideLabel'),
+        routeRuntimeSlots: runtimeSlotsFor(paths, 'run_time'),
+        routeNoASlots: runtimeSlotsFor(paths, 'noA'),
+        routeElevationSlots: runtimeSlotsFor(paths, 'elevation'),
+        blockFastest: false,
+        ok: false,
+    };
+
+    if (paths.length === 0) return { ...base, reason: routeResult.reason || 'timeout' };
+    if (paths.length === 1) return { ...base, reason: 'distinct', routeIndexes: [paths[0].routeIndex] };
+
+    ensureRouteSides(paths, pair.start, pair.goal);
     const pairs = [];
     for (let i = 0; i < paths.length; i++) {
         for (let j = i + 1; j < paths.length; j++) {
             const a = paths[i], b = paths[j];
-            if (!a.run_time || !b.run_time) continue;
+            if (!Number.isFinite(a.run_time) || !Number.isFinite(b.run_time) || a.run_time <= 0 || b.run_time <= 0) continue;
             const faster = Math.min(a.run_time, b.run_time);
             const slower = Math.max(a.run_time, b.run_time);
             pairs.push({
@@ -296,8 +341,7 @@ function selectRuntimeRouteOptions(pair, routeResult, rng = null) {
 
     const bestPair = pairs[0];
     if (!bestPair) return { ...base, reason: 'distinct' };
-
-    if (bestPair.relativeGap > ROUTE_RUNTIME_MAX_RELATIVE_GAP) return { ...base, reason: 'runtime' };
+    if (bestPair.relativeGap > 0.5) return { ...base, reason: 'runtime' };
 
     const selected = [paths[bestPair.i], paths[bestPair.j]];
     const routeSideMin = bestPair.sideGap / 4;
@@ -307,9 +351,6 @@ function selectRuntimeRouteOptions(pair, routeResult, rng = null) {
         selected.some((p) => Math.abs(p.side) < routeSideMin)
     ) return { ...base, reason: 'routeside' };
 
-    // Balance reject: probabilistically drop problems whose two routes are too
-    // close in runtime (see balanceRejectConfig). Uses the seeded per-batch RNG
-    // so a given seed stays reproducible; falls back to Math.random if unseeded.
     if (
         bestPair.relativeGap <= balanceRejectConfig.maxRelativeGap &&
         (rng ? rng.float() : Math.random()) < balanceRejectConfig.probability
@@ -334,6 +375,8 @@ function selectRuntimeRouteOptions(pair, routeResult, rng = null) {
         routeElevationSlots: runtimeSlotsFor(paths, 'elevation'),
         skippedBarriers,
         blockFastest: skippedBarriers.length > 0,
+        relativeGap: bestPair.relativeGap,
+        sideGap: bestPair.sideGap,
     };
 }
 
@@ -362,20 +405,7 @@ function selectExtremeRouteOptions(pair, routeResult, rng = null) {
     if (paths.length === 0) return { ...base, reason: routeResult.reason || 'timeout' };
     if (paths.length === 1) return { ...base, reason: 'distinct', routeIndexes: [paths[0].routeIndex] };
 
-    const sgDx = pair.goal.x - pair.start.x;
-    const sgDy = pair.goal.y - pair.start.y;
-    const sgLen = Math.hypot(sgDx, sgDy) || 1;
-    for (const p of paths) {
-        if (Number.isFinite(p.side)) continue;
-        let sum = 0;
-        for (const pt of p.path) sum += sgDx * (pt.y - pair.start.y) - sgDy * (pt.x - pair.start.x);
-        p.side = (sum / p.path.length) / sgLen;
-        p.sideLabel = p.side > 0 ? 'R' : p.side < 0 ? 'L' : 'C';
-    }
-
-    // routeIndex by run_time (fastest = 1) so blocking/visualisation is stable.
-    paths.sort((a, b) => (a.run_time ?? Infinity) - (b.run_time ?? Infinity));
-    for (let i = 0; i < paths.length; i++) paths[i].routeIndex = i + 1;
+    ensureRouteSides(paths, pair.start, pair.goal);
 
     const withRun = paths.filter((p) => Number.isFinite(p.run_time) && p.run_time > 0);
     if (withRun.length < 2) return { ...base, reason: 'distinct' };
@@ -406,10 +436,7 @@ function selectExtremeRouteOptions(pair, routeResult, rng = null) {
     // choice is obvious (no training value) — retry with new endpoints.
     if (relativeGap >= selectionConfig.extremesMaxRelativeGap) return { ...base, reason: 'runtime' };
 
-    // Block every route that is not one of the two served (left-most/right-most).
-    const skippedBarriers = paths
-        .filter((p) => p !== leftmost && p !== rightmost && p.barrier)
-        .map((p) => p.barrier);
+    const skippedBarriers = skippedBarriersForSelection(paths, selected);
 
     return {
         ...base,
@@ -616,20 +643,23 @@ function buildSceneBatchCandidate(pairCount, options = {}) {
         .map((ward) => ({ ward, bbox: routePickWardBbox(ward) }));
     if (candidates.length === 0) throw new Error('Generated city has no traversable wards');
 
-    const rejectionCounts = { distinct: 0, distance: 0, side: 0, routeside: 0, balanced: 0, timeout: 0 };
+    const rejectionCounts = { distinct: 0, distance: 0, side: 0, routeside: 0, lateral: 0, balanced: 0, timeout: 0 };
     const batch = makeBatchSkeleton(city, settings, generationMs, graphMs, rejectionCounts);
     const scenes = batch.scenes;
     const usedEndpoints = [];
     const maxRetries = CITY_ROUTE_RETRIES * pairCount;
+    let retriesSinceAccepted = 0;
 
     for (let retries = 0; retries < maxRetries && scenes.length < pairCount; retries++) {
         const pair = routePickPair(candidates, visibilityGraph, city.wall, rng);
         if (!pair) {
             rejectionCounts.distance++;
+            retriesSinceAccepted++;
             continue;
         }
         if (routePairTooCloseToUsed(pair, usedEndpoints)) {
             rejectionCounts.distance++;
+            retriesSinceAccepted++;
             continue;
         }
         const routeResult = computeRouteOptions(pair.start, pair.goal, visibilityGraph, {
@@ -639,7 +669,9 @@ function buildSceneBatchCandidate(pairCount, options = {}) {
         });
         const runtimeResult = selectionConfig.strategy === 'extremes'
             ? selectExtremeRouteOptions(pair, routeResult, rng)
-            : selectRuntimeRouteOptions(pair, routeResult, rng);
+            : selectionConfig.strategy === 'closest'
+                ? selectClosestRouteOptions(pair, routeResult, rng)
+                : selectRuntimeRouteOptions(pair, routeResult, rng);
         if (runtimeResult.ok) {
             const scene = buildSceneFromRouteResult(city, pair, runtimeResult);
             scene.meta = {
@@ -647,7 +679,7 @@ function buildSceneBatchCandidate(pairCount, options = {}) {
                 settings,
                 generationMs,
                 graphMs,
-                retries,
+                retries: retriesSinceAccepted,
                 pairIndex: scenes.length,
                 routeMs: routeResult.dt,
                 rejectionCounts,
@@ -656,6 +688,7 @@ function buildSceneBatchCandidate(pairCount, options = {}) {
             batch.meta.routeCount = scenes.length;
             options.onScene?.(scene, scenes.length - 1, batch);
             usedEndpoints.push(pair.start, pair.goal);
+            retriesSinceAccepted = 0;
             continue;
         }
         const rejectionReason = runtimeResult.reason || (runtimeResult.timeout ? 'timeout' : 'side');
@@ -663,8 +696,10 @@ function buildSceneBatchCandidate(pairCount, options = {}) {
         else if (rejectionReason === 'distinct') rejectionCounts.distinct++;
         else if (rejectionReason === 'runtime') rejectionCounts.distance++;
         else if (rejectionReason === 'routeside') rejectionCounts.routeside++;
+        else if (rejectionReason === 'lateral') rejectionCounts.lateral++;
         else if (rejectionReason === 'balanced') rejectionCounts.balanced++;
         else rejectionCounts.side++;
+        retriesSinceAccepted++;
     }
 
     if (scenes.length < pairCount) throw new Error(`Only found ${scenes.length}/${pairCount} route pairs for seed ${settings.seed}`);

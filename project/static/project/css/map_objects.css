@@ -56,6 +56,27 @@
     -webkit-user-drag: none;
 }
 
+#infinity-mask-img {
+    position: absolute;
+    top: 0;
+    left: 0;
+    z-index: 1;
+    display: none;
+    pointer-events: none;
+    user-select: none;
+    -webkit-user-drag: none;
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+}
+
+#map-container.mode-infinity #map-img {
+    display: none !important;
+}
+
+#map-container.mode-infinity #infinity-mask-img {
+    display: block;
+}
+
 #mask-canvas {
     position: absolute;
     top: 0;

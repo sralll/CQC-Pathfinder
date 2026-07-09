@@ -207,6 +207,9 @@ def get_files(request):
                 'published': obj.published,
                 'infinite_enabled': obj.infinite_enabled,
                 'has_mask': obj.has_mask,
+                'infinite_region_set': bool(
+                    isinstance(obj.infinite_region, list) and len(obj.infinite_region) >= 3
+                ),
                 'author': obj.author or '',
                 'team': obj.team.name if obj.team else '',
                 'editable': obj.team == active_team,
@@ -383,14 +386,6 @@ def _mask_dimensions(mask_path):
         return int(img.width), int(img.height)
 
 
-def _default_frame_polygon(W, H):
-    """Base region for a fresh map: the four corners of the whole mask.
-
-    Coaches tighten this inward; it is intentionally *not* auto-detected (the
-    old fine contour detector added far too many vertices to edit by hand)."""
-    return [[0, 0], [W, 0], [W, H], [0, H]]
-
-
 def _region_is_full_frame(region, W, H, eps=2):
     """True when ``region`` is still exactly the whole-map frame corners.
 
@@ -435,12 +430,11 @@ def _validate_region_polygon(polygon):
 @role_required('Trainer')
 @require_GET
 def region_suggest(request, file_id):
-    """Return the coach-drawn region if set, else the whole-map frame corners.
+    """Return the coach-drawn region if set, else an empty draft.
 
-    JSON: ``{polygon: [[x,y],...], source: 'saved'|'frame'}`` in full-res
-    mask-pixel coords (same space as the navgraph ``nodes``). There is no
-    automatic zone detection any more — a fresh map starts as the four map
-    corners, which the coach drags inward."""
+    JSON: ``{polygon: [[x,y],...], source: 'saved'|'empty'}`` in full-res
+    mask-pixel coords (same space as the navgraph ``nodes``). Fresh maps start
+    empty so the coach draws the polygon from scratch."""
     file = get_object_or_404(File, id=file_id, deleted=False)
     if not user_can_access_file(request, file):
         return HttpResponseNotFound("Not found.")
@@ -452,12 +446,7 @@ def region_suggest(request, file_id):
     if not mask_path or not os.path.isfile(mask_path):
         return JsonResponse({'error': _('This map has no mask yet.')}, status=404)
 
-    try:
-        W, H = _mask_dimensions(mask_path)
-    except Exception as exc:
-        traceback.print_exc()
-        return JsonResponse({'error': str(exc)}, status=500)
-    return JsonResponse({'polygon': _default_frame_polygon(W, H), 'source': 'frame'})
+    return JsonResponse({'polygon': [], 'source': 'empty'})
 
 
 def _rebuild_navgraph_for_file(file_id, enable_on_success=False):

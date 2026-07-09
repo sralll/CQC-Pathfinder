@@ -27,7 +27,29 @@ function fileStatus(f) {
     return STATUS.begonnen;
 }
 
-let competitionMode    = true;   // true = competition (trophy), false = training (book)
+// Play mode: 'training' | 'competition' | 'infinity'. Default competition.
+// In infinity mode the list is filtered to maps opted in to infinite play
+// (infinite_enabled) and the control-pairs column is hidden.
+let playMode = 'competition';
+
+// Base route for infinite play. With ?source=mask&file=… it plays a real
+// uploaded map's mask; with no query it runs the procedurally-generated
+// "generated map" (city gen).
+const INFINITY_URL = '/play/infinity/';
+
+// Synthetic first-row entry shown only in infinity mode. Clicking it launches
+// procedural infinite play. Pinned to the top regardless of filters/sorting.
+function generatedMapEntry() {
+    return {
+        synthetic:        true,
+        id:               '__generated__',
+        name:             gettext('Generated map'),
+        author:           'SYS',
+        team_name:        activeTeamName,
+        label:            null,
+        infinite_enabled: true,
+    };
+}
 
 let activeLabelFilter  = null;      // single ID or null (like editor)
 let activeAuthorFilters = [];
@@ -65,51 +87,49 @@ async function loadFiles() {
 }
 
 /* =========================================================
-   MODE TOGGLE  (competition / training)
+   MODE TOGGLE  (training / competition / infinity)
 ========================================================= */
 
+const MODE_ICON = { training: 'book-open', competition: 'trophy', infinity: 'infinity' };
+
+function infinityMode() { return playMode === 'infinity'; }
+
 function initModeToggle() {
-    const input = document.getElementById('mode-toggle-input');
-    if (!input) return;
+    const slider = document.querySelector('.play-3way');
+    if (!slider) return;
+    const thumb = document.getElementById('play-mode-thumb');
 
-    // Restore persisted mode; fall back to checkbox default (competition = checked)
-    const stored = sessionStorage.getItem('competitionMode');
-    if (stored !== null) {
-        competitionMode = stored === 'true';
-        input.checked   = competitionMode;
-    } else {
-        competitionMode = input.checked;
+    const setThumbIcon = mode => {
+        if (typeof window.icon === 'function') {
+            thumb.innerHTML = window.icon(MODE_ICON[mode] || 'trophy', '16px');
+        }
+    };
+
+    // Restore persisted mode; default competition.
+    const stored = sessionStorage.getItem('playMode');
+    if (stored === 'training' || stored === 'competition' || stored === 'infinity') {
+        playMode = stored;
     }
-    updateModeIcons();
+    slider.dataset.mode = playMode;
+    setThumbIcon(playMode);
 
-    input.addEventListener('change', () => {
-        competitionMode = input.checked;
-        sessionStorage.setItem('competitionMode', competitionMode);
-        updateModeIcons();
-    });
-
-    // Mobile: click on icon shows/hides tooltip; desktop relies on CSS :hover
-    document.querySelectorAll('.mode-icon-tip').forEach(el => {
-        el.addEventListener('click', e => {
-            e.stopPropagation();
-            const isOpen = el.classList.contains('tip-open');
-            // Close all tips
-            document.querySelectorAll('.mode-icon-tip').forEach(o => o.classList.remove('tip-open'));
-            if (!isOpen) el.classList.add('tip-open');
+    slider.querySelectorAll('.play-3way-stop').forEach(stop => {
+        stop.addEventListener('click', () => {
+            const m = stop.dataset.mode;
+            if (m === playMode) return;
+            playMode = m;
+            sessionStorage.setItem('playMode', playMode);
+            slider.dataset.mode = playMode;
+            setThumbIcon(playMode);
+            // The Controls column is hidden in infinity mode — don't leave the
+            // table sorted by a column that's no longer visible.
+            if (infinityMode() && sortState.key === 'cp_count') {
+                sortState = { key: 'last_edited', dir: -1 };
+            }
+            renderHeader();     // rebuild thead (column set depends on mode)
+            applyFilters();     // re-filter (infinity → infinite_enabled only)
         });
     });
-
-    // Close tips when clicking elsewhere
-    document.addEventListener('click', () => {
-        document.querySelectorAll('.mode-icon-tip').forEach(el => el.classList.remove('tip-open'));
-    });
-}
-
-function updateModeIcons() {
-    document.querySelector('.mode-icon-tip[data-mode="training"]')
-        ?.classList.toggle('mode-active', !competitionMode);
-    document.querySelector('.mode-icon-tip[data-mode="competition"]')
-        ?.classList.toggle('mode-active',  competitionMode);
 }
 
 /* =========================================================
@@ -159,6 +179,8 @@ function applyFilters() {
     const search = document.getElementById('play-search').value.toLowerCase();
 
     filteredFiles = allFiles.filter(f => {
+        // Infinity mode only lists maps opted in to infinite play.
+        if (infinityMode() && !f.infinite_enabled) return false;
         const matchSearch =
             (f.name   || '').toLowerCase().includes(search) ||
             (f.author || '').toLowerCase().includes(search) ||
@@ -175,6 +197,12 @@ function applyFilters() {
     });
 
     filteredFiles = applySorting(filteredFiles);
+
+    // The "generated map" entry is always first in infinity mode, unaffected
+    // by search, filters or sorting.
+    if (infinityMode()) {
+        filteredFiles = [generatedMapEntry(), ...filteredFiles];
+    }
 
     renderTable();
     renderCards();
@@ -233,6 +261,15 @@ function renderHeader() {
            </th>`
         : '';
 
+    // Controls column is meaningless in infinity mode (procedural pairs).
+    const cpCol = infinityMode()
+        ? ''
+        : `<th class="col-cp" data-sort="cp_count" style="text-align:center;">
+               <span class="sortable">${gettext('Controls')}
+                   <span id="sort-cp_count" class="sort-indicator"></span>
+               </span>
+           </th>`;
+
     thead.innerHTML = `
         <tr>
             <th class="col-name" data-sort="name">
@@ -250,11 +287,7 @@ function renderHeader() {
                     <span class="filter-indicator active-filter-icon">${window.icon('filter', '0.8em')}</span>
                 </span>
             </th>
-            <th class="col-cp" data-sort="cp_count" style="text-align:center;">
-                <span class="sortable">${gettext('Controls')}
-                    <span id="sort-cp_count" class="sort-indicator"></span>
-                </span>
-            </th>
+            ${cpCol}
             <th class="col-author">
                 <span class="filterable" id="author-filter-btn">${gettext('Author')}
                     <span class="filter-indicator active-filter-icon">${window.icon('filter', '0.8em')}</span>
@@ -530,7 +563,7 @@ function renderTable() {
     tbody.innerHTML = '';
 
     if (filteredFiles.length === 0) {
-        const colCount = 6 + (multiTeam ? 1 : 0);
+        const colCount = 6 + (multiTeam ? 1 : 0) - (infinityMode() ? 1 : 0);
         const tr = document.createElement('tr');
         tr.className = 'play-empty-row';
         tr.innerHTML = `<td colspan="${colCount}">${gettext('No projects found.')}</td>`;
@@ -539,6 +572,26 @@ function renderTable() {
     }
 
     filteredFiles.forEach(f => {
+        if (f.synthetic) {
+            const tr = document.createElement('tr');
+            tr.className = 'play-generated-row';
+            // Columns match the infinity-mode header: name, label, status,
+            // author, [team], date. No control-pairs column in infinity mode.
+            const kaderCell = multiTeam
+                ? `<td class="user-active-team">${f.team_name || '—'}</td>`
+                : '';
+            tr.innerHTML = `
+                <td class="play-name-cell play-generated-name">${f.name}</td>
+                <td></td>
+                <td></td>
+                <td>${f.author}</td>
+                ${kaderCell}
+                <td>—</td>`;
+            tr.addEventListener('click', () => openFile(f));
+            tbody.appendChild(tr);
+            return;
+        }
+
         const tr = document.createElement('tr');
         tr.dataset.id = f.id;
         if (multiTeam && f.team_name !== activeTeamName) tr.classList.add('play-other-team');
@@ -555,16 +608,17 @@ function renderTable() {
             : '';
 
         const st = fileStatus(f);
+        const cpCell = infinityMode() ? '' : `<td class="play-cp-cell">${f.cp_count}</td>`;
         tr.innerHTML = `
             <td class="play-name-cell">${f.name}</td>
             <td>${labelHtml}</td>
             <td class="col-status-cell" style="color:${st.color};font-weight:600;">${st.label}</td>
-            <td class="play-cp-cell">${f.cp_count}</td>
+            ${cpCell}
             <td>${f.author || '—'}</td>
             ${kaderCell}
             <td>${formatDate(f.last_edited)}</td>`;
 
-        tr.addEventListener('click', () => openFile(f.id));
+        tr.addEventListener('click', () => openFile(f));
         tbody.appendChild(tr);
     });
 }
@@ -586,6 +640,26 @@ function renderCards() {
     }
 
     filteredFiles.forEach(f => {
+        if (f.synthetic) {
+            const card = document.createElement('div');
+            card.className = 'play-card play-generated-card';
+            const kaderHtml = multiTeam && f.team_name
+                ? `<span class="user-active-team">${f.team_name}</span>
+                   <span class="play-card-sep">·</span>`
+                : '';
+            card.innerHTML = `
+                <div class="play-card-row1">
+                    <span class="play-card-name">${f.name}</span>
+                </div>
+                <div class="play-card-row2">
+                    ${kaderHtml}
+                    <span>${f.author}</span>
+                </div>`;
+            card.addEventListener('click', () => openFile(f));
+            wrap.appendChild(card);
+            return;
+        }
+
         const card = document.createElement('div');
         card.className = 'play-card' + (multiTeam && f.team_name !== activeTeamName ? ' play-other-team' : '');
         const st = fileStatus(f);
@@ -612,10 +686,13 @@ function renderCards() {
                <span class="play-card-sep">·</span>`
             : '';
 
+        const cpSpan = infinityMode()
+            ? ''
+            : `<span class="play-card-cp">${f.cp_count} ${f.cp_count === 1 ? gettext('Control') : gettext('Controls')}</span>`;
         card.innerHTML = `
             <div class="play-card-row1">
                 <span class="play-card-name">${f.name}</span>
-                <span class="play-card-cp">${f.cp_count} ${f.cp_count === 1 ? gettext('Control') : gettext('Controls')}</span>
+                ${cpSpan}
             </div>
             <div class="play-card-row2">
                 ${labelHtml}
@@ -624,7 +701,7 @@ function renderCards() {
                 <span class="play-card-date">${formatDate(f.last_edited)}</span>
             </div>`;
 
-        card.addEventListener('click', () => openFile(f.id));
+        card.addEventListener('click', () => openFile(f));
         wrap.appendChild(card);
     });
 }
@@ -643,7 +720,7 @@ function renderMobileControls() {
 
     const sortFields = [
         { key: 'name',        label: gettext('Name')     },
-        { key: 'cp_count',    label: gettext('Controls') },
+        ...(infinityMode() ? [] : [{ key: 'cp_count', label: gettext('Controls') }]),
         { key: 'last_edited', label: gettext('Date')     },
     ];
     sortFields.forEach(({ key, label }) => {
@@ -686,9 +763,23 @@ function renderMobileControls() {
    NAVIGATION
 ========================================================= */
 
-function openFile(id) {
-    const mode = competitionMode ? 'competition' : 'training';
-    window.location.href = `/play/${id}/${mode}/`;
+function openFile(f) {
+    if (f.synthetic) {
+        // "Generated map" → procedurally-generated infinite play (no mask).
+        window.location.href = INFINITY_URL;
+        return;
+    }
+    if (infinityMode()) {
+        // Launch infinite play on this map's mask (server-built navgraph).
+        const q = new URLSearchParams({
+            source:   'mask',
+            file:     String(f.id),
+            filename: f.map_file || '',
+        });
+        window.location.href = `${INFINITY_URL}?${q.toString()}`;
+        return;
+    }
+    window.location.href = `/play/${f.id}/${playMode}/`;
 }
 
 /* =========================================================

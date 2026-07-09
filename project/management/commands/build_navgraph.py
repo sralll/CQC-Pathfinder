@@ -8,22 +8,27 @@ Usage:
     python manage.py build_navgraph --file media/masks/mask_X.png
     python manage.py build_navgraph --file 7            # File id -> its mask
     python manage.py build_navgraph --all
+    python manage.py build_navgraph --all --debug
+    python manage.py build_navgraph --all --random --limit 10 --force --debug
     python manage.py build_navgraph --all --limit 5
     python manage.py build_navgraph --all --force
 """
 
 import json
 import os
+import random
 import time
 
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
+from django.db.utils import DatabaseError
 
 from project.navgraph import build_navgraph, save_navgraph
 
 # Marker used by any derived artifact (npz/bin/debug overlay/...) so --all
 # never mistakes one for a mask, regardless of where the marker falls.
 NAVGRAPH_INFIX = ".navgraph."
+_REGION_LOOKUP_DISABLED = False
 
 
 def _masks_dir():
@@ -36,7 +41,7 @@ def _mask_path_for_file_id(file_id):
     from project.models import File
 
     try:
-        file_obj = File.objects.get(pk=file_id)
+        file_obj = File.objects.only("map_file").get(pk=file_id)
     except File.DoesNotExist:
         raise CommandError(f"No File with id={file_id}.")
 
@@ -67,28 +72,36 @@ def _npz_path(mask_path):
     return base + ".navgraph.npz"
 
 
-def _file_for_mask_path(mask_path):
-    """Best-effort resolve the File whose mask this is (to read its region).
+def _region_for_mask_path(mask_path):
+    """The coach-drawn ``infinite_region`` polygon for this mask, or ``None``.
 
-    Masks are named ``mask_<map_file stem>.png``; strip the prefix/suffix and
-    match ``File.map_file`` on the stem. Returns the File or ``None``."""
+    Region lookup is deliberately best-effort. Local/staging databases that have
+    not run the ``infinite_region`` migration should still be able to backfill
+    navgraphs; in that case ``None`` means build with the automatic/full-map
+    fallback instead of a hand-drawn polygon.
+    """
+    global _REGION_LOOKUP_DISABLED
+    if _REGION_LOOKUP_DISABLED:
+        return None
+
     from project.models import File
 
     name = os.path.basename(mask_path)
     if not (name.startswith("mask_") and name.lower().endswith(".png")):
         return None
     stem = name[len("mask_"):-len(".png")]
-    return (
-        File.objects.filter(map_file__startswith=stem, deleted=False)
-        .order_by("-last_edited")
-        .first()
-    )
 
+    try:
+        region = (
+            File.objects.filter(map_file__startswith=stem, deleted=False)
+            .order_by("-last_edited")
+            .values_list("infinite_region", flat=True)
+            .first()
+        )
+    except DatabaseError:
+        _REGION_LOOKUP_DISABLED = True
+        return None
 
-def _region_for_mask_path(mask_path):
-    """The coach-drawn ``infinite_region`` polygon for this mask, or ``None``."""
-    file_obj = _file_for_mask_path(mask_path)
-    region = getattr(file_obj, "infinite_region", None)
     if isinstance(region, list) and len(region) >= 3:
         return [[int(x), int(y)] for (x, y) in region]
     return None
@@ -126,7 +139,7 @@ def _is_up_to_date(mask_path):
     return _artifact_region(npz_path) == _region_for_mask_path(mask_path)
 
 
-def _iter_all_masks(limit=None):
+def _iter_all_masks(limit=None, randomize=False, seed=None):
     """Yield mask paths under ``media/masks``, skipping navgraph artifacts."""
     masks_dir = _masks_dir()
     if not os.path.isdir(masks_dir):
@@ -136,6 +149,8 @@ def _iter_all_masks(limit=None):
         if f.startswith("mask_") and f.lower().endswith(".png")
         and NAVGRAPH_INFIX not in f
     )
+    if randomize:
+        random.Random(seed).shuffle(names)
     if limit is not None:
         names = names[:limit]
     for name in names:
@@ -167,14 +182,30 @@ class Command(BaseCommand):
             '--limit', type=int, default=None,
             help="Process at most N masks (applies to --all).",
         )
+        parser.add_argument(
+            '--random', action='store_true',
+            help="Randomize mask order before applying --limit.",
+        )
+        parser.add_argument(
+            '--seed', type=int, default=None,
+            help="Optional seed for --random, useful for repeatable samples.",
+        )
+        parser.add_argument(
+            '--debug', action='store_true',
+            help="Also write <mask>.navgraph.debug.png overlays showing the "
+                 "connected nodes/edges for each processed mask.",
+        )
 
     def handle(self, *args, **opts):
         file_arg = opts['file']
         # --limit only makes sense against the --all backfill, so treat it as
         # implying --all (lets `--limit N` be used standalone for testing).
-        all_flag = opts['all'] or opts['limit'] is not None
+        all_flag = opts['all'] or opts['limit'] is not None or opts['random']
         force = opts['force']
         limit = opts['limit']
+        randomize = opts['random']
+        seed = opts['seed']
+        debug = opts['debug']
 
         if bool(file_arg) == bool(all_flag):
             raise CommandError("Specify exactly one of --file or --all.")
@@ -182,7 +213,8 @@ class Command(BaseCommand):
         if file_arg:
             mask_paths = [_resolve_file_arg(file_arg)]
         else:
-            mask_paths = list(_iter_all_masks(limit=limit))
+            mask_paths = list(_iter_all_masks(
+                limit=limit, randomize=randomize, seed=seed))
             if not mask_paths:
                 self.stdout.write(self.style.WARNING(
                     f"No masks found under {_masks_dir()}."
@@ -192,34 +224,49 @@ class Command(BaseCommand):
         built = 0
         skipped = 0
         failed = 0
+        debug_written = 0
 
         for mask_path in mask_paths:
             name = os.path.basename(mask_path)
+            artifact = None
 
             if not force and _is_up_to_date(mask_path):
                 self.stdout.write(f"SKIP  {name} (up to date)")
                 skipped += 1
-                continue
+            else:
+                try:
+                    t0 = time.time()
+                    region = _region_for_mask_path(mask_path)
+                    artifact = build_navgraph(mask_path, region_polygon=region)
+                    save_navgraph(artifact, mask_path)
+                    elapsed = time.time() - t0
+                    stats = artifact["stats"]
+                    self.stdout.write(self.style.SUCCESS(
+                        f"BUILT {name}: {stats['mpx']} Mpx, ds={stats['downsample']}, "
+                        f"nodes={stats['n_nodes']}, edges={stats['n_edges']}, "
+                        f"hitzone={stats['hitzone_source']}, "
+                        f"main_conn={stats['main_component_connectivity']:.3f}, "
+                        f"{elapsed:.1f}s"
+                    ))
+                    built += 1
+                except Exception as exc:
+                    self.stdout.write(self.style.ERROR(f"FAILED {name}: {exc}"))
+                    failed += 1
+                    continue
 
-            try:
-                t0 = time.time()
-                region = _region_for_mask_path(mask_path)
-                artifact = build_navgraph(mask_path, region_polygon=region)
-                save_navgraph(artifact, mask_path)
-                elapsed = time.time() - t0
-                stats = artifact["stats"]
-                self.stdout.write(self.style.SUCCESS(
-                    f"BUILT {name}: {stats['mpx']} Mpx, ds={stats['downsample']}, "
-                    f"nodes={stats['n_nodes']}, edges={stats['n_edges']}, "
-                    f"hitzone={stats['hitzone_source']}, "
-                    f"main_conn={stats['main_component_connectivity']:.3f}, "
-                    f"{elapsed:.1f}s"
-                ))
-                built += 1
-            except Exception as exc:
-                self.stdout.write(self.style.ERROR(f"FAILED {name}: {exc}"))
-                failed += 1
+            if debug:
+                try:
+                    from scripts.navgraph_debug import render_overlay_for_mask
+
+                    render_overlay_for_mask(mask_path, artifact=artifact)
+                    debug_written += 1
+                except Exception as exc:
+                    self.stdout.write(self.style.ERROR(
+                        f"FAILED debug overlay for {name}: {exc}"
+                    ))
+                    failed += 1
 
         self.stdout.write(
-            f"Done. {built} built, {skipped} skipped, {failed} failed."
+            f"Done. {built} built, {skipped} skipped, "
+            f"{debug_written} debug PNGs, {failed} failed."
         )

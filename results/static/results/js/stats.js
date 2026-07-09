@@ -44,6 +44,12 @@ const MODE_LABEL = {
     random:      'Infinity',
 };
 
+const TRAINER_TABLE_HIDDEN_RANDOM_SORT_KEYS = new Set([
+    'fortschritt',
+    'time_sensitivity',
+    'roi_slope',
+]);
+
 /* =========================================================
    INIT
 ========================================================= */
@@ -92,6 +98,7 @@ function initModeToggle() {
             slider.dataset.mode = m;
             setThumbIcon(m);
             updateNavTitle();
+            updateTrainerTableColumns();
             loadStats();
         });
     });
@@ -263,6 +270,7 @@ function applyView() {
     document.getElementById('stats-grid').style.display = isGraph ? '' : 'none';
     const tableWrap = document.getElementById('stats-table-wrap');
     if (tableWrap) tableWrap.style.display = isGraph ? 'none' : 'block';
+    updateTrainerTableColumns();
     // Athlete picker is visible in both views — in table view it filters the table
 }
 
@@ -430,6 +438,7 @@ async function loadGraphStats(token) {
 async function loadTrainerTable(token) {
     const wrap  = document.getElementById('stats-table-wrap');
     const tbody = document.querySelector('#stats-table tbody');
+    const colspan = trainerTableColumnCount();
     if (wrap) wrap.classList.add('loading');
     try {
         const res = await fetch(`/stats/get-table/?mode=${PAGE.mode}`);
@@ -437,7 +446,7 @@ async function loadTrainerTable(token) {
         if (token !== loadSeq) return;
         if (!res.ok) {
             if (tbody) {
-                tbody.innerHTML = `<tr><td colspan="11" style="text-align:center;color:#666;padding:24px;">${gettext('Error loading data')}</td></tr>`;
+                tbody.innerHTML = `<tr><td colspan="${colspan}" style="text-align:center;color:#666;padding:24px;">${gettext('Error loading data')}</td></tr>`;
             }
             return;
         }
@@ -448,6 +457,25 @@ async function loadTrainerTable(token) {
     } finally {
         if (token === loadSeq && wrap) wrap.classList.remove('loading');
     }
+}
+
+function trainerTableHiddenSortKeys() {
+    return PAGE.mode === 'random' ? TRAINER_TABLE_HIDDEN_RANDOM_SORT_KEYS : new Set();
+}
+
+function trainerTableColumnCount() {
+    return PAGE.mode === 'random' ? 9 : 11;
+}
+
+function updateTrainerTableColumns() {
+    const hiddenSortKeys = trainerTableHiddenSortKeys();
+    document.querySelectorAll('#stats-table thead th[data-sort]').forEach(th => {
+        th.hidden = hiddenSortKeys.has(th.dataset.sort);
+    });
+    if (hiddenSortKeys.has(PAGE.tableSort.key)) {
+        PAGE.tableSort = { key: null, dir: 1 };
+    }
+    updateTableSortIndicators();
 }
 
 // Numeric value used for column sort comparisons (NaN for "–"/missing)
@@ -475,9 +503,10 @@ function tableSortValue(row, key) {
 function renderTrainerTable(rows) {
     const tbody = document.querySelector('#stats-table tbody');
     if (!tbody) return;
+    const colspan = trainerTableColumnCount();
     tbody.innerHTML = '';
     if (!rows.length) {
-        tbody.innerHTML = `<tr><td colspan="11" style="text-align:center;color:#666;padding:24px;">${gettext('No data available')}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="${colspan}" style="text-align:center;color:#666;padding:24px;">${gettext('No data available')}</td></tr>`;
         updateTableSortIndicators();
         return;
     }
@@ -530,18 +559,24 @@ function renderTrainerTable(rows) {
             tr.dataset.userId      = row.user_id;
             tr.dataset.athleteName = row.athlete || '';
         }
-        tr.innerHTML = `
-            <td>${escapeHtml(athleteName)}</td>
-            <td>${row.posten ?? '–'}</td>
-            <td>${fmtSec(row.avg_choice_time)}</td>
-            <td>${fmtSec(row.avg_error)}</td>
-            <td style="color:#4CAF50">${fmtPct(row.schnellste)}</td>
-            <td style="color:#FFC107">${fmtPct(row.lt5)}</td>
-            <td style="color:#FF9800">${fmtPct(row.lt10)}</td>
-            <td style="color:#F44336">${fmtPct(row.gt10)}</td>
-            <td class="stats-cell-prog">${fmtProgressBar(row.progress)}</td>
-            <td>${fmtMs(row.error_potential_sensitivity)}</td>
-            <td>${fmtMs(row.time_sensitivity)}</td>`;
+        const cells = [
+            `<td>${escapeHtml(athleteName)}</td>`,
+            `<td>${row.posten ?? '–'}</td>`,
+            `<td>${fmtSec(row.avg_choice_time)}</td>`,
+            `<td>${fmtSec(row.avg_error)}</td>`,
+            `<td style="color:#4CAF50">${fmtPct(row.schnellste)}</td>`,
+            `<td style="color:#FFC107">${fmtPct(row.lt5)}</td>`,
+            `<td style="color:#FF9800">${fmtPct(row.lt10)}</td>`,
+            `<td style="color:#F44336">${fmtPct(row.gt10)}</td>`,
+        ];
+        if (PAGE.mode !== 'random') {
+            cells.push(`<td class="stats-cell-prog">${fmtProgressBar(row.progress)}</td>`);
+        }
+        cells.push(`<td>${fmtMs(row.error_potential_sensitivity)}</td>`);
+        if (PAGE.mode !== 'random') {
+            cells.push(`<td>${fmtMs(row.time_sensitivity)}</td>`);
+        }
+        tr.innerHTML = cells.join('');
         tbody.appendChild(tr);
     }
     updateTableSortIndicators();

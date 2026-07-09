@@ -100,7 +100,6 @@ function renderTableHeader() {
             </th>
             <th class="col-infinity">
                 <span class="filterable" id="infinity-filter-btn" title="${gettext('Infinite play')}">
-                    ${icon("infinity", "0.9em")}
                     <span class="active-filter-icon">${icon("filter", "0.8em")}</span>
                 </span>
             </th>
@@ -294,12 +293,8 @@ function renderInfinityFilterDropdown() {
         </div>
         <div class="filter-options-list">
             <div class="filter-option" onclick="event.stopPropagation(); setInfinityFilter(true)">
-                ${gettext('Infinite play on')}
+                ${gettext('Released')}
                 ${activeInfinityFilter === true ? icon("square-check") : icon("square")}
-            </div>
-            <div class="filter-option" onclick="event.stopPropagation(); setInfinityFilter(false)">
-                ${gettext('Infinite play off')}
-                ${activeInfinityFilter === false ? icon("square-check") : icon("square")}
             </div>
         </div>
     `;
@@ -464,8 +459,25 @@ window.closeAllFilters = closeAllFilters;
 
 function positionFilterDropdown(dropdown, target) {
     const rect = target.getBoundingClientRect();
-    dropdown.style.left = `${rect.left}px`;
+    const vw = window.innerWidth;
+    const MARGIN = 8;
+
+    // Measure natural width off-screen before the dropdown is made visible
+    dropdown.style.left = '-9999px';
+    dropdown.style.right = '';
+    dropdown.style.display = 'flex';
+    const dropW = dropdown.offsetWidth;
+    dropdown.style.display = '';
+
     dropdown.style.top = `${rect.bottom + 4}px`;
+
+    if (rect.left + dropW + MARGIN > vw) {
+        // Would overflow the right edge — anchor to the button's right edge instead
+        dropdown.style.left = '';
+        dropdown.style.right = `${vw - rect.right}px`;
+    } else {
+        dropdown.style.left = `${rect.left}px`;
+    }
 }
 
 /* =========================================================
@@ -580,12 +592,22 @@ function renderCards() {
                 ? `<span class="file-card-publish file-card-publish-active file-card-publish-disabled">${icon("globe", "1em")}</span>`
                 : '');
 
-        const infinityBtn = f.can_edit && !f.is_locked && f.has_mask
+        const infinityTitle = f.infinite_enabled
+            ? gettext('Infinite play is on — click to turn off')
+            : (!f.has_mask
+                ? gettext('Add a mask to this map first.')
+                : (!f.infinite_region_set
+                    ? gettext('Draw a map region before enabling infinite play.')
+                    : gettext('Turn on infinite play for this map')));
+        const infinityCanToggle = f.can_edit
+            && !f.is_locked
+            && (f.infinite_enabled || (f.has_mask && f.infinite_region_set));
+        const infinityBtn = infinityCanToggle
             ? `<button class="file-card-publish infinity-card-btn ${f.infinite_enabled ? 'file-card-publish-active' : ''}"
-                       title="${f.infinite_enabled ? gettext('Infinite play is on — click to turn off') : gettext('Turn on infinite play for this map')}"
+                       title="${infinityTitle}"
                        data-infinity-id="${f.id}">${icon("infinity", "1em")}</button>`
-            : (f.infinite_enabled
-                ? `<span class="file-card-publish file-card-publish-active file-card-publish-disabled">${icon("infinity", "1em")}</span>`
+            : (f.infinite_enabled || (f.can_edit && !f.is_locked && f.has_mask)
+                ? `<span class="file-card-publish infinity-card-btn ${f.infinite_enabled ? 'file-card-publish-active' : ''} file-card-publish-disabled" title="${infinityTitle}">${icon("infinity", "1em")}</span>`
                 : '');
 
         const labelHtml = f.label

@@ -181,8 +181,10 @@ RESAMPLE_SPACING_PX = 48     # add a node every ~this many full-res px along a s
 # a denser, more uniform lattice that reaches nearer the field edges lets legs
 # cross straight. Clearance threshold lowered so the lattice extends closer to
 # field boundaries; spacing tightened for uniform coverage.
-OPEN_CLEARANCE_PX = 24       # full-res clearance above which a region counts as "open"
-LATTICE_SPACING_PX = 40      # open-region lattice node spacing (full-res px)
+OPEN_CLEARANCE_PX = 12       # full-res clearance above which lattice may start
+NEAR_OBSTACLE_CLEARANCE_PX = 80  # denser lattice up to this clearance from obstacles
+LATTICE_SPACING_NEAR_PX = 24  # obstacle-adjacent open-space lattice spacing
+LATTICE_SPACING_FAR_PX = 40   # plaza/interior open-space lattice spacing
 
 # --- Edges -------------------------------------------------------------------
 EDGE_KNN = 6                 # k-nearest-neighbour candidate edges per node
@@ -554,23 +556,14 @@ def _resample_segments(node_yx, segments, spacing):
     return node_yx, edges
 
 
-def _lattice_nodes(coarse_open, existing_yx, spacing):
-    """Add a sparse lattice over large open regions so plazas are crossable.
-
-    ``coarse_open`` is a bool grid (coarse resolution) of "open" cells. Lattice
-    points land on the ``spacing`` grid (coarse px) wherever open and not already
-    close to an existing node.
-    """
-    h, w = coarse_open.shape
-    occupied = np.zeros((h, w), dtype=bool)
-    for (y, x) in existing_yx:
-        if 0 <= y < h and 0 <= x < w:
-            occupied[y, x] = True
+def _lattice_nodes_into(open_mask, occupied, spacing):
+    """Add one lattice pass into ``occupied`` and return new coarse coords."""
+    h, w = open_mask.shape
     new_yx = []
-    half = spacing // 2
+    half = max(1, spacing // 2)
     for y in range(half, h, spacing):
         for x in range(half, w, spacing):
-            if not coarse_open[y, x]:
+            if not open_mask[y, x]:
                 continue
             # skip if an existing node is within half-spacing
             y0, y1 = max(0, y - half), min(h, y + half + 1)
@@ -579,6 +572,32 @@ def _lattice_nodes(coarse_open, existing_yx, spacing):
                 continue
             new_yx.append((y, x))
             occupied[y, x] = True
+    return new_yx
+
+
+def _adaptive_lattice_nodes(coarse_clearance, existing_yx, near_spacing,
+                            far_spacing, open_clearance, near_clearance_max):
+    """Add an adaptive lattice over open regions so plazas are crossable.
+
+    Near obstacles, a denser lattice gives the graph plausible options that skim
+    around local blockers instead of snapping to the center of a plaza. Farther
+    inside broad open areas, a coarser lattice keeps artifact size and graph A*
+    cheap.
+    """
+    h, w = coarse_clearance.shape
+    occupied = np.zeros((h, w), dtype=bool)
+    for (y, x) in existing_yx:
+        if 0 <= y < h and 0 <= x < w:
+            occupied[y, x] = True
+
+    near_open = (
+        (coarse_clearance > open_clearance) &
+        (coarse_clearance <= near_clearance_max)
+    )
+    far_open = coarse_clearance > near_clearance_max
+
+    new_yx = _lattice_nodes_into(near_open, occupied, near_spacing)
+    new_yx.extend(_lattice_nodes_into(far_open, occupied, far_spacing))
     return new_yx
 
 
@@ -1005,7 +1024,8 @@ def build_navgraph(mask_path, region_polygon=None, verbose=False):
     #    specified in full-res px and converted to coarse px for this stage.
     t = time.time()
     resample_coarse = max(3, round(RESAMPLE_SPACING_PX / ds))
-    lattice_coarse = max(4, round(LATTICE_SPACING_PX / ds))
+    lattice_near_coarse = max(3, round(LATTICE_SPACING_NEAR_PX / ds))
+    lattice_far_coarse = max(4, round(LATTICE_SPACING_FAR_PX / ds))
     node_yx, segments = _skeleton_nodes_and_segments(skel, resample_coarse)
     node_yx, skeleton_edges = _resample_segments(node_yx, segments, resample_coarse)
 
@@ -1016,8 +1036,11 @@ def build_navgraph(mask_path, region_polygon=None, verbose=False):
     # and invites shortcut edges. The (sparse) skeleton still runs through the
     # margin, so map regions that only connect across it stay connected.
     coarse_dist = _block_reduce(dist_full, ds, "max") if ds > 1 else dist_full
-    coarse_open = coarse_dist > OPEN_CLEARANCE_PX
-    lattice_yx = _lattice_nodes(coarse_open, node_yx, lattice_coarse)
+    lattice_yx = _adaptive_lattice_nodes(
+        coarse_dist, node_yx,
+        lattice_near_coarse, lattice_far_coarse,
+        OPEN_CLEARANCE_PX, NEAR_OBSTACLE_CLEARANCE_PX,
+    )
     lattice_yx = [
         (y, x) for (y, x) in lattice_yx
         if hz_footprint[min((y * ds) // hz_ds, hz_footprint.shape[0] - 1),
@@ -1072,6 +1095,7 @@ def build_navgraph(mask_path, region_polygon=None, verbose=False):
         "downsample": int(ds),
         "n_nodes": int(len(nodes_arr)),
         "n_skeleton_nodes": int(n_skeleton_nodes),
+        "n_lattice_nodes": int(len(lattice_yx)),
         "n_edges": int(len(edges_arr)),
         "n_components": int(ncomp),
         "main_component_fraction": round(
@@ -1085,6 +1109,12 @@ def build_navgraph(mask_path, region_polygon=None, verbose=False):
         "region_polygon": (
             [[int(x), int(y)] for (x, y) in region_polygon] if has_polygon else None),
         "min_cost_per_px": min_cost_per_px,
+        "lattice": {
+            "open_clearance_px": int(OPEN_CLEARANCE_PX),
+            "near_obstacle_clearance_px": int(NEAR_OBSTACLE_CLEARANCE_PX),
+            "near_spacing_px": int(LATTICE_SPACING_NEAR_PX),
+            "far_spacing_px": int(LATTICE_SPACING_FAR_PX),
+        },
         "build_seconds": round(time.time() - t_start, 2),
         "timings": {k: round(v, 2) for k, v in timings.items()},
     }

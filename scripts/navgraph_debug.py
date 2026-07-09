@@ -4,9 +4,8 @@ Renders, for each given mask, a PNG overlay next to its ``.navgraph.npz``
 artifact (``<base>.navgraph.debug.png``) showing:
 
 * the mask as a dimmed grayscale background,
-* the off-map hit zone (see ``project.navgraph._hitzone``): area outside the
-  map footprint tinted red (nodes there are pruned), and in-footprint-but-boring
-  area (crossable, but not an endpoint zone) tinted yellow,
+* the artifact's stored endpoint hit zone: sampleable cells tinted normally,
+  non-sampleable cells tinted red/yellow where an automatic footprint is known,
 * graph edges as line segments, colour-ramped by weight-per-pixel
   (``weight / euclidean_length``) — cheap/fast terrain is green, expensive/
   slow terrain is red (see COLOUR RAMP below),
@@ -120,6 +119,47 @@ def _stats_of(artifact):
     return stats
 
 
+def _scalar_int(value, default):
+    try:
+        return int(np.asarray(value).item())
+    except Exception:
+        return default
+
+
+def _artifact_hitzone(mask, artifact):
+    """Return full-res ``(footprint, sample, stats)`` for debug tinting.
+
+    ``coarse_hitzone`` is the endpoint zone actually served to the client. For
+    polygon-built artifacts the polygon is both footprint and sample. For
+    automatic artifacts we recompute only the coarse footprint so the overlay can
+    still distinguish off-map red from in-map-but-boring yellow.
+    """
+    H, W = mask.shape
+    stats = _stats_of(artifact)
+    hz_ds = _scalar_int(artifact.get("hitzone_scale"), stats.get("hitzone_scale", 16))
+    coarse_sample = artifact.get("coarse_hitzone")
+
+    if coarse_sample is None:
+        fp_c, sample_c, hz_ds = _hitzone(mask)
+    else:
+        sample_c = np.asarray(coarse_sample, dtype=bool)
+        if stats.get("hitzone_source") == "polygon":
+            fp_c = sample_c
+        else:
+            fp_c, _, auto_ds = _hitzone(mask)
+            if int(auto_ds) != int(hz_ds) or fp_c.shape != sample_c.shape:
+                fp_c = sample_c
+
+    fp_full = _upscale_coarse(fp_c, hz_ds, H, W)
+    sample_full = _upscale_coarse(sample_c, hz_ds, H, W)
+    return fp_full, sample_full, {
+        "footprint_fraction": round(float(np.asarray(fp_c, dtype=bool).mean()), 4),
+        "sample_fraction": round(float(np.asarray(sample_c, dtype=bool).mean()), 4),
+        "scale": int(hz_ds),
+        "source": stats.get("hitzone_source", "unknown"),
+    }
+
+
 # =============================================================================
 # Shortest path (undirected Dijkstra over nodes/edges/weights)
 # =============================================================================
@@ -181,15 +221,10 @@ def _render_overlay(mask_path, artifact, out_path, pair=None):
     edges = np.asarray(artifact["edges"]).reshape(-1, 2)
     weights = np.asarray(artifact["weights"]).reshape(-1)
 
-    # --- Hit zone: footprint (map body) + sample (endpoint zone), coarse grids.
-    fp_c, sample_c, hz_ds = _hitzone(mask)
-    fp_full = _upscale_coarse(fp_c, hz_ds, H, W)
-    sample_full = _upscale_coarse(sample_c, hz_ds, H, W)
-    hitzone_stats = {
-        "footprint_fraction": round(float(fp_c.mean()), 4),
-        "sample_fraction": round(float(sample_c.mean()), 4),
-        "scale": int(hz_ds),
-    }
+    # --- Hit zone: footprint (map body) + sample (endpoint zone), using the
+    #     artifact's stored endpoint zone so polygon-built graphs visualize the
+    #     same data served to the client.
+    fp_full, sample_full, hitzone_stats = _artifact_hitzone(mask, artifact)
 
     # --- Output scale (downscale only, never upscale).
     scale = min(1.0, MAX_OUTPUT_SIDE / max(H, W))
@@ -299,6 +334,7 @@ def _render_overlay(mask_path, artifact, out_path, pair=None):
                f"nodes={len(nodes)}  edges={len(edges)}  "
                f"footprint={hitzone_stats['footprint_fraction']*100:.0f}%  "
                f"sample={hitzone_stats['sample_fraction']*100:.0f}%  "
+               f"hitzone={hitzone_stats['source']}  "
                f"(red=off-map, yellow=boring)")
 
     canvas.save(out_path)
@@ -308,6 +344,26 @@ def _render_overlay(mask_path, artifact, out_path, pair=None):
         "hitzone_stats": hitzone_stats, "n_nodes": len(nodes), "n_edges": len(edges),
         "path_info": path_info,
     }
+
+
+def render_overlay_for_mask(mask_path, artifact=None, pair=None, out_path=None):
+    """Render a ``.navgraph.debug.png`` overlay for ``mask_path``.
+
+    ``artifact`` may be the in-memory dict returned by ``build_navgraph()`` or a
+    loaded ``.navgraph.npz`` dict. If omitted, the artifact next to the mask is
+    loaded, building it only as the standalone script's fallback behavior.
+    """
+    if artifact is None:
+        artifact, _ = _load_artifact(mask_path)
+    if out_path is None:
+        base, _ = os.path.splitext(mask_path)
+        out_path = base + ".navgraph.debug.png"
+    stats = _stats_of(artifact)
+    print(f"[navgraph_debug] {os.path.basename(mask_path)}: "
+          f"{stats.get('mpx', '?')} Mpx, nodes={stats.get('n_nodes')}, "
+          f"edges={stats.get('n_edges')}, "
+          f"main_conn={stats.get('main_component_connectivity')}")
+    return _render_overlay(mask_path, artifact, out_path, pair=pair)
 
 
 def _draw_text(draw, xy, text):
@@ -345,15 +401,7 @@ def main():
         if not os.path.isfile(mask_path):
             print(f"[navgraph_debug] SKIP missing file: {mask_path}")
             continue
-        base, _ = os.path.splitext(mask_path)
-        out_path = base + ".navgraph.debug.png"
-        artifact, npz_path = _load_artifact(mask_path)
-        stats = _stats_of(artifact)
-        print(f"[navgraph_debug] {os.path.basename(mask_path)}: "
-              f"{stats.get('mpx', '?')} Mpx, nodes={stats.get('n_nodes')}, "
-              f"edges={stats.get('n_edges')}, "
-              f"main_conn={stats.get('main_component_connectivity')}")
-        _render_overlay(mask_path, artifact, out_path, pair=args.pair)
+        render_overlay_for_mask(mask_path, pair=args.pair)
 
 
 if __name__ == "__main__":
