@@ -11,7 +11,8 @@
 {% endblock %}
 
 {% block content %}
-<div id="play-wrap" class="rp-play-wrap">
+<div id="play-wrap" class="rp-play-wrap"
+     {% if infinity_file %}data-infinity-file-id="{{ infinity_file.id }}" data-infinity-filename="{{ infinity_file.map_file }}" data-infinity-map-scale="{{ infinity_file.map_scale }}"{% endif %}>
 
     <!-- HUD: attempts + streak (left), last choice time (centre), report action (right) -->
     <div id="rp-hud">

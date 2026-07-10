@@ -3,6 +3,10 @@ from django.http import JsonResponse, HttpResponseNotFound
 from django.views.decorators.http import require_GET, require_POST
 from django.db.models import Count, Q
 from .models import File, Label, ControlPair, Route
+from .passage_validation import (
+    LevelPassagesValidationError,
+    normalize_level_passages,
+)
 from account.decorators import role_required
 from django.db.models import Prefetch
 import traceback
@@ -27,6 +31,15 @@ logger = logging.getLogger(__name__)
 
 _OCAD_CONVERSION_EXECUTOR = ThreadPoolExecutor(max_workers=1)
 _OCAD_CONVERSION_STALE_MINUTES = 15
+
+
+def _invalid_level_passages_response(exc):
+    """Return a stable client error while retaining a developer diagnostic."""
+    return JsonResponse({
+        'error': 'invalid_level_passages',
+        'message': _('This file is not a valid project.'),
+        'detail': str(exc),
+    }, status=400)
 
 
 def _normalize_order_payload(control_pairs):
@@ -130,7 +143,9 @@ def _create_db_snapshot(file, user, trigger):
         name=file.name, label=file.label, author=file.author or '',
         scale=file.scale, map_file=file.map_file, has_mask=file.has_mask,
         map_scale=file.map_scale,
-        blocked_terrain=file.blocked_terrain, control_pairs=cp_data,
+        blocked_terrain=file.blocked_terrain,
+        level_passages=normalize_level_passages(file.level_passages),
+        control_pairs=cp_data,
         n_control_pairs=len(cp_data), n_routes=n_routes,
     )
 
@@ -266,6 +281,20 @@ def open_file(request, file_id):
             if not (own or shared):
                 return JsonResponse({'error': 'Permission denied'}, status=403)
 
+        # Validate before acquiring an editor lock. Unsupported future versions
+        # remain untouched and cannot accidentally enter an editable v1 session.
+        level_passages = normalize_level_passages(file.level_passages)
+
+        # ``has_mask`` is a cache of the filesystem state, not the source of
+        # truth.  A volume restore or an interrupted mask write can leave the
+        # database flag stale.  The editor uses this value to choose between
+        # loading and generating, so reconcile it whenever a file is opened.
+        mask_path = _mask_path_for_file(file)
+        has_mask = bool(mask_path and os.path.isfile(mask_path))
+        if file.has_mask != has_mask:
+            file.has_mask = has_mask
+            file.save(update_fields=['has_mask'])
+
         # Determine read-only state: published takes priority, then active lock
         from django.utils import timezone as tz
         from datetime import timedelta
@@ -306,12 +335,13 @@ def open_file(request, file_id):
                 'map_scale': file.map_scale,
                 'scaled': file.scaled,
                 'map_file': file.map_file,
-                'has_mask': file.has_mask,
+                'has_mask': has_mask,
                 'infinite_enabled': file.infinite_enabled,
                 'infinite_region_set': bool(
                     isinstance(file.infinite_region, list) and len(file.infinite_region) >= 3
                 ),
                 'blocked_terrain': file.blocked_terrain,
+                'level_passages': level_passages,
                 'control_pairs': [
                     {
                         'id': cp.id,
@@ -339,6 +369,8 @@ def open_file(request, file_id):
             }
         })
 
+    except LevelPassagesValidationError as exc:
+        return _invalid_level_passages_response(exc)
     except Exception as e:
         traceback.print_exc()
         return JsonResponse({'error': str(e)}, status=500)
@@ -367,6 +399,19 @@ def get_navgraph(request, file_id):
     if not user_can_access_file(request, file):
         return HttpResponseNotFound("Navgraph not found.")
     return serve_navgraph_file(file)
+
+
+@role_required('Trainer')
+@require_GET
+def get_level_passages(request, file_id):
+    """Return canonical passage data without acquiring an editor lock."""
+    file = get_object_or_404(File, id=file_id, deleted=False)
+    if not user_can_access_file(request, file):
+        return HttpResponseNotFound()
+    try:
+        return JsonResponse(normalize_level_passages(file.level_passages))
+    except LevelPassagesValidationError as exc:
+        return _invalid_level_passages_response(exc)
 
 
 def _mask_path_for_file(file):
@@ -796,6 +841,8 @@ def load_snapshot(request, snapshot_id):
             if not (own or shared):
                 return JsonResponse({'error': 'Permission denied'}, status=403)
 
+        level_passages = normalize_level_passages(snap.level_passages)
+
         return JsonResponse({
             'project': {
                 'id':              file.id,
@@ -806,9 +853,12 @@ def load_snapshot(request, snapshot_id):
                 'map_file':        snap.map_file,
                 'has_mask':        snap.has_mask,
                 'blocked_terrain': snap.blocked_terrain,
+                'level_passages':  level_passages,
                 'control_pairs':   snap.control_pairs,
             }
         })
+    except LevelPassagesValidationError as exc:
+        return _invalid_level_passages_response(exc)
     except Exception as e:
         traceback.print_exc()
         return JsonResponse({'error': str(e)}, status=500)
@@ -822,6 +872,7 @@ def save_file(request):
     from django.utils import timezone as tz
     try:
         data        = _json.loads(request.body)
+        level_passages = normalize_level_passages(data.get('level_passages'))
         profile     = request.user.profile
         active_team = profile.active_team
         file_id     = data.get('id')
@@ -868,6 +919,7 @@ def save_file(request):
         file.map_file        = incoming_map_file
         file.has_mask        = data.get('has_mask', False)
         file.blocked_terrain = data.get('blocked_terrain')
+        file.level_passages  = level_passages
         file.last_edited     = tz.now()
         file.locked_by       = request.user   # refresh lock
         file.locked_at       = tz.now()
@@ -926,6 +978,8 @@ def save_file(request):
             'id_map': id_map,
         })
 
+    except LevelPassagesValidationError as exc:
+        return _invalid_level_passages_response(exc)
     except Exception as e:
         traceback.print_exc()
         return JsonResponse({'error': str(e)}, status=500)
@@ -1012,7 +1066,7 @@ def save_cp_order(request):
 @role_required('Trainer')
 @require_POST
 def save_element(request):
-    """Granular save: control_pair | route | blocked_terrain."""
+    """Granular save: control_pair | route | blocked_terrain | level_passages."""
     import json as _json
     from django.utils import timezone as tz
     try:
@@ -1095,8 +1149,26 @@ def save_element(request):
             file.save(update_fields=['author', 'blocked_terrain', 'last_edited', 'locked_by', 'locked_at'])
             return JsonResponse({'status': 'ok', 'last_edited': file.last_edited.isoformat()})
 
+        # ── Additional level passages ─────────────────────────────────────────────────
+        elif element_type == 'level_passages':
+            file.level_passages = normalize_level_passages(data.get('level_passages'))
+            file.author      = request.user.first_name or request.user.username
+            file.last_edited = tz.now()
+            file.locked_by   = request.user
+            file.locked_at   = tz.now()
+            file.save(update_fields=[
+                'author', 'level_passages', 'last_edited', 'locked_by', 'locked_at',
+            ])
+            return JsonResponse({
+                'status': 'ok',
+                'level_passages': file.level_passages,
+                'last_edited': file.last_edited.isoformat(),
+            })
+
         return JsonResponse({'error': f'Unknown type: {element_type}'}, status=400)
 
+    except LevelPassagesValidationError as exc:
+        return _invalid_level_passages_response(exc)
     except Exception as e:
         traceback.print_exc()
         return JsonResponse({'error': str(e)}, status=500)
@@ -1112,6 +1184,7 @@ def save_snapshot(request):
         file_id = data.get('id')
         trigger = data.get('trigger', 'autosave')
         cps     = data.get('control_pairs', [])
+        level_passages = normalize_level_passages(data.get('level_passages'))
 
         if not file_id:
             return JsonResponse({'error': 'Missing file id'}, status=400)
@@ -1136,12 +1209,15 @@ def save_snapshot(request):
             map_file        = data.get('map_file', ''),
             has_mask        = data.get('has_mask', False),
             blocked_terrain = data.get('blocked_terrain'),
+            level_passages  = level_passages,
             control_pairs   = cps,
             n_control_pairs = n_control_pairs,
             n_routes        = n_routes,
         )
         return JsonResponse({'status': 'ok', 'n_control_pairs': n_control_pairs, 'n_routes': n_routes})
 
+    except LevelPassagesValidationError as exc:
+        return _invalid_level_passages_response(exc)
     except Exception as e:
         traceback.print_exc()
         return JsonResponse({'error': str(e)}, status=500)

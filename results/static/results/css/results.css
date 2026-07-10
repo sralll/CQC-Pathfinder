@@ -318,6 +318,7 @@ html, body {
 #play-table .col-results { width: 90px;  text-align: center; }
 #play-table .col-status  { width: 80px;  }
 #play-table .col-cp      { width: 78px;  }
+#play-table .col-infinity-done { width: 110px; }
 #play-table .col-author  { width: 120px; }
 #play-table .col-kader   { width: 130px; }
 #play-table .col-date    { width: 110px; }
@@ -440,10 +441,14 @@ html, body {
 }
 .play-card:active { background: var(--bg-3); }
 
-/* ── "Generated map" entry — infinity mode, pinned first ── */
+/* ── "Generated maps" entry — infinity mode, pinned first ── */
 .play-generated-row { cursor: pointer; background: rgba(224, 112, 32, 0.06); }
 .play-generated-row:hover { background: rgba(224, 112, 32, 0.12); }
-.play-generated-name { font-weight: 600; }
+#play-table .play-generated-row .play-generated-name,
+#play-table .play-generated-row:hover .play-generated-name {
+    color: var(--brand);
+    font-weight: 600;
+}
 .play-generated-name x-icon,
 .play-generated-card .play-card-name x-icon {
     color: var(--brand);
@@ -456,7 +461,7 @@ html, body {
     border-left: 3px solid var(--brand);
 }
 .play-generated-card:active { background: var(--bg-3); }
-.play-generated-card .play-card-name { font-weight: 600; }
+.play-generated-card .play-card-name { color: var(--brand); font-weight: 600; }
 
 .play-card-row1 {
     display: flex;

@@ -99,6 +99,29 @@ const CITY_SETTINGS = {
     gates: -1,
 };
 
+// City geometry uses compact generated coordinates. Uploaded maps already use
+// the normal editor/play coordinate space, so their magenta course overprint
+// must use play.js's original pixel sizes directly.
+function controlRadiusForScene(sc = scene) {
+    return sc?.kind === 'mask' ? PLAY_CONTROL_RADIUS : CONTROL_RADIUS;
+}
+
+function controlGapForScene(sc = scene) {
+    return sc?.kind === 'mask' ? 8 : GAP;
+}
+
+function controlStrokeWidthForScene(sc = scene) {
+    return sc?.kind === 'mask' ? PLAY_CONTROL_STROKE_WIDTH : CONTROL_STROKE_WIDTH;
+}
+
+function blockingStrokeWidthForScene(sc = scene) {
+    return sc?.kind === 'mask' ? PLAY_BLOCKING_STROKE_WIDTH : BLOCKING_STROKE_WIDTH;
+}
+
+function controlWaveStrokeWidthForScene(sc = scene) {
+    return sc?.kind === 'mask' ? PLAY_CONTROL_WAVE_STROKE_WIDTH : CONTROL_WAVE_STROKE_WIDTH;
+}
+
 function routeStrokeWidthForZoom(baseWidth, scale = cam.scale) {
     const safeScale = Math.max(scale || 1, ROUTE_STROKE_MIN_CAMERA_SCALE);
     const visualWidth = baseWidth
@@ -236,7 +259,7 @@ let stats       = loadStats();
    City mode is the default and leaves the existing code path fully intact.
    Mask mode (WP 3.3) draws problems from a real uploaded map's server-built
    navgraph via the pathing worker (see infinite/mask_scene_source.js). It is
-   selected at play start with ?source=mask&file=<id>&filename=<name>. */
+   selected at play start with /play/<file_id>/infinity/. */
 let sceneSource = 'city';           // 'city' | 'mask'
 let maskSource  = null;             // MaskSceneSource instance (mask mode)
 let maskSourceReady = null;         // Promise, resolves once navgraph is loaded
@@ -244,10 +267,26 @@ let suppressPlay = false;           // true while the map picker is open
 
 function detectSceneSource() {
     try {
+        const playWrap = document.getElementById('play-wrap');
+        const routeFileId = playWrap?.dataset.infinityFileId;
+        const routeFilename = playWrap?.dataset.infinityFilename || '';
+        const routeMapScale = Number(playWrap?.dataset.infinityMapScale) || 4000;
+        if (routeFileId) {
+            sceneSource = 'mask';
+            maskSource = new MaskSceneSource({
+                fileId: routeFileId,
+                filename: routeFilename,
+                mapScale: routeMapScale,
+                buildScene: buildMaskScene,
+            });
+            maskSourceReady = maskSource.ready().catch(handleMaskSourceError);
+            return;
+        }
         const params = new URLSearchParams(window.location.search);
         if (params.get('source') !== 'mask') return;
         const fileId = params.get('file');
         const filename = params.get('filename') || '';
+        const mapScale = Number(params.get('map_scale')) || 4000;
         if (!fileId) {
             // ?source=mask without a chosen map → show the (temporary) picker.
             showMaskMapPicker();
@@ -257,19 +296,22 @@ function detectSceneSource() {
         maskSource = new MaskSceneSource({
             fileId,
             filename,
+            mapScale,
             buildScene: buildMaskScene,
         });
         // Kick off the (async) navgraph + mask load right away so the buffer is
         // warm by the time the first scene is requested.
-        maskSourceReady = maskSource.ready().catch((err) => {
-            console.error('mask scene source failed to initialise; falling back to city:', err);
-            sceneSource = 'city';
-            maskSource = null;
-            return null;
-        });
+        maskSourceReady = maskSource.ready().catch(handleMaskSourceError);
     } catch (err) {
         console.warn('failed to detect scene source:', err);
     }
+}
+
+function handleMaskSourceError(err) {
+    console.error('mask scene source failed to initialise; falling back to city:', err);
+    sceneSource = 'city';
+    maskSource = null;
+    return null;
 }
 
 // Map picker for mask-mode infinite play. Lists maps a coach has opted in to
@@ -327,12 +369,7 @@ function showMaskMapPicker() {
                 btn.className = 'rp-modal-btn rp-modal-btn-primary';
                 btn.textContent = m.name || m.filename;
                 btn.addEventListener('click', () => {
-                    const q = new URLSearchParams({
-                        source: 'mask',
-                        file: String(m.id),
-                        filename: m.filename || '',
-                    });
-                    window.location.search = `?${q.toString()}`;
+                    window.location.href = `/play/${m.id}/infinity/`;
                 });
                 list.appendChild(btn);
             }
@@ -1714,12 +1751,13 @@ function routePairTooCloseToUsed(pair, usedEndpoints) {
 }
 
 function mapMetresPerUnit() {
-    return MAP_METRES_PER_UNIT;
+    return scene?.kind === 'mask' && Number.isFinite(scene.metresPerMapUnit)
+        ? scene.metresPerMapUnit
+        : MAP_METRES_PER_UNIT;
 }
 
-function calcRuntimeRouteLength(path) {
+function calcRuntimeRouteLength(path, metresPerUnit = mapMetresPerUnit()) {
     if (!path || path.length < 2) return 0;
-    const metresPerUnit = mapMetresPerUnit();
     let total = 0;
     for (let i = 1; i < path.length; i++) {
         const dx = path[i].x - path[i - 1].x;
@@ -1739,8 +1777,8 @@ function roundNoA(value) {
     return Math.round(value * 10) / 10;
 }
 
-function simplifiedNoAPoints(points) {
-    const minStep = NOA_MIN_SEGMENT_M / mapMetresPerUnit();
+function simplifiedNoAPoints(points, metresPerUnit = mapMetresPerUnit()) {
+    const minStep = NOA_MIN_SEGMENT_M / metresPerUnit;
     const out = [];
     for (const p of points || []) {
         if (!Number.isFinite(p?.x) || !Number.isFinite(p?.y)) continue;
@@ -1757,12 +1795,11 @@ function simplifiedNoAPoints(points) {
     return out;
 }
 
-function calcRuntimeRouteNoA(path) {
-    const rP = simplifiedNoAPoints(path);
+function calcRuntimeRouteNoA(path, metresPerUnit = mapMetresPerUnit()) {
+    const rP = simplifiedNoAPoints(path, metresPerUnit);
     if (!rP || rP.length < 3) return 0;
 
     const epsRad = NOA_EPSILON_DEG * Math.PI / 180;
-    const metresPerUnit = mapMetresPerUnit();
     const cum = [0];
     const headings = [];
     const segLen = [];
@@ -2008,8 +2045,9 @@ function buildSceneFromRouteResult(city, visibilityGraph, pair, routeResult) {
    renderScene / buildRenderedScene / the choice + scoring + report flow all
    work unchanged. The only structural differences: kind === 'mask', a
    `mapImage` descriptor for the raster background instead of `scene.city`,
-   and no `visibilityGraph`/`routeResult` (the worker already selected + refined
-   the two routes).
+   and no `visibilityGraph`. The worker already selected + refined the two
+   routes, but its barrier metadata is retained as `routeResult` so the shared
+   purple-block renderer has exactly the same input shape as city scenes.
 ========================================================= */
 
 function maskRouteSide(points, start, goal) {
@@ -2024,6 +2062,7 @@ function maskRouteSide(points, start, goal) {
 function buildMaskScene(pair) {
     const start = pair.start;
     const ziel = pair.goal;
+    const metresPerMapUnit = pair.source.metresPerMapUnit;
 
     // Worker guarantees routes[0]=left, routes[1]=right. Compute the signed
     // side value the same way selectRuntimeRouteOptions does so the stats panel
@@ -2031,8 +2070,8 @@ function buildMaskScene(pair) {
     const routes = pair.routes.map((r) => {
         const points = r.points;
         const side = maskRouteSide(points, start, ziel);
-        const length = calcRuntimeRouteLength(points);
-        const noA = calcRuntimeRouteNoA(points);
+        const length = calcRuntimeRouteLength(points, metresPerMapUnit);
+        const noA = calcRuntimeRouteNoA(points, metresPerMapUnit);
         const runTime = Number.isFinite(r.runtime) ? r.runtime : null;
         return {
             points,
@@ -2054,7 +2093,13 @@ function buildMaskScene(pair) {
         start,
         ziel,
         routes,
+        routeResult: {
+            skippedBarriers: pair.skippedBarriers || [],
+            blockFastest: (pair.skippedBarriers || []).length > 0,
+            barriers: pair.barriers || [],
+        },
         mapScale: 1,
+        metresPerMapUnit,
         // Raster background descriptor. Full-res mask dims × TRAIN_SCALE_VALUE =
         // map-image px, which is exactly the map-unit space start/ziel/routes
         // live in, so the <image> at (0,0) with these dims aligns pixel-exact.
@@ -2073,6 +2118,11 @@ function buildMaskScene(pair) {
             relGap: pair.meta?.relGap ?? null,
             legality: pair.meta?.legality ?? null,
             timings: pair.meta?.timings ?? null,
+            workerMs: pair.meta?.workerMs ?? null,
+            rejectionCounts: pair.meta?.rejectionCounts || {},
+            refineMode: pair.meta?.refineMode ?? null,
+            refineFallback: pair.meta?.refineFallback ?? 0,
+            refine: pair.meta?.refine || [],
         },
     };
 }
@@ -2659,7 +2709,7 @@ function maskFitTransform(sc) {
         if (sc) { sc.mapScale = 1; sc.mapTx = 0; sc.mapTy = 0; }
         return '';
     }
-    const margin = CONTROL_RADIUS * 3;
+    const margin = controlRadiusForScene(sc) * 3;
     const minX = bounds.minX - margin, minY = bounds.minY - margin;
     const maxX = bounds.maxX + margin, maxY = bounds.maxY + margin;
     const bw = Math.max(1e-3, maxX - minX);
@@ -2731,7 +2781,7 @@ function orientCameraToScene(duration = 0, onComplete = null) {
 
     [start, ziel].forEach(pt => {
         const { rx, ry } = toRot(pt);
-        const controlSurfaceRadius = CONTROL_RADIUS * (scene?.mapScale || 1);
+        const controlSurfaceRadius = controlRadiusForScene(scene) * (scene?.mapScale || 1);
         minRX = Math.min(minRX, rx - controlSurfaceRadius);
         maxRX = Math.max(maxRX, rx + controlSurfaceRadius);
         minRY = Math.min(minRY, ry - controlSurfaceRadius);
@@ -3476,8 +3526,9 @@ function drawRouteBlocks(layer = layerEl('rp-route-layer')) {
         line.setAttribute('x1', b.ax); line.setAttribute('y1', b.ay);
         line.setAttribute('x2', b.bx); line.setAttribute('y2', b.by);
         line.setAttribute('stroke', CONTROL_COLOR);
-        line.setAttribute('stroke-width', BLOCKING_STROKE_WIDTH);
+        line.setAttribute('stroke-width', blockingStrokeWidthForScene());
         line.setAttribute('stroke-linecap', 'butt');
+        if (scene?.kind === 'mask') line.setAttribute('vector-effect', 'non-scaling-stroke');
         line.setAttribute('pointer-events', 'none');
         layer.appendChild(line);
     }
@@ -3678,34 +3729,39 @@ function drawFenceTicks(layer, a, b) {
 
 function drawControls(start, ziel) {
     const layer = layerEl('rp-control-layer');
+    const radius = controlRadiusForScene();
+    const gap = controlGapForScene();
+    const strokeWidth = controlStrokeWidthForScene();
     // Use the same draw routines as regular play mode: two equal circles +
     // a straight connection line (no arrow, no dashed line).
     [start, ziel].forEach(pt => {
         const c = svgEl('circle');
-        c.setAttribute('cx', pt.x); c.setAttribute('cy', pt.y); c.setAttribute('r', CONTROL_RADIUS);
+        c.setAttribute('cx', pt.x); c.setAttribute('cy', pt.y); c.setAttribute('r', radius);
         c.setAttribute('fill', 'transparent');
         c.setAttribute('stroke', CONTROL_COLOR);
-        c.setAttribute('stroke-width', CONTROL_STROKE_WIDTH);
+        c.setAttribute('stroke-width', strokeWidth);
         c.setAttribute('opacity', CONTROL_OPACITY);
+        if (scene?.kind === 'mask') c.setAttribute('vector-effect', 'non-scaling-stroke');
         layer.appendChild(c);
     });
 
     const dx  = ziel.x - start.x;
     const dy  = ziel.y - start.y;
     const dist = Math.hypot(dx, dy);
-    if (dist <= 2 * (CONTROL_RADIUS + GAP)) return;
+    if (dist <= 2 * (radius + gap)) return;
 
     const angle  = Math.atan2(dy, dx);
-    const offset = CONTROL_RADIUS + GAP;
+    const offset = radius + gap;
     const line = svgEl('line');
     line.setAttribute('x1', start.x + Math.cos(angle) * offset);
     line.setAttribute('y1', start.y + Math.sin(angle) * offset);
     line.setAttribute('x2', ziel.x  - Math.cos(angle) * offset);
     line.setAttribute('y2', ziel.y  - Math.sin(angle) * offset);
     line.setAttribute('stroke', CONTROL_COLOR);
-    line.setAttribute('stroke-width', CONTROL_STROKE_WIDTH);
+    line.setAttribute('stroke-width', strokeWidth);
     line.setAttribute('fill', 'none');
     line.setAttribute('opacity', CONTROL_OPACITY);
+    if (scene?.kind === 'mask') line.setAttribute('vector-effect', 'non-scaling-stroke');
     layer.appendChild(line);
 }
 
@@ -3736,7 +3792,7 @@ function initStatsPanel() {
         if (statsVisible) {
             hideStatsPanel();
         } else {
-            renderStatsPanel({ routes: scene.routes });
+            renderStatsPanel({ routes: scene.routes, meta: scene.meta, kind: scene.kind });
         }
     });
 }
@@ -3796,6 +3852,35 @@ function renderStatsPanel(cp) {
             (showCorners ? row(noALabel, `+${noATime}s`) : '');
         inner.appendChild(col);
     });
+
+    // Mask scenes carry the same generation diagnostics as city batches.
+    // Keep them in the existing play stats surface so staging verification can
+    // confirm rejection pressure and theta/fallback behaviour without devtools.
+    if (cp.kind === 'mask' && cp.meta) {
+        const tMaskGeneration = typeof gettext === 'function' ? gettext('Mask generation') : 'Mask generation';
+        const tAttempts = typeof gettext === 'function' ? gettext('Attempts') : 'Attempts';
+        const tRetries = typeof gettext === 'function' ? gettext('Retries') : 'Retries';
+        const tRefine = typeof gettext === 'function' ? gettext('Refine') : 'Refine';
+        const tFallback = typeof gettext === 'function' ? gettext('fallback') : 'fallback';
+        const tRejections = typeof gettext === 'function' ? gettext('Rejections') : 'Rejections';
+        const tTimings = typeof gettext === 'function' ? gettext('Timings') : 'Timings';
+        const m = cp.meta;
+        const rejects = Object.entries(m.rejectionCounts || {}).filter(([, v]) => Number(v) > 0);
+        const timings = m.timings || {};
+        const timingParts = ['sample', 'snap', 'route', 'refine', 'theta']
+            .filter((k) => Number.isFinite(Number(timings[k])))
+            .map((k) => `${k} ${Math.round(Number(timings[k]))}ms`);
+        const diagnostics = document.createElement('div');
+        diagnostics.className = 'stats-mask-diagnostics';
+        diagnostics.innerHTML =
+            `<span class="stats-diagnostics-title">${tMaskGeneration}</span>` +
+            `<span class="stats-row"><span class="stats-label">${tAttempts}</span><span class="stats-value">${m.attempts ?? '-'}</span></span>` +
+            `<span class="stats-row"><span class="stats-label">${tRetries}</span><span class="stats-value">${m.retries ?? '-'}</span></span>` +
+            `<span class="stats-row"><span class="stats-label">${tRefine}</span><span class="stats-value">${m.refineMode || '-'}${m.refineFallback ? ` (${tFallback})` : ''}</span></span>` +
+            `<span class="stats-row"><span class="stats-label">${tRejections}</span><span class="stats-value">${rejects.length ? rejects.map(([k, v]) => `${k}:${v}`).join(' ') : '0'}</span></span>` +
+            `<span class="stats-row"><span class="stats-label">${tTimings}</span><span class="stats-value">${timingParts.join(', ') || '-'}</span></span>`;
+        inner.appendChild(diagnostics);
+    }
 
     panel.appendChild(inner);
     statsVisible = true;
@@ -3987,7 +4072,7 @@ function buildInfinityReportPayload() {
         pair_index: scene.meta.pairIndex ?? scene.batchIndex ?? null,
         start: clonePoint(scene.start),
         goal: clonePoint(scene.ziel),
-        map_metres_per_unit: MAP_METRES_PER_UNIT,
+        map_metres_per_unit: mapMetresPerUnit(),
         settings: scene.meta.settings || {},
         route_indexes: routeResult.routeIndexes || [],
         routes: (scene.routes || []).map((route, index) => ({
@@ -4143,6 +4228,7 @@ function pickSide(idx) {
         choice_time:  choiceTime,
         shorter_time: shorter.run_time,
         longer_time:  longer.run_time,
+        file_id:      sceneSource === 'mask' ? (maskSource?.fileId ?? null) : null,
     });
 }
 
@@ -4253,19 +4339,21 @@ function animateRoutes(chosenIdx) {
 
 function emitWave(pos, color) {
     const layer = SVG('rp-control-layer');
+    const radius = controlRadiusForScene();
     const c = svgEl('circle');
-    c.setAttribute('cx', pos.x); c.setAttribute('cy', pos.y); c.setAttribute('r', CONTROL_RADIUS);
+    c.setAttribute('cx', pos.x); c.setAttribute('cy', pos.y); c.setAttribute('r', radius);
     c.setAttribute('fill', 'none');
     c.setAttribute('stroke', color);
-    c.setAttribute('stroke-width', CONTROL_WAVE_STROKE_WIDTH);
+    c.setAttribute('stroke-width', controlWaveStrokeWidthForScene());
     c.setAttribute('opacity', '0.85');
+    if (scene?.kind === 'mask') c.setAttribute('vector-effect', 'non-scaling-stroke');
     c.style.filter = 'blur(4px)';
     layer.appendChild(c);
     const start = performance.now();
     (function step(now) {
         const t = Math.min((now - start) / 1800, 1);
         const e = 1 - Math.pow(1 - t, 2);
-        c.setAttribute('r',       CONTROL_RADIUS + (CONTROL_RADIUS * 1.6) * e);
+        c.setAttribute('r',       radius + (radius * 1.6) * e);
         c.setAttribute('opacity', (1 - e) * 0.85);
         if (t < 1) requestAnimationFrame(step);
         else c.remove();

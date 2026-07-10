@@ -1,0 +1,28 @@
+{
+  "seed": 1,
+  "count": 15,
+  "results": [
+    {
+      "label": "small",
+      "mask": "mask_20250602_081036.png",
+      "accepted": 15,
+      "calls": 15,
+      "placedBars": 60,
+      "skippedBars": 31,
+      "activeRouteBars": 63,
+      "legality": 0,
+      "barrierViolations": 0,
+      "anchorFailures": 0,
+      "ineffectiveBars": 0,
+      "ms": 8405
+    }
+  ],
+  "total": {
+    "accepted": 15,
+    "placedBars": 60,
+    "skippedBars": 31,
+    "activeRouteBars": 63,
+    "legality": 0,
+    "barrierViolations": 0
+  }
+}

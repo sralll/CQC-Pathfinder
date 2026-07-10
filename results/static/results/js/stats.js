@@ -41,7 +41,7 @@ Object.defineProperty(PAGE, 'competition', {
 const MODE_LABEL = {
     competition: gettext('Competition'),
     training:    gettext('Training'),
-    random:      'Infinity',
+    random:      gettext('Infinity'),
 };
 
 const TRAINER_TABLE_HIDDEN_RANDOM_SORT_KEYS = new Set([

@@ -50,4 +50,7 @@ Swiss German spelling (no "ß": "Schliessen", not "Schließen").
 
 Out of scope (no translation needed): `console.log`/debug output, code comments,
 log lines, exception messages aimed at developers, internal identifiers and CSV
-column keys.
+column keys. Established exceptions from the original rollout: unexpected-failure
+`alert()`/error strings were deliberately left in English (product decision), and
+strings used as lookup **keys** must never be translated — keep a raw key and
+translate only the display label (this has caused real bugs).

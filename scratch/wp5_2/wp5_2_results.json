@@ -1,0 +1,70 @@
+{
+  "seed": 1,
+  "results": [
+    {
+      "label": "small",
+      "name": "mask_20250602_081036",
+      "accepted": 90,
+      "legalityTotal": 0,
+      "barCross": 0,
+      "barCrossGeom": 0,
+      "barTestedRoutes": 141,
+      "routesTotal": 180,
+      "thetaRoutes": 180,
+      "improvedRoutes": 180,
+      "improvedPct": 100,
+      "thetaPairs": 90,
+      "fallbackPairs": 0,
+      "p90RefineMs": 920.4,
+      "meanRefineMs": 518.4,
+      "maxRefineMs": 2182.1,
+      "wallMs": 48332,
+      "rendered": 4,
+      "failReasons": {}
+    },
+    {
+      "label": "median",
+      "name": "mask_20250715_092410",
+      "accepted": 90,
+      "legalityTotal": 0,
+      "barCross": 0,
+      "barCrossGeom": 0,
+      "barTestedRoutes": 157,
+      "routesTotal": 180,
+      "thetaRoutes": 180,
+      "improvedRoutes": 180,
+      "improvedPct": 100,
+      "thetaPairs": 90,
+      "fallbackPairs": 0,
+      "p90RefineMs": 722.6,
+      "meanRefineMs": 371.9,
+      "maxRefineMs": 1321.5,
+      "wallMs": 35855,
+      "rendered": 4,
+      "failReasons": {}
+    },
+    {
+      "label": "75Mpx",
+      "name": "mask_20260422_134232",
+      "accepted": 40,
+      "legalityTotal": 0,
+      "barCross": 0,
+      "barCrossGeom": 0,
+      "barTestedRoutes": 67,
+      "routesTotal": 80,
+      "thetaRoutes": 73,
+      "improvedRoutes": 73,
+      "improvedPct": 100,
+      "thetaPairs": 36,
+      "fallbackPairs": 4,
+      "p90RefineMs": 1273.8,
+      "meanRefineMs": 755.8,
+      "maxRefineMs": 2030.7,
+      "wallMs": 34862,
+      "rendered": 4,
+      "failReasons": {
+        "timeout": 7
+      }
+    }
+  ]
+}

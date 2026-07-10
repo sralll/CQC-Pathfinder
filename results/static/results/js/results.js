@@ -12,6 +12,7 @@ let filteredFiles   = [];
 let sharedPool      = false;
 let multiTeam       = false;
 let activeTeamName  = '';
+let generatedInfiniteDone = 0;
 
 // key = stable identifier used for filtering/matching (never translated);
 // label = display text (translated).
@@ -29,7 +30,7 @@ function fileStatus(f) {
 
 // Play mode: 'training' | 'competition' | 'infinity'. Default competition.
 // In infinity mode the list is filtered to maps opted in to infinite play
-// (infinite_enabled) and the control-pairs column is hidden.
+// (infinite_enabled); status and control-pair progress are not applicable.
 let playMode = 'competition';
 
 // Base route for infinite play. With ?source=mask&file=… it plays a real
@@ -43,11 +44,12 @@ function generatedMapEntry() {
     return {
         synthetic:        true,
         id:               '__generated__',
-        name:             gettext('Generated map'),
+        name:             gettext('Generated maps'),
         author:           'SYS',
         team_name:        activeTeamName,
         label:            null,
         infinite_enabled: true,
+        infinite_done:    generatedInfiniteDone,
     };
 }
 
@@ -77,6 +79,7 @@ async function loadFiles() {
         sharedPool     = data.shared_pool      || false;
         multiTeam      = data.multi_team       || false;
         activeTeamName = data.active_team_name || '';
+        generatedInfiniteDone = Number(data.generated_infinite_done) || 0;
         renderHeader();
         applyFilters();
     } catch (e) {
@@ -93,6 +96,10 @@ async function loadFiles() {
 const MODE_ICON = { training: 'book-open', competition: 'trophy', infinity: 'infinity' };
 
 function infinityMode() { return playMode === 'infinity'; }
+
+function statusFilterActive() {
+    return !infinityMode() && activeStatusFilters.length > 0;
+}
 
 function initModeToggle() {
     const slider = document.querySelector('.play-3way');
@@ -156,7 +163,7 @@ function updateClearButton() {
     const hasFilters = activeLabelFilter !== null
         || activeAuthorFilters.length > 0
         || activeKaderFilters.length  > 0
-        || activeStatusFilters.length > 0;
+        || statusFilterActive();
     clearBtn.classList.toggle('visible', hasSearch || hasFilters);
 }
 
@@ -191,7 +198,9 @@ function applyFilters() {
             || activeAuthorFilters.includes((f.author || '').trim());
         const matchKader  = !activeKaderFilters.length
             || activeKaderFilters.includes((f.team_name || '').trim());
-        const matchStatus = !activeStatusFilters.length
+        // Infinity has no completion status: every opted-in map must remain
+        // available regardless of the status selection used in other modes.
+        const matchStatus = !statusFilterActive()
             || activeStatusFilters.includes(fileStatus(f).key);
         return matchSearch && matchLabel && matchAuthor && matchKader && matchStatus;
     });
@@ -261,9 +270,17 @@ function renderHeader() {
            </th>`
         : '';
 
-    // Controls column is meaningless in infinity mode (procedural pairs).
-    const cpCol = infinityMode()
+    // Status and Controls are progress fields and do not apply to Infinity.
+    const statusCol = infinityMode()
         ? ''
+        : `<th class="col-status">
+               <span class="filterable" id="status-filter-btn">${gettext('Status')}
+                   <span class="filter-indicator active-filter-icon">${window.icon('filter', '0.8em')}</span>
+               </span>
+           </th>`;
+
+    const cpCol = infinityMode()
+        ? `<th class="col-cp col-infinity-done" style="text-align:center;">${gettext('Done')}</th>`
         : `<th class="col-cp" data-sort="cp_count" style="text-align:center;">
                <span class="sortable">${gettext('Controls')}
                    <span id="sort-cp_count" class="sort-indicator"></span>
@@ -282,11 +299,7 @@ function renderHeader() {
                     <span class="filter-indicator active-filter-icon">${window.icon('filter', '0.8em')}</span>
                 </span>
             </th>
-            <th class="col-status">
-                <span class="filterable" id="status-filter-btn">${gettext('Status')}
-                    <span class="filter-indicator active-filter-icon">${window.icon('filter', '0.8em')}</span>
-                </span>
-            </th>
+            ${statusCol}
             ${cpCol}
             <th class="col-author">
                 <span class="filterable" id="author-filter-btn">${gettext('Author')}
@@ -342,7 +355,7 @@ function updateFilterIcons() {
     document.querySelector('.col-label  .active-filter-icon')?.classList.toggle('active', activeLabelFilter !== null);
     document.querySelector('.col-author .active-filter-icon')?.classList.toggle('active', activeAuthorFilters.length > 0);
     document.querySelector('.col-kader  .active-filter-icon')?.classList.toggle('active', activeKaderFilters.length  > 0);
-    document.querySelector('.col-status .active-filter-icon')?.classList.toggle('active', activeStatusFilters.length > 0);
+    document.querySelector('.col-status .active-filter-icon')?.classList.toggle('active', statusFilterActive());
 }
 
 /* =========================================================
@@ -575,15 +588,15 @@ function renderTable() {
         if (f.synthetic) {
             const tr = document.createElement('tr');
             tr.className = 'play-generated-row';
-            // Columns match the infinity-mode header: name, label, status,
-            // author, [team], date. No control-pairs column in infinity mode.
+            // Columns match the infinity-mode header: name, label, done,
+            // author, [team], date. Status and control-pair counts are omitted.
             const kaderCell = multiTeam
                 ? `<td class="user-active-team">${f.team_name || '—'}</td>`
                 : '';
             tr.innerHTML = `
                 <td class="play-name-cell play-generated-name">${f.name}</td>
                 <td></td>
-                <td></td>
+                <td class="play-cp-cell play-infinity-done-cell">${infinityDoneText(f.infinite_done)}</td>
                 <td>${f.author}</td>
                 ${kaderCell}
                 <td>—</td>`;
@@ -608,11 +621,16 @@ function renderTable() {
             : '';
 
         const st = fileStatus(f);
-        const cpCell = infinityMode() ? '' : `<td class="play-cp-cell">${f.cp_count}</td>`;
+        const statusCell = infinityMode()
+            ? ''
+            : `<td class="col-status-cell" style="color:${st.color};font-weight:600;">${st.label}</td>`;
+        const cpCell = infinityMode()
+            ? `<td class="play-cp-cell play-infinity-done-cell">${infinityDoneText(f.infinite_done)}</td>`
+            : `<td class="play-cp-cell">${f.cp_count}</td>`;
         tr.innerHTML = `
             <td class="play-name-cell">${f.name}</td>
             <td>${labelHtml}</td>
-            <td class="col-status-cell" style="color:${st.color};font-weight:600;">${st.label}</td>
+            ${statusCell}
             ${cpCell}
             <td>${f.author || '—'}</td>
             ${kaderCell}
@@ -663,15 +681,17 @@ function renderCards() {
         const card = document.createElement('div');
         card.className = 'play-card' + (multiTeam && f.team_name !== activeTeamName ? ' play-other-team' : '');
         const st = fileStatus(f);
-        // Smoother gradient: two intermediate stops so the fall-off is gradual,
-        // and the colour reaches the dark base only at 100% rather than 65%.
-        card.style.background =
-            `linear-gradient(to left,
-                rgba(${st.rgb},0.45) 0%,
-                rgba(${st.rgb},0.25) 35%,
-                rgba(${st.rgb},0.08) 75%,
-                rgba(${st.rgb},0)    100%), #1a1a1a`;
-        card.style.color = '#fff';
+        if (!infinityMode()) {
+            // Smoother gradient: two intermediate stops so the fall-off is gradual,
+            // and the colour reaches the dark base only at 100% rather than 65%.
+            card.style.background =
+                `linear-gradient(to left,
+                    rgba(${st.rgb},0.45) 0%,
+                    rgba(${st.rgb},0.25) 35%,
+                    rgba(${st.rgb},0.08) 75%,
+                    rgba(${st.rgb},0)    100%), #1a1a1a`;
+            card.style.color = '#fff';
+        }
 
         const labelHtml = f.label
             ? `<span style="background:${f.label.color}22;color:${f.label.color};
@@ -687,7 +707,7 @@ function renderCards() {
             : '';
 
         const cpSpan = infinityMode()
-            ? ''
+            ? `<span class="play-card-cp">${infinityDoneText(f.infinite_done)}</span>`
             : `<span class="play-card-cp">${f.cp_count} ${f.cp_count === 1 ? gettext('Control') : gettext('Controls')}</span>`;
         card.innerHTML = `
             <div class="play-card-row1">
@@ -740,7 +760,9 @@ function renderMobileControls() {
     const filterFields = [
         { field: 'label',  label: gettext('Label'),  toggle: toggleLabelFilter  },
         { field: 'author', label: gettext('Author'), toggle: toggleAuthorFilter },
-        { field: 'status', label: gettext('Status'), toggle: toggleStatusFilter },
+        ...(infinityMode()
+            ? []
+            : [{ field: 'status', label: gettext('Status'), toggle: toggleStatusFilter }]),
         ...(multiTeam
             ? [{ field: 'kader', label: gettext('Team'), toggle: toggleKaderFilter }]
             : []),
@@ -765,18 +787,13 @@ function renderMobileControls() {
 
 function openFile(f) {
     if (f.synthetic) {
-        // "Generated map" → procedurally-generated infinite play (no mask).
+        // "Generated maps" → procedurally-generated infinite play (no mask).
         window.location.href = INFINITY_URL;
         return;
     }
     if (infinityMode()) {
         // Launch infinite play on this map's mask (server-built navgraph).
-        const q = new URLSearchParams({
-            source:   'mask',
-            file:     String(f.id),
-            filename: f.map_file || '',
-        });
-        window.location.href = `${INFINITY_URL}?${q.toString()}`;
+        window.location.href = `/play/${f.id}/infinity/`;
         return;
     }
     window.location.href = `/play/${f.id}/${playMode}/`;
@@ -789,4 +806,8 @@ function openFile(f) {
 function formatDate(iso) {
     if (!iso) return '—';
     return new Date(iso).toLocaleDateString('de-CH', { day: '2-digit', month: '2-digit', year: '2-digit' });
+}
+
+function infinityDoneText(count) {
+    return `${Math.max(0, Number(count) || 0)} ${gettext('done')}`;
 }

@@ -156,6 +156,50 @@ body.mode-infinity #infinity-controls { display: flex; flex-direction: column; g
     pointer-events: none;
 }
 /* ===== PERF-FIX #3 END ===== */
+
+/* Sparse third-dimension passage overlays. The committed and preview groups
+   have dedicated SVG layers so passage redraws never invalidate course objects
+   and live drawing never clears another tool's preview. */
+#passage-layer,
+#passage-preview-layer {
+    pointer-events: none;
+    color: #19b9d1;
+}
+
+#passage-layer { opacity: 0.28; }
+#map-container.mode-mask #passage-layer { opacity: 0.72; }
+
+.passage-corridor {
+    stroke: currentColor;
+    fill: none;
+}
+
+.passage-object.selected .passage-corridor,
+.passage-corridor-preview {
+    color: #35d7ed;
+    opacity: 0.5;
+}
+
+.passage-entrance {
+    fill: rgba(25, 185, 209, 0.18);
+    stroke: #baf7ff;
+    stroke-width: 1.5;
+    stroke-dasharray: 5 4;
+    vector-effect: non-scaling-stroke;
+}
+
+.passage-centreline {
+    stroke: rgba(220, 252, 255, 0.8);
+    stroke-width: 1;
+    stroke-dasharray: 5 5;
+    vector-effect: non-scaling-stroke;
+}
+
+.passage-node {
+    fill: #fff;
+    stroke: #087c8d;
+    stroke-width: 1.5;
+}
 /* Editor accent color — control pairs, blocked-terrain hatch, place-CP preview,
    and route polyline fallback all use this. Change here to recolor everything. */
 :root {

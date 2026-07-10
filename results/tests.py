@@ -343,10 +343,11 @@ class InfinityUserStatsTests(TestCase):
         other_profile.teams.add(self.team)
         self.client.force_login(self.user)
 
-    def create_choice(self, user):
+    def create_choice(self, user, file=None):
         return InfiniteChoice.objects.create(
             user=user,
             team=self.team,
+            file=file,
             correct=True,
             choice_time=1,
             shorter_time=10,
@@ -379,11 +380,65 @@ class InfinityUserStatsTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {'status': 'saved', 'choice_count': 1})
+        self.assertIsNone(InfiniteChoice.objects.get(user=self.user).file_id)
+
+    def test_submit_infinite_choice_saves_accessible_infinity_file(self):
+        file = File.objects.create(
+            name='Infinity course',
+            team=self.team,
+            published=True,
+            infinite_enabled=True,
+        )
+
+        response = self.client.post(
+            reverse('submit_infinity_choice'),
+            data=json.dumps({
+                'correct': True,
+                'choice_time': 1.5,
+                'shorter_time': 10,
+                'longer_time': 12,
+                'file_id': file.id,
+            }),
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(InfiniteChoice.objects.get(user=self.user).file, file)
+
+    def test_play_file_list_groups_infinity_counts_by_file_and_generated_maps(self):
+        first = File.objects.create(
+            name='First course', team=self.team, published=True, infinite_enabled=True,
+        )
+        second = File.objects.create(
+            name='Second course', team=self.team, published=True, infinite_enabled=True,
+        )
+        self.create_choice(self.user)
+        self.create_choice(self.user)
+        self.create_choice(self.user, first)
+        self.create_choice(self.user, first)
+        self.create_choice(self.user, second)
+        self.create_choice(self.other_user, first)
+
+        response = self.client.get(reverse('play_get_files'))
+
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data['generated_infinite_done'], 2)
+        counts = {item['id']: item['infinite_done'] for item in data['files']}
+        self.assertEqual(counts[first.id], 2)
+        self.assertEqual(counts[second.id], 1)
 
     def test_random_stats_response_includes_error_potential_fits(self):
+        file = File.objects.create(
+            name='Stats infinity course',
+            team=self.team,
+            published=True,
+            infinite_enabled=True,
+        )
         InfiniteChoice.objects.create(
             user=self.user,
             team=self.team,
+            file=file,
             correct=True,
             choice_time=1.0,
             shorter_time=10.0,

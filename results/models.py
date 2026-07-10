@@ -38,11 +38,13 @@ class Choice(models.Model):
 
 
 class InfiniteChoice(models.Model):
-    """One attempt of the procedurally-generated /play/infinity/ leg."""
+    """One Infinity attempt; ``file=None`` identifies a generated-map leg."""
 
     user         = models.ForeignKey('auth.User', on_delete=models.SET_NULL,
                                      null=True, blank=True, related_name='infinite_choices')
     team         = models.ForeignKey('account.Team', on_delete=models.SET_NULL,
+                                     null=True, blank=True, related_name='infinite_choices')
+    file         = models.ForeignKey('project.File', on_delete=models.SET_NULL,
                                      null=True, blank=True, related_name='infinite_choices')
     correct      = models.BooleanField()
     choice_time  = models.FloatField()                         # seconds from reveal → decision
@@ -55,6 +57,7 @@ class InfiniteChoice(models.Model):
         indexes = [
             models.Index(fields=['team', 'user'], name='infchoice_team_user_idx'),
             models.Index(fields=['user', 'timestamp'], name='infchoice_user_time_idx'),
+            models.Index(fields=['user', 'file'], name='infchoice_user_file_idx'),
         ]
 
     @property

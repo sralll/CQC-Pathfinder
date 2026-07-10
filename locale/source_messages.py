@@ -78,6 +78,7 @@ DJANGO = {
         "Dessine et enregistre une région de carte avant d'activer le mode infini.",
         "Disegna e salva una regione della mappa prima di abilitare la modalità infinita."),
     "Infinity Mode": ("Infinity-Modus", "Mode infini", "Modalità infinita"),
+    "Infinity mode": ("Infinity-Modus", "Mode infini", "Modalità infinita"),
     "Mark the area athletes may be sent between. Start from the four map corners and drag them inward.": (
         "Markiere den Bereich, zwischen dem Athleten geschickt werden dürfen. Beginne bei den vier Kartenecken und ziehe sie nach innen.",
         "Marque la zone entre laquelle les athlètes peuvent être envoyés. Commence aux quatre coins de la carte et fais-les glisser vers l'intérieur.",
@@ -238,6 +239,13 @@ DJANGO = {
 }
 
 DJANGOJS = {
+    "Mask generation": ("Masken-Generierung", "Génération du masque", "Generazione maschera"),
+    "Attempts": ("Versuche", "Tentatives", "Tentativi"),
+    "Retries": ("Wiederholungen", "Reprises", "Ripetizioni"),
+    "Refine": ("Verfeinerung", "Raffinement", "Raffinamento"),
+    "fallback": ("Fallback", "Repli", "Fallback"),
+    "Rejections": ("Ablehnungen", "Rejets", "Rifiuti"),
+    "Timings": ("Zeiten", "Durées", "Tempi"),
     "+ automatic route": ("+ automatische Route", "+ choix automatique", "+ percorso automatico"),
     "A project with this name already exists.": ("Ein Projekt mit diesem Namen existiert bereits.", "Un projet portant ce nom existe déjà.", "Esiste già un progetto con questo nome."),
     "Additionally": ("Zusätzlich", "En plus", "In aggiunta"),
@@ -300,6 +308,7 @@ DJANGOJS = {
     "Hidden": ("Verborgen", "Masqué", "Nascosto"),
     "Home": ("Startseite", "Accueil", "Pagina iniziale"),
     "File is currently being edited": ("Datei wird gerade bearbeitet", "Le fichier est en cours d'édition", "Il file è in fase di modifica"),
+    "Generated maps": ("Generierte Karten", "Cartes générées", "Mappe generate"),
     "Generating mask…": ("Maske wird generiert…", "Génération du masque…", "Generazione della maschera…"),
     "Mask ready": ("Maske fertig", "Masque prêt", "Maschera pronta"),
     "Rasterizing map…": ("Karte wird rasterisiert…", "Rastérisation de la carte…", "Rasterizzazione della mappa…"),
@@ -423,6 +432,11 @@ DJANGOJS = {
 }
 
 DJANGO.update({
+    "Finish": ("Abschliessen", "Terminer", "Termina"),
+    "Tap to add passage points. Drag to pan the map.": (
+        "Tippe, um Passagenpunkte hinzuzufügen. Ziehe, um die Karte zu verschieben.",
+        "Touche pour ajouter des points au passage. Fais glisser pour déplacer la carte.",
+        "Tocca per aggiungere punti al passaggio. Trascina per spostare la mappa."),
     "%(name)s is currently editing this file.": ("%(name)s bearbeitet diese Datei gerade.", "%(name)s modifie ce fichier en ce moment.", "%(name)s sta modificando questo file."),
     "Controls without routes": ("Posten ohne Routen", "Postes sans choix", "Punti senza percorsi"),
     "File too large (max. 15 MB)": ("Datei zu gross (max. 15 MB)", "Fichier trop volumineux (max. 15 Mo)", "File troppo grande (max. 15 MB)"),
@@ -441,12 +455,39 @@ DJANGO.update({
     "Only OCAD allowed": ("Nur OCAD erlaubt", "Seul OCAD est autorisé", "È consentito solo OCAD"),
     "Only OCD allowed": ("Nur OCD erlaubt", "Seul OCD est autorisé", "È consentito solo OCD"),
     "Only PNG, JPEG or OCAD allowed": ("Nur PNG, JPEG oder OCAD erlaubt", "Seuls PNG, JPEG ou OCAD sont autorisés", "Sono consentiti solo PNG, JPEG o OCAD"),
+    "This file is not a valid project.": ("Diese Datei ist kein gültiges Projekt.", "Ce fichier n'est pas un projet valide.", "Questo file non è un progetto valido."),
     "Title and text must not be empty.": ("Titel und Text dürfen nicht leer sein.", "Le titre et le texte ne doivent pas être vides.", "Titolo e testo non possono essere vuoti."),
     "You can only edit your own replies.": ("Du kannst nur eigene Antworten bearbeiten.", "Tu ne peux modifier que tes propres réponses.", "Puoi modificare solo le tue risposte."),
     "You can only edit your own topics.": ("Du kannst nur eigene Themen bearbeiten.", "Tu ne peux modifier que tes propres sujets.", "Puoi modificare solo i tuoi argomenti."),
 })
 
 DJANGOJS.update({
+    "3rd dimension": ("3. Dimension", "3e dimension", "3ª dimension"),
+    "A passage cannot contain any more points.": ("Eine Passage kann keine weiteren Punkte enthalten.", "Un passage ne peut pas contenir davantage de points.", "Un passaggio non può contenere altri punti."),
+    "Add": ("Hinzufügen", "Ajouter", "Aggiungi"),
+    "Add at least two distinct passage points.": ("Füge mindestens zwei unterschiedliche Passagenpunkte hinzu.", "Ajoute au moins deux points distincts au passage.", "Aggiungi almeno due punti distinti al passaggio."),
+    "Add control pair": ("Postenpaar hinzufügen", "Ajouter une paire de postes", "Aggiungi coppia di punti"),
+    "Add obstacle": ("Hindernis hinzufügen", "Ajouter un obstacle", "Aggiungi ostacolo"),
+    "Add passage": ("Passage hinzufügen", "Ajouter un passage", "Aggiungi passaggio"),
+    "Drag controls": ("Posten ziehen", "Déplacer les postes", "Trascina i punti"),
+    "Each passage entrance must overlap passable terrain.": ("Jeder Passageneingang muss passierbares Gelände überlappen.", "Chaque entrée du passage doit chevaucher un terrain praticable.", "Ogni ingresso del passaggio deve sovrapporsi a un terreno percorribile."),
+    "Erase": ("Radieren", "Effacer", "Cancella"),
+    "Make the passage longer than its width so the entrances do not overlap.": ("Mache die Passage länger als ihre Breite, damit sich die Eingänge nicht überlappen.", "Allonge le passage au-delà de sa largeur afin que les entrées ne se chevauchent pas.", "Rendi il passaggio più lungo della sua larghezza affinché gli ingressi non si sovrappongano."),
+    "Obstacles": ("Hindernisse", "Obstacles", "Ostacoli"),
+    "Pan": ("Karte verschieben", "Déplacer la carte", "Sposta la mappa"),
+    "Passage added": ("Passage hinzugefügt", "Passage ajouté", "Passaggio aggiunto"),
+    "Passage points must stay inside the mask.": ("Passagenpunkte müssen innerhalb der Maske bleiben.", "Les points du passage doivent rester à l'intérieur du masque.", "I punti del passaggio devono rimanere all'interno della maschera."),
+    "Passage removed": ("Passage entfernt", "Passage supprimé", "Passaggio rimosso"),
+    "Passage width": ("Passagenbreite", "Largeur du passage", "Larghezza del passaggio"),
+    "Passage width changed": ("Passagenbreite geändert", "Largeur du passage modifiée", "Larghezza del passaggio modificata"),
+    "Polygon": ("Polygon", "Polygone", "Poligono"),
+    "Remove": ("Entfernen", "Supprimer", "Rimuovi"),
+    "Remove obstacle": ("Hindernis entfernen", "Supprimer un obstacle", "Rimuovi ostacolo"),
+    "Remove passage": ("Passage entfernen", "Supprimer un passage", "Rimuovi passaggio"),
+    "These passages exceed the pathfinding complexity limit.": ("Diese Passagen überschreiten die Komplexitätsgrenze der Wegfindung.", "Ces passages dépassent la limite de complexité du calcul d’itinéraire.", "Questi passaggi superano il limite di complessità del calcolo del percorso."),
+    "This map already has the maximum number of passages.": ("Diese Karte hat bereits die maximale Anzahl an Passagen.", "Cette carte contient déjà le nombre maximal de passages.", "Questa mappa contiene già il numero massimo di passaggi."),
+    "This passage geometry is not valid.": ("Diese Passagengeometrie ist ungültig.", "La géométrie de ce passage n'est pas valide.", "La geometria di questo passaggio non è valida."),
+    "Tool size": ("Werkzeuggrösse", "Taille de l'outil", "Dimensione dello strumento"),
     "Align course": ("Bahn ausrichten", "Aligner le parcours", "Allinea percorso"),
     "Add a mask to this map first.": ("Füge dieser Karte zuerst eine Maske hinzu.", "Ajoute d'abord un masque à cette carte.", "Aggiungi prima una maschera a questa mappa."),
     "Draw a map region before enabling infinite play.": (
@@ -530,6 +571,7 @@ DJANGOJS.update({
     "File too large (max. 50 MB)": ("Datei zu gross (max. 50 MB)", "Fichier trop volumineux (max. 50 Mo)", "File troppo grande (max. 50 MB)"),
     "Import": ("Importieren", "Importer", "Importa"),
     "Import routes": ("Routen importieren", "Importer les choix", "Importa percorsi"),
+    "Infinity": ("Infinity", "Infinity", "Infinity"),
     "Loaded": ("Geladen", "Chargé", "Caricato"),
     "No OCAD course found in this file.": ("Keine OCAD-Bahn in dieser Datei gefunden.", "Aucun parcours OCAD trouvé dans ce fichier.", "Nessun percorso OCAD trovato in questo file."),
     "No actions": ("Keine Aktionen", "Aucune action", "Nessuna azione"),

@@ -87,11 +87,16 @@ def tutorial_complete(request):
 
 
 @login_required
-def infinite_play(request):
+def infinite_play(request, file_id=None):
     """Procedurally-generated single-obstacle scenarios (city mode), or —
-    when ?source=mask&file=<id> is passed — infinite play on a real uploaded
-    map mask via the server-built navgraph (WP 3.x)."""
-    return render(request, 'results/infinite_play.html')
+    when ``file_id`` is present — infinite play on a real uploaded map mask
+    via the server-built navgraph (WP 3.x)."""
+    file = None
+    if file_id is not None:
+        file = get_object_or_404(File, id=file_id, deleted=False)
+        if not user_can_access_file(request, file):
+            return HttpResponseNotFound()
+    return render(request, 'results/infinite_play.html', {'infinity_file': file})
 
 
 @login_required
@@ -131,6 +136,7 @@ def infinite_mask_maps(request):
             'id': f.id,
             'filename': f.map_file,
             'name': f.name or f.map_file,
+            'map_scale': f.map_scale,
         })
     return JsonResponse({'maps': maps})
 
@@ -158,11 +164,27 @@ def submit_infinite_choice(request):
         choice_time  = float(data['choice_time'])
         shorter_time = float(data['shorter_time'])
         longer_time  = float(data['longer_time'])
+        file_id      = data.get('file_id')
+
+        file = None
+        if file_id not in (None, ''):
+            try:
+                file_id = int(file_id)
+            except (TypeError, ValueError):
+                return JsonResponse({'error': 'bad file'}, status=400)
+            file = File.objects.filter(
+                id=file_id,
+                deleted=False,
+                infinite_enabled=True,
+            ).first()
+            if not file or not user_can_access_file(request, file):
+                return JsonResponse({'error': 'file not found'}, status=404)
 
         from .models import InfiniteChoice
         InfiniteChoice.objects.create(
             user         = request.user,
             team         = getattr(request.user.profile, 'active_team', None),
+            file         = file,
             correct      = correct,
             choice_time  = choice_time,
             shorter_time = shorter_time,
@@ -410,8 +432,21 @@ def get_files(request):
     profile = request.user.profile
     active_team = profile.active_team
 
+    from .models import InfiniteChoice
+    infinity_done = (
+        InfiniteChoice.objects
+        .filter(user=request.user)
+        .values('file_id')
+        .annotate(n=Count('id'))
+    )
+    infinity_done_map = {entry['file_id']: entry['n'] for entry in infinity_done}
+
     if not active_team:
-        return JsonResponse({'files': [], 'shared_pool': False})
+        return JsonResponse({
+            'files': [],
+            'shared_pool': False,
+            'generated_infinite_done': infinity_done_map.get(None, 0),
+        })
 
     qs = File.objects.filter(deleted=False, published=True)
 
@@ -458,6 +493,7 @@ def get_files(request):
                 if f.label else None
             ),
             'user_cp_done': user_done_map.get(f.id, 0),
+            'infinite_done': infinity_done_map.get(f.id, 0),
         })
 
     return JsonResponse({
@@ -465,6 +501,7 @@ def get_files(request):
         'shared_pool':      active_team.shared_pool,
         'multi_team':       profile.teams.count() > 1,
         'active_team_name': active_team.name,
+        'generated_infinite_done': infinity_done_map.get(None, 0),
     })
 
 

@@ -22,6 +22,12 @@
 import { MinHeap } from './heap.js';
 
 const SQRT2 = Math.SQRT2;
+
+// Monotonic clock for the optional deadline (Node >=16 + browser workers both
+// expose `performance`). Kept module-local so theta_star.js stays DOM-free.
+const nowMs = (typeof performance !== 'undefined' && performance.now)
+	? () => performance.now()
+	: () => Date.now();
 const DXS = new Int8Array([-1, -1, -1, 0, 0, 1, 1, 1]);
 const DYS = new Int8Array([-1, 0, 1, -1, 1, -1, 0, 1]);
 
@@ -50,7 +56,10 @@ function losAndSameTerrain(grid, w, h, x0, y0, x1, y1) {
     }
 }
 
-export function guidedThetaStar(grid, w, h, start, goal, waypoints, switchRadius = 10) {
+// `deadlineMs` (absolute `nowMs()` timestamp, optional) aborts the search
+// (returns null) once exceeded — checked every ~1024 pops. The editor path
+// (pipeline.js) passes none and is unaffected.
+export function guidedThetaStar(grid, w, h, start, goal, waypoints, switchRadius = 10, deadlineMs = null) {
     const sx = start.x | 0, sy = start.y | 0;
     const gx = goal.x | 0, gy = goal.y | 0;
     const n = w * h;
@@ -85,7 +94,9 @@ export function guidedThetaStar(grid, w, h, start, goal, waypoints, switchRadius
     let guidanceIdx = 0;
     const totalWps = waypoints.length / 2;
 
+    let popCount = 0;
     while (open.size > 0) {
+        if (deadlineMs !== null && (popCount++ & 1023) === 0 && nowMs() > deadlineMs) return null;
         const cur = open.pop();
         if (closed[cur]) continue;
         closed[cur] = 1;

@@ -17,8 +17,36 @@ import { TRAIN_SCALE_VALUE } from '/static/project/js/pathing/pipeline.js';
 // user never waits when advancing at the ~2 s play cadence.
 const PREFETCH_TARGET = 3;   // one served + ≥2 buffered
 const PAIR_TIMEOUT_MS = 20000;
+const PAIR_WARN_MS = 5000;
+const REFERENCE_MAP_SCALE = 4000;
+const EDITOR_PX_TO_METRES = 0.48;
+
+// Route-choice limits are real metres. Convert them to the full-resolution
+// mask pixels consumed by navgraph_router using the normal editor/play scale.
+const ROUTE_PICK_MIN_METRES = 40;
+const ROUTE_PICK_MAX_METRES = 120;
+const ROUTE_SIDE_MIN_METRES = 12;
 
 export { TRAIN_SCALE_VALUE };
+
+export function maskScaleForMap(mapScale = REFERENCE_MAP_SCALE) {
+    const parsedScale = Number(mapScale);
+    const safeMapScale = Number.isFinite(parsedScale) && parsedScale > 0
+        ? parsedScale
+        : REFERENCE_MAP_SCALE;
+    const metresPerMapUnit = EDITOR_PX_TO_METRES * (safeMapScale / REFERENCE_MAP_SCALE);
+    const metresPerMaskPixel = metresPerMapUnit * TRAIN_SCALE_VALUE;
+    return {
+        mapScale: safeMapScale,
+        metresPerMapUnit,
+        metresPerMaskPixel,
+        navConfig: {
+            distMinPx: ROUTE_PICK_MIN_METRES / metresPerMaskPixel,
+            distMaxPx: ROUTE_PICK_MAX_METRES / metresPerMaskPixel,
+            sideGapMinPx: ROUTE_SIDE_MIN_METRES / metresPerMaskPixel,
+        },
+    };
+}
 
 // mask px → map units (same space the city scene uses for start/ziel/routes)
 function toMapUnits(p) {
@@ -32,6 +60,12 @@ async function fetchArrayBuffer(url) {
     const res = await fetch(url, { credentials: 'same-origin' });
     if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
     return res.arrayBuffer();
+}
+
+async function fetchJson(url) {
+    const res = await fetch(url, { credentials: 'same-origin' });
+    if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
+    return res.json();
 }
 
 /**
@@ -77,17 +111,21 @@ async function decodeMaskGreyscale(url) {
  * city scene.
  */
 export class MaskSceneSource {
-    constructor({ fileId, filename, buildScene, mapUnitScale = TRAIN_SCALE_VALUE }) {
+    constructor({ fileId, filename, buildScene, mapScale = REFERENCE_MAP_SCALE, mapUnitScale = TRAIN_SCALE_VALUE }) {
         this.fileId = fileId;
         this.filename = filename;
         this.mapId = String(fileId);
         this.buildScene = buildScene;
         this.mapUnitScale = mapUnitScale;
+        this.scale = maskScaleForMap(mapScale);
+        this.mapScale = this.scale.mapScale;
+        this.metresPerMapUnit = this.scale.metresPerMapUnit;
         this.mapImageUrl = `/editor/map/${filename}`;
 
         this.worker = null;
         this.width = 0;
         this.height = 0;
+        this.passageRevision = null;
         this.navReady = null;      // Promise resolved once navgraph ack arrives
         this._msgId = 1;
         this._pendingPairs = new Map();  // msgId → {resolve, reject, timer}
@@ -95,6 +133,7 @@ export class MaskSceneSource {
         this._inFlight = 0;        // outstanding generatePair requests
         this._refillScheduled = false;
         this._destroyed = false;
+        this.metrics = { requested: 0, completed: 0, failed: 0, slow: 0, starved: 0, maxPairMs: 0 };
     }
 
     /** Full-res mask dimensions in map units (for background sizing). */
@@ -117,9 +156,10 @@ export class MaskSceneSource {
             console.warn('[mask-source] worker error:', e.message || e);
         });
 
-        const [binBuffer, mask] = await Promise.all([
+        const [binBuffer, mask, passageDocument] = await Promise.all([
             fetchArrayBuffer(`/editor/navgraph/${this.fileId}/`),
             decodeMaskGreyscale(`/editor/mask/${this.fileId}/`),
+            fetchJson(`/editor/level-passages/${this.fileId}/`),
         ]);
         this.width = mask.width;
         this.height = mask.height;
@@ -138,9 +178,12 @@ export class MaskSceneSource {
             maskBuffer: mask.greys.buffer,
             width: mask.width,
             height: mask.height,
+            config: this.scale.navConfig,
+            levelPassages: passageDocument.items,
         }, [binBuffer, mask.greys.buffer]);
 
         const ack = await ackPromise;
+        this.passageRevision = ack.passageRevision || null;
         // Kick off prefetch immediately so the buffer is warm before first take.
         this._scheduleRefill();
         return ack;
@@ -152,7 +195,12 @@ export class MaskSceneSource {
             if (this._navAckTimer) { clearTimeout(this._navAckTimer); this._navAckTimer = null; }
             if (!this._navAck) return;
             if (msg.error) this._navAck.reject(new Error(msg.error));
-            else this._navAck.resolve({ nodes: msg.nodes, edges: msg.edges, sampleCells: msg.sampleCells });
+            else this._navAck.resolve({
+                nodes: msg.nodes,
+                edges: msg.edges,
+                sampleCells: msg.sampleCells,
+                passageRevision: msg.passageRevision || null,
+            });
             this._navAck = null;
             return;
         }
@@ -169,6 +217,8 @@ export class MaskSceneSource {
     _requestPair() {
         const msgId = this._msgId++;
         this._inFlight++;
+        this.metrics.requested++;
+        const started = performance.now();
         const promise = new Promise((resolve, reject) => {
             const timer = setTimeout(() => {
                 this._pendingPairs.delete(msgId);
@@ -176,8 +226,22 @@ export class MaskSceneSource {
             }, PAIR_TIMEOUT_MS);
             this._pendingPairs.set(msgId, { resolve, reject, timer });
         });
-        this.worker.postMessage({ type: 'generatePair', msgId, mapId: this.mapId });
-        return promise.finally(() => { this._inFlight--; });
+        this.worker.postMessage({
+            type: 'generatePair',
+            msgId,
+            mapId: this.mapId,
+            passageRevision: this.passageRevision,
+        });
+        return promise.then((msg) => {
+            const elapsed = performance.now() - started;
+            this.metrics.completed++;
+            this.metrics.maxPairMs = Math.max(this.metrics.maxPairMs, elapsed);
+            if (elapsed > PAIR_WARN_MS) this.metrics.slow++;
+            return msg;
+        }).catch((err) => {
+            this.metrics.failed++;
+            throw err;
+        }).finally(() => { this._inFlight--; });
     }
 
     /**
@@ -222,10 +286,18 @@ export class MaskSceneSource {
     _wrapPair(pairMsg) {
         const start = toMapUnits(pairMsg.start);
         const goal = toMapUnits(pairMsg.goal);
+        const toMapBarrier = (barrier) => ({
+            ...barrier,
+            ax: barrier.ax * TRAIN_SCALE_VALUE,
+            ay: barrier.ay * TRAIN_SCALE_VALUE,
+            bx: barrier.bx * TRAIN_SCALE_VALUE,
+            by: barrier.by * TRAIN_SCALE_VALUE,
+        });
         const routes = (pairMsg.routes || []).map((poly, i) => ({
             index: i,
             points: (poly || []).map(toMapUnits),
             runtime: pairMsg.runtimes?.[i] ?? null,
+            passageSpans: pairMsg.passageSpans?.[i] || [],
         }));
         if (routes.length < 2 || routes.some((r) => r.points.length < 2)) return null;
         return this.buildScene({
@@ -233,6 +305,8 @@ export class MaskSceneSource {
             goal,
             routes,
             runtimes: pairMsg.runtimes || [],
+            barriers: (pairMsg.barriers || []).map(toMapBarrier),
+            skippedBarriers: (pairMsg.skippedBarriers || []).map(toMapBarrier),
             meta: pairMsg.meta || {},
             source: this,
         });
@@ -243,9 +317,13 @@ export class MaskSceneSource {
         await this.ready();
         if (this.buffer.length) {
             const scene = this.buffer.shift();
+            if (this.buffer.length < 2) {
+                console.warn(`[mask-source] buffer low: ${this.buffer.length} ready, ${this._inFlight} in flight`);
+            }
             this._scheduleRefill();
             return scene;
         }
+        this.metrics.starved++;
         // Buffer empty (first take or a burst) — wait for the next produced scene.
         this._scheduleRefill();
         return new Promise((resolve, reject) => {

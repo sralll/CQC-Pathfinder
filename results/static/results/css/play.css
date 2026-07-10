@@ -159,6 +159,7 @@ body.desktop .stats-choice-sub   { font-size: var(--font-xs); }
 
 #play-stats-inner {
     display: flex;
+    flex-wrap: wrap;
     gap: 6px;
     padding: 5px 3px;
 }
@@ -172,6 +173,20 @@ body.desktop .stats-choice-sub   { font-size: var(--font-xs); }
     padding: 4px 5px;
     border-top: 2px solid;
     overflow: visible;
+}
+
+.stats-mask-diagnostics {
+    flex: 1 1 100%;
+    min-width: 0;
+    padding: 4px 5px;
+    border-top: 2px solid var(--text-dim);
+}
+.stats-diagnostics-title {
+    display: block;
+    margin-bottom: 2px;
+    color: var(--text-soft);
+    font-size: 10px;
+    font-weight: 600;
 }
 
 .stats-total {

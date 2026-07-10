@@ -192,6 +192,9 @@ msgstr "File troppo grande (max. 50 MB)"
 msgid "Fill"
 msgstr "Riempimento"
 
+msgid "Finish"
+msgstr "Termina"
+
 msgid "Forum"
 msgstr "Forum"
 
@@ -223,6 +226,9 @@ msgid "Infinity"
 msgstr "Infinity"
 
 msgid "Infinity Mode"
+msgstr "Modalità infinita"
+
+msgid "Infinity mode"
 msgstr "Modalità infinita"
 
 msgid "Information about error potential detection"
@@ -456,6 +462,9 @@ msgstr "Interruttore spento → vengono mostrate solo le gare."
 msgid "Table"
 msgstr "Tabella"
 
+msgid "Tap to add passage points. Drag to pan the map."
+msgstr "Tocca per aggiungere punti al passaggio. Trascina per spostare la mappa."
+
 msgid "The error potential detection shows how strongly you react when a control has the potential for a big mistake."
 msgstr "Il rilevamento del potenziale di errore mostra quanto reagisci quando un punto può portare a un grande errore."
 
@@ -467,6 +476,9 @@ msgstr "La regione copre ancora l'intera mappa. Restringila verso l'interno cos�
 
 msgid "This analysis should be taken with caution."
 msgstr "Questa analisi va presa con cautela."
+
+msgid "This file is not a valid project."
+msgstr "Questo file non è un progetto valido."
 
 msgid "This map has no mask yet."
 msgstr "Questa mappa non ha ancora una maschera."

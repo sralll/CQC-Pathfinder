@@ -193,6 +193,15 @@ buffer + raster background (3.3, live-verified on staging File 25: nav ack 4019 
 edges, legal pairs, buffer held at 3, map image loads). Refinement stays at `refineRouteLegal`
 (theta* deferred to Phase 5, plan's low-risk rec).
 
+**Scaling correction (2026-07-10):** uploaded-map infinity scenes now use the same
+coordinate/metric model as normal play and the editor: full-res mask px × `0.710` =
+editor/map px, then `0.48 × map_scale/4000` metres per editor px. The provisional
+500–1500 mask-px pair band was replaced by a map-scale-aware 40–120 m band, and the
+route-side threshold is likewise 12 m. Mask controls/connections use normal play's
+25 px radius, 8 px gap and 3 px stroke; blocking marks use the normal 5 px stroke,
+with a matching 7-mask-px enforcement band. Route lengths/NoA/report metadata now use
+the uploaded map's metre scale instead of the generated city's metre-per-unit value.
+
 ⚠ **Not yet confirmable end-to-end** (two known gates, both expected):
 - **Real map-region testing awaits WP 4.1** (coach-drawn polygon). Until then endpoint sampling
   uses the *automatic* hit-zone fallback, so "works" ≠ "validated on true regions" (Lars).
@@ -369,7 +378,14 @@ Acceptance: report visible in editor for 3 test maps; warning appears on a known
 
 Implemented in `project/navgraph_suitability.py` (mirrors `scripts/navgraph_harness.mjs`: sample→snap→graph-A*→barrier alternates→`selectRuntimeRouteOptions` port), called from `build_navgraph` (try/except-guarded — a sim failure never breaks a build) and stashed in `stats["suitability"]`, which already rides along in the `.npz` (no `.bin` format/version change). Endpoint `GET /editor/region-suitability/<file_id>/`; editor `SuitabilityReport` module (`editor.js`) renders in `#region-panel` below the opt-in toggle, with a soft warning driven by a server-computed `warn` flag. Verified on 3 masks: tiny/weak (0.26 Mpx) → 0% valid, warn; small (1.7 Mpx) → 18%, no warn; mid urban (8 Mpx) → 26%, no warn — same ballpark as the WP 2.2 harness numbers for the same masks.
 
-## Phase 5 — Editor-grade refinement, selection parity + blocking elements (masks) — **NEW 2026-07-09**
+## Phase 5 — Editor-grade refinement, selection parity + blocking elements (masks) — ✅ DONE (2026-07-10)
+
+All four WPs implemented + verified (Node acceptance harnesses + live staging
+session; zero legality violations and zero barrier crossings everywhere).
+Remaining: Phase 6 (tuning + phone verification), which inherits these flagged
+items: 5.2 p90 refine times on median/75 Mpx maps, `BARRIER_DRAW_WIDTH_MASK_PX`
+tuning, live legal-fallback rate re-measure on a foregrounded tab,
+`navgraph_suitability.py` still on the old simplified barrier port.
 
 This phase closes the three gaps Phase 3 deliberately left open, and is the missing
 "rest of the pipeline" from the editor:
@@ -414,9 +430,24 @@ their timeout/skipped-barrier semantics off it. Constants live in
 `DEFAULT_CONFIG` (navgraph_router.js) unless noted; every new threshold goes there
 too so Phase 6 can tune in one place.
 
-### WP 5.1 — Selection/rejection parity + time budgets — **Opus**
+### WP 5.1 — Selection/rejection parity + time budgets — **Opus** — ✅ DONE (2026-07-10)
 
-Replace the mask router's local `selectRuntimeRouteOptions` with the shared
+Implemented all 7 items: shared `route_pair_selection.js` injected (worker via
+`/static/…` import, Node by path; stale local `selectRuntimeRouteOptions` deleted);
+city-shape route records (`routeIndex`, `barrier`, `run_time`; routeAttempts 4→5);
+`selectWeightedRoutePair` with maxRelativeGap 0.40 + seeded rng + `skippedBarriers`
+(shape `Array<{ax,ay,bx,by}>` mask px, forwarded in the worker `pair` message);
+budgets 400/200 ms with deadline checks in `graphAstar` + `astarSubgrid` (route 1's
+budget covers snap stubs), <2 routes → `timeout`; balance reject synced 0.05/0.8;
+13-key `meta.rejectionCounts` logged by the worker; harness de-drifted to import the
+real modules. Acceptance: 12-mask batch (seed 1) — **zero legality violations**,
+seeded runs byte-identical, `primaryBudgetMs:1` → timeouts not hangs, served-pipeline
+ms/valid 15.2 vs 18.9 pre-change (×0.80). Gap distribution now centres ~0.113;
+`side` 571→365, `routeside` 479→138, new `balanced` 203 — the intended shift.
+Artifacts: `scratch/wp5_1_summary.md`, `scratch/wp5_1_rebaseline.md`. Note for 5.4:
+`collectstatic` not yet run (no browser check in this WP).
+
+Original spec: Replace the mask router's local `selectRuntimeRouteOptions` with the shared
 weighted selection, and port the city planner's budget/kick semantics.
 
 1. **Shared module via dependency injection.** `route_pair_selection.js` is pure and
@@ -471,9 +502,31 @@ Acceptance: Node batch on ≥ 10 WP 2.2 masks completes with the shared selectio
 seeded runs reproducible; a forced tiny budget (e.g. `primaryBudgetMs: 1`) yields
 `timeout` rejections, not hangs; worker logs show the new counters.
 
-### WP 5.2 — Corridor + guided θ* refinement of served routes — **Opus**
+### WP 5.2 — Corridor + guided θ* refinement of served routes — **Opus** — ✅ DONE (2026-07-10)
 
-Full-quality refinement for the accepted pair only (outside the retry loop), as
+Implemented: new `project/static/project/js/pathing/refine_theta.js` with
+`refineRouteTheta(state, path, barriers, opts) → {path, cost, mode, …}` (`mode ∈
+theta|legal-fallback|unusable`); legal spine → subgrid → barrier stamping → corridor
+→ `guidedThetaStar` (optional `deadlineMs`, editor path untouched) → simplify;
+runtime = Σ `lineCost` on the true mask; `corridorRadius:24` / `refineBudgetMs:600`
+/ `refineTimeoutPolicy:'fallback'` in DEFAULT_CONFIG; `[theta-client]` logs gain
+`theta` + refine mode. Acceptance (seed 1, 220 pairs, small/median/75 Mpx): **zero
+legality violations, zero drawn-bar crossings** (stamped + geometric checks),
+refined ≤ legal-spine runtime **432/432**; p90 refine/pair 772 ms small, 885 ms
+median (marginal, within Node variance), 1413 ms on the opt-in-gated 75 Mpx outlier
+(Phase-6 trim via budget/radius). Spot-check PNGs `scratch/wp5_2/`, summary
+`scratch/wp5_2_summary.md`. Deviations (documented in code):
+`BARRIER_DRAW_WIDTH_MASK_PX = 7` for normal-play's 5 editor-px overprint (widths
+1–2 leak sub-pixel diagonal gaps); LOS-guarded densifying repair after
+`simplifyThetaPath` (Bresenham-vs-linear-sampler corner disagreement forced ~55 %
+fallbacks; now θ* used on ~95 %+ with legality 0); barrier-legality guard rejects
+barrier-crossing legal-fallback pairs (bucketed `timeout` until WP 5.3 owns a
+taxonomy key). For 5.3: exports `BARRIER_DRAW_WIDTH_MASK_PX`,
+`countBarrierViolations(path, barriers, width?)`, `activeBarriersFor`; barriers
+carry `attemptIndex`. For 5.4: thread `meta.refineMode`, `meta.refineFallback`,
+`meta.refine[2]`, `meta.timings.theta`; `collectstatic` still pending.
+
+Original spec: Full-quality refinement for the accepted pair only (outside the retry loop), as
 plan.md's Architecture always intended. New module
 `project/static/project/js/pathing/refine_theta.js` (same-dir relative imports of
 `preprocess.js`, `theta_star.js`, `simplify.js` work in both Node and the worker),
@@ -526,9 +579,71 @@ spot-checks show smooth any-angle polylines hugging terrain (Lars eyeballs a
 handful). Per-stage `[theta-client]` timings extended with `theta` alongside
 `refine`.
 
-### WP 5.3 — Blocking elements without a visibility graph — **Opus**
+### WP 5.3 — Blocking elements without a visibility graph — **Opus** — ✅ DONE (2026-07-10; Node acceptance + live staging check passed)
 
-Make mask barriers as trustworthy as city ones: intelligently anchored, actually
+Implemented in `project/static/project/js/pathing/navgraph_router.js`,
+`project/static/project/js/pathing/worker.js`,
+`results/static/results/js/infinite/mask_scene_source.js`, and
+`results/static/results/js/infinite_play.js`; Node acceptance harness:
+`scripts/wp5_3_verify.mjs`.
+
+- Re-ported the current city barrier tiers (`bestClearEnclosed`,
+  `bestEnclosed`, broad 0.25–0.75 fallback) with the mask configuration.
+  The handoff had retained an obsolete `findBarrier` call signature; it now
+  passes the router state correctly, so barrier-driven alternates actually run.
+- `inSignificantObstacle` flood-fills bounded impassable components and caches
+  the outcome: anchors must be area >= 60 px or elongated (ratio >= 8). Tiny,
+  compact tree/symbol blobs are ignored. Barrier endpoints are rechecked after
+  applying their margin, so a thin fence cannot leave an endpoint in open space.
+- Every emitted bar records `routeEdgeCrossings`; candidates with zero crossings
+  of the route that created them are discarded before rerouting. This is the
+  direct no-op barrier guard required without a visibility graph.
+- `generateOnePair` now returns both all `barriers` and the selected pair's
+  `skippedBarriers` in mask pixels. The worker forwards both; the mask scene
+  source converts them to map units; `buildMaskScene` now supplies
+  `routeResult = { skippedBarriers, blockFastest, barriers }`. Existing
+  `drawRouteBlocks` therefore draws the purple bars in mask play with no new
+  renderer.
+- Full-resolution enforcement is live through the single exported
+  `BARRIER_DRAW_WIDTH_MASK_PX` (originally 3; now 7 to match normal play's 5
+  editor-px stroke): active lower-attempt bars are stamped during theta refinement
+  and `countBarrierViolations` rejects any served crossing. Width 3 remains the
+  smallest watertight raster band.
+
+**Node acceptance — `node scripts/wp5_3_verify.mjs`:** 100 accepted pairs on
+each representative mask (the 75 Mpx run was split into two 50-pair seeds to
+stay within the command window). The harness asserts every placed/skipped end
+is significant, every placed bar has `routeEdgeCrossings >= 1`, and each
+refined route has zero lower-attempt-bar crossings.
+
+| mask | pairs | placed bars | skipped/rendered bars | active route bars | legality / bar crossings |
+|---|---:|---:|---:|---:|---:|
+| small `mask_20250602_081036` | 100 | 397 | 200 | 389 | 0 / 0 |
+| median `mask_20250715_092410` | 100 | 399 | 238 | 476 | 0 / 0 |
+| 75 Mpx `mask_20260422_134232` (seeds 1+2) | 100 | 391 | 192 | 409 | 0 / 0 |
+| **total** | **300** | **1,187** | **630** | **1,274** | **0 / 0** |
+
+**Live staging check done too** (uvicorn-preview :8765, `/dev/agent-login/`, after
+collectstatic + restart): first served scene on File 35 (Solothurn) rendered 3
+purple bars (`#a033f0`, `BLOCKING_STROKE_WIDTH`) via the untouched
+`drawRouteBlocks`; in-page probe 0 route/bar intersections; all 6 bar endpoints
+anchored in significant obstacles with passable mid-spans; zoomed screenshot shows
+a bar spanning a real gap with the route detouring. Evidence
+`scratch/wp5_3/live_pair_file35.json` + `.png`; summary `scratch/wp5_3_summary.md`.
+Deviations (documented in code): unanchored city fallback walls are dropped on
+masks (would float in open ground — window slides until anchored + route-crossing,
+else null); anchor endpoints walk back through `barrierMarginPx` to the first
+significant pixel; `BARRIER_DRAW_WIDTH_MASK_PX` moved to navgraph_router.js
+(re-exported from refine_theta — ESM circular-import TDZ crash otherwise);
+`meta.legality` stays terrain-only, barrier crossings enforced by the
+reject-before-serve guard. WP 5.1/5.2 regression runs green (5.2 small-mask p90
+refine 920 ms — real bars force θ* detours; Phase-6 tuning item). Notes for 5.4:
+a first stats mask-diagnostics block + i18n rows already exist (verify against
+stats.js); `manage_translations --check` currently fails on strings from a
+*parallel level-passages session* (not Phase 5); Python `navgraph_suitability.py`
+still uses the old simplified barrier port (build-time estimate only — Phase 6).
+
+Original spec: Make mask barriers as trustworthy as city ones: intelligently anchored, actually
 route-blocking, rendered to the player, and enforced in refinement.
 
 1. **Port the *current* `findSmartBarrier`.** The navgraph_router `findBarrier`
@@ -576,7 +691,60 @@ intersected zero route edges; live on staging via `/dev/agent-login/`: a pair
 with `blockFastest` shows the purple bar exactly covering the passage, routes
 visibly detour around it.
 
-### WP 5.4 — Play wiring, stats + live verification — **Sonnet**
+### WP 5.4 — Play wiring, stats + live verification — **Sonnet** — ✅ DONE (2026-07-10)
+
+Progress (2026-07-10): implementation and local acceptance wiring completed
+(details below); live staging verification then completed in a second pass:
+
+- **Live session evidence** (`scratch/wp5_4/live_probe.json`, `scratch/wp5_4_summary.md`):
+  collectstatic → `uvicorn-preview` :8765 → `/dev/agent-login/` → active team
+  flipped to `Nationalkader`; drove the real `MaskSceneSource` from the page
+  console at 2 s cadence (rAF-frozen-tab workaround). Solothurn (35, 7.1 Mpx):
+  25 pairs, max round-trip 5.36 s; Aarberg (37, 6.7 Mpx): 12 pairs, max 2.19 s;
+  Locarno Sprint (142, **75 Mpx**, opt-in bypassed for test): 11 pairs, max
+  8.06 s. All ≪ the 20 s `PAIR_TIMEOUT_MS` guard — **no bump needed**; buffer
+  never hit 0 on any map (zero starvation); 13-key rejection counters populated
+  live; stats-panel diagnostics block renders with real data + translations.
+- **stats.js resolution:** the trainer dashboard (`stats.js`) never reads
+  `rejectionCounts` etc. — city mode's equivalents are likewise client-only.
+  The correct surface is `renderStatsPanel` in `infinite_play.js`, which the
+  wiring below fills; no `stats.js` change needed.
+- **i18n:** `manage_translations.py --check` exits 0 (the earlier inherited
+  failure no longer reproduces), `--build` clean for de/fr/it.
+- **Deferred to Phase 6:** live legal-fallback rate ran higher than the WP 5.2
+  Node number (64 % on File 35, 82 % on 142, 0 % on 37) — likely
+  `refineBudgetMs:600` tightness on busy terrain + background-tab CPU
+  throttling; re-measure foregrounded before treating as regression. Zero
+  legality/bar-crossing violations in all modes regardless.
+
+- `worker.js` now forwards the complete WP5 metadata and records `workerMs`.
+  It emits a diagnostic warning when one `generatePair` call exceeds 5 s; the
+  existing 20 s `PAIR_TIMEOUT_MS` remains the hard outer guard.
+- `MaskSceneSource` tracks requested/completed/failed/slow pair calls, maximum
+  pair latency, and buffer starvation. It warns when consuming a scene leaves
+  fewer than two validated scenes ready, making the 2 s cadence requirement
+  observable in the browser console.
+- `buildMaskScene` mirrors the city scene metadata surface: rejection counts,
+  refinement mode/fallback, per-route refinement outcomes, stage timings, and
+  worker latency are retained on `scene.meta`.
+- The play stats panel now includes a translated “Mask generation” diagnostics
+  block with attempts, retries, refinement/fallback state, non-zero rejection
+  counters, and sample/snap/route/refine/theta timings. CSS keeps this block
+  inside the existing stats surface.
+- Added the required `djangojs` catalog rows and rebuilt all `.po/.mo` files.
+  `manage_translations.py --check` still reports one pre-existing Django
+  msgid (`This file is not a valid project.`) missing from the table; the new
+  WP5.4 JS strings are all covered.
+- `node --check` passes for the worker, mask source, and play bundle;
+  `git diff --check` passes. The WP5.3 acceptance smoke remains green after
+  the wiring changes (30 pairs across small/median/75 Mpx: legality 0,
+  active-bar crossings 0).
+- `collectstatic`/`/dev/agent-login/` verification could not run in this
+  workspace because the available Python runtime has no Django installed
+  (`ModuleNotFoundError: No module named 'django'`). Once the project runtime
+  is available, reload the app after collectstatic and verify a coach-enabled
+  mask session keeps ≥2 buffered scenes while the stats panel shows the
+  counters above.
 
 - Thread `meta.rejectionCounts`, refine mode/fallback counts and per-stage timings
   from the worker `pair` message through `buildMaskScene` into the same stats

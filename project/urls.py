@@ -10,6 +10,7 @@ urlpatterns = [
     path('map/<str:filename>', views.get_map, name='get_map'),
     path('mask/<int:file_id>/', views.get_mask, name='get_mask'),
     path('navgraph/<int:file_id>/', views.get_navgraph, name='get_navgraph'),
+    path('level-passages/<int:file_id>/', views.get_level_passages, name='get_level_passages'),
     path('region-suggest/<int:file_id>/', views.region_suggest, name='region_suggest'),
     path('save-region/<int:file_id>/', views.save_region, name='save_region'),
     path('region-build-status/<int:file_id>/', views.navgraph_build_status, name='navgraph_build_status'),

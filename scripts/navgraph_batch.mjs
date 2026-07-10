@@ -19,7 +19,7 @@ import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import {
 	loadArtifact, loadMask, buildState, generatePairs, makeRng,
-	refineRouteLegal, countLegalityViolations, DEFAULT_CONFIG, SUPPORTED_VERSION,
+	countLegalityViolations, DEFAULT_CONFIG, SUPPORTED_VERSION,
 } from './navgraph_harness.mjs';
 
 function parseArgs(argv) {
@@ -94,13 +94,14 @@ async function runMap(maskPath, { count, maxAttempts, seed, sideGapMinPx }) {
 	const wallMs = performance.now() - t0;
 
 	// Mandatory legality assertion over EVERY accepted pair's two routes.
+	// generatePairs already returns routes refined to legal full-res polylines
+	// (generateOnePair refines the served pair), so we assert on them directly.
 	let legalityViolations = 0;
 	const violationDetails = [];
 	for (let i = 0; i < pairs.length; i++) {
 		const pr = pairs[i];
 		for (let ri = 0; ri < pr.routes.length; ri++) {
-			const refined = refineRouteLegal(state, pr.routes[ri].path);
-			const hits = countLegalityViolations(state, refined);
+			const hits = countLegalityViolations(state, pr.routes[ri].path);
 			if (hits > 0) {
 				legalityViolations += hits;
 				violationDetails.push({ mask: name, pairIndex: i, routeIndex: ri, hits });
@@ -125,6 +126,7 @@ async function runMap(maskPath, { count, maxAttempts, seed, sideGapMinPx }) {
 		count: effCount, countRequested: count, note,
 		attempts: stats.attempts, valid: stats.valid, validRate: stats.validRate,
 		meanRetries, medianRetries, p90Retries, meanMsPerValid,
+		meanRelGap: stats.meanRelGap, medianRelGap: stats.medianRelGap, gapHist: stats.gapHist,
 		reasonCounts, topReasons, legalityViolations, violationDetails,
 		wallMs: +wallMs.toFixed(0),
 		meetsGate: meanRetries != null && meanRetries <= 5 && meanMsPerValid != null && meanMsPerValid <= 1000,
@@ -180,6 +182,12 @@ async function main() {
 	const aggReasons = {};
 	for (const r of ok) for (const [k, v] of Object.entries(r.reasonCounts)) aggReasons[k] = (aggReasons[k] || 0) + v;
 
+	// Aggregate served relative-gap distribution across all maps.
+	const aggGapHist = {};
+	for (const r of ok) for (const [k, v] of Object.entries(r.gapHist || {})) aggGapHist[k] = (aggGapHist[k] || 0) + v;
+	const aggMeanRelGap = meanOfMeans('meanRelGap');
+	const aggMedianRelGap = meanOfMeans('medianRelGap');
+
 	const goNoGo = (gatePassPct >= 70) && (totalLegalityViolations === 0);
 
 	// -------------------------------------------------------------- markdown
@@ -221,6 +229,12 @@ async function main() {
 	lines.push(`- Mean of per-map mean-ms/valid: **${aggMeanMs != null ? aggMeanMs.toFixed(1) : '-'} ms**`);
 	lines.push(`- Maps meeting gate (mean retries <= 5 AND mean ms/valid <= 1000): **${gatePassCount}/${ok.length} (${gatePassPct.toFixed(1)}%)**`);
 	lines.push(`- Aggregate rejection reasons: ${JSON.stringify(aggReasons)}`);
+	lines.push('');
+	lines.push('## Served relative-gap distribution');
+	lines.push('');
+	lines.push(`- Mean of per-map mean relative gap: **${aggMeanRelGap != null ? aggMeanRelGap.toFixed(4) : '-'}**` +
+		`  |  mean of per-map median: **${aggMedianRelGap != null ? aggMedianRelGap.toFixed(4) : '-'}**`);
+	lines.push(`- Aggregate gap histogram (served pairs): ${JSON.stringify(aggGapHist)}`);
 	lines.push('');
 
 	lines.push('## Legality assertion (mandatory)');
@@ -276,7 +290,7 @@ async function main() {
 		fs.mkdirSync(path.dirname(jsonPath), { recursive: true });
 		fs.writeFileSync(jsonPath, JSON.stringify({ label, count, seed, sideGapMinPx, results, aggregate: {
 			totalAttempts, totalValid, aggValidRate, aggMeanRetries, aggMeanMs, gatePassCount, gatePassPct,
-			totalLegalityViolations, aggReasons, goNoGo,
+			totalLegalityViolations, aggReasons, aggGapHist, aggMeanRelGap, aggMedianRelGap, goNoGo,
 		} }, null, 2));
 		console.log(`Wrote json: ${jsonPath}`);
 	}

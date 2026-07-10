@@ -12,14 +12,35 @@ msgstr "MIME-Version: 1.0\nContent-Type: text/plain; charset=UTF-8\nContent-Tran
 msgid "+ automatic route"
 msgstr "+ automatische Route"
 
+msgid "3rd dimension"
+msgstr "3. Dimension"
+
+msgid "A passage cannot contain any more points."
+msgstr "Eine Passage kann keine weiteren Punkte enthalten."
+
 msgid "A project with this name already exists."
 msgstr "Ein Projekt mit diesem Namen existiert bereits."
 
 msgid "A region needs at least 3 points."
 msgstr "Eine Region braucht mindestens 3 Punkte."
 
+msgid "Add"
+msgstr "Hinzufügen"
+
 msgid "Add a mask to this map first."
 msgstr "Füge dieser Karte zuerst eine Maske hinzu."
+
+msgid "Add at least two distinct passage points."
+msgstr "Füge mindestens zwei unterschiedliche Passagenpunkte hinzu."
+
+msgid "Add control pair"
+msgstr "Postenpaar hinzufügen"
+
+msgid "Add obstacle"
+msgstr "Hindernis hinzufügen"
+
+msgid "Add passage"
+msgstr "Passage hinzufügen"
 
 msgid "Additionally"
 msgstr "Zusätzlich"
@@ -41,6 +62,9 @@ msgstr "Bei Links/Rechts-Posten entweder direkt die Knöpfe oder die Route an de
 
 msgid "At Left/Right controls, either tap the buttons directly or tap the route at the expected spot on the map, or tap the map after deciding to reveal the routes."
 msgstr "Bei Links/Rechts-Posten entweder direkt die Knöpfe antippen oder die Route an der erwarteten Stelle auf der Karte antippen, oder nach der Entscheidung auf die Karte tippen, um die Routen anzuzeigen."
+
+msgid "Attempts"
+msgstr "Versuche"
 
 msgid "Author"
 msgstr "Autor"
@@ -201,11 +225,17 @@ msgstr "Distanz-basierte Zeit"
 msgid "Done"
 msgstr "Fertig"
 
+msgid "Drag controls"
+msgstr "Posten ziehen"
+
 msgid "Drag the corners inward to mark the map area."
 msgstr "Ziehe die Ecken nach innen, um den Kartenbereich zu markieren."
 
 msgid "Draw a map region before enabling infinite play."
 msgstr "Zeichne eine Kartenregion, bevor du den Infinity-Modus aktivierst."
+
+msgid "Each passage entrance must overlap passable terrain."
+msgstr "Jeder Passageneingang muss passierbares Gelände überlappen."
 
 msgid "Edit points"
 msgstr "Punkte bearbeiten"
@@ -224,6 +254,9 @@ msgstr "Vergrössern"
 
 msgid "Enter the real-world distance — drag the endpoints to adjust."
 msgstr "Gib die reale Distanz ein – ziehe die Endpunkte zum Anpassen."
+
+msgid "Erase"
+msgstr "Radieren"
 
 msgid "Error"
 msgstr "Fehler"
@@ -264,6 +297,9 @@ msgstr "Finde die schnellste Route auf der leeren Karte. Klicke direkt an die St
 msgid "Find the fastest route on the empty map. Tap directly where your route goes to select it immediately. If the selection is unambiguous at the tapped spot, the route is selected right away."
 msgstr "Finde die schnellste Route auf der leeren Karte. Tippe direkt an die Stelle, wo deine Route durchgeht, um sie direkt auszuwählen. Wenn an der angetippten Stelle die Auswahl eindeutig ist, wird die Route sofort ausgewählt."
 
+msgid "Generated maps"
+msgstr "Generierte Karten"
+
 msgid "Generating mask…"
 msgstr "Maske wird generiert…"
 
@@ -300,6 +336,9 @@ msgstr "Infinity-Modus aus"
 msgid "Infinite play on"
 msgstr "Infinity-Modus an"
 
+msgid "Infinity"
+msgstr "Infinity"
+
 msgid "Label"
 msgstr "Label"
 
@@ -330,8 +369,14 @@ msgstr "Karten werden geladen…"
 msgid "Loading region…"
 msgstr "Region wird geladen…"
 
+msgid "Make the passage longer than its width so the entrances do not overlap."
+msgstr "Mache die Passage länger als ihre Breite, damit sich die Eingänge nicht überlappen."
+
 msgid "Mask edited"
 msgstr "Maske bearbeitet"
+
+msgid "Mask generation"
+msgstr "Masken-Generierung"
 
 msgid "Mask ready"
 msgstr "Maske fertig"
@@ -426,8 +471,29 @@ msgstr "OCAD-Bahn-Import fehlgeschlagen."
 msgid "Obstacle changed"
 msgstr "Hindernis geändert"
 
+msgid "Obstacles"
+msgstr "Hindernisse"
+
 msgid "Own stats"
 msgstr "Eigene Stats"
+
+msgid "Pan"
+msgstr "Karte verschieben"
+
+msgid "Passage added"
+msgstr "Passage hinzugefügt"
+
+msgid "Passage points must stay inside the mask."
+msgstr "Passagenpunkte müssen innerhalb der Maske bleiben."
+
+msgid "Passage removed"
+msgstr "Passage entfernt"
+
+msgid "Passage width"
+msgstr "Passagenbreite"
+
+msgid "Passage width changed"
+msgstr "Passagenbreite geändert"
 
 msgid "Personal"
 msgstr "Persönlich"
@@ -443,6 +509,9 @@ msgstr "Bitte zuerst eine Karte öffnen oder hochladen."
 
 msgid "Please select an OCD file."
 msgstr "Bitte eine OCD-Datei auswählen."
+
+msgid "Polygon"
+msgstr "Polygon"
 
 msgid "Potential"
 msgstr "Potential"
@@ -477,11 +546,17 @@ msgstr "Graph wird neu aufgebaut…"
 msgid "Redo"
 msgstr "Wiederherstellen"
 
+msgid "Refine"
+msgstr "Verfeinerung"
+
 msgid "Region saved & graph rebuilt."
 msgstr "Region gespeichert & Graph neu aufgebaut."
 
 msgid "Region saved."
 msgstr "Region gespeichert."
+
+msgid "Rejections"
+msgstr "Ablehnungen"
 
 msgid "Released"
 msgstr "Freigegeben"
@@ -489,8 +564,17 @@ msgstr "Freigegeben"
 msgid "Reload"
 msgstr "Neu laden"
 
+msgid "Remove"
+msgstr "Entfernen"
+
 msgid "Remove label"
 msgstr "Label entfernen"
+
+msgid "Remove obstacle"
+msgstr "Hindernis entfernen"
+
+msgid "Remove passage"
+msgstr "Passage entfernen"
 
 msgid "Remove point"
 msgstr "Punkt entfernen"
@@ -518,6 +602,9 @@ msgstr "Projekt-JSON wiederherstellen"
 
 msgid "Results"
 msgstr "Resultate"
+
+msgid "Retries"
+msgstr "Wiederholungen"
 
 msgid "Right"
 msgstr "Rechts"
@@ -627,11 +714,20 @@ msgstr "Die Datei ist kein gültiges JSON."
 msgid "The routes are shown on the map, but"
 msgstr "Die Routen werden auf der Karte angezeigt, aber"
 
+msgid "These passages exceed the pathfinding complexity limit."
+msgstr "Diese Passagen überschreiten die Komplexitätsgrenze der Wegfindung."
+
 msgid "This file is not a valid project."
 msgstr "Diese Datei ist kein gültiges Projekt."
 
 msgid "This file is published"
 msgstr "Diese Datei ist veröffentlicht"
+
+msgid "This map already has the maximum number of passages."
+msgstr "Diese Karte hat bereits die maximale Anzahl an Passagen."
+
+msgid "This passage geometry is not valid."
+msgstr "Diese Passagengeometrie ist ungültig."
 
 msgid "Time"
 msgstr "Zeit"
@@ -641,6 +737,12 @@ msgstr "Zeitsensitivität"
 
 msgid "Time vs Ø:"
 msgstr "Zeit vs. Ø:"
+
+msgid "Timings"
+msgstr "Zeiten"
+
+msgid "Tool size"
+msgstr "Werkzeuggrösse"
 
 msgid "Total time of the route"
 msgstr "Gesamtzeit der Route"
@@ -695,6 +797,9 @@ msgstr "zusätzliche Zeit wegen scharfen Ecken"
 
 msgid "extra time due to stairs or other obstacles"
 msgstr "zusätzliche Zeit wegen Treppen oder anderen Hindernissen"
+
+msgid "fallback"
+msgstr "Fallback"
 
 msgid "fastest route chosen"
 msgstr "schnellste Route gewählt"
