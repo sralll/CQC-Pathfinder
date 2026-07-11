@@ -113,6 +113,28 @@ assert.equal(projectedObstacle.perRoute[0].strategy, 'same-passage-overlap');
 assert.equal(projectedObstacle.perRoute[0].legacy.distinct, true);
 assert.equal(projectedObstacle.perRoute[0].surroundingBase.distinct, false);
 
+// The Infinity pair gate (navgraph_router.generateOnePair) passes {x, y}
+// object routes with authoritative spans: a pair that shares its passage
+// traversal over a projected level-0 obstacle must not count as distinct.
+function navgraphRoute(points, spans) {
+    const route = points.map(([x, y]) => ({ x, y }));
+    route.passageSpans = spans;
+    return route;
+}
+const navPairA = navgraphRoute(
+    [[5, 18], [15, 18], [40, 17], [65, 18], [75, 18]],
+    [{ passageId: 'wide-horizontal', fromIndex: 1, toIndex: 3 }],
+);
+const navPairB = navgraphRoute(
+    [[5, 20], [15, 20], [40, 21], [65, 20], [75, 20]],
+    [{ passageId: 'wide-horizontal', fromIndex: 1, toIndex: 3 }],
+);
+const navPair = layeredRouteDistinct(
+    navPairA, [navPairB], underBridgeObstacleGrid, width, height, passages,
+);
+assert.equal(navPair.distinct, false);
+assert.equal(navPair.perRoute[0].strategy, 'same-passage-overlap');
+
 // Two routes may share the same line through a passage yet remain distinct
 // because a real base-surface obstacle separates their approach/exit legs.
 const surroundingGrid = openGrid(width, height);

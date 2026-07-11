@@ -489,6 +489,8 @@ class InfinityDebugSecurityTests(TestCase):
             self.client.get(reverse('debug_infinity_reports')),
             self.client.get(reverse('debug_infinity_report_detail', args=[self.report.id])),
             self.client.delete(reverse('debug_infinity_report_detail', args=[self.report.id])),
+            self.client.get(reverse('debug_infinity_file_map', args=[self.report.seed])),
+            self.client.get(reverse('debug_infinity_file_mask', args=[self.report.seed])),
         ]
 
         self.assertTrue(all(response.status_code in (403, 404) for response in responses))
@@ -507,6 +509,27 @@ class InfinityDebugSecurityTests(TestCase):
         self.assertEqual(list_response.json()['reports'][0]['id'], self.report.id)
         self.assertEqual(detail_response.status_code, 200)
         self.assertEqual(detail_response.json()['report']['seed'], 12345)
+        self.assertIsNone(detail_response.json()['report']['infinity_file'])
+
+    def test_report_seed_matching_file_id_loads_uploaded_map_metadata(self):
+        infinity_file = File.objects.create(
+            id=self.report.seed,
+            name='Reported uploaded map',
+            team=self.team,
+            map_file='reported-map.png',
+        )
+        superuser = User.objects.create_superuser(username='admin', password='pw')
+        self.client.force_login(superuser)
+
+        response = self.client.get(reverse('debug_infinity_report_detail', args=[self.report.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()['report']['infinity_file'], {
+            'id': infinity_file.id,
+            'name': infinity_file.name,
+            'map_url': reverse('debug_infinity_file_map', args=[infinity_file.id]),
+            'mask_url': reverse('debug_infinity_file_mask', args=[infinity_file.id]),
+        })
 
     def test_superuser_can_delete_infinity_report(self):
         superuser = User.objects.create_superuser(username='admin', password='pw')

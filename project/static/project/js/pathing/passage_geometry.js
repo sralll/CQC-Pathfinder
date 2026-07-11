@@ -196,12 +196,16 @@ export function hitTestPassage(passage, x, y, tolerance = 0) {
     return distanceToPassage(passage, x, y) <= passage.width / 2 + Math.max(0, tolerance) + EPSILON;
 }
 
-/** Entrance identity in the two rectangular bands outside the drawn endpoints. */
+/** Entrance identity in the two rectangular bands outside the drawn endpoints.
+ *  The tolerance also applies along the corridor axis so a point on (or within
+ *  tolerance of) the drawn cap plane still counts as touching that entrance —
+ *  raster cell membership stays strictly outside the plane. */
 export function passageEntranceAt(passage, x, y, tolerance = 0) {
     if (!hitTestPassage(passage, x, y, tolerance)) return 0;
     const projections = terminalProjections(resolveFrames(passage), x, y);
-    const inStart = projections.start < -EPSILON;
-    const inEnd = projections.end < -EPSILON;
+    const reach = Math.max(0, tolerance) + EPSILON;
+    const inStart = projections.start <= reach;
+    const inEnd = projections.end <= reach;
     return (inStart ? 1 : 0) | (inEnd ? 2 : 0);
 }
 

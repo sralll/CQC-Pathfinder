@@ -185,8 +185,9 @@ class _State:
 
     __slots__ = (
         "mask", "W", "H", "min_cost_per_px", "sample_cells", "coarse_scale",
-        "buckets", "bucket_cell", "nodes", "adj_start", "adj_to", "adj_w",
-        "adj_edge", "edge_ux", "edge_uy", "edge_vx", "edge_vy",
+        "buckets", "bucket_cell", "nodes", "node_in_region", "adj_start",
+        "adj_to", "adj_w", "adj_edge", "edge_ux", "edge_uy", "edge_vx",
+        "edge_vy",
     )
 
 
@@ -225,11 +226,22 @@ def _build_state(nodes, edges, weights, coarse_minval, coarse_clear, coarse_labe
         sample_cells = list(zip(cy_idx[in_hz].tolist(), cx_idx[in_hz].tolist()))
     st.sample_cells = sample_cells
 
+    # Region gate (mirrors the client router): the stored hit zone is
+    # authoritative for the whole route, so nodes outside it are never
+    # snapped to or expanded.
+    N = len(nodes)
+    if N:
+        nodes_arr = np.asarray(nodes, dtype=np.int64)
+        nhy = np.minimum(nodes_arr[:, 1] // hitzone_scale, hh - 1)
+        nhx = np.minimum(nodes_arr[:, 0] // hitzone_scale, hw - 1)
+        st.node_in_region = coarse_hitzone[nhy, nhx] != 0
+    else:
+        st.node_in_region = np.zeros(0, dtype=bool)
+
     # Node bucket grid for snapping.
     cell = max(1, CONFIG["snapMaxDistPx"])
     st.bucket_cell = cell
     buckets = {}
-    N = len(nodes)
     for i in range(N):
         nx, ny = nodes[i]
         bx, by = int(nx // cell), int(ny // cell)
@@ -330,6 +342,9 @@ def _snap_endpoint(st, pt):
     for gx in (bx - 1, bx, bx + 1):
         for gy in (by - 1, by, by + 1):
             for ni in st.buckets.get((gx, gy), ()):
+                # Routes must never touch a node outside the stored region.
+                if not st.node_in_region[ni]:
+                    continue
                 nx, ny = st.nodes[ni]
                 d = math.hypot(nx - px, ny - py)
                 if d <= CONFIG["snapMaxDistPx"]:
@@ -404,10 +419,14 @@ def _graph_astar(st, goal_pt, start_snap, goal_snap, blocked_edges=None):
                     push(heap, (tentative + h_euclid(nx, ny), ni))
         else:
             s0, s1 = adj_start[cur], adj_start[cur + 1]
+            in_region = st.node_in_region
             for e in range(s0, s1):
                 if blocked is not None and blocked[adj_edge[e]]:
                     continue
                 to = adj_to[e]
+                # A node outside the stored region may never appear on a path.
+                if not in_region[to]:
+                    continue
                 tentative = gc + adj_w[e]
                 if tentative < g[to]:
                     g[to] = tentative

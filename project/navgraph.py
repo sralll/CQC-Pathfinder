@@ -26,9 +26,10 @@ Polygonizing black pixels gives a visibility graph with a uniform-cost
 assumption — fine for the (uniform) generated cities, wrong for real masks whose
 terrain weights drive route choice. Instead we skeletonize the *free* space
 (medial axis) so nodes sit in corridor centres, sample along corridors, and add
-a sparse lattice across large open plazas. Terrain is respected twice: at node
-placement (open-region lattice vs. corridor skeleton) and in every measured edge
-weight.
+a sparse lattice across large open plazas. Dense obstacle-boundary and
+low-clearance skeleton samples preserve narrow gates while open ground stays
+sparse. Terrain is respected both when nearby nodes are deduplicated and in
+every measured edge weight.
 
 
 Adaptive resolution
@@ -176,18 +177,22 @@ SKELETON_MAX_DS = 8
 # density roughly constant in map units regardless of the adaptive factor.
 SPUR_MIN_LEN = 4             # prune skeleton branches shorter than this (coarse px)
 RESAMPLE_SPACING_PX = 48     # add a node every ~this many full-res px along a segment
-# Open plazas/fields get a uniform lattice of crossing nodes. A convex field's
-# skeleton is just a central point + corner spurs, which forces routes to bend;
-# a denser, more uniform lattice that reaches nearer the field edges lets legs
-# cross straight. Clearance threshold lowered so the lattice extends closer to
-# field boundaries; spacing tightened for uniform coverage.
-OPEN_CLEARANCE_PX = 12       # full-res clearance above which lattice may start
+# Obstacle-biased sampling.  The skeleton guarantees broad connectivity, while
+# these nodes give the graph enough local choices around walls/buildings and in
+# narrow gates.  Open space stays deliberately sparse; otherwise most of the
+# artifact budget is spent where a straight crossing already works well.
+OBSTACLE_CLEARANCE_PX = 16   # dense sampling at/below this distance from a wall
+OBSTACLE_SPACING_PX = 12     # boundary-band lattice spacing
+BOTTLENECK_SPACING_PX = 16   # extra low-clearance skeleton anchors
+NODE_DEDUPE_PX = 6           # merge only nearly coincident, mutually visible nodes
+NODE_DEDUPE_TERRAIN_DELTA = 16  # never merge a path node into nearby slow terrain
 NEAR_OBSTACLE_CLEARANCE_PX = 80  # denser lattice up to this clearance from obstacles
-LATTICE_SPACING_NEAR_PX = 24  # obstacle-adjacent open-space lattice spacing
-LATTICE_SPACING_FAR_PX = 40   # plaza/interior open-space lattice spacing
+LATTICE_SPACING_NEAR_PX = 32  # transition band between boundary and open space
+LATTICE_SPACING_FAR_PX = 64   # plaza/interior open-space lattice spacing
 
 # --- Edges -------------------------------------------------------------------
 EDGE_KNN = 6                 # k-nearest-neighbour candidate edges per node
+EDGE_OBSTACLE_KNN = 12       # more choices for boundary/gate nodes (many are wall-blocked)
 EDGE_MAX_DIST = 120          # px; candidate edge endpoints must be within this (full-res)
 EDGE_MARGIN = 12             # px; subgrid margin around a k-NN edge bbox for A*
 EDGE_DETOUR_RATIO = 3.0      # drop a k-NN edge whose A* path is > this * straight
@@ -556,49 +561,95 @@ def _resample_segments(node_yx, segments, spacing):
     return node_yx, edges
 
 
-def _lattice_nodes_into(open_mask, occupied, spacing):
-    """Add one lattice pass into ``occupied`` and return new coarse coords."""
+def _lattice_candidates(open_mask, spacing):
+    """Return regular-grid candidates whose cells belong to ``open_mask``."""
     h, w = open_mask.shape
-    new_yx = []
+    candidates = []
     half = max(1, spacing // 2)
     for y in range(half, h, spacing):
         for x in range(half, w, spacing):
-            if not open_mask[y, x]:
-                continue
-            # skip if an existing node is within half-spacing
-            y0, y1 = max(0, y - half), min(h, y + half + 1)
-            x0, x1 = max(0, x - half), min(w, x + half + 1)
-            if occupied[y0:y1, x0:x1].any():
-                continue
-            new_yx.append((y, x))
-            occupied[y, x] = True
-    return new_yx
+            if open_mask[y, x]:
+                candidates.append((y, x))
+    return candidates
 
 
-def _adaptive_lattice_nodes(coarse_clearance, existing_yx, near_spacing,
-                            far_spacing, open_clearance, near_clearance_max):
-    """Add an adaptive lattice over open regions so plazas are crossable.
+def _bottleneck_candidates(skel, coarse_clearance, max_clearance, spacing):
+    """Sample low-clearance skeleton pixels, prioritising narrow throats.
 
-    Near obstacles, a denser lattice gives the graph plausible options that skim
-    around local blockers instead of snapping to the center of a plaza. Farther
-    inside broad open areas, a coarser lattice keeps artifact size and graph A*
-    cheap.
+    Junction/end-point extraction alone does not guarantee a node in a wall
+    opening: a long skeleton segment may cross the opening between its normal
+    48 px resample points.  These anchors fill only that low-clearance part of
+    the skeleton.  A small Poisson-like suppression keeps flat, narrow streets
+    from receiving a node at every skeleton pixel.
     """
-    h, w = coarse_clearance.shape
-    occupied = np.zeros((h, w), dtype=bool)
-    for (y, x) in existing_yx:
-        if 0 <= y < h and 0 <= x < w:
-            occupied[y, x] = True
+    ys, xs = np.where(
+        skel & (coarse_clearance > 0) &
+        (coarse_clearance <= max_clearance)
+    )
+    if not len(ys):
+        return []
 
+    # Narrowest first means a gate wins over a nearby, wider corridor when the
+    # suppression discs overlap.  y/x make the result deterministic.
+    order = np.lexsort((xs, ys, coarse_clearance[ys, xs]))
+    cell = max(1, spacing)
+    buckets = {}
+    out = []
+    radius2 = spacing * spacing
+    for oi in order.tolist():
+        y, x = int(ys[oi]), int(xs[oi])
+        by, bx = y // cell, x // cell
+        too_close = False
+        for gy in (by - 1, by, by + 1):
+            for gx in (bx - 1, bx, bx + 1):
+                for yy, xx in buckets.get((gy, gx), ()):
+                    if (y - yy) ** 2 + (x - xx) ** 2 <= radius2:
+                        too_close = True
+                        break
+                if too_close:
+                    break
+            if too_close:
+                break
+        if too_close:
+            continue
+        out.append((y, x))
+        buckets.setdefault((by, bx), []).append((y, x))
+    return out
+
+
+def _adaptive_lattice_nodes(coarse_clearance, skel, obstacle_spacing,
+                            bottleneck_spacing, near_spacing, far_spacing,
+                            obstacle_clearance, near_clearance_max):
+    """Return obstacle-biased candidates, then progressively sparser lattices.
+
+    The returned order is significant: bottleneck anchors and the obstacle
+    boundary band come first, followed by transition/open-area candidates.
+    Full-resolution, visibility-safe deduplication happens after node snapping,
+    where thin walls cannot disappear because of skeleton downsampling.
+    """
+    bottlenecks = _bottleneck_candidates(
+        skel, coarse_clearance, obstacle_clearance, bottleneck_spacing)
+    boundary_open = (
+        (coarse_clearance > 0) &
+        (coarse_clearance <= obstacle_clearance)
+    )
     near_open = (
-        (coarse_clearance > open_clearance) &
+        (coarse_clearance > obstacle_clearance) &
         (coarse_clearance <= near_clearance_max)
     )
     far_open = coarse_clearance > near_clearance_max
 
-    new_yx = _lattice_nodes_into(near_open, occupied, near_spacing)
-    new_yx.extend(_lattice_nodes_into(far_open, occupied, far_spacing))
-    return new_yx
+    boundary = _lattice_candidates(boundary_open, obstacle_spacing)
+    near = _lattice_candidates(near_open, near_spacing)
+    far = _lattice_candidates(far_open, far_spacing)
+    candidates = bottlenecks + boundary + near + far
+    return candidates, {
+        "bottleneck_candidates": len(bottlenecks),
+        "boundary_candidates": len(boundary),
+        "near_candidates": len(near),
+        "far_candidates": len(far),
+        "obstacle_candidate_count": len(bottlenecks) + len(boundary),
+    }
 
 
 # =============================================================================
@@ -717,6 +768,65 @@ def _line_cost(mask, x0, y0, x1, y1):
     return cost
 
 
+def _dedupe_appended_nodes(mask, nodes_xy, fixed_count, min_distance,
+                           terrain_delta=NODE_DEDUPE_TERRAIN_DELTA):
+    """Deduplicate newly appended nodes without crossing walls or terrain bands.
+
+    Skeleton nodes ``[:fixed_count]`` are topology-bearing and are never
+    removed.  Later obstacle/lattice nodes are discarded only when a retained
+    node is almost coincident, the straight segment between them is passable,
+    and their terrain values are similar.  The visibility requirement is what
+    preserves two close nodes on opposite sides of a thin wall; the terrain
+    requirement preserves a fast-path anchor beside slow vegetation.
+
+    Returns ``(deduped_nodes, source_indices)`` where ``source_indices[new_i]``
+    is the corresponding index in the original ``nodes_xy`` list.
+    """
+    if min_distance <= 0 or len(nodes_xy) <= fixed_count:
+        return list(nodes_xy), list(range(len(nodes_xy)))
+
+    cell = max(1, int(min_distance))
+    radius2 = float(min_distance * min_distance)
+    buckets = {}
+    out = []
+    source_indices = []
+
+    def retain(source_idx):
+        x, y = nodes_xy[source_idx]
+        out_idx = len(out)
+        out.append((int(x), int(y)))
+        source_indices.append(source_idx)
+        buckets.setdefault((int(x) // cell, int(y) // cell), []).append(out_idx)
+
+    for idx in range(min(fixed_count, len(nodes_xy))):
+        retain(idx)
+
+    for source_idx in range(fixed_count, len(nodes_xy)):
+        x, y = nodes_xy[source_idx]
+        bx, by = int(x) // cell, int(y) // cell
+        duplicate = False
+        value = int(mask[int(y), int(x)])
+        for gx in (bx - 1, bx, bx + 1):
+            for gy in (by - 1, by, by + 1):
+                for kept_idx in buckets.get((gx, gy), ()):
+                    xx, yy = out[kept_idx]
+                    if (x - xx) ** 2 + (y - yy) ** 2 > radius2:
+                        continue
+                    if abs(value - int(mask[yy, xx])) > terrain_delta:
+                        continue
+                    if _line_cost(mask, int(x), int(y), xx, yy) is not None:
+                        duplicate = True
+                        break
+                if duplicate:
+                    break
+            if duplicate:
+                break
+        if not duplicate:
+            retain(source_idx)
+
+    return out, source_indices
+
+
 def _astar_edge(mask, xi, yi, xj, yj, straight, margin=EDGE_MARGIN,
                 detour_ratio=EDGE_DETOUR_RATIO):
     """A* an edge on the bounding subgrid; return cost or ``None`` if no path /
@@ -771,12 +881,20 @@ def _weight_edges(mask, nodes_xy, candidate_edges, astar_pairs):
     return edges_out, weights_out
 
 
-def _candidate_edges(nodes_xy, skeleton_edges):
-    """Union of skeleton-adjacency edges and k-NN candidates within radius."""
+def _candidate_edges(nodes_xy, skeleton_edges, obstacle_nodes=None):
+    """Union of skeleton edges and local neighbour candidates.
+
+    Obstacle/gate nodes consider more neighbours because their geometrically
+    closest candidates often sit across an intervening wall and are discarded
+    during legality weighting.  The larger pool makes it much more likely that
+    both sides of a real opening receive usable connections without making the
+    whole open-area graph dense.
+    """
     cand = set()
     for a, b, _ in skeleton_edges:
         if a != b:
             cand.add((min(a, b), max(a, b)))
+    obstacle_nodes = set(obstacle_nodes or ())
     pts = np.asarray(nodes_xy, dtype=np.float64)
     n = len(pts)
     if n == 0:
@@ -798,8 +916,9 @@ def _candidate_edges(nodes_xy, skeleton_edges):
         d2 = (pts[near_arr, 0] - x) ** 2 + (pts[near_arr, 1] - y) ** 2
         order = np.argsort(d2)
         taken = 0
+        wanted = EDGE_OBSTACLE_KNN if idx in obstacle_nodes else EDGE_KNN
         for oi in order:
-            if taken >= EDGE_KNN:
+            if taken >= wanted:
                 break
             j = int(near_arr[oi])
             if d2[oi] > EDGE_MAX_DIST * EDGE_MAX_DIST:
@@ -1024,31 +1143,38 @@ def build_navgraph(mask_path, region_polygon=None, verbose=False):
     #    specified in full-res px and converted to coarse px for this stage.
     t = time.time()
     resample_coarse = max(3, round(RESAMPLE_SPACING_PX / ds))
+    obstacle_spacing_coarse = max(2, round(OBSTACLE_SPACING_PX / ds))
+    bottleneck_spacing_coarse = max(2, round(BOTTLENECK_SPACING_PX / ds))
     lattice_near_coarse = max(3, round(LATTICE_SPACING_NEAR_PX / ds))
     lattice_far_coarse = max(4, round(LATTICE_SPACING_FAR_PX / ds))
     node_yx, segments = _skeleton_nodes_and_segments(skel, resample_coarse)
     node_yx, skeleton_edges = _resample_segments(node_yx, segments, resample_coarse)
 
     n_skeleton_nodes = len(node_yx)
-    # Open-region lattice (coarse clearance threshold). The lattice is confined
-    # to the map footprint: it exists to make in-map plazas/fields crossable, and
-    # flooding the off-map open margin with a dense mesh only bloats the artifact
-    # and invites shortcut edges. The (sparse) skeleton still runs through the
-    # margin, so map regions that only connect across it stay connected.
+    # Obstacle-biased candidates plus a sparse open-region lattice. Added nodes
+    # are confined to the map footprint; the skeleton remains global so map
+    # regions whose only connection crosses the inferred margin stay connected.
     coarse_dist = _block_reduce(dist_full, ds, "max") if ds > 1 else dist_full
-    lattice_yx = _adaptive_lattice_nodes(
-        coarse_dist, node_yx,
+    raw_lattice_yx, obstacle_sampling = _adaptive_lattice_nodes(
+        coarse_dist, skel,
+        obstacle_spacing_coarse, bottleneck_spacing_coarse,
         lattice_near_coarse, lattice_far_coarse,
-        OPEN_CLEARANCE_PX, NEAR_OBSTACLE_CLEARANCE_PX,
+        OBSTACLE_CLEARANCE_PX, NEAR_OBSTACLE_CLEARANCE_PX,
     )
-    lattice_yx = [
-        (y, x) for (y, x) in lattice_yx
-        if hz_footprint[min((y * ds) // hz_ds, hz_footprint.shape[0] - 1),
-                        min((x * ds) // hz_ds, hz_footprint.shape[1] - 1)]
-    ]
+    raw_obstacle_count = obstacle_sampling["obstacle_candidate_count"]
+    lattice_yx = []
+    footprint_obstacle_count = 0
+    for raw_idx, (y, x) in enumerate(raw_lattice_yx):
+        inside = hz_footprint[
+            min((y * ds) // hz_ds, hz_footprint.shape[0] - 1),
+            min((x * ds) // hz_ds, hz_footprint.shape[1] - 1),
+        ]
+        if not inside:
+            continue
+        lattice_yx.append((y, x))
+        if raw_idx < raw_obstacle_count:
+            footprint_obstacle_count += 1
     node_yx.extend(lattice_yx)
-    timings["nodes"] = time.time() - t
-    _log(f"nodes: {len(node_yx)} (skeleton+resample+{len(lattice_yx)} lattice)")
 
     # 7. Snap coarse node coords to a genuinely passable full-res pixel (x, y).
     #    Nodes are NOT pruned to the hit zone: the off-map open area often links
@@ -1056,7 +1182,27 @@ def build_navgraph(mask_path, region_polygon=None, verbose=False):
     #    graph below the connectivity bar. The hit zone gates route *endpoints*
     #    (stored below), not graph topology; the skeleton backbone is kept
     #    everywhere so the graph stays connected and open fields stay crossable.
-    nodes_xy = _snap_nodes(mask, node_yx, ds)
+    snapped_xy = _snap_nodes(mask, node_yx, ds)
+    nodes_xy, node_source_indices = _dedupe_appended_nodes(
+        mask, snapped_xy, n_skeleton_nodes, NODE_DEDUPE_PX)
+    obstacle_source_end = n_skeleton_nodes + footprint_obstacle_count
+    obstacle_nodes = {
+        new_idx for new_idx, source_idx in enumerate(node_source_indices)
+        if n_skeleton_nodes <= source_idx < obstacle_source_end
+    }
+    n_lattice_nodes = len(nodes_xy) - n_skeleton_nodes
+    obstacle_sampling.update({
+        "footprint_candidates": len(lattice_yx),
+        "footprint_obstacle_candidates": footprint_obstacle_count,
+        "deduplicated_count": len(snapped_xy) - len(nodes_xy),
+        "n_obstacle_nodes": len(obstacle_nodes),
+        "n_open_nodes": n_lattice_nodes - len(obstacle_nodes),
+    })
+    timings["nodes"] = time.time() - t
+    _log(f"nodes: {len(nodes_xy)} ({n_skeleton_nodes} skeleton, "
+         f"{len(obstacle_nodes)} obstacle/gate, "
+         f"{n_lattice_nodes - len(obstacle_nodes)} open lattice, "
+         f"{obstacle_sampling['deduplicated_count']} deduplicated)")
 
     # 8. Component id per node (from unfiltered labels) — needed for repair.
     nodes_arr = np.asarray(nodes_xy, dtype=np.int32).reshape(-1, 2)
@@ -1068,7 +1214,7 @@ def build_navgraph(mask_path, region_polygon=None, verbose=False):
     # 9. Candidate edges -> weighting (A* fallback for skeleton backbone only).
     t = time.time()
     skeleton_pairs = {(min(a, b), max(a, b)) for a, b, _ in skeleton_edges if a != b}
-    cand = _candidate_edges(nodes_xy, skeleton_edges)
+    cand = _candidate_edges(nodes_xy, skeleton_edges, obstacle_nodes)
     edges, weights = _weight_edges(mask, nodes_xy, cand, skeleton_pairs)
     n_before = len(edges)
     edges, weights = _repair_connectivity(
@@ -1095,7 +1241,8 @@ def build_navgraph(mask_path, region_polygon=None, verbose=False):
         "downsample": int(ds),
         "n_nodes": int(len(nodes_arr)),
         "n_skeleton_nodes": int(n_skeleton_nodes),
-        "n_lattice_nodes": int(len(lattice_yx)),
+        "n_lattice_nodes": int(n_lattice_nodes),
+        "n_obstacle_nodes": int(len(obstacle_nodes)),
         "n_edges": int(len(edges_arr)),
         "n_components": int(ncomp),
         "main_component_fraction": round(
@@ -1110,11 +1257,15 @@ def build_navgraph(mask_path, region_polygon=None, verbose=False):
             [[int(x), int(y)] for (x, y) in region_polygon] if has_polygon else None),
         "min_cost_per_px": min_cost_per_px,
         "lattice": {
-            "open_clearance_px": int(OPEN_CLEARANCE_PX),
+            "obstacle_clearance_px": int(OBSTACLE_CLEARANCE_PX),
+            "obstacle_spacing_px": int(OBSTACLE_SPACING_PX),
+            "bottleneck_spacing_px": int(BOTTLENECK_SPACING_PX),
+            "dedupe_px": int(NODE_DEDUPE_PX),
             "near_obstacle_clearance_px": int(NEAR_OBSTACLE_CLEARANCE_PX),
             "near_spacing_px": int(LATTICE_SPACING_NEAR_PX),
             "far_spacing_px": int(LATTICE_SPACING_FAR_PX),
         },
+        "obstacle_sampling": obstacle_sampling,
         "build_seconds": round(time.time() - t_start, 2),
         "timings": {k: round(v, 2) for k, v in timings.items()},
     }

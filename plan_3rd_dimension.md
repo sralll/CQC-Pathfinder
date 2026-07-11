@@ -126,7 +126,65 @@ only the primary agent may mark a package `accepted` after review and verificati
 **Status:** follow-up package in progress; CR 1, CR 2, CR 3, CR 4, CR 5, and CR 6 complete — implemented 2026-07-11
 **Authority:** this section supersedes the earlier rounded-cap and Phase-5 UI text
 where they conflict. Keep the earlier text as the implementation history; do not
-mistake it for the target behaviour for the follow-up work.
+mistake it for the target behaviour for the follow-up work. The **second
+follow-up package** below (2026-07-11) supersedes this section in turn where
+they conflict — in particular the 5 px inward portal bands, the separate
+Add/Edit passage actions, and every editor-side portal placement check.
+
+### Second follow-up package — implemented 2026-07-11
+
+Requested by Lars after reviewing the first follow-up package; all items are
+implemented and verified.
+
+- **CR 1 revision — outward 3 px portals:** `PASSAGE_PORTAL_DEPTH` is now 3 and
+  the entrance bands lie **outside** the drawn corridor: each terminal segment
+  is extended outward by the portal depth and the appended full-width rectangle
+  is the band (raster membership `-3 ≤ projection < 0`). Clearance, membership,
+  `distanceToPassage`, `hitTestPassage`, SVG portal lines, and all fixtures
+  follow the outward planes. `passageEntranceAt` treats the drawn cap plane as
+  inclusive and honors its tolerance longitudinally so classification of
+  anchors on the plane stays robust. Deterministic raster hashes were re-frozen.
+- **Portal placement checks removed:** the overlapping/touching-band rejection
+  and the "entrance must overlap passable terrain" editor check are gone —
+  placement judgment belongs to the coaches. Only a band with zero raster cells
+  inside the map still rejects (`empty-entrance`), since such a passage could
+  never be entered. Self-overlap, budget, and structural validation remain.
+- **CR 2 revision — abortable saves, front end is truth:** passage saves moved
+  off the serialized `_saveQueue` onto `passage_save_client.js`
+  (`createPassageSaveClient`): a newer save aborts the in-flight request
+  (superseded ≠ failure) and server responses are no longer written back into
+  `project.level_passages` or route metrics, so a slow stale response can never
+  revert newer local edits. The new `passage_save_client.test.mjs` drives the
+  client with a spy fetch: one request per action carrying the full metric
+  batch, abort-on-newer-save, and the error/failure taxonomy.
+- **CR 3 revision — combined Add/Edit, icons, RCM fix, region finish:** the
+  third-dimension family now has two actions, `edit` (combined add/edit:
+  click on free map adds draft points, node click drags, wheel over a passage
+  changes width, right click/Enter finishes) and `remove`; legacy leaf ids map
+  onto the combined action. The bridge icon uses the Font Awesome bridge glyph
+  and the mask-edit family the FA mask-ventilator glyph (`face-mask`). The RCM
+  level-3 all-orange bug is fixed (level-3 segments carry `data-family` for hit
+  grouping and were styled by the family loop; only the exact active
+  family/action pair highlights now). The infinity region polygon now closes on
+  distance to the first vertex (matching the visible close ring) instead of
+  requiring the exact 6 px handle as event target — a stacked near-miss vertex
+  could previously make finishing impossible.
+- **CR 4 revision:** `D` still removes the last draft point; with no open draft
+  it deletes the most recently added passage (one undo entry, one save).
+- **CR 6 revision — passage-aware Infinity culling:** `generateOnePair` now
+  gates the refined pair through `layeredRouteDistinct` whenever either route
+  carries passage spans: a pair sharing its passage traversal is rejected
+  (`distinct`) even when a level-0 obstacle projected underneath technically
+  separates the lines. Base-only pairs keep the established selection tuning.
+- **Touch:** holding still (~600 ms) on an open draft finishes the passage —
+  touch has no right click or Enter.
+
+**Verification:** all 8 Node pathing suites (including the new save-client
+suite and an Infinity-shaped same-passage regression in
+`layered_distinct.test.mjs`), `node --check` on every touched file,
+`manage_translations.py --check`/`--build`, 60/60 `project`+`results` Django
+tests on isolated SQLite, Django system check, and `collectstatic` pass.
+Manual visual QA (CR 7) remains open.
 
 ### Change-package overview and agent effort
 

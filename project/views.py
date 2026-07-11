@@ -19,6 +19,7 @@ from django.utils import timezone
 from django.utils.translation import gettext as _
 import os
 import tempfile
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 
 from .media_access import (
@@ -577,7 +578,7 @@ def region_suggest(request, file_id):
     return JsonResponse({'polygon': [], 'source': 'empty'})
 
 
-def _rebuild_navgraph_for_file(file_id, enable_on_success=False):
+def _rebuild_navgraph_for_file(file_id, enable_on_success=False, build_token=None):
     """Background rebuild of a File's navgraph honouring its saved region.
 
     Surfaces state in ``File.batch_progress`` (type ``navgraph_build``) so the
@@ -591,6 +592,15 @@ def _rebuild_navgraph_for_file(file_id, enable_on_success=False):
         file = File.objects.filter(id=file_id, deleted=False).first()
         if not file:
             return
+        if build_token:
+            progress = file.batch_progress
+            if not (
+                isinstance(progress, dict)
+                and progress.get('type') == 'navgraph_build'
+                and progress.get('status') == 'building'
+                and progress.get('build_token') == build_token
+            ):
+                return
         mask_path = _mask_path_for_file(file)
         if not mask_path or not os.path.isfile(mask_path):
             File.objects.filter(id=file_id).update(batch_progress={
@@ -601,28 +611,61 @@ def _rebuild_navgraph_for_file(file_id, enable_on_success=False):
             return
         File.objects.filter(id=file_id).update(batch_progress={
             'type': 'navgraph_build', 'status': 'building',
+            'build_token': build_token,
             'updated_at': timezone.now().isoformat(),
         })
         from .navgraph import build_navgraph, save_navgraph
         region = file.infinite_region if isinstance(file.infinite_region, list) else None
         artifact = build_navgraph(mask_path, region_polygon=region)
         save_navgraph(artifact, mask_path)
-        if enable_on_success:
-            File.objects.filter(id=file_id).update(infinite_enabled=True)
-        File.objects.filter(id=file_id).update(batch_progress={
-            'type': 'navgraph_build', 'status': 'done',
-            'infinite_enabled': bool(enable_on_success),
-            'hitzone_source': artifact['stats'].get('hitzone_source'),
-            'n_nodes': artifact['stats'].get('n_nodes'),
-            'n_edges': artifact['stats'].get('n_edges'),
-            'updated_at': timezone.now().isoformat(),
-        })
+        with transaction.atomic():
+            file = File.objects.select_for_update().get(id=file_id)
+            progress = file.batch_progress
+            build_is_current = (
+                not build_token
+                or (
+                    isinstance(progress, dict)
+                    and progress.get('type') == 'navgraph_build'
+                    and progress.get('status') == 'building'
+                    and progress.get('build_token') == build_token
+                )
+            )
+            if not build_is_current:
+                # A mask/region edit invalidated this build while it was running.
+                # The artifact may have been written, but it must never make the
+                # file playable until a later, current build succeeds.
+                file.infinite_enabled = False
+                file.save(update_fields=['infinite_enabled'])
+                return
+            file.infinite_enabled = bool(enable_on_success)
+            file.batch_progress = {
+                'type': 'navgraph_build', 'status': 'done',
+                'build_token': build_token,
+                'infinite_enabled': bool(enable_on_success),
+                'hitzone_source': artifact['stats'].get('hitzone_source'),
+                'n_nodes': artifact['stats'].get('n_nodes'),
+                'n_edges': artifact['stats'].get('n_edges'),
+                'updated_at': timezone.now().isoformat(),
+            }
+            file.save(update_fields=['infinite_enabled', 'batch_progress'])
     except Exception as exc:
         logger.exception("navgraph rebuild failed for file %s", file_id)
-        File.objects.filter(id=file_id).update(batch_progress={
+        failure = {
             'type': 'navgraph_build', 'status': 'failed',
+            'build_token': build_token,
             'error': str(exc), 'updated_at': timezone.now().isoformat(),
-        })
+        }
+        if build_token:
+            File.objects.filter(
+                id=file_id,
+                batch_progress__build_token=build_token,
+                batch_progress__status='building',
+            ).update(infinite_enabled=False, batch_progress=failure)
+        else:
+            File.objects.filter(id=file_id).update(
+                infinite_enabled=False,
+                batch_progress=failure,
+            )
     finally:
         close_old_connections()
 
@@ -649,12 +692,24 @@ def save_region(request, file_id):
             return JsonResponse({'error': 'Permission denied'}, status=403)
 
         file.infinite_region = polygon or None
+        file.infinite_enabled = False
         file.last_edited = tz.now()
-        file.save(update_fields=['infinite_region', 'last_edited'])
+        progress = file.batch_progress
+        update_fields = ['infinite_region', 'infinite_enabled', 'last_edited']
+        if isinstance(progress, dict) and progress.get('type') == 'navgraph_build' and progress.get('status') == 'building':
+            file.batch_progress = {
+                **progress,
+                'status': 'invalidated',
+                'infinite_enabled': False,
+                'updated_at': file.last_edited.isoformat(),
+            }
+            update_fields.append('batch_progress')
+        file.save(update_fields=update_fields)
 
         return JsonResponse({
             'status': 'ok',
             'polygon': file.infinite_region or [],
+            'infinite_enabled': False,
         })
     except Exception as e:
         traceback.print_exc()
@@ -762,13 +817,15 @@ def toggle_infinite(request, file_id):
 
         # Build the navgraph in the background; the flag flips on success only.
         import threading
+        build_token = uuid.uuid4().hex
         File.objects.filter(id=file.id).update(batch_progress={
             'type': 'navgraph_build', 'status': 'building',
+            'build_token': build_token,
             'updated_at': tz.now().isoformat(),
-        })
+        }, infinite_enabled=False)
         threading.Thread(
             target=_rebuild_navgraph_for_file, args=(file.id,),
-            kwargs={'enable_on_success': True}, daemon=True,
+            kwargs={'enable_on_success': True, 'build_token': build_token}, daemon=True,
         ).start()
 
         return JsonResponse({'status': 'building', 'infinite_enabled': False})
@@ -1375,12 +1432,38 @@ def save_mask(request):
     basename, _ = os.path.splitext(file.map_file)
     mask_path   = os.path.join(settings.MEDIA_ROOT, 'masks', f'mask_{basename}.png')
     os.makedirs(os.path.dirname(mask_path), exist_ok=True)
-    with open(mask_path, 'wb') as f:
-        for chunk in file_obj.chunks():
-            f.write(chunk)
-    # Update last_edited on the owning file
-    File.objects.filter(id=file.id, deleted=False).update(last_edited=tz.now())
-    return JsonResponse({'status': 'ok'})
+    # A navgraph is derived from the mask. Any successful mask write therefore
+    # revokes infinite-play eligibility until the coach explicitly rebuilds it.
+    # Keep the row locked until an atomic filesystem replacement completes, so
+    # a concurrent enable cannot start a build against the previous mask.
+    temp_path = None
+    try:
+        with transaction.atomic():
+            file = File.objects.select_for_update().get(id=file.id, deleted=False)
+            file.infinite_enabled = False
+            file.last_edited = tz.now()
+            progress = file.batch_progress
+            update_fields = ['infinite_enabled', 'last_edited']
+            if isinstance(progress, dict) and progress.get('type') == 'navgraph_build' and progress.get('status') == 'building':
+                file.batch_progress = {
+                    **progress,
+                    'status': 'invalidated',
+                    'infinite_enabled': False,
+                    'updated_at': file.last_edited.isoformat(),
+                }
+                update_fields.append('batch_progress')
+            file.save(update_fields=update_fields)
+
+            fd, temp_path = tempfile.mkstemp(prefix='.mask-upload-', dir=os.path.dirname(mask_path))
+            with os.fdopen(fd, 'wb') as temp_file:
+                for chunk in file_obj.chunks():
+                    temp_file.write(chunk)
+            os.replace(temp_path, mask_path)
+            temp_path = None
+    finally:
+        if temp_path and os.path.exists(temp_path):
+            os.remove(temp_path)
+    return JsonResponse({'status': 'ok', 'infinite_enabled': False})
 
 
 @role_required('Trainer')

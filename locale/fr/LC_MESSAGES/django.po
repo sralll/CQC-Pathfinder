@@ -96,8 +96,8 @@ msgstr "Clique le premier point sur la carte…"
 msgid "Click the points on the map and enter the distance."
 msgstr "Clique les points sur la carte et saisis la distance."
 
-msgid "Click: add point · Right click / Enter: finish · D: remove last point · Escape: cancel"
-msgstr "Clic : ajouter un point · Clic droit / Entrée : terminer · D : supprimer le dernier point · Échap : annuler"
+msgid "Click: add point · Right click / Enter: finish · D: remove last point / last passage · Escape: cancel · Wheel over passage: width · Drag node: move"
+msgstr "Clic : ajouter un point · Clic droit / Entrée : terminer · D : supprimer le dernier point / le dernier passage · Échap : annuler · Molette sur un passage : largeur · Glisser un point : déplacer"
 
 msgid "Close"
 msgstr "Fermer"

@@ -1,7 +1,11 @@
 from django.contrib.auth.decorators import user_passes_test
 from django.http import HttpResponseForbidden, JsonResponse
 from django.shortcuts import get_object_or_404, render
+from django.urls import reverse
 from django.views.decorators.http import require_GET, require_http_methods
+
+from project.media_access import serve_map_file, serve_mask_file
+from project.models import File
 
 from .models import ReportedInfinity
 
@@ -39,6 +43,10 @@ def _report_summary(report):
 
 
 def _report_detail(report):
+    infinity_file = File.objects.filter(
+        id=report.seed,
+        deleted=False,
+    ).exclude(map_file="").first()
     return {
         **_report_summary(report),
         "start": {"x": report.start_x, "y": report.start_y},
@@ -51,6 +59,12 @@ def _report_detail(report):
         "route_result": report.route_result or {},
         "client_state": report.client_state or {},
         "user_agent": report.user_agent,
+        "infinity_file": ({
+            "id": infinity_file.id,
+            "name": infinity_file.name,
+            "map_url": reverse("debug_infinity_file_map", args=[infinity_file.id]),
+            "mask_url": reverse("debug_infinity_file_mask", args=[infinity_file.id]),
+        } if infinity_file else None),
     }
 
 
@@ -87,3 +101,19 @@ def debug_infinity_report_detail(request, report_id):
         report.delete()
         return JsonResponse({"deleted": True, "id": report_id})
     return JsonResponse({"report": _report_detail(report)})
+
+
+@superuser_required
+@require_GET
+def debug_infinity_file_map(request, file_id):
+    file = get_object_or_404(File, id=file_id, deleted=False)
+    if not file.map_file:
+        return JsonResponse({"error": "Map not found."}, status=404)
+    return serve_map_file(file.map_file)
+
+
+@superuser_required
+@require_GET
+def debug_infinity_file_mask(request, file_id):
+    file = get_object_or_404(File, id=file_id, deleted=False)
+    return serve_mask_file(file)

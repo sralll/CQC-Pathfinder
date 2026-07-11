@@ -1,4 +1,5 @@
 import { ROUTE_BARRIER_DRAW_WIDTH } from './infinite/citygen/core/RoutePlanner.js';
+import { TRAIN_SCALE_VALUE } from '/static/project/js/pathing/pipeline.js';
 
 const NS = 'http://www.w3.org/2000/svg';
 const ROUTE_COLORS = ['#dd0011', '#cc6000', '#0066cc', '#7a2cbf'];
@@ -750,14 +751,47 @@ function drawCity(city) {
     drawMapFeatures(mapLayer, city.features);
 }
 
+function drawUploadedMap(file) {
+    return new Promise((resolve, reject) => {
+        const mapLoader = new Image();
+        const maskLoader = new Image();
+        const image = el('image');
+        let loaded = 0;
+        const finish = () => {
+            loaded++;
+            if (loaded < 2) return;
+            const width = maskLoader.naturalWidth * TRAIN_SCALE_VALUE;
+            const height = maskLoader.naturalHeight * TRAIN_SCALE_VALUE;
+            if (!(width > 0 && height > 0)) {
+                reject(new Error(`Map ${file.id} has invalid dimensions`));
+                return;
+            }
+            image.setAttribute('x', '0');
+            image.setAttribute('y', '0');
+            image.setAttribute('width', width);
+            image.setAttribute('height', height);
+            image.setAttribute('preserveAspectRatio', 'none');
+            mapLayer.replaceChildren(image);
+            resolve({ minX: 0, minY: 0, maxX: width, maxY: height });
+        };
+        mapLoader.addEventListener('load', finish, { once: true });
+        maskLoader.addEventListener('load', finish, { once: true });
+        mapLoader.addEventListener('error', () => reject(new Error(`Failed to load map ${file.id}`)), { once: true });
+        maskLoader.addEventListener('error', () => reject(new Error(`Failed to load mask ${file.id}`)), { once: true });
+        image.setAttribute('href', file.map_url);
+        mapLoader.src = file.map_url;
+        maskLoader.src = file.mask_url;
+    });
+}
+
 function routePoints(route) {
     return route?.points || route?.rP || [];
 }
 
-function drawReport(report, city) {
+function drawReport(report, city, mapBounds = null) {
     currentReport = report;
     deleteReportBtn.disabled = false;
-    drawCity(city);
+    if (city) drawCity(city);
     routeLayer.replaceChildren();
     controlLayer.replaceChildren();
     routeLayer.style.display = routesVisible ? '' : 'none';
@@ -787,7 +821,7 @@ function drawReport(report, city) {
     drawCircle(controlLayer, report.goal, 0.75, CONTROL_COLOR, CONTROL_COLOR, 0);
 
     const routePts = (report.routes || []).flatMap(routePoints);
-    setViewBox(paddedBounds(city?.bounds || report.client_state?.cityBounds, [report.start, report.goal, ...routePts]));
+    setViewBox(paddedBounds(city?.bounds || mapBounds || report.client_state?.cityBounds, [report.start, report.goal, ...routePts]));
     titleEl.textContent = `Report #${report.id} | seed ${report.seed} | pair ${report.pair_index ?? '-'}`;
     setStatus(
         'Report data',
@@ -847,6 +881,11 @@ async function loadReport(id) {
     if (!response.ok) throw new Error(`Report detail failed (${response.status})`);
     const data = await response.json();
     const report = data.report;
+    if (report.infinity_file) {
+        const mapBounds = await drawUploadedMap(report.infinity_file);
+        drawReport(report, null, mapBounds);
+        return;
+    }
     const settings = { ...(report.settings || {}), seed: report.seed };
     const cityMsg = await workerRequest({ type: 'generateCity', settings });
     drawReport(report, cityMsg.city);

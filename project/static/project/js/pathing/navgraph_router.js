@@ -379,6 +379,18 @@ export function buildState(artifact, mask, config = DEFAULT_CONFIG) {
 		}
 	}
 
+	// Region gate: the stored hit zone (the coach-drawn polygon when one was
+	// supplied at build time) is authoritative for the WHOLE route, not only
+	// its endpoints. Nodes outside it stay in the artifact for connectivity
+	// history, but routing must never touch them.
+	const nodeInRegion = new Uint8Array(N);
+	for (let i = 0; i < N; i++) {
+		const hy = Math.floor(nodes[2 * i + 1] / hitzoneScale);
+		const hx = Math.floor(nodes[2 * i] / hitzoneScale);
+		nodeInRegion[i] = (hy >= 0 && hx >= 0 && hy < hh && hx < hw
+			&& coarseHitzone[hy * hw + hx]) ? 1 : 0;
+	}
+
 	// Node bucket grid for snapping (cell = snapMaxDistPx).
 	const cell = Math.max(1, cfg.snapMaxDistPx);
 	const buckets = new Map();
@@ -406,7 +418,7 @@ export function buildState(artifact, mask, config = DEFAULT_CONFIG) {
 	}
 
 	return {
-		artifact, mask, cfg, mainComp, sampleCells,
+		artifact, mask, cfg, mainComp, sampleCells, nodeInRegion,
 		buckets, bucketCell: cell,
 		adjStart, adjTo, adjW, adjEdge,
 		// Per-pixel memo for inSignificantObstacle (WP 5.3). Sparse Map keyed by
@@ -531,6 +543,8 @@ export function snapEndpoint(state, pt, deadline = null) {
 			const arr = buckets.get(gx * 100003 + gy);
 			if (!arr) continue;
 			for (const ni of arr) {
+				// Routes must never touch a node outside the stored region.
+				if (state.nodeInRegion && !state.nodeInRegion[ni]) continue;
 				const nx = nodes[2 * ni], ny = nodes[2 * ni + 1];
 				const d = Math.hypot(nx - pt.x, ny - pt.y);
 				if (d <= cfg.snapMaxDistPx) cand.push({ node: ni, d });
@@ -625,6 +639,9 @@ export function graphAstar(state, goalPt, startSnap, goalSnap, blockedEdges, dea
 	return null;
 
 	function relax(to, tentative, from) {
+		// The stored region hit zone is authoritative for the whole route: a
+		// base node outside it may never appear on a served node path.
+		if (to < N && state.nodeInRegion && !state.nodeInRegion[to]) return;
 		if (closed[to] || tentative >= g[to]) return;
 		g[to] = tentative; parent[to] = from;
 		let hx = 0;
@@ -1065,6 +1082,78 @@ export function countLegalityViolations(state, path) {
 	return hits;
 }
 
+// Keep the uploaded-map obstacle penalty identical to editor.js. The worker
+// already owns the full-resolution mask, so calculate this before converting
+// the served route to map units for rendering.
+const ROUTE_OBSTACLE_THRESHOLD = 200;
+const ROUTE_OBSTACLE_SECONDS_PER_ENTRY = 1;
+const ROUTE_STAIR_VALUE = 242;
+const ROUTE_STAIR_SECONDS_PER_ENTRY = 0.25;
+
+export function calcRouteObstacle(mask, width, height, path, passageSpans = []) {
+	if (!mask || !width || !height || !path || path.length < 2) return 0;
+
+	let seconds = 0;
+	let terrain = null;
+	let lastX = null;
+	let lastY = null;
+
+	function visit(x, y) {
+		if (x === lastX && y === lastY) return;
+		lastX = x;
+		lastY = y;
+		if (x < 0 || x >= width || y < 0 || y >= height) {
+			terrain = null;
+			return;
+		}
+		const value = mask[y * width + x];
+		const nextTerrain = value < ROUTE_OBSTACLE_THRESHOLD
+			? 'obstacle'
+			: value === ROUTE_STAIR_VALUE
+				? 'stairs'
+				: null;
+		if (nextTerrain && nextTerrain !== terrain) {
+			seconds += nextTerrain === 'stairs'
+				? ROUTE_STAIR_SECONDS_PER_ENTRY
+				: ROUTE_OBSTACLE_SECONDS_PER_ENTRY;
+		}
+		terrain = nextTerrain;
+	}
+
+	for (let i = 1; i < path.length; i++) {
+		const onPassage = passageSpans.some((span) => (
+			i - 1 >= Number(span?.fromIndex) && i <= Number(span?.toIndex)
+		));
+		if (onPassage) {
+			terrain = null;
+			lastX = null;
+			lastY = null;
+			continue;
+		}
+
+		let x0 = Math.round(Number(path[i - 1]?.x));
+		let y0 = Math.round(Number(path[i - 1]?.y));
+		const x1 = Math.round(Number(path[i]?.x));
+		const y1 = Math.round(Number(path[i]?.y));
+		if (![x0, y0, x1, y1].every(Number.isFinite)) continue;
+
+		const dx = Math.abs(x1 - x0);
+		const dy = Math.abs(y1 - y0);
+		const sx = x0 < x1 ? 1 : -1;
+		const sy = y0 < y1 ? 1 : -1;
+		let err = dx - dy;
+		while (true) {
+			visit(x0, y0);
+			if (x0 === x1 && y0 === y1) break;
+			const e2 = 2 * err;
+			if (e2 > -dy) { err -= dy; x0 += sx; }
+			if (e2 < dx) { err += dx; y0 += sy; }
+		}
+	}
+
+	return seconds;
+}
+
 function passagePolylineCost(passage, path) {
 	let cost = 0;
 	for (let i = 1; i < path.length; i++) {
@@ -1253,6 +1342,7 @@ function countTypedBarrierViolations(refined) {
  *   start?: {x,y}, goal?: {x,y},
  *   routes?: [Array<{x,y}>, Array<{x,y}>],   // refined, ordered by side (L then R)
  *   runtimes?: [number, number],             // refined terrain-weighted costs
+ *   obstacles?: [number, number],            // editor-compatible entry penalties in seconds
  *   skippedBarriers?: Array<{ax,ay,bx,by}>,  // barriers of skipped lower-index routes (WP 5.3)
  *   meta?: { retries, attempts, sideGap, relGap, legality, rejectionCounts, timings },
  *   reason?: string
@@ -1406,6 +1496,10 @@ export function generateOnePair(state, { rng, maxAttempts = 4000, now, selection
 			goal: sp.goal,
 			routes: [pathA, pathB],
 			runtimes: [rtA, rtB],
+			obstacles: [
+				calcRouteObstacle(state.mask, state.artifact.W, state.artifact.H, pathA, passageSpansA),
+				calcRouteObstacle(state.mask, state.artifact.W, state.artifact.H, pathB, passageSpansB),
+			],
 			passageSpans: [passageSpansA, passageSpansB],
 			// All bars placed while exploring alternates.  The scene uses the
 			// skipped subset for rendering; retaining the full set makes the worker

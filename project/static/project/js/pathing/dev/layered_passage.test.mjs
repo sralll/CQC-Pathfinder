@@ -87,11 +87,16 @@ function assertDirectionalLeg(leg, passage) {
     const w = 40, h = 30;
     const grid = new Uint8Array(w * h);
     for (let y = 0; y < h; y++) {
-        for (let x = 0; x <= 13; x++) grid[y * w + x] = FAST;
-        for (let x = 27; x < w; x++) grid[y * w + x] = FAST;
+        for (let x = 0; x <= 10; x++) grid[y * w + x] = FAST;
+        for (let x = 30; x < w; x++) grid[y * w + x] = FAST;
     }
-    grid[12 * w + 14] = FAST;
-    grid[18 * w + 26] = FAST;
+    // The outward bands cover x 11..13 and 27..29 across rows 12..18. Leave
+    // exactly one live base cell in each band — opposite extreme corners — and
+    // connect them to the open regions through rows outside the band.
+    for (const x of [11, 12, 13]) grid[11 * w + x] = FAST;
+    grid[12 * w + 13] = FAST;                    // start band corner (13, 12)
+    for (const x of [27, 28, 29]) grid[19 * w + x] = FAST;
+    grid[18 * w + 27] = FAST;                    // end band corner (27, 18)
     const passages = normalize({
         version: 1,
         items: [{ id: 'edge-portals', points: [[14, 15], [26, 15]], width: 6 }],
@@ -101,8 +106,8 @@ function assertDirectionalLeg(leg, passage) {
     );
     assert.ok(search);
     assert.deepEqual(search.legs.map(leg => leg.surface), ['base', 'passage:edge-portals', 'base']);
-    assert.deepEqual(search.legs[1].points.slice(0, 2), [14, 12]);
-    assert.deepEqual(search.legs[1].points.slice(-2), [26, 18]);
+    assert.deepEqual(search.legs[1].points.slice(0, 2), [13, 12]);
+    assert.deepEqual(search.legs[1].points.slice(-2), [27, 18]);
 }
 
 // Surface-aware refinement is free to cross a wide bridge diagonally and the

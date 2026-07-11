@@ -111,12 +111,16 @@ async function decodeMaskGreyscale(url) {
  * city scene.
  */
 export class MaskSceneSource {
-    constructor({ fileId, filename, buildScene, mapScale = REFERENCE_MAP_SCALE, mapUnitScale = TRAIN_SCALE_VALUE }) {
+    constructor({ fileId, filename, buildScene, mapScale = REFERENCE_MAP_SCALE, editorScale = 1, mapUnitScale = TRAIN_SCALE_VALUE }) {
         this.fileId = fileId;
         this.filename = filename;
         this.mapId = String(fileId);
         this.buildScene = buildScene;
         this.mapUnitScale = mapUnitScale;
+        const parsedEditorScale = Number(editorScale);
+        this.editorScale = Number.isFinite(parsedEditorScale) && parsedEditorScale > 0
+            ? parsedEditorScale
+            : 1;
         this.scale = maskScaleForMap(mapScale);
         this.mapScale = this.scale.mapScale;
         this.metresPerMapUnit = this.scale.metresPerMapUnit;
@@ -297,6 +301,7 @@ export class MaskSceneSource {
             index: i,
             points: (poly || []).map(toMapUnits),
             runtime: pairMsg.runtimes?.[i] ?? null,
+            obstacle: pairMsg.obstacles?.[i] ?? 0,
             passageSpans: pairMsg.passageSpans?.[i] || [],
         }));
         if (routes.length < 2 || routes.some((r) => r.points.length < 2)) return null;

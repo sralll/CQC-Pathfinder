@@ -161,6 +161,9 @@ function invalidEntrances() {
 function overlappingEntranceCaps() {
     const baseMask = emptyMask(20, 20, FAST);
     return {
+        // Historical name: with inward bands this short corridor was rejected
+        // for overlapping entrances. Bands now sit outside the drawn ends and
+        // placement judgment is the coaches' — the geometry is valid.
         name: 'overlapping-entrance-caps',
         baseMask,
         passages: {
@@ -170,8 +173,8 @@ function overlappingEntranceCaps() {
         start: [5, 10],
         goal: [8, 10],
         expectedTopology: {
-            runtimeGeometryValid: false,
-            diagnostic: 'overlapping-entrances',
+            runtimeGeometryValid: true,
+            diagnostic: null,
         },
     };
 }

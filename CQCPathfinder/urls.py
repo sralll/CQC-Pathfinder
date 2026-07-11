@@ -35,6 +35,8 @@ urlpatterns = [
     path('debug/infinity/', debug_views.debug_infinity, name='debug_infinity'),
     path('debug/infinity/api/reports/', debug_views.debug_infinity_reports, name='debug_infinity_reports'),
     path('debug/infinity/api/reports/<int:report_id>/', debug_views.debug_infinity_report_detail, name='debug_infinity_report_detail'),
+    path('debug/infinity/api/files/<int:file_id>/map/', debug_views.debug_infinity_file_map, name='debug_infinity_file_map'),
+    path('debug/infinity/api/files/<int:file_id>/mask/', debug_views.debug_infinity_file_mask, name='debug_infinity_file_mask'),
 
     # Login must stay public, otherwise redirect-to-login would loop forever.
     path('login/', login_not_required(

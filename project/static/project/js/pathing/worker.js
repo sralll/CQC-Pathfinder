@@ -329,6 +329,7 @@ self.addEventListener('message', async (e) => {
             goal: res.goal,
             routes: res.routes,
             runtimes: res.runtimes,
+            obstacles: res.obstacles,
             passageSpans: res.passageSpans || [[], []],
             passageRevision: navgraph.passageRevision,
             barriers: res.barriers,

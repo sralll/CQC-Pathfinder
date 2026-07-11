@@ -53,6 +53,7 @@ const PLAY_CONTROL_RADIUS = 25;
 const PLAY_CONTROL_STROKE_WIDTH = 3;
 const PLAY_BLOCKING_STROKE_WIDTH = 5;
 const PLAY_CONTROL_WAVE_STROKE_WIDTH = 14;
+const REFERENCE_MAP_SCALE = 4000;
 const FOUNTAIN_RADIUS = 0.5;
 const CONTROL_RADIUS = FOUNTAIN_RADIUS * 5;     // diameter is 5x the fountain diameter
 const CONTROL_DIAMETER_M = 25;
@@ -62,8 +63,8 @@ const CONTROL_STROKE_WIDTH = PLAY_CONTROL_STROKE_WIDTH * CONTROL_SIZE_RATIO;
 const BLOCKING_STROKE_WIDTH = PLAY_BLOCKING_STROKE_WIDTH * CONTROL_SIZE_RATIO * 2;
 const CONTROL_WAVE_STROKE_WIDTH = PLAY_CONTROL_WAVE_STROKE_WIDTH * CONTROL_SIZE_RATIO;
 const CONTROL_OPACITY = 0.8;
-const ROUTE_BACKGROUND_STROKE_WIDTH = 2;
-const ROUTE_FOREGROUND_STROKE_WIDTH = 1;
+const ROUTE_BACKGROUND_STROKE_WIDTH = 3;
+const ROUTE_FOREGROUND_STROKE_WIDTH = 1.5;
 const ROUTE_DOT_SURFACE_RADIUS = 1;
 const ROUTE_HIT_WIDTH = 40;
 const ROUTE_STROKE_MULTIPLIER       = 2.5;
@@ -99,27 +100,53 @@ const CITY_SETTINGS = {
     gates: -1,
 };
 
-// City geometry uses compact generated coordinates. Uploaded maps already use
-// the normal editor/play coordinate space, so their magenta course overprint
-// must use play.js's original pixel sizes directly.
+// City geometry uses compact generated coordinates. Uploaded-map symbols start
+// with play.js's original pixel sizes, then convert those sizes to the map's
+// editor coordinate space using the saved editor scale and map denominator.
 function controlRadiusForScene(sc = scene) {
-    return sc?.kind === 'mask' ? PLAY_CONTROL_RADIUS : CONTROL_RADIUS;
+    return sc?.kind === 'mask'
+        ? PLAY_CONTROL_RADIUS * maskVisualScaleForScene(sc)
+        : CONTROL_RADIUS;
 }
 
 function controlGapForScene(sc = scene) {
-    return sc?.kind === 'mask' ? 8 : GAP;
+    return sc?.kind === 'mask' ? 8 * maskVisualScaleForScene(sc) : GAP;
 }
 
 function controlStrokeWidthForScene(sc = scene) {
-    return sc?.kind === 'mask' ? PLAY_CONTROL_STROKE_WIDTH : CONTROL_STROKE_WIDTH;
+    return sc?.kind === 'mask'
+        ? PLAY_CONTROL_STROKE_WIDTH * maskVisualScaleForScene(sc)
+        : CONTROL_STROKE_WIDTH;
 }
 
 function blockingStrokeWidthForScene(sc = scene) {
-    return sc?.kind === 'mask' ? PLAY_BLOCKING_STROKE_WIDTH : BLOCKING_STROKE_WIDTH;
+    return sc?.kind === 'mask'
+        ? PLAY_BLOCKING_STROKE_WIDTH * maskVisualScaleForScene(sc)
+        : BLOCKING_STROKE_WIDTH;
 }
 
 function controlWaveStrokeWidthForScene(sc = scene) {
-    return sc?.kind === 'mask' ? PLAY_CONTROL_WAVE_STROKE_WIDTH : CONTROL_WAVE_STROKE_WIDTH;
+    return sc?.kind === 'mask'
+        ? PLAY_CONTROL_WAVE_STROKE_WIDTH * maskVisualScaleForScene(sc)
+        : CONTROL_WAVE_STROKE_WIDTH;
+}
+
+// The normal play symbols are sized in source-map pixels at the reference
+// 1:4000 scale. Uploaded-map scene coordinates are source-map pixels multiplied
+// by File.scale, while the map denominator changes the physical size represented
+// by one map pixel. Keep these metadata values separate from scene.mapScale,
+// which is the per-scene fit transform written by maskFitTransform().
+function maskVisualScaleForScene(sc = scene) {
+    if (sc?.kind !== 'mask') return 1;
+    const mapScale = Number(sc.mapScaleDenominator);
+    const editorScale = Number(sc.editorScale);
+    const mapScaleFactor = Number.isFinite(mapScale) && mapScale > 0
+        ? REFERENCE_MAP_SCALE / mapScale
+        : 1;
+    const editorScaleFactor = Number.isFinite(editorScale) && editorScale > 0
+        ? editorScale
+        : 1;
+    return mapScaleFactor * editorScaleFactor;
 }
 
 function routeStrokeWidthForZoom(baseWidth, scale = cam.scale) {
@@ -130,9 +157,19 @@ function routeStrokeWidthForZoom(baseWidth, scale = cam.scale) {
     return visualWidth / cssCameraDeltaScale(scale);
 }
 
+// Route display widths use the same per-map base conversion as the controls.
+// The adaptive zoom calculation above remains unchanged, so routes still grow
+// more slowly than the map when the athlete zooms in.
+function routeDisplayBaseWidthForScene(baseWidth, sc = scene) {
+    return sc?.kind === 'mask'
+        ? baseWidth * maskVisualScaleForScene(sc)
+        : baseWidth;
+}
+
 function setAdaptiveRouteStroke(el, baseWidth) {
-    el.dataset.routeBaseStroke = String(baseWidth);
-    el.setAttribute('stroke-width', routeStrokeWidthForZoom(baseWidth));
+    const sceneBaseWidth = routeDisplayBaseWidthForScene(baseWidth);
+    el.dataset.routeBaseStroke = String(sceneBaseWidth);
+    el.setAttribute('stroke-width', routeStrokeWidthForZoom(sceneBaseWidth));
 }
 
 function updateRouteStrokeWidths() {
@@ -277,6 +314,7 @@ function detectSceneSource() {
                 fileId: routeFileId,
                 filename: routeFilename,
                 mapScale: routeMapScale,
+                editorScale: Number(playWrap?.dataset.infinityEditorScale) || 1,
                 buildScene: buildMaskScene,
             });
             maskSourceReady = maskSource.ready().catch(handleMaskSourceError);
@@ -287,6 +325,7 @@ function detectSceneSource() {
         const fileId = params.get('file');
         const filename = params.get('filename') || '';
         const mapScale = Number(params.get('map_scale')) || 4000;
+        const editorScale = Number(params.get('scale')) || 1;
         if (!fileId) {
             // ?source=mask without a chosen map → show the (temporary) picker.
             showMaskMapPicker();
@@ -297,6 +336,7 @@ function detectSceneSource() {
             fileId,
             filename,
             mapScale,
+            editorScale,
             buildScene: buildMaskScene,
         });
         // Kick off the (async) navgraph + mask load right away so the buffer is
@@ -2072,13 +2112,19 @@ function buildMaskScene(pair) {
         const side = maskRouteSide(points, start, ziel);
         const length = calcRuntimeRouteLength(points, metresPerMapUnit);
         const noA = calcRuntimeRouteNoA(points, metresPerMapUnit);
-        const runTime = Number.isFinite(r.runtime) ? r.runtime : null;
+        const obstacle = Number.isFinite(Number(r.obstacle)) ? Number(r.obstacle) : 0;
+        // The worker's runtime is a terrain-weighted pathing cost used only
+        // to select a pair. It is not measured in seconds and can therefore
+        // be orders of magnitude larger than the distance/angle breakdown
+        // shown in the stats panel. The scene runtime must use that same
+        // seconds-based model as the breakdown.
+        const runTime = calcRuntimeRouteTime(length, noA, 0, obstacle);
         return {
             points,
             length,
             noA,
             elevation: 0,
-            obstacle: 0,
+            obstacle,
             run_time: runTime,
             time: runTime,
             routeIndex: r.index + 1,
@@ -2099,6 +2145,8 @@ function buildMaskScene(pair) {
             barriers: pair.barriers || [],
         },
         mapScale: 1,
+        mapScaleDenominator: pair.source.mapScale,
+        editorScale: pair.source.editorScale,
         metresPerMapUnit,
         // Raster background descriptor. Full-res mask dims × TRAIN_SCALE_VALUE =
         // map-image px, which is exactly the map-unit space start/ziel/routes
@@ -3528,7 +3576,6 @@ function drawRouteBlocks(layer = layerEl('rp-route-layer')) {
         line.setAttribute('stroke', CONTROL_COLOR);
         line.setAttribute('stroke-width', blockingStrokeWidthForScene());
         line.setAttribute('stroke-linecap', 'butt');
-        if (scene?.kind === 'mask') line.setAttribute('vector-effect', 'non-scaling-stroke');
         line.setAttribute('pointer-events', 'none');
         layer.appendChild(line);
     }
@@ -3741,7 +3788,6 @@ function drawControls(start, ziel) {
         c.setAttribute('stroke', CONTROL_COLOR);
         c.setAttribute('stroke-width', strokeWidth);
         c.setAttribute('opacity', CONTROL_OPACITY);
-        if (scene?.kind === 'mask') c.setAttribute('vector-effect', 'non-scaling-stroke');
         layer.appendChild(c);
     });
 
@@ -3761,7 +3807,6 @@ function drawControls(start, ziel) {
     line.setAttribute('stroke-width', strokeWidth);
     line.setAttribute('fill', 'none');
     line.setAttribute('opacity', CONTROL_OPACITY);
-    if (scene?.kind === 'mask') line.setAttribute('vector-effect', 'non-scaling-stroke');
     layer.appendChild(line);
 }
 
@@ -3837,10 +3882,14 @@ function renderStatsPanel(cp) {
     sorted.forEach(({ route, i }) => {
         const distTime = route.length ? (route.length / RUN_SPEED).toFixed(1) : null;
         const noATime = route.noA ? route.noA.toFixed(1) : '0';
+        const obstacleTime = Number(route.obstacle).toFixed(1) || '0';
+        const showObstacle = Number(obstacleTime) > 0;
         const showCorners = Number(noATime) > 0;
 
         const lengthStr = route.length ? `${route.length.toFixed(0)}m` : '-';
+        const ICON_OBSTACLE = window.icon ? window.icon('obstacle', '0.9em') : '';
         const ICON_ANGLE = window.icon ? window.icon('angle', '1em') : '';
+        const obstacleLabel = `<span class="stats-icon">${ICON_OBSTACLE}</span>:`;
         const noALabel = `<span class="stats-icon">${ICON_ANGLE}</span>${noATime}:`;
 
         const col = document.createElement('div');
@@ -3849,38 +3898,10 @@ function renderStatsPanel(cp) {
         col.innerHTML =
             `<span class="stats-total">${formatTime(route.run_time)}</span>` +
             row(`${lengthStr}:`, distTime == null ? '+0.0s' : `+${distTime}s`) +
+            (showObstacle ? row(obstacleLabel, `+${obstacleTime}s`) : '') +
             (showCorners ? row(noALabel, `+${noATime}s`) : '');
         inner.appendChild(col);
     });
-
-    // Mask scenes carry the same generation diagnostics as city batches.
-    // Keep them in the existing play stats surface so staging verification can
-    // confirm rejection pressure and theta/fallback behaviour without devtools.
-    if (cp.kind === 'mask' && cp.meta) {
-        const tMaskGeneration = typeof gettext === 'function' ? gettext('Mask generation') : 'Mask generation';
-        const tAttempts = typeof gettext === 'function' ? gettext('Attempts') : 'Attempts';
-        const tRetries = typeof gettext === 'function' ? gettext('Retries') : 'Retries';
-        const tRefine = typeof gettext === 'function' ? gettext('Refine') : 'Refine';
-        const tFallback = typeof gettext === 'function' ? gettext('fallback') : 'fallback';
-        const tRejections = typeof gettext === 'function' ? gettext('Rejections') : 'Rejections';
-        const tTimings = typeof gettext === 'function' ? gettext('Timings') : 'Timings';
-        const m = cp.meta;
-        const rejects = Object.entries(m.rejectionCounts || {}).filter(([, v]) => Number(v) > 0);
-        const timings = m.timings || {};
-        const timingParts = ['sample', 'snap', 'route', 'refine', 'theta']
-            .filter((k) => Number.isFinite(Number(timings[k])))
-            .map((k) => `${k} ${Math.round(Number(timings[k]))}ms`);
-        const diagnostics = document.createElement('div');
-        diagnostics.className = 'stats-mask-diagnostics';
-        diagnostics.innerHTML =
-            `<span class="stats-diagnostics-title">${tMaskGeneration}</span>` +
-            `<span class="stats-row"><span class="stats-label">${tAttempts}</span><span class="stats-value">${m.attempts ?? '-'}</span></span>` +
-            `<span class="stats-row"><span class="stats-label">${tRetries}</span><span class="stats-value">${m.retries ?? '-'}</span></span>` +
-            `<span class="stats-row"><span class="stats-label">${tRefine}</span><span class="stats-value">${m.refineMode || '-'}${m.refineFallback ? ` (${tFallback})` : ''}</span></span>` +
-            `<span class="stats-row"><span class="stats-label">${tRejections}</span><span class="stats-value">${rejects.length ? rejects.map(([k, v]) => `${k}:${v}`).join(' ') : '0'}</span></span>` +
-            `<span class="stats-row"><span class="stats-label">${tTimings}</span><span class="stats-value">${timingParts.join(', ') || '-'}</span></span>`;
-        inner.appendChild(diagnostics);
-    }
 
     panel.appendChild(inner);
     statsVisible = true;
@@ -4065,10 +4086,16 @@ function clonePoints(points) {
 }
 
 function buildInfinityReportPayload() {
-    if (!scene?.meta?.seed || !scene.start || !scene.ziel) return null;
+    const reportSeed = sceneSource === 'mask'
+        ? Number(maskSource?.fileId ?? scene?.meta?.fileId)
+        : Number(scene?.meta?.seed);
+    if (!Number.isInteger(reportSeed) || reportSeed <= 0 || !scene.start || !scene.ziel) return null;
     const routeResult = scene.routeResult || {};
     return {
-        seed: scene.meta.seed,
+        // ReportedInfinity intentionally has no File FK. For uploaded-map
+        // scenes the existing seed column stores File.id; /debug/infinity/
+        // resolves a matching live file before falling back to city regen.
+        seed: reportSeed,
         pair_index: scene.meta.pairIndex ?? scene.batchIndex ?? null,
         start: clonePoint(scene.start),
         goal: clonePoint(scene.ziel),
@@ -4083,6 +4110,7 @@ function buildInfinityReportPayload() {
             pos: route.pos ?? null,
             length: route.length ?? null,
             noA: route.noA ?? null,
+            obstacle: route.obstacle ?? null,
             run_time: route.run_time ?? null,
             points: clonePoints(route.points),
         })),
@@ -4346,7 +4374,6 @@ function emitWave(pos, color) {
     c.setAttribute('stroke', color);
     c.setAttribute('stroke-width', controlWaveStrokeWidthForScene());
     c.setAttribute('opacity', '0.85');
-    if (scene?.kind === 'mask') c.setAttribute('vector-effect', 'non-scaling-stroke');
     c.style.filter = 'blur(4px)';
     layer.appendChild(c);
     const start = performance.now();

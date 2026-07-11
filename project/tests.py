@@ -179,6 +179,123 @@ class EditorSecurityTests(TestCase):
         self.assertIn('bad file', progress['error'])
 
 
+class NavgraphInvalidationTests(TestCase):
+    def setUp(self):
+        self.team = Team.objects.create(name='Navgraph Team')
+        self.trainer = User.objects.create_user(username='navgraph-trainer', password='pw')
+        Group.objects.create(name='Trainer').user_set.add(self.trainer)
+        profile = Profile.objects.create(user=self.trainer, active_team=self.team)
+        profile.teams.add(self.team)
+        self.client.force_login(self.trainer)
+        self.file = File.objects.create(
+            name='Enabled mask',
+            team=self.team,
+            map_file='enabled-map.png',
+            has_mask=True,
+            infinite_enabled=True,
+        )
+
+    def test_successful_mask_edit_disables_infinite_play(self):
+        with tempfile.TemporaryDirectory() as media_root, override_settings(MEDIA_ROOT=media_root):
+            response = self.client.post(reverse('save_mask'), {
+                'filename': self.file.map_file,
+                'file_id': str(self.file.id),
+                'file': SimpleUploadedFile('mask_enabled-map.png', b'updated mask', content_type='image/png'),
+            })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.json()['infinite_enabled'])
+        self.file.refresh_from_db()
+        self.assertFalse(self.file.infinite_enabled)
+
+    def test_mask_edit_invalidates_an_in_flight_build(self):
+        self.file.batch_progress = {
+            'type': 'navgraph_build',
+            'status': 'building',
+            'build_token': 'stale-build',
+        }
+        self.file.save(update_fields=['batch_progress'])
+
+        with tempfile.TemporaryDirectory() as media_root, override_settings(MEDIA_ROOT=media_root):
+            response = self.client.post(reverse('save_mask'), {
+                'filename': self.file.map_file,
+                'file_id': str(self.file.id),
+                'file': SimpleUploadedFile('mask_enabled-map.png', b'updated mask', content_type='image/png'),
+            })
+
+        self.assertEqual(response.status_code, 200)
+        self.file.refresh_from_db()
+        self.assertEqual(self.file.batch_progress['status'], 'invalidated')
+        self.assertFalse(self.file.infinite_enabled)
+
+    def test_invalidated_build_cannot_reenable_file_when_it_finishes(self):
+        token = 'stale-build'
+        self.file.batch_progress = {
+            'type': 'navgraph_build',
+            'status': 'building',
+            'build_token': token,
+        }
+        self.file.save(update_fields=['batch_progress'])
+
+        def invalidate_during_build(*_args, **_kwargs):
+            File.objects.filter(id=self.file.id).update(
+                infinite_enabled=False,
+                batch_progress={
+                    'type': 'navgraph_build',
+                    'status': 'invalidated',
+                    'build_token': token,
+                },
+            )
+            return {'stats': {}}
+
+        with tempfile.TemporaryDirectory() as media_root, override_settings(MEDIA_ROOT=media_root):
+            mask_dir = os.path.join(media_root, 'masks')
+            os.makedirs(mask_dir)
+            with open(os.path.join(mask_dir, 'mask_enabled-map.png'), 'wb') as mask_file:
+                mask_file.write(b'mask')
+            with (
+                mock.patch('project.navgraph.build_navgraph', side_effect=invalidate_during_build),
+                mock.patch('project.navgraph.save_navgraph'),
+                mock.patch('django.db.close_old_connections'),
+            ):
+                project_views._rebuild_navgraph_for_file(
+                    self.file.id,
+                    enable_on_success=True,
+                    build_token=token,
+                )
+
+        self.file.refresh_from_db()
+        self.assertFalse(self.file.infinite_enabled)
+        self.assertEqual(self.file.batch_progress['status'], 'invalidated')
+
+    def test_region_edit_disables_infinite_play(self):
+        response = self.client.post(
+            reverse('save_region', args=[self.file.id]),
+            data=json.dumps({'polygon': [[10, 10], [100, 10], [100, 100], [10, 100]]}),
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.file.refresh_from_db()
+        self.assertFalse(self.file.infinite_enabled)
+
+    def test_passage_edit_does_not_invalidate_base_navgraph(self):
+        response = self.client.post(
+            reverse('save_element'),
+            data=json.dumps({
+                'type': 'level_passages',
+                'file_id': self.file.id,
+                'level_passages': level_passages_document(),
+                'route_updates': [],
+            }),
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.file.refresh_from_db()
+        self.assertTrue(self.file.infinite_enabled)
+
+
 class LevelPassagesValidationTests(TestCase):
     def test_null_is_canonical_empty_document(self):
         self.assertEqual(normalize_level_passages(None), empty_level_passages())

@@ -95,15 +95,25 @@ assert.equal(future.versionSupported, false);
 assert.equal(future.passages.length, 0);
 assert.equal(future.diagnostics[0].code, 'unsupported-version');
 
-const invalidCaps = normalizeFixture(fixtures['overlapping-entrance-caps']);
-assert.equal(invalidCaps.passages.length, 0);
-assert.equal(invalidCaps.diagnostics[0].code, 'overlapping-entrances');
-const acuteOverlappingBands = normalizePassagesForRuntime({
+// Entrance placement judgment belongs to the coaches: a corridor shorter than
+// its width and an acute V whose outer bands nearly meet both stay valid.
+const shortCaps = normalizeFixture(fixtures['overlapping-entrance-caps']);
+assert.equal(shortCaps.passages.length, 1);
+assert.equal(shortCaps.diagnostics.length, 0);
+const acuteBands = normalizePassagesForRuntime({
     version: 1,
     items: [{ id: 'acute-bands', points: [[5, 14], [9, 10], [5, 6]], width: 2 }],
 }, { mapWidth: 20, mapHeight: 20 });
-assert.equal(acuteOverlappingBands.passages.length, 0);
-assert.equal(acuteOverlappingBands.diagnostics[0].code, 'overlapping-entrances');
+assert.equal(acuteBands.passages.length, 1);
+assert.equal(acuteBands.diagnostics.length, 0);
+// Only a band with no raster cell at all (clipped off-map) is structurally
+// unusable and still rejects.
+const clippedBand = normalizePassagesForRuntime({
+    version: 1,
+    items: [{ id: 'clipped-band', points: [[0, 8], [10, 8]], width: 4 }],
+}, { mapWidth: 20, mapHeight: 16 });
+assert.equal(clippedBand.passages.length, 0);
+assert.equal(clippedBand.diagnostics[0].code, 'empty-entrance');
 
 const duplicateAndInvalid = normalizePassagesForRuntime({
     version: 1,
@@ -172,7 +182,7 @@ const totalRasterWorkBudget = normalizePassagesForRuntime({
     ],
 }, {
     mapWidth: 20, mapHeight: 16, maxRasterCells: 1000,
-    maxTotalRasterCells: 1000, maxRasterWork: 1000, maxTotalRasterWork: 50,
+    maxTotalRasterCells: 1000, maxRasterWork: 1000, maxTotalRasterWork: 100,
 });
 assert.equal(totalRasterWorkBudget.passages.length, 1);
 assert.equal(totalRasterWorkBudget.diagnostics.at(-1).code, 'total-raster-work-budget-exceeded');
@@ -194,15 +204,19 @@ for (const passage of geometricCases.passages) {
     assertConnectedPassable(passage);
     assert.ok(passage.grid.includes(PASSAGE_BOUNDARY_VALUE), `${passage.id} lacks a boundary cost band`);
     assert.ok(passage.startEntrance.length > 0 && passage.endEntrance.length > 0);
-    assert.ok(passage.localWidth * passage.localHeight < 32 * 32, `${passage.id} was not cropped`);
+    assert.ok(passage.localWidth * passage.localHeight <= 32 * 32, `${passage.id} exceeds the map`);
 }
+// Axis-aligned corridors stay tightly cropped (the map-diagonal fixture may
+// legitimately touch all four map edges once its outward bands are included).
+assert.ok(geometricCases.passages[0].localWidth * geometricCases.passages[0].localHeight < 32 * 32);
+assert.ok(geometricCases.passages[1].localWidth * geometricCases.passages[1].localHeight < 32 * 32);
 const hashes = Object.fromEntries(geometricCases.passages.map((passage) => [passage.id, hashTypedArrays(passage)]));
 assert.deepEqual(hashes, {
-    horizontal: '9060c2cfa1a24f907c98a98f73367da548a90d5a801a9d39e614151cfb834ad0',
-    vertical: '546c004ef0baec85be5c76435b3a736af401c427d0e56f03ce59f1292a9cfc89',
-    diagonal: '743a2abcf5057d6a9795054ef341dac8ac01c9892eff83003ba71e88421d191f',
-    'sharp-bend': 'd9e2a76723f2f1cf8b2c565f70a7e35a94e657d5dbd008a1c8fb497de916bdc6',
-    'short-first-last-segments': 'dc50724f9d03a4aee472254311be90b65fd799c563da077c79ad6b4a426922a7',
+    horizontal: '676586975238c7e5a2675759e41b544d5f24f9a5bd9ba64502564747e5c8881e',
+    vertical: 'e46a81432f1b69d0d033a4a7283c99ad1b89be4570d0ea5b409e182e76166e20',
+    diagonal: '07fd1d2cbbcaa41e37aaf27d4d6da12d1ec60585a2357f330769d9009c1e9fce',
+    'sharp-bend': 'c137d0de38de9a0924f63870e21cc57aa9ac40eecad3774dffef6875edf89889',
+    'short-first-last-segments': 'b4cdf104d138109422db0390c786966776d88fa6a5344a5ceee8a9942c6aea8a',
 });
 
 const horizontal = geometricCases.passages[0];
@@ -212,34 +226,51 @@ assert.equal(passageGridValueAt(horizontal, 12, 8), PASSAGE_FAST_VALUE);
 assert.equal(passageGridValueAt(horizontal, 12, 20), 0);
 assert.equal(hitTestPassage(horizontal, 12, 11), true);
 assert.equal(hitTestPassage(horizontal, 12, 11.1), false);
-// Terminal half-planes are authoritative: the old endpoint discs cannot leak
-// beyond horizontal, vertical, or diagonal butt caps.
+// The corridor plus its outward portal bands ends at flat planes exactly
+// PASSAGE_PORTAL_DEPTH outside the drawn endpoints.
 assert.equal(hitTestPassage(horizontal, 4, 8), true);
-assert.equal(hitTestPassage(horizontal, 3.999, 8), false);
-assert.equal(hitTestPassage(horizontal, 25, 8), true);
-assert.equal(hitTestPassage(horizontal, 25.001, 8), false);
-assert.equal(hitTestPassage(vertical, 8, 3.999), false);
+assert.equal(hitTestPassage(horizontal, 3.999, 8), true);
+assert.equal(hitTestPassage(horizontal, 1, 8), true);
+assert.equal(hitTestPassage(horizontal, 0.999, 8), false);
+assert.equal(hitTestPassage(horizontal, 25.001, 8), true);
+assert.equal(hitTestPassage(horizontal, 28, 8), true);
+assert.equal(hitTestPassage(horizontal, 28.001, 8), false);
+// The outward band keeps the full corridor width (rectangular, no round cap).
+assert.equal(hitTestPassage(horizontal, 2, 11), true);
+assert.equal(hitTestPassage(horizontal, 2, 11.1), false);
+assert.equal(hitTestPassage(vertical, 8, 3.999), true);
+assert.equal(hitTestPassage(vertical, 8, 0.999), false);
 const diagonalStart = diagonal.points[0];
 const diagonalTangent = diagonal.terminalFrames.startInward;
 assert.equal(hitTestPassage(diagonal, diagonalStart[0] + diagonalTangent.x * 0.01,
     diagonalStart[1] + diagonalTangent.y * 0.01), true);
 assert.equal(hitTestPassage(diagonal, diagonalStart[0] - diagonalTangent.x * 0.01,
-    diagonalStart[1] - diagonalTangent.y * 0.01), false);
-assert.equal(distanceToPassage(horizontal, 3.999, 8), Infinity);
+    diagonalStart[1] - diagonalTangent.y * 0.01), true);
+assert.equal(hitTestPassage(diagonal, diagonalStart[0] - diagonalTangent.x * 3.01,
+    diagonalStart[1] - diagonalTangent.y * 3.01), false);
+assert.equal(distanceToPassage(horizontal, 0.999, 8), Infinity);
 
-// Portal bands cover the full flat width and are exactly five map pixels deep.
-assert.equal(PASSAGE_PORTAL_DEPTH, 5);
-assert.equal(passageEntranceAt(horizontal, 9, 8), 1);
-assert.equal(passageEntranceAt(horizontal, 9.001, 8), 0);
+// Portal bands lie outside the drawn line, cover the full flat width, and are
+// exactly three map pixels deep.
+assert.equal(PASSAGE_PORTAL_DEPTH, 3);
+assert.equal(passageEntranceAt(horizontal, 3, 8), 1);
+assert.equal(passageEntranceAt(horizontal, 4, 8), 1);      // cap plane inclusive
+assert.equal(passageEntranceAt(horizontal, 4.001, 8), 0);  // interior
+assert.equal(passageEntranceAt(horizontal, 4.5, 8, 0.75), 1); // classifier reach
+assert.equal(passageEntranceAt(horizontal, 9, 8), 0);
 for (let y = 5; y <= 11; y++) {
-    const bandIndex = passageLocalIndex(horizontal, 6, y);
-    assert.notEqual(passageGridValueAt(horizontal, 6, y), 0);
+    const bandIndex = passageLocalIndex(horizontal, 2, y);
+    assert.notEqual(passageGridValueAt(horizontal, 2, y), 0);
     assert.equal(entranceContainsLocalIndex(horizontal.startEntrance, bandIndex), true);
 }
+// Cells on the drawn cap plane are corridor, not entrance band.
+assert.notEqual(passageGridValueAt(horizontal, 4, 8), 0);
+assert.equal(entranceContainsLocalIndex(horizontal.startEntrance, passageLocalIndex(horizontal, 4, 8)), false);
+assert.equal(passageGridValueAt(horizontal, 0, 8), 0);
 const local = globalToPassageLocal(horizontal, 12, 8);
 assert.deepEqual(passageLocalToGlobal(horizontal, local.x, local.y), { x: 12, y: 8 });
-const localIndex = passageLocalIndex(horizontal, 4, 8);
-assert.deepEqual(passageLocalIndexToGlobal(horizontal, localIndex), { x: 4, y: 8 });
+const localIndex = passageLocalIndex(horizontal, 2, 8);
+assert.deepEqual(passageLocalIndexToGlobal(horizontal, localIndex), { x: 2, y: 8 });
 assert.equal(entranceContainsLocalIndex(horizontal.startEntrance, localIndex), true);
 
 // Bbox allocation remains proportional to passage bbox, not the full mask.

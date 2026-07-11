@@ -16,6 +16,16 @@ assert.match(source, /normalized\.passages\.length\s*===\s*nextItems\.length\s*&
     'passage commits must reject skipped or diagnosed runtime items');
 assert.match(source, /route_updates:\s*passageRouteMetricUpdates\(\)/,
     'passage saves must carry the derived route metric batch');
+assert.match(source, /createPassageSaveClient\(\{/,
+    'passage saves must go through the abortable single-flight client');
+assert.doesNotMatch(source, /project\.level_passages = normalizeLevelPassagesDocument\(data/,
+    'server responses must never overwrite the local passage document');
+assert.match(template, /passage_save_client\.js[\s\S]*editor\.js/,
+    'the save client script must load before editor.js');
+assert.match(source, /if \(PassageEditor\.removeLastDraftPoint\(\)\) return true;\s*return PassageEditor\.removeLastPassage\(\);/,
+    'D must remove the last draft point, else the last passage');
+assert.match(source, /"third-dimension":\s*\[[^\]]*id:\s*"edit"[\s\S]*?id:\s*"remove"[^\]]*\]/,
+    'the third-dimension family must expose one combined add/edit action plus remove');
 assert.match(source, /const routeRefresh = invalidateRouting\(\);\s*render\(\);\s*await routeRefresh;\s*return !!\(await saveLevelPassages\(\)\);/s,
     'passage metrics must be recalculated before the single atomic save');
 assert.doesNotMatch(source, /saveRecalculatedRoutes/,

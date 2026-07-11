@@ -765,6 +765,132 @@ starvation; stats panel shows mask rejection counts like city ones.
 
 ## Phase 6 — Tuning + phone verification — **Opus** *(was Phase 5)*
 
+### WP 6.1 — Prune polygon-exterior navgraph topology at build time — **Opus / GPT-5 Codex (high reasoning)** — **Complexity: medium-high**
+
+**Decision and pipeline invariant (2026-07-11, Lars):** the map-region polygon is
+not an optional endpoint hint for an Infinity map. The processing order is always
+mask → portals → coach-drawn inclusion polygon → explicit coach opt-in → navgraph
+build. Therefore every artifact that can be served in Infinity mode has an
+authoritative polygon available at build time, and a served route must remain
+inside that polygon for its entire length. The earlier Phase-1 decision to retain
+the global skeleton for connections through the surrounding margin is superseded:
+such a connection is now illegal, not useful connectivity.
+
+Keep the existing client/Python `node_in_region` A* gate regardless. It protects
+already-built artifacts, rejects stale/mismatched topology, and is a cheap defense
+in depth (one `Uint8Array`/boolean lookup per expansion). Build-time pruning is
+primarily for smaller downloads, lower browser memory, faster state/snapping setup,
+and lower builder edge-generation/weighting/repair cost; pure graph-search time is
+already close to the pruned case because of the runtime gate.
+
+Implement the pruning in `project/navgraph.py` **after all skeleton, resample and
+lattice nodes have been placed and snapped/deduplicated, but before
+`_candidate_edges`, `_weight_edges`, and `_repair_connectivity`**:
+
+1. Require a valid coach polygon for the polygon-pruned path (`len >= 3`, non-empty
+   raster, sane coordinates). Reuse one authoritative rasterization helper for the
+   hit-zone artifact, node pruning, and edge legality so the definitions cannot
+   drift. Preserve the automatic hit-zone path only for non-Infinity/legacy builds;
+   it must never be used as authority to prune a coach-enabled map. Enabling
+   Infinity without a valid polygon must fail before/kick back the build rather
+   than silently build from the automatic detector.
+2. Build an `old_index → new_index` remap. Remove every snapped skeleton/lattice
+   node whose centre is outside the coach region, remap `skeleton_edges` and
+   `obstacle_nodes`, and discard skeleton edges with a removed endpoint. Recompute
+   `n_skeleton_nodes`, lattice/obstacle counts and component ids from the retained
+   arrays; do not rely on the former “skeleton nodes are a contiguous prefix”
+   assumption unless the compaction explicitly preserves it.
+3. Node filtering alone is insufficient for concave polygons: two inside endpoints
+   can have an edge that cuts across the exterior. Treat polygon-exterior pixels as
+   impassable for **every edge-legality path**. The straight-line integral must
+   reject a candidate if any rasterized sample leaves the region; the skeleton
+   A* fallback and connectivity-repair A* must search on `passable mask AND
+   inclusion region`, so neither can repair connectivity by leaving the map.
+   Apply the same rule to any local endpoint-stub/refinement legality check needed
+   for the final served polyline. A route is legal only if both terrain and polygon
+   checks report zero violations.
+4. Do not mask the source before full-image EDT or skeletonization in this first
+   pass. Those stages are global and comparatively awkward to crop safely near a
+   polygon boundary. The intended compute saving starts before candidate-edge
+   generation/weighting/repair, which is where the expensive per-edge work occurs.
+   A later optimization may crop skeleton/EDT to the polygon bounding box plus a
+   tested margin, but only if measurements show this work package leaves meaningful
+   build time on the table.
+5. Keep `.navgraph.bin` version/layout unchanged: fewer nodes and CSR edges fit the
+   existing v2 representation. Continue storing `coarse_hitzone` and the polygon in
+   stats. Add build stats for `nodes_before_region_prune`,
+   `nodes_after_region_prune`, `edges_after_region_prune`, `region_pruned_fraction`,
+   and per-stage timings so the benefit is measurable and debug overlays can show
+   the polygon boundary plus retained topology only.
+
+**Acceptance:** on at least 7 representative coach-enabled maps (small, median,
+largest, concave regions, narrow legal corridors, and portal-bearing maps), every
+serialized node is inside the coach polygon; every serialized edge rasterization
+is inside it; graph A*, endpoint stubs, and final refined routes produce zero
+polygon-exterior samples. Connectivity is evaluated only among legal in-region
+nodes—do not compare against the old global main-component score. Visually inspect
+debug overlays at tight/concave boundaries. Existing runtime-region-gate tests stay
+green.
+
+### WP 6.2 — Make build orchestration and suitability polygon-authoritative — **Sonnet / strong coding model** — **Complexity: medium**
+
+Update the opt-in/rebuild flow and `build_navgraph` management command so the
+contract above is explicit and testable:
+
+- The editor remains the normal trigger: region edits invalidate/rebuild the
+  artifact, and enabling Infinity builds only after mask, portals, and a valid
+  coach polygon are persisted. Verify the background-build race cannot read the
+  previous polygon revision. Record a polygon hash/revision in artifact stats and
+  compare it when deciding whether an artifact is up to date.
+- `build_navgraph --all --force` should prune files that have a stored coach
+  polygon. For masks without one, either build the legacy unpruned diagnostic
+  artifact with `hitzone_source=auto` or skip them with a clear reason, but they
+  cannot become Infinity-servable. Print before/after node and edge counts, artifact
+  bytes, and build time.
+- Recompute `main_component_connectivity` (or add an explicitly named
+  `region_component_connectivity`) on the retained graph only. The Python
+  suitability mirror must use the pruned topology and polygon-legality rule, so
+  its valid rate cannot count a connection through outside space. Worse suitability
+  for a poorly drawn/disconnected region is an honest coach-facing result.
+- Check dynamic portal overlays explicitly. Portal nodes/legs may extend beyond
+  the base-mask polygon only where the product's portal semantics intentionally
+  permit it; otherwise they must pass the same region test. Document the chosen
+  exception rather than letting dynamic overlay nodes bypass the guarantee.
+- This work changes no user-facing copy unless validation errors are surfaced. If
+  copy is added, wrap it in gettext, add de/fr/it rows to
+  `locale/source_messages.py`, then run translation `--check` and `--build` as
+  required by `AGENTS.md`.
+
+**Acceptance:** enabling without a polygon is rejected; enabling with a saved
+polygon builds the matching revision; a polygon edit makes the previous artifact
+stale and rebuilds it; suitability and connectivity cannot traverse the exterior;
+forced backfill reports deterministic prune statistics.
+
+### WP 6.3 — Benchmark the real serving/build benefit and decide on grid compaction — **Sonnet / strong coding model** — **Complexity: low-medium**
+
+Run an A/B rebuild of the same representative maps before and after pruning and
+record: `.navgraph.bin` byte size (and transferred size with the production content
+encoding), N/E, total build time plus edge-generation/weight/repair time, browser
+state-build time, snap time, worker heap, and graph-search p50/p90. The expected
+result is a large reduction in N/E and edge-build work when the polygon covers a
+small fraction, a smaller search-time change because the runtime gate already
+rejects exterior nodes, and improved startup/download/memory.
+
+Do not promise that a current ~3 MB artifact shrinks in direct proportion to N/E:
+the full-map coarse sampling arrays—especially `coarse_labels`—can dominate the
+binary. If representative median artifacts miss a useful target (provisional:
+at least 30% smaller, or under 2 MB transferred), create a separate follow-up to
+crop/compact the sampling grids to the polygon bounding box or replace labels with
+the minimum metadata the client needs. That follow-up likely requires a v3 header
+with grid origin/bounds and coordinated Python/JS readers; do not mix it into the
+no-format-change topology-pruning patch.
+
+**Recommended execution:** use the strongest reasoning/coding model (Opus-class or
+GPT-5 Codex with high reasoning) for WP 6.1 because index remapping, concave-boundary
+legality, and connectivity repair interact. WP 6.2 and WP 6.3 are well specified
+enough for a Sonnet-class/standard strong coding model, with WP 6.1 reviewed before
+backfilling production artifacts.
+
 - Re-run WP 2.2 batch after any threshold changes; tune: hit-zone/region handling, node spacing, distance band, sideGap scaling, barrier length, Phase-5 additions (budgets, corridor radius, barrier significance thresholds, `refineTimeoutPolicy`).
 - Browser verification with 4–6× CPU throttling (phone proxy): time-to-valid-pair distribution over 50 pairs on median + large maps; memory snapshot (heap < ~150 MB on median maps).
 - Edge cases: old-scheme masks, masks with several large free components (islands across a river without bridge portals), degenerate tiny masks.

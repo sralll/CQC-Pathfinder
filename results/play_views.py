@@ -136,6 +136,7 @@ def infinite_mask_maps(request):
             'id': f.id,
             'filename': f.map_file,
             'name': f.name or f.map_file,
+            'scale': f.scale,
             'map_scale': f.map_scale,
         })
     return JsonResponse({'maps': maps})

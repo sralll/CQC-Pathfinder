@@ -8,8 +8,8 @@ gunicorn CQCPathfinder.asgi:application \
   --bind 0.0.0.0:$PORT \
   --preload \
   --workers 2 \
-  --max-requests 50 \
-  --max-requests-jitter 5 \
+  --max-requests 100 \
+  --max-requests-jitter 10 \
   --timeout 30 \
-  --graceful-timeout 900 \
+  --graceful-timeout 600 \
   --log-level info
