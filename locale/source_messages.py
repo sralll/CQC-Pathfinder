@@ -423,6 +423,7 @@ DJANGOJS = {
     "longest streak of fastest routes": ("längste Serie schnellster Routen", "plus longue série de choix les plus rapides", "serie più lunga di percorsi più veloci"),
     "new": ("neu", "nouveau", "nuovo"),
     "not enough results": ("nicht genügend Resultate", "pas assez de résultats", "risultati insufficienti"),
+    "Progress": ("Fortschritt", "Progression", "Progresso"),
     "result": ("Resultat", "résultat", "risultato"),
     "results": ("Resultate", "résultats", "risultati"),
     "someone else": ("jemand anderes", "quelqu'un d'autre", "qualcun altro"),
@@ -432,11 +433,10 @@ DJANGOJS = {
 }
 
 DJANGO.update({
-    "Finish": ("Abschliessen", "Terminer", "Termina"),
-    "Tap to add passage points. Drag to pan the map.": (
-        "Tippe, um Passagenpunkte hinzuzufügen. Ziehe, um die Karte zu verschieben.",
-        "Touche pour ajouter des points au passage. Fais glisser pour déplacer la carte.",
-        "Tocca per aggiungere punti al passaggio. Trascina per spostare la mappa."),
+    "Click: add point · Right click / Enter: finish · D: remove last point · Escape: cancel": (
+        "Klick: Punkt hinzufügen · Rechtsklick / Enter: abschliessen · D: letzten Punkt entfernen · Escape: abbrechen",
+        "Clic : ajouter un point · Clic droit / Entrée : terminer · D : supprimer le dernier point · Échap : annuler",
+        "Clic: aggiungi punto · Clic destro / Invio: termina · D: rimuovi ultimo punto · Esc: annulla"),
     "%(name)s is currently editing this file.": ("%(name)s bearbeitet diese Datei gerade.", "%(name)s modifie ce fichier en ce moment.", "%(name)s sta modificando questo file."),
     "Controls without routes": ("Posten ohne Routen", "Postes sans choix", "Punti senza percorsi"),
     "File too large (max. 15 MB)": ("Datei zu gross (max. 15 MB)", "Fichier trop volumineux (max. 15 Mo)", "File troppo grande (max. 15 MB)"),
@@ -471,11 +471,15 @@ DJANGOJS.update({
     "Add passage": ("Passage hinzufügen", "Ajouter un passage", "Aggiungi passaggio"),
     "Drag controls": ("Posten ziehen", "Déplacer les postes", "Trascina i punti"),
     "Each passage entrance must overlap passable terrain.": ("Jeder Passageneingang muss passierbares Gelände überlappen.", "Chaque entrée du passage doit chevaucher un terrain praticable.", "Ogni ingresso del passaggio deve sovrapporsi a un terreno percorribile."),
+    "Edit": ("Bearbeiten", "Modifier", "Modifica"),
     "Erase": ("Radieren", "Effacer", "Cancella"),
-    "Make the passage longer than its width so the entrances do not overlap.": ("Mache die Passage länger als ihre Breite, damit sich die Eingänge nicht überlappen.", "Allonge le passage au-delà de sa largeur afin que les entrées ne se chevauchent pas.", "Rendi il passaggio più lungo della sua larghezza affinché gli ingressi non si sovrappongano."),
+    "Lock / view only": ("Sperren / nur ansehen", "Verrouiller / lecture seule", "Blocca / sola visualizzazione"),
+    "Mask edit": ("Maske bearbeiten", "Modifier le masque", "Modifica maschera"),
+    "Separate the two 5 px passage entrance bands.": ("Trenne die beiden 5-Pixel-Eingangsbänder der Passage.", "Sépare les deux bandes d'entrée de 5 px du passage.", "Separa le due fasce d'ingresso da 5 px del passaggio."),
     "Obstacles": ("Hindernisse", "Obstacles", "Ostacoli"),
     "Pan": ("Karte verschieben", "Déplacer la carte", "Sposta la mappa"),
     "Passage added": ("Passage hinzugefügt", "Passage ajouté", "Passaggio aggiunto"),
+    "Passage node moved": ("Passagenpunkt verschoben", "Point du passage déplacé", "Punto del passaggio spostato"),
     "Passage points must stay inside the mask.": ("Passagenpunkte müssen innerhalb der Maske bleiben.", "Les points du passage doivent rester à l'intérieur du masque.", "I punti del passaggio devono rimanere all'interno della maschera."),
     "Passage removed": ("Passage entfernt", "Passage supprimé", "Passaggio rimosso"),
     "Passage width": ("Passagenbreite", "Largeur du passage", "Larghezza del passaggio"),

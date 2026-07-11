@@ -24,9 +24,9 @@
 // it lazily at call time — safe in both Node and the browser.
 import { refineRouteTheta, countBarrierViolations } from './refine_theta.js';
 import { guidedThetaStar } from './theta_star.js';
-import { corridorMask, applyCorridor } from './preprocess.js';
-import { simplifyAStarSameTerrainPath, simplifyThetaPath } from './simplify.js';
+import { simplifyThetaPath } from './simplify.js';
 import { normalizePassagesForRuntime } from './passage_geometry.js';
+import { layeredRouteDistinct } from './layered_distinct.js';
 import {
 	buildPassageOverlay, blockedDynamicEdges, nodePathToTypedRoute,
 	overlayNodeCoord, passageRevision,
@@ -1094,13 +1094,12 @@ function refinePassageLeg(state, leg) {
 	const t0 = nowMs();
 	let theta = null;
 	try {
-		const waypoints = simplifyAStarSameTerrainPath(dense, passage.grid,
-			passage.localWidth, passage.localHeight, 10);
-		const corridor = corridorMask(waypoints, passage.localWidth, passage.localHeight,
-			state.cfg.passageCorridorRadius || state.cfg.corridorRadius || 24);
-		const constrained = applyCorridor(passage.grid, corridor);
-		theta = guidedThetaStar(constrained, passage.localWidth, passage.localHeight,
-			start, goal, waypoints, 10);
+		// The passage grid is already a tightly cropped legal surface. A fixed
+		// tube around the dense dynamic edge can preserve a wall-hugging spine on
+		// wide passages, so refine over the complete raster and guide directly to
+		// the goal. Base navgraph refinement retains its legacy corridor.
+		theta = guidedThetaStar(passage.grid, passage.localWidth, passage.localHeight,
+			start, goal, [goal.x, goal.y], 10);
 		if (theta) theta = simplifyThetaPath(theta, 10, 5);
 	} catch (_) {
 		theta = null;
@@ -1375,6 +1374,25 @@ export function generateOnePair(state, { rng, maxAttempts = 4000, now, selection
 		// choice — drop them with cfg.balanceRejectProbability and retry.
 		if (relGap <= cfg.balanceRejectMaxRelativeGap && rng() < cfg.balanceRejectProbability) {
 			bump('balanced'); lastReason = 'balanced'; retries++; continue;
+		}
+
+		// Surface-aware pair distinctness: two routes that share their passage
+		// traversal are not a route choice even when a level-0 obstacle projected
+		// underneath the passage technically separates the two lines. Reuse the
+		// editor's layered distinctness on the refined pair; base-only pairs keep
+		// the established selection tuning untouched.
+		if ((passageSpansA.length || passageSpansB.length)
+			&& state.passageOverlay?.passages?.length) {
+			const candidateRoute = pathA.slice();
+			candidateRoute.passageSpans = passageSpansA;
+			const existingRoute = pathB.slice();
+			existingRoute.passageSpans = passageSpansB;
+			const verdict = layeredRouteDistinct(
+				candidateRoute, [existingRoute],
+				state.mask, state.artifact.W, state.artifact.H,
+				state.passageOverlay.passages,
+			);
+			if (!verdict.distinct) { bump('distinct'); lastReason = 'distinct'; retries++; continue; }
 		}
 
 		const legality = typedA || typedB

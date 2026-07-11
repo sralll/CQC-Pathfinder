@@ -96,6 +96,9 @@ msgstr "Clique le premier point sur la carte…"
 msgid "Click the points on the map and enter the distance."
 msgstr "Clique les points sur la carte et saisis la distance."
 
+msgid "Click: add point · Right click / Enter: finish · D: remove last point · Escape: cancel"
+msgstr "Clic : ajouter un point · Clic droit / Entrée : terminer · D : supprimer le dernier point · Échap : annuler"
+
 msgid "Close"
 msgstr "Fermer"
 
@@ -191,9 +194,6 @@ msgstr "Fichier trop volumineux (max. 50 Mo)"
 
 msgid "Fill"
 msgstr "Remplissage"
-
-msgid "Finish"
-msgstr "Terminer"
 
 msgid "Forum"
 msgstr "Forum"
@@ -461,9 +461,6 @@ msgstr "Interrupteur désactivé → seules les courses de compétition sont aff
 
 msgid "Table"
 msgstr "Tableau"
-
-msgid "Tap to add passage points. Drag to pan the map."
-msgstr "Touche pour ajouter des points au passage. Fais glisser pour déplacer la carte."
 
 msgid "The error potential detection shows how strongly you react when a control has the potential for a big mistake."
 msgstr "La détection du potentiel d'erreur montre à quel point tu réagis lorsqu'un poste présente un risque d'erreur important."

@@ -123,7 +123,7 @@ only the primary agent may mark a package `accepted` after review and verificati
 ## Post-implementation change request - flat portals and three-level tools
 
 **Requested:** 2026-07-10  
-**Status:** specification only; none of the changes in this section are implemented  
+**Status:** follow-up package in progress; CR 1, CR 2, CR 3, CR 4, CR 5, and CR 6 complete — implemented 2026-07-11
 **Authority:** this section supersedes the earlier rounded-cap and Phase-5 UI text
 where they conflict. Keep the earlier text as the implementation history; do not
 mistake it for the target behaviour for the follow-up work.
@@ -132,19 +132,19 @@ mistake it for the target behaviour for the follow-up work.
 
 | Change package | Agent effort | Recommended owner | Depends on |
 |---|---|---|---|
-| CR 1 - flat runtime corridor and 5 px portals | Very high | Senior geometry/pathfinding agent | None |
-| CR 2 - one passage action, one save request | High | Senior Django/editor integration agent | CR 4 transaction boundaries |
-| CR 3 - three-level sidebar and radial context menu | High | Frontend agent familiar with the editor tool state machine | None |
-| CR 4 - add/edit/remove interactions and undo accounting | Very high | Senior frontend interaction agent | CR 1 hit testing, CR 3 state hierarchy |
-| CR 5 - stronger passage rendering | Medium | SVG/CSS frontend agent | CR 1 portal geometry |
-| CR 6 - wall-hugging any-angle investigation and correction | Very high | Senior pathfinding agent | CR 1, then diagnostic fixtures |
+| CR 1 - flat runtime corridor and 5 px portals — **COMPLETE (2026-07-11)** | Very high | Senior geometry/pathfinding agent | None |
+| CR 2 - one passage action, one save request — **COMPLETE (2026-07-11)** | High | Senior Django/editor integration agent | CR 4 transaction boundaries |
+| CR 3 - three-level sidebar and radial context menu — **COMPLETE (2026-07-11)** | High | Frontend agent familiar with the editor tool state machine | None |
+| CR 4 - add/edit/remove interactions and undo accounting — **COMPLETE (2026-07-11)** | Very high | Senior frontend interaction agent | CR 1 hit testing, CR 3 state hierarchy |
+| CR 5 - stronger passage rendering — **COMPLETE (2026-07-11)** | Medium | SVG/CSS frontend agent | CR 1 portal geometry |
+| CR 6 - wall-hugging any-angle investigation and correction — **COMPLETE (2026-07-11)** | Very high | Senior pathfinding agent | CR 1, then diagnostic fixtures |
 | CR 7 - translations, regression tests, and manual QA | High | Independent review agent plus human visual review | CR 1-6 |
 
 The packages should not be implemented as isolated visual tweaks. In particular,
 CR 1 changes the topology used by the worker and classifier, CR 4 defines when an
 edit becomes one undo/save action, and CR 2 must use those transaction boundaries.
 
-### CR 1 - flat corridor ends and rectangular portal bands
+### CR 1 - flat corridor ends and rectangular portal bands — **COMPLETE (2026-07-11)**
 
 **Agent effort:** Very high  
 **Primary files:** `passage_geometry.js`, `passage_classifier.js`,
@@ -195,11 +195,66 @@ Required fixtures:
   overlapping independent passages, and Infinity portal reconstruction;
 - unchanged no-passage routing.
 
-### CR 2 - coalesce passage persistence into one save-element request
+**Implementation record — 2026-07-11:**
+
+- `passage_geometry.js` now exports the authoritative
+  `PASSAGE_PORTAL_DEPTH = 5` and shared terminal frames. Runtime membership is
+  clipped by the start/end tangent half-planes, while the existing union of
+  segment strokes keeps rounded, gap-free interior joins. The terminal planes
+  also participate in clearance calculation, so the boundary-cost band follows
+  the flat ends.
+- Entrance rasters are the corridor cells whose inward terminal projection is
+  from 0 through 5 mask pixels. Normalization rejects empty, overlapping, or
+  8-neighbour-touching start/end entrance cell sets after preserving the existing
+  self-overlap, allocation, and work-budget checks.
+- `distanceToPassage()`, `hitTestPassage()`, and `passageEntranceAt()` now enforce
+  the shared half-plane/band rules. The saved-route classifier, editor hit testing,
+  layered base/passage transitions, and Infinity portal overlay continue to consume
+  these shared helpers or the authoritative entrance arrays, so they cannot create
+  circular-cap or mid-corridor transitions.
+- The editor renders butt-capped corridors and terminal-tangent portal bands using
+  the exported 5 px constant; the overlap validation message and DE/FR/IT catalogs
+  were updated and rebuilt.
+- Regression coverage now includes horizontal, vertical, diagonal, and bent flat
+  ends; just-inside/outside half-plane probes; exact portal depth and full-width
+  edge transitions; straight and acute overlapping bands; forward/reverse layered
+  routing; saved-route reclassification; projected and independent crossings;
+  Infinity reconstruction; deterministic raster hashes; and unchanged base-only
+  behavior. All pathing `*.test.mjs` suites and
+  `scripts/manage_translations.py --check` pass.
+
+### CR 2 - coalesce passage persistence into one save-element request — **COMPLETE (2026-07-11)**
 
 **Agent effort:** High  
 **Primary files:** `editor.js`, the `save_element` branch in `project/views.py`, and
 focused request/transaction tests
+
+**Status:** complete — implemented 2026-07-11.
+
+**Implementation record:**
+
+- `PassageEditor` now waits for passage-dependent route recalculation and builds
+  one lazy `route_updates` batch alongside the canonical `level_passages`
+  document. Add, edit, remove, point-drag, and width-wheel passage actions all
+  use that single persistence path; the old one-request-per-route follow-up was
+  removed. The batch contains only persisted route identifiers plus the derived
+  `obstacle` and `run_time` values, so `Route.rP` and the model schema remain
+  unchanged.
+- The `save_element` passage branch now locks the target file and validates every
+  route update against that file/control pair. It rejects duplicate, malformed,
+  foreign, or out-of-range updates, then writes the passage document and all
+  derived route metrics in one database transaction. The response returns the
+  canonical passage document, route identifiers/values, and one `last_edited`
+  timestamp. Atomic failure returns the existing save failure path and the local
+  action is not reported as persisted.
+- Added Django coverage for the successful multi-route batch, invalid-metric
+  rollback, and cross-file ownership rejection. The editor contract test asserts
+  the single batched request path and absence of per-route passage follow-up
+  saves. Snapshot saves remain independent and retain their existing cadence.
+
+**Verification:** SQLite-isolated `LevelPassagesPersistenceTests` (12/12),
+passage editor contract, passage geometry, layered passage, and layered
+distinctness Node suites, plus translation `--check`/`--build`.
 
 Observed current cause: `PassageEditor.finish()` and `removeAt()` save the
 `level_passages` document once, then `saveRecalculatedRoutes()` calls `saveRoute()`
@@ -231,7 +286,7 @@ Required behaviour:
   required metric updates. Add Django tests for ownership rejection and rollback of
   the entire batch when any route update is invalid.
 
-### CR 3 - restore a three-level mask tool hierarchy
+### CR 3 - restore a three-level mask tool hierarchy — **COMPLETE (2026-07-11)**
 
 **Agent effort:** High  
 **Primary files:** `editor.js`, `editor.css`, `editor.html`, and `static/js/icons.js`
@@ -277,11 +332,61 @@ Radial context menu (RCM) requirements:
   all use one nested mask-tool state machine. Do not reintroduce separate flattened
   state that can drift between the two menus.
 
+**Status:** complete — implemented 2026-07-11.
+
+**Implementation record:**
+
+- Replaced the flattened Mask subtool list with one canonical nested state machine:
+  `lock/view`, `mask-edit/add|remove`, and
+  `third-dimension/add|edit|remove`. Legacy leaf IDs remain readable when restoring
+  undo snapshots, while new sidebar and RCM selections write the canonical state.
+- Restored the two-column sidebar layout: the level-2 family column contains lock,
+  mask edit, and 3rd dimension; the level-3 column contains only the active family's
+  actions. The third-dimension family uses the shared `bridge` icon from
+  `static/js/icons.js`.
+- Extended the RCM with shared center/level-1/level-2/level-3 radii. Mask branches
+  render level-2 families and dynamically populate the level-3 action ring on hover;
+  guide-line, sticky, double-right-click, wheel, cursor, and keyboard dispatch all
+  use the same nested state.
+
+**Verification:** `node --check` for `editor.js` and `icons.js`,
+`python scripts/manage_translations.py --check`, and `git diff --check` pass.
+
 ### CR 4 - direct passage add, edit, remove, and undo interactions
 
 **Agent effort:** Very high  
 **Primary files:** `editor.js`, `editor.html`, `editor.css`, editor contract tests,
 and all translated help strings
+
+**Status:** Complete - 2026-07-11
+
+**Implementation notes:**
+
+- Add now starts one undo/action transaction before its first point. Primary clicks
+  append points, right click or Enter finishes, `D` removes the last draft point,
+  and Escape cancels. Double click no longer finishes. The finishing right-button
+  down/up pair is consumed before the RCM or pan handlers, and the sidebar Finish/
+  Cancel buttons were replaced with translated direct-interaction help.
+- Edit has no persistent passage selection. Each hover, wheel, and primary-button
+  down resolves all passage hits through shared passage geometry. Node candidates
+  are ordered by screen distance, topmost render order, stable passage id, and point
+  index. A body hit outside the node tolerance does not move a node. Hover feedback
+  is transient and node drags retain their passage id and point index for the full
+  gesture.
+- Width wheel ticks update the hovered passage immediately and are coalesced into
+  one undo/save action by an idle debounce. Node drags push once before their first
+  real mutation and commit once on pointer up. Full-document geometry/work budgets,
+  mask bounds, entrance overlap, and passable-terrain checks run before edits are
+  accepted; invalid drags restore the pre-gesture passage document.
+- Remove still deletes the whole topmost hit passage and contributes one shared
+  undo/action entry. Cancelled/no-op/invalid interactions do not retain undo entries.
+  Undo/redo and state restore clear drafts, hover, drag, and width-debounce state.
+- `passage_editor_contract.test.mjs` now guards the direct Add controls, right-click
+  RCM priority, deterministic Edit ordering, width debounce, first-mutation undo
+  boundary, and removal of the sidebar Finish/Cancel buttons. The focused Node
+  contract, JavaScript syntax check, translation check/build, and `git diff --check`
+  pass. The focused Django passage suite could not start because this environment's
+  configured PostgreSQL host is network-blocked; no database assertion ran.
 
 #### Add mode
 
@@ -345,6 +450,18 @@ and all translated help strings
 **Primary files:** the passage SVG renderer in `editor.js` and passage rules in
 `map_objects.css`
 
+**Status:** complete — the renderer now uses shared terminal frames for flat butt
+caps and 5 mask-pixel transverse portal bands in both committed and preview
+geometry. The dashed centreline and circular/dashed entrance treatment were
+removed. Passage overlays now use a stronger cyan accent with higher normal and
+preview opacity; the control/route purple accent remains separate. Passage
+selection has no persistent visual treatment, while node handles remain limited
+to the active draft and transient hover feedback.
+
+**Verification:** `node --check project/static/project/js/editor.js`, the passage
+geometry/classifier suite, the passage editor contract suite, `git diff --check`,
+and the rebuilt repository translation catalogs pass.
+
 - Render the corridor with flat SVG caps (`stroke-linecap="butt"`) so its visible
   terminal planes agree with CR 1. Preview and committed geometry must use the same
   terminal tangent logic.
@@ -360,7 +477,7 @@ and all translated help strings
 - Node handles appear only as Edit-mode hover/drag feedback or as Add draft points;
   there is no persistent selected rendering.
 
-### CR 6 - investigate and correct wall-hugging passage routes
+### CR 6 - investigate and correct wall-hugging passage routes — **COMPLETE (2026-07-11)**
 
 **Agent effort:** Very high  
 **Primary files:** `layered_pipeline.js`, `layered_astar.js`, `theta_star.js`,
@@ -415,6 +532,39 @@ Acceptance requires the new fixtures to choose the shorter gradual line, preserv
 flat-portal-only level changes, remain legal after simplification, and show no
 material no-passage regression. Apply the same diagnosis to Infinity if its dynamic
 portal route/refinement shows the symptom.
+
+**Implementation record — 2026-07-11:**
+
+- The investigation reproduced all three limiting mechanisms in the passage branch:
+  a fixed-radius refinement tube excluded legal cross-sections wider than 48 px,
+  independently pinned transition cells left avoidable bends after per-leg
+  refinement, and the shared mutable waypoint index could make passage refinement
+  expansion-order dependent. The legacy base-only branch remains unchanged.
+- `layered_pipeline.js` now refines every passage leg over its complete cropped legal
+  raster and uses goal-directed Theta* guidance for that surface. Before refinement,
+  a bounded deterministic coordinate-descent pass evaluates live cells across both
+  5 px portal bands, legalizes improved anchors, and writes the same exact projected
+  coordinate into the adjoining base and passage legs. Transitions therefore remain
+  limited to the two authoritative flat portal bands.
+- Infinity used the same fixed-radius passage tube. `navgraph_router.js` now also
+  refines dynamic passage legs over their complete cropped raster with goal-directed
+  guidance; its established base-navgraph corridor remains unchanged.
+- `wall_hugging_fixtures.mjs` adds wide straight, reversed, unequal-entrance-terrain,
+  below-2×-radius, diagonal, and bent cases. `wall_hugging.test.mjs` records the chosen
+  portal cells, dense layered cost, total and passage refined costs, both wall
+  clearances, and an independent full-raster 8-neighbour reference optimum. It also
+  checks gradual lateral movement, exact opposite-band transitions, post-simplify
+  raster legality, deterministic saved-route reclassification, and the Infinity
+  dynamic-overlay path.
+- On the recorded run, passage any-angle costs were 859.60–1115.09 versus discrete
+  full-raster reference costs of 924.58–1200.36. The six end-to-end layered cases
+  completed in 19–79 ms on the verification machine; the existing four-passage
+  benchmark recorded a 106.71 ms median with 153,240 allocated nodes. These are
+  diagnostic machine-local values, not frozen cross-machine performance thresholds.
+- All seven pathing `*.test.mjs` suites, `layered_bench.mjs`,
+  `scripts/manage_translations.py --check`, `git diff --check`, the Django system
+  check, and all 54 `project`/`results` tests on isolated SQLite pass. No user-facing
+  strings, persisted schemas, or route payloads changed.
 
 ### CR 7 - translations, verification, and handoff
 

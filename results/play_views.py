@@ -448,7 +448,11 @@ def get_files(request):
             'generated_infinite_done': infinity_done_map.get(None, 0),
         })
 
-    qs = File.objects.filter(deleted=False, published=True)
+    # Fetch published files plus any unpublished files that are infinity-enabled,
+    # so the client can switch modes without a round-trip.
+    qs = File.objects.filter(deleted=False).filter(
+        Q(published=True) | Q(infinite_enabled=True)
+    )
 
     if not request.user.is_superuser:
         if active_team.shared_pool:
@@ -486,6 +490,7 @@ def get_files(request):
             'team_name':        f.team.name if f.team else '',
             'cp_count':         f.cp_count,
             'map_file':         f.map_file,
+            'published':        bool(f.published),
             'infinite_enabled': bool(f.infinite_enabled),
             'last_edited':      f.last_edited.isoformat() if f.last_edited else '',
             'label': (

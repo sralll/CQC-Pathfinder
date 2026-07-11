@@ -7,10 +7,13 @@ import { createHash } from 'node:crypto';
 import {
     PASSAGE_BOUNDARY_VALUE,
     PASSAGE_FAST_VALUE,
+    PASSAGE_PORTAL_DEPTH,
     entranceContainsLocalIndex,
+    distanceToPassage,
     globalToPassageLocal,
     hitTestPassage,
     normalizePassagesForRuntime,
+    passageEntranceAt,
     passageGridValueAt,
     passageLocalIndex,
     passageLocalIndexToGlobal,
@@ -95,18 +98,24 @@ assert.equal(future.diagnostics[0].code, 'unsupported-version');
 const invalidCaps = normalizeFixture(fixtures['overlapping-entrance-caps']);
 assert.equal(invalidCaps.passages.length, 0);
 assert.equal(invalidCaps.diagnostics[0].code, 'overlapping-entrances');
+const acuteOverlappingBands = normalizePassagesForRuntime({
+    version: 1,
+    items: [{ id: 'acute-bands', points: [[5, 14], [9, 10], [5, 6]], width: 2 }],
+}, { mapWidth: 20, mapHeight: 20 });
+assert.equal(acuteOverlappingBands.passages.length, 0);
+assert.equal(acuteOverlappingBands.diagnostics[0].code, 'overlapping-entrances');
 
 const duplicateAndInvalid = normalizePassagesForRuntime({
     version: 1,
     items: [
-        { id: 'valid', points: [[2, 3], [2, 3], [12, 3]], width: 2 },
+        { id: 'valid', points: [[2, 3], [2, 3], [14, 3]], width: 2 },
         { id: 'valid', points: [[1, 1], [15, 1]], width: 2 },
         { id: 'bad-width', points: [[1, 1], [15, 1]], width: 1 },
         { id: 'bad-points', points: [[1, 1], [1, 1]], width: 2 },
     ],
 }, { mapWidth: 20, mapHeight: 20 });
 assert.equal(duplicateAndInvalid.passages.length, 1);
-assert.deepEqual(duplicateAndInvalid.passages[0].points, [[2, 3], [12, 3]]);
+assert.deepEqual(duplicateAndInvalid.passages[0].points, [[2, 3], [14, 3]]);
 assert.deepEqual(duplicateAndInvalid.diagnostics.map((entry) => entry.code), [
     'duplicate-id', 'invalid-width', 'invalid-points',
 ]);
@@ -148,8 +157,8 @@ assert.equal(rasterWorkBudget.diagnostics[0].code, 'raster-work-budget-exceeded'
 const totalRasterBudget = normalizePassagesForRuntime({
     version: 1,
     items: [
-        { id: 'first-budget', width: 2, points: [[2, 3], [12, 3]] },
-        { id: 'second-budget', width: 2, points: [[2, 10], [12, 10]] },
+        { id: 'first-budget', width: 2, points: [[2, 3], [14, 3]] },
+        { id: 'second-budget', width: 2, points: [[2, 10], [14, 10]] },
     ],
 }, { mapWidth: 20, mapHeight: 16, maxRasterCells: 1000, maxTotalRasterCells: 100 });
 assert.equal(totalRasterBudget.passages.length, 1);
@@ -158,8 +167,8 @@ assert.equal(totalRasterBudget.diagnostics.at(-1).code, 'total-raster-budget-exc
 const totalRasterWorkBudget = normalizePassagesForRuntime({
     version: 1,
     items: [
-        { id: 'first-work', width: 2, points: [[2, 3], [12, 3]] },
-        { id: 'second-work', width: 2, points: [[2, 10], [12, 10]] },
+        { id: 'first-work', width: 2, points: [[2, 3], [14, 3]] },
+        { id: 'second-work', width: 2, points: [[2, 10], [14, 10]] },
     ],
 }, {
     mapWidth: 20, mapHeight: 16, maxRasterCells: 1000,
@@ -189,18 +198,44 @@ for (const passage of geometricCases.passages) {
 }
 const hashes = Object.fromEntries(geometricCases.passages.map((passage) => [passage.id, hashTypedArrays(passage)]));
 assert.deepEqual(hashes, {
-    horizontal: 'af84e8eb9e260a07520e9ccdf4523570d1c288c2136968c12afa1810bc11ac4d',
-    vertical: '7b05dc3f89c6cad616a288f1f929a8ec93732f38fa883441e9b53339af01c672',
-    diagonal: '34acd3ca76412b51cb60456bbb52bb5d7008467ad9c87112354a20f26687c9a4',
-    'sharp-bend': '4fdeb2a3795f30ec449b4e9b6219da923ef075c212c9bcb1e9b7a2463c55af60',
-    'short-first-last-segments': 'd4a61e4129696ae6f0557192b1f0b7c6f442b1c64d1c1aeec65c74538535e278',
+    horizontal: '9060c2cfa1a24f907c98a98f73367da548a90d5a801a9d39e614151cfb834ad0',
+    vertical: '546c004ef0baec85be5c76435b3a736af401c427d0e56f03ce59f1292a9cfc89',
+    diagonal: '743a2abcf5057d6a9795054ef341dac8ac01c9892eff83003ba71e88421d191f',
+    'sharp-bend': 'd9e2a76723f2f1cf8b2c565f70a7e35a94e657d5dbd008a1c8fb497de916bdc6',
+    'short-first-last-segments': 'dc50724f9d03a4aee472254311be90b65fd799c563da077c79ad6b4a426922a7',
 });
 
 const horizontal = geometricCases.passages[0];
+const vertical = geometricCases.passages[1];
+const diagonal = geometricCases.passages[2];
 assert.equal(passageGridValueAt(horizontal, 12, 8), PASSAGE_FAST_VALUE);
 assert.equal(passageGridValueAt(horizontal, 12, 20), 0);
 assert.equal(hitTestPassage(horizontal, 12, 11), true);
 assert.equal(hitTestPassage(horizontal, 12, 11.1), false);
+// Terminal half-planes are authoritative: the old endpoint discs cannot leak
+// beyond horizontal, vertical, or diagonal butt caps.
+assert.equal(hitTestPassage(horizontal, 4, 8), true);
+assert.equal(hitTestPassage(horizontal, 3.999, 8), false);
+assert.equal(hitTestPassage(horizontal, 25, 8), true);
+assert.equal(hitTestPassage(horizontal, 25.001, 8), false);
+assert.equal(hitTestPassage(vertical, 8, 3.999), false);
+const diagonalStart = diagonal.points[0];
+const diagonalTangent = diagonal.terminalFrames.startInward;
+assert.equal(hitTestPassage(diagonal, diagonalStart[0] + diagonalTangent.x * 0.01,
+    diagonalStart[1] + diagonalTangent.y * 0.01), true);
+assert.equal(hitTestPassage(diagonal, diagonalStart[0] - diagonalTangent.x * 0.01,
+    diagonalStart[1] - diagonalTangent.y * 0.01), false);
+assert.equal(distanceToPassage(horizontal, 3.999, 8), Infinity);
+
+// Portal bands cover the full flat width and are exactly five map pixels deep.
+assert.equal(PASSAGE_PORTAL_DEPTH, 5);
+assert.equal(passageEntranceAt(horizontal, 9, 8), 1);
+assert.equal(passageEntranceAt(horizontal, 9.001, 8), 0);
+for (let y = 5; y <= 11; y++) {
+    const bandIndex = passageLocalIndex(horizontal, 6, y);
+    assert.notEqual(passageGridValueAt(horizontal, 6, y), 0);
+    assert.equal(entranceContainsLocalIndex(horizontal.startEntrance, bandIndex), true);
+}
 const local = globalToPassageLocal(horizontal, 12, 8);
 assert.deepEqual(passageLocalToGlobal(horizontal, local.x, local.y), { x: 12, y: 8 });
 const localIndex = passageLocalIndex(horizontal, 4, 8);

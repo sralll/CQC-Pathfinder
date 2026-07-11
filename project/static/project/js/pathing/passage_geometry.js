@@ -10,6 +10,12 @@ export const PASSAGE_MIN_WIDTH = 2;
 export const PASSAGE_MAX_WIDTH = 256;
 export const PASSAGE_MAX_ITEMS = 64;
 export const PASSAGE_MAX_POINTS = 256;
+// Entrance topology is a map-space geometry rule. Keep this single exported
+// value authoritative for raster cells, classifiers, graph transitions, SVG,
+// and regression fixtures. The portal band lies OUTSIDE the drawn corridor:
+// each terminal segment is extended outward by this depth and the appended
+// rectangle is the entrance band.
+export const PASSAGE_PORTAL_DEPTH = 3;
 // Dense cropped rasters keep the hot path simple, but an adversarial long
 // diagonal can otherwise allocate most of a map-sized bounding box. These
 // limits bound both normalization and the two directional A* state copies.
@@ -118,37 +124,84 @@ function validDimension(value) {
     return Number.isInteger(value) && value > 0;
 }
 
-/** Minimum Euclidean distance from a global point to a passage centreline. */
+function unitVector(from, to) {
+    const dx = to[0] - from[0];
+    const dy = to[1] - from[1];
+    const length = Math.hypot(dx, dy);
+    if (!(length > EPSILON)) return null;
+    return Object.freeze({ x: dx / length, y: dy / length });
+}
+
+/** Terminal inward tangents used by both the runtime and SVG renderer.
+ *  `startOuter`/`endOuter` are the drawn endpoints pushed outward by the
+ *  portal depth; the corridor plus its two entrance bands ends there.
+ *  Returns null for degenerate input (fewer than two points, or a zero-length
+ *  terminal segment as unnormalized editor drafts can briefly contain). */
+export function passageTerminalFrames(passage) {
+    const points = passage?.points;
+    if (!Array.isArray(points) || points.length < 2) return null;
+    const start = Object.freeze(points[0].slice());
+    const end = Object.freeze(points[points.length - 1].slice());
+    const startInward = unitVector(start, points[1]);
+    const endInward = unitVector(end, points[points.length - 2]);
+    if (!startInward || !endInward) return null;
+    const startOuter = Object.freeze([
+        start[0] - startInward.x * PASSAGE_PORTAL_DEPTH,
+        start[1] - startInward.y * PASSAGE_PORTAL_DEPTH,
+    ]);
+    const endOuter = Object.freeze([
+        end[0] - endInward.x * PASSAGE_PORTAL_DEPTH,
+        end[1] - endInward.y * PASSAGE_PORTAL_DEPTH,
+    ]);
+    return Object.freeze({ start, end, startInward, endInward, startOuter, endOuter });
+}
+
+function resolveFrames(passage) {
+    return passage.terminalFrames || passageTerminalFrames(passage);
+}
+
+function terminalProjections(frames, x, y) {
+    if (!frames) return { start: -Infinity, end: -Infinity };
+    return {
+        start: (x - frames.start[0]) * frames.startInward.x
+            + (y - frames.start[1]) * frames.startInward.y,
+        end: (x - frames.end[0]) * frames.endInward.x
+            + (y - frames.end[1]) * frames.endInward.y,
+    };
+}
+
+/** Minimum Euclidean distance from a global point to the passage centreline,
+ *  measured against the terminal segments extended outward through the portal
+ *  bands. Points beyond either outer cap plane are outside (Infinity). */
 export function distanceToPassage(passage, x, y) {
+    const frames = resolveFrames(passage);
+    const projections = terminalProjections(frames, x, y);
+    if (projections.start < -PASSAGE_PORTAL_DEPTH - EPSILON
+        || projections.end < -PASSAGE_PORTAL_DEPTH - EPSILON) return Infinity;
     let best = Infinity;
     const points = passage.points;
-    for (let i = 1; i < points.length; i++) {
-        const a = points[i - 1];
-        const b = points[i];
+    const last = points.length - 1;
+    for (let i = 1; i <= last; i++) {
+        const a = i === 1 ? frames.startOuter : points[i - 1];
+        const b = i === last ? frames.endOuter : points[i];
         const distanceSquared = pointSegmentDistanceSquared(x, y, a[0], a[1], b[0], b[1]);
         if (distanceSquared < best) best = distanceSquared;
     }
     return Math.sqrt(best);
 }
 
-/** True when a point is inside the rounded stroke, optionally with tolerance. */
+/** True inside the side-expanded stroke, clipped by both flat outer cap planes. */
 export function hitTestPassage(passage, x, y, tolerance = 0) {
     if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(tolerance)) return false;
     return distanceToPassage(passage, x, y) <= passage.width / 2 + Math.max(0, tolerance) + EPSILON;
 }
 
-/** Entrance identity at a global point: 1=start, 2=end, 3=overlap, 0=neither. */
+/** Entrance identity in the two rectangular bands outside the drawn endpoints. */
 export function passageEntranceAt(passage, x, y, tolerance = 0) {
-    const radius = passage.width / 2 + Math.max(0, tolerance);
-    const radiusSquared = radius * radius + EPSILON;
-    const start = passage.points[0];
-    const end = passage.points[passage.points.length - 1];
-    const sdx = x - start[0];
-    const sdy = y - start[1];
-    const edx = x - end[0];
-    const edy = y - end[1];
-    const inStart = sdx * sdx + sdy * sdy <= radiusSquared;
-    const inEnd = edx * edx + edy * edy <= radiusSquared;
+    if (!hitTestPassage(passage, x, y, tolerance)) return 0;
+    const projections = terminalProjections(resolveFrames(passage), x, y);
+    const inStart = projections.start < -EPSILON;
+    const inEnd = projections.end < -EPSILON;
     return (inStart ? 1 : 0) | (inEnd ? 2 : 0);
 }
 
@@ -215,8 +268,9 @@ export function rasterizePassage(rawItem, options = {}) {
     }
     const startPoint = normalizedPoints[0];
     const endPoint = normalizedPoints[normalizedPoints.length - 1];
-    if (Math.hypot(endPoint[0] - startPoint[0], endPoint[1] - startPoint[1]) <= width + EPSILON) {
-        return { passage: null, diagnostics: [diagnostic('overlapping-entrances', itemIndex, id, 'Derived start and end entrance caps must not overlap or touch.')] };
+    const terminalFrames = passageTerminalFrames({ points: normalizedPoints });
+    if (!terminalFrames) {
+        return { passage: null, diagnostics: [diagnostic('invalid-points', itemIndex, id, 'At least two distinct finite consecutive points are required.')] };
     }
     if (hasSelfOverlappingCorridor(normalizedPoints, width)) {
         return { passage: null, diagnostics: [diagnostic('self-overlapping-corridor', itemIndex, id, 'A passage corridor must not cross, branch, or touch a non-adjacent part of itself.')] };
@@ -236,7 +290,7 @@ export function rasterizePassage(rawItem, options = {}) {
     let minPointY = Infinity;
     let maxPointX = -Infinity;
     let maxPointY = -Infinity;
-    for (const point of normalizedPoints) {
+    for (const point of [...normalizedPoints, terminalFrames.startOuter, terminalFrames.endOuter]) {
         minPointX = Math.min(minPointX, point[0]);
         minPointY = Math.min(minPointY, point[1]);
         maxPointX = Math.max(maxPointX, point[0]);
@@ -266,9 +320,12 @@ export function rasterizePassage(rawItem, options = {}) {
     }
     const segmentBounds = [];
     let rasterWork = 0;
-    for (let segment = 1; segment < normalizedPoints.length; segment++) {
-        const a = normalizedPoints[segment - 1];
-        const b = normalizedPoints[segment];
+    const lastSegment = normalizedPoints.length - 1;
+    for (let segment = 1; segment <= lastSegment; segment++) {
+        // Terminal segments extend outward through the portal bands so the
+        // appended entrance rectangles keep the full corridor width.
+        const a = segment === 1 ? terminalFrames.startOuter : normalizedPoints[segment - 1];
+        const b = segment === lastSegment ? terminalFrames.endOuter : normalizedPoints[segment];
         const fromX = Math.max(minX, Math.floor(Math.min(a[0], b[0]) - radius));
         const fromY = Math.max(minY, Math.floor(Math.min(a[1], b[1]) - radius));
         const toX = Math.min(maxX, Math.ceil(Math.max(a[0], b[0]) + radius));
@@ -299,12 +356,22 @@ export function rasterizePassage(rawItem, options = {}) {
         for (let globalY = fromY; globalY <= toY; globalY++) {
             const row = (globalY - minY) * localWidth;
             for (let globalX = fromX; globalX <= toX; globalX++) {
+                const startProjection = (globalX - start[0]) * terminalFrames.startInward.x
+                    + (globalY - start[1]) * terminalFrames.startInward.y;
+                const endProjection = (globalX - end[0]) * terminalFrames.endInward.x
+                    + (globalY - end[1]) * terminalFrames.endInward.y;
+                if (startProjection < -PASSAGE_PORTAL_DEPTH - EPSILON
+                    || endProjection < -PASSAGE_PORTAL_DEPTH - EPSILON) continue;
                 const distanceSquared = pointSegmentDistanceSquared(
                     globalX, globalY, a[0], a[1], b[0], b[1],
                 );
                 if (distanceSquared > radiusSquared) continue;
                 const index = row + globalX - minX;
-                const clearance = radius - Math.sqrt(distanceSquared);
+                const clearance = Math.min(
+                    radius - Math.sqrt(distanceSquared),
+                    startProjection + PASSAGE_PORTAL_DEPTH,
+                    endProjection + PASSAGE_PORTAL_DEPTH,
+                );
                 const isBoundary = boundaryBand > 0 && clearance < boundaryBand - EPSILON;
                 // Any segment that sees the pixel as interior wins over a boundary
                 // observation, independent of the numeric terrain values supplied.
@@ -321,13 +388,23 @@ export function rasterizePassage(rawItem, options = {}) {
             const index = row + localX;
             if (grid[index] === 0) continue;
             const globalX = minX + localX;
-            const startDx = globalX - start[0];
-            const startDy = globalY - start[1];
-            if (startDx * startDx + startDy * startDy <= radiusSquared) startEntrance.push(index);
-            const endDx = globalX - end[0];
-            const endDy = globalY - end[1];
-            if (endDx * endDx + endDy * endDy <= radiusSquared) endEntrance.push(index);
+            const startProjection = (globalX - start[0]) * terminalFrames.startInward.x
+                + (globalY - start[1]) * terminalFrames.startInward.y;
+            const endProjection = (globalX - end[0]) * terminalFrames.endInward.x
+                + (globalY - end[1]) * terminalFrames.endInward.y;
+            if (startProjection < -EPSILON) startEntrance.push(index);
+            if (endProjection < -EPSILON) endEntrance.push(index);
         }
+    }
+
+    // Placement judgment (overlapping or touching bands, entrance terrain) is
+    // deliberately left to the coaches. Only a band with no raster cells at
+    // all is rejected, because such a passage could never be entered.
+    if (!startEntrance.length || !endEntrance.length) {
+        return { passage: null, diagnostics: [diagnostic(
+            'empty-entrance', itemIndex, id,
+            'Each entrance band must contain at least one raster cell inside the map.',
+        )] };
     }
 
     const frozenPoints = Object.freeze(normalizedPoints.map((point) => Object.freeze(point.slice())));
@@ -335,6 +412,7 @@ export function rasterizePassage(rawItem, options = {}) {
     const passage = Object.freeze({
         id,
         points: frozenPoints,
+        terminalFrames,
         width,
         bounds,
         localWidth,

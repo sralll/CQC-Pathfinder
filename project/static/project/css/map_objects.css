@@ -163,41 +163,34 @@ body.mode-infinity #infinity-controls { display: flex; flex-direction: column; g
 #passage-layer,
 #passage-preview-layer {
     pointer-events: none;
-    color: #19b9d1;
+    color: #008fa3;
 }
 
-#passage-layer { opacity: 0.28; }
-#map-container.mode-mask #passage-layer { opacity: 0.72; }
+#passage-layer { opacity: 0.6; }
+#map-container.mode-mask #passage-layer { opacity: 0.82; }
 
 .passage-corridor {
     stroke: currentColor;
     fill: none;
 }
 
-.passage-object.selected .passage-corridor,
+/* Transient Edit-mode hover feedback (there is no persistent selection): the
+   passage that would receive a wheel or drag gesture brightens to the same
+   accent as the live preview. */
+.passage-object.hovered .passage-corridor,
 .passage-corridor-preview {
-    color: #35d7ed;
-    opacity: 0.5;
+    color: #00c6d9;
+    opacity: 0.95;
 }
 
 .passage-entrance {
-    fill: rgba(25, 185, 209, 0.18);
-    stroke: #baf7ff;
-    stroke-width: 1.5;
-    stroke-dasharray: 5 4;
-    vector-effect: non-scaling-stroke;
-}
-
-.passage-centreline {
-    stroke: rgba(220, 252, 255, 0.8);
-    stroke-width: 1;
-    stroke-dasharray: 5 5;
-    vector-effect: non-scaling-stroke;
+    stroke: #e8fdff;
+    opacity: 0.95;
 }
 
 .passage-node {
-    fill: #fff;
-    stroke: #087c8d;
+    fill: #f7ffff;
+    stroke: #006d80;
     stroke-width: 1.5;
 }
 /* Editor accent color — control pairs, blocked-terrain hatch, place-CP preview,

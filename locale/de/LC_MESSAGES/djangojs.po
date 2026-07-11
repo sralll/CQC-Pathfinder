@@ -237,6 +237,9 @@ msgstr "Zeichne eine Kartenregion, bevor du den Infinity-Modus aktivierst."
 msgid "Each passage entrance must overlap passable terrain."
 msgstr "Jeder Passageneingang muss passierbares Gelände überlappen."
 
+msgid "Edit"
+msgstr "Bearbeiten"
+
 msgid "Edit points"
 msgstr "Punkte bearbeiten"
 
@@ -369,8 +372,11 @@ msgstr "Karten werden geladen…"
 msgid "Loading region…"
 msgstr "Region wird geladen…"
 
-msgid "Make the passage longer than its width so the entrances do not overlap."
-msgstr "Mache die Passage länger als ihre Breite, damit sich die Eingänge nicht überlappen."
+msgid "Lock / view only"
+msgstr "Sperren / nur ansehen"
+
+msgid "Mask edit"
+msgstr "Maske bearbeiten"
 
 msgid "Mask edited"
 msgstr "Maske bearbeitet"
@@ -483,6 +489,9 @@ msgstr "Karte verschieben"
 msgid "Passage added"
 msgstr "Passage hinzugefügt"
 
+msgid "Passage node moved"
+msgstr "Passagenpunkt verschoben"
+
 msgid "Passage points must stay inside the mask."
 msgstr "Passagenpunkte müssen innerhalb der Maske bleiben."
 
@@ -515,6 +524,9 @@ msgstr "Polygon"
 
 msgid "Potential"
 msgstr "Potential"
+
+msgid "Progress"
+msgstr "Fortschritt"
 
 msgid "Project"
 msgstr "Projekt"
@@ -671,6 +683,9 @@ msgstr "Senden"
 
 msgid "Sensitivity"
 msgstr "Sensitivität"
+
+msgid "Separate the two 5 px passage entrance bands."
+msgstr "Trenne die beiden 5-Pixel-Eingangsbänder der Passage."
 
 msgid "Show all versions"
 msgstr "Alle Versionen anzeigen"

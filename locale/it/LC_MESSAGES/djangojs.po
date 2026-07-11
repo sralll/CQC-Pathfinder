@@ -237,6 +237,9 @@ msgstr "Disegna una regione della mappa prima di attivare la modalità infinita.
 msgid "Each passage entrance must overlap passable terrain."
 msgstr "Ogni ingresso del passaggio deve sovrapporsi a un terreno percorribile."
 
+msgid "Edit"
+msgstr "Modifica"
+
 msgid "Edit points"
 msgstr "Modifica punti"
 
@@ -369,8 +372,11 @@ msgstr "Caricamento delle mappe…"
 msgid "Loading region…"
 msgstr "Caricamento della regione…"
 
-msgid "Make the passage longer than its width so the entrances do not overlap."
-msgstr "Rendi il passaggio più lungo della sua larghezza affinché gli ingressi non si sovrappongano."
+msgid "Lock / view only"
+msgstr "Blocca / sola visualizzazione"
+
+msgid "Mask edit"
+msgstr "Modifica maschera"
 
 msgid "Mask edited"
 msgstr "Maschera modificata"
@@ -483,6 +489,9 @@ msgstr "Sposta la mappa"
 msgid "Passage added"
 msgstr "Passaggio aggiunto"
 
+msgid "Passage node moved"
+msgstr "Punto del passaggio spostato"
+
 msgid "Passage points must stay inside the mask."
 msgstr "I punti del passaggio devono rimanere all'interno della maschera."
 
@@ -515,6 +524,9 @@ msgstr "Poligono"
 
 msgid "Potential"
 msgstr "Potenziale"
+
+msgid "Progress"
+msgstr "Progresso"
 
 msgid "Project"
 msgstr "Progetto"
@@ -671,6 +683,9 @@ msgstr "Invia"
 
 msgid "Sensitivity"
 msgstr "Sensibilità"
+
+msgid "Separate the two 5 px passage entrance bands."
+msgstr "Separa le due fasce d'ingresso da 5 px del passaggio."
 
 msgid "Show all versions"
 msgstr "Mostra tutte le versioni"

@@ -498,7 +498,8 @@ function captureState(label = "") {
 }
 
 function pushUndoState(label = gettext("Loaded")) {
-    undoStack.push(captureState(label));
+    const state = captureState(label);
+    undoStack.push(state);
     if (undoStack.length > UNDO_MAX) undoStack.shift();
     redoStack = [];
     actionCount++;
@@ -507,10 +508,12 @@ function pushUndoState(label = gettext("Loaded")) {
         else saveSnapshot("autosave");
     }
     updateUndoMenu();
+    return state;
 }
 
 function restoreState(state) {
     if (readOnly) return;
+    PassageEditor?.resetTransient?.();
     activeTool.onExit?.();
     project = structuredClone(state.project);
     PassageRuntime.invalidate();
@@ -1220,9 +1223,34 @@ function saveRoute(cp, route) {
     });
 }
 
+function passageRouteMetricUpdates() {
+    return (project.control_pairs || []).flatMap(cp => (cp.routes || [])
+        .filter(route => Number.isInteger(Number(cp.id)) && Number(cp.id) > 0
+            && Number.isInteger(Number(route.id)) && Number(route.id) > 0)
+        .map(route => ({
+            cp_db_id: Number(cp.id),
+            route: {
+                db_id: Number(route.id),
+                obstacle: route.obstacle,
+                run_time: route.run_time,
+            },
+        }))
+    );
+}
+
 function saveBlockedTerrain() {
     return _saveElement(() => ({ type: 'blocked_terrain', blocked_terrain: project.blocked_terrain }));
 }
+
+// Passage saves bypass the serialized _saveQueue: on a slow connection the
+// queue head-of-line blocks a burst of passage edits, and a stale response
+// must never overwrite newer local edits. The local document is the source of
+// truth after the initial project load — a newer save aborts the in-flight
+// request and the server response is not written back into local state.
+const _passageSaveClient = createPassageSaveClient({
+    fetchImpl: (...args) => fetch(...args),
+    getCsrfToken: () => document.cookie.match(/csrftoken=([^;]+)/)?.[1] ?? "",
+});
 
 function saveLevelPassages() {
     const levelPassages = normalizeLevelPassagesDocument(project.level_passages, { rejectInvalid: true });
@@ -1231,14 +1259,28 @@ function saveLevelPassages() {
         return Promise.resolve(null);
     }
     project.level_passages = levelPassages;
-    return _saveElement(() => ({
+    if (readOnly || !project.id) return Promise.resolve(null);
+    _pendingSaves++;
+    return _passageSaveClient.save({
+        file_id: project.id,
         type: 'level_passages',
-        level_passages: project.level_passages,
-    })).then(data => {
-        if (data?.level_passages) {
-            project.level_passages = normalizeLevelPassagesDocument(data.level_passages);
+        level_passages: levelPassages,
+        route_updates: passageRouteMetricUpdates(),
+    }).then(result => {
+        _pendingSaves = Math.max(0, _pendingSaves - 1);
+        if (result.status === "superseded") return null;
+        if (result.status === "saved") {
+            if (result.data?.last_edited) project.last_edited = result.data.last_edited;
+            _clearSaveFailedWarning();
+            return result.data;
         }
-        return data;
+        if (result.data?.error === "invalid_level_passages" && result.data?.message) {
+            window.showModal?.({ message: result.data.message });
+            return null;
+        }
+        console.warn("saveLevelPassages failed:", result.error || result.data?.error || result.data);
+        _showSaveFailedWarning();
+        return null;
     });
 }
 window.saveLevelPassages = saveLevelPassages;
@@ -2732,12 +2774,17 @@ function redoMask() {
 const PassageEditor = (() => {
     const DEFAULT_WIDTH = 24;
     const HIT_TOLERANCE_SCREEN_PX = 8;
+    const NODE_HIT_TOLERANCE_SCREEN_PX = 12;
     const PAN_THRESHOLD_PX = 5;
+    const WIDTH_EDIT_DEBOUNCE_MS = 300;
     let draftPoints = [];
     let draftWidth = DEFAULT_WIDTH;
-    let editingId = null;
     let previewPoint = null;
     let gesture = null;
+    let hoverTarget = null;
+    let wheelEdit = null;
+    let wheelEditTimer = null;
+    let addUndoState = null;
 
     const maskToWorld = point => ({
         x: Number(point[0]) * PATHING_MASK_TRAIN_SCALE,
@@ -2752,7 +2799,7 @@ const PassageEditor = (() => {
         return Array.isArray(project.level_passages?.items) ? project.level_passages.items : [];
     }
 
-    function svgPassage(parent, passage, { preview = false, selected = false } = {}) {
+    function svgPassage(parent, passage, { preview = false } = {}) {
         if (!parent || !Array.isArray(passage?.points) || passage.points.length < 2) return;
         const points = passage.points.map(maskToWorld);
         const pointString = points.map(p => `${p.x},${p.y}`).join(" ");
@@ -2762,25 +2809,34 @@ const PassageEditor = (() => {
             fill: "none",
             stroke: "currentColor",
             "stroke-width": width,
-            "stroke-linecap": "round",
+            "stroke-linecap": "butt",
             "stroke-linejoin": "round",
-            class: `passage-corridor${preview ? " passage-corridor-preview" : ""}${selected ? " selected" : ""}`,
+            class: `passage-corridor${preview ? " passage-corridor-preview" : ""}`,
         });
         parent.appendChild(body);
-        const radius = width / 2;
-        [points[0], points[points.length - 1]].forEach((point, index) => {
-            parent.appendChild(svgNode("circle", {
-                cx: point.x,
-                cy: point.y,
-                r: radius,
-                class: `passage-entrance passage-entrance-${index === 0 ? "start" : "end"}`,
+        const geometry = PassageRuntime.geometry();
+        const frames = geometry?.passageTerminalFrames?.(passage);
+        const portalDepth = geometry?.PASSAGE_PORTAL_DEPTH;
+        if (frames && Number.isFinite(portalDepth)) [
+            { point: frames.start, inward: frames.startInward, name: "start" },
+            { point: frames.end, inward: frames.endInward, name: "end" },
+        ].forEach(({ point, inward, name }) => {
+            // The entrance band sits outside the drawn corridor end.
+            const centreX = (point[0] - inward.x * portalDepth / 2) * PATHING_MASK_TRAIN_SCALE;
+            const centreY = (point[1] - inward.y * portalDepth / 2) * PATHING_MASK_TRAIN_SCALE;
+            const halfWidth = width / 2;
+            const normalX = -inward.y;
+            const normalY = inward.x;
+            parent.appendChild(svgNode("line", {
+                x1: centreX - normalX * halfWidth,
+                y1: centreY - normalY * halfWidth,
+                x2: centreX + normalX * halfWidth,
+                y2: centreY + normalY * halfWidth,
+                "stroke-width": portalDepth * PATHING_MASK_TRAIN_SCALE,
+                "stroke-linecap": "butt",
+                class: `passage-entrance passage-entrance-${name}`,
             }));
         });
-        parent.appendChild(svgNode("polyline", {
-            points: pointString,
-            fill: "none",
-            class: "passage-centreline",
-        }));
     }
 
     function renderCommitted() {
@@ -2788,12 +2844,21 @@ const PassageEditor = (() => {
         if (!layer) return;
         layer.innerHTML = "";
         for (const passage of items()) {
-            if (passage.id === editingId) continue; // the editable copy is rendered in the preview layer
             const group = svgNode("g", {
-                class: "passage-object",
+                class: `passage-object${hoverTarget?.passageId === passage.id ? " hovered" : ""}`,
                 "data-passage-id": passage.id,
             });
             svgPassage(group, passage);
+            if (hoverTarget?.passageId === passage.id && Number.isInteger(hoverTarget.pointIndex)) {
+                const point = maskToWorld(passage.points[hoverTarget.pointIndex]);
+                group.appendChild(svgNode("circle", {
+                    cx: point.x,
+                    cy: point.y,
+                    r: 4,
+                    class: "passage-node",
+                    "vector-effect": "non-scaling-stroke",
+                }));
+            }
             layer.appendChild(group);
         }
     }
@@ -2803,8 +2868,8 @@ const PassageEditor = (() => {
         if (!layer) return;
         layer.innerHTML = "";
         let points = draftPoints.slice();
-        if (!editingId && previewPoint && points.length) points.push([previewPoint.x, previewPoint.y]);
-        if (points.length >= 2) svgPassage(layer, { points, width: draftWidth }, { preview: true, selected: true });
+        if (previewPoint && points.length) points.push([previewPoint.x, previewPoint.y]);
+        if (points.length >= 2) svgPassage(layer, { points, width: draftWidth }, { preview: true });
         for (const point of draftPoints) {
             const world = maskToWorld(point);
             layer.appendChild(svgNode("circle", {
@@ -2847,16 +2912,6 @@ const PassageEditor = (() => {
         });
     }
 
-    function capHasPassableCell(passage, cap) {
-        const indices = cap === "start" ? passage.startEntrance : passage.endEntrance;
-        const geometry = PassageRuntime.geometry();
-        for (const index of indices) {
-            const point = geometry.passageLocalIndexToGlobal(passage, index);
-            if (point && Number(MaskLayer.valueAtMaskPixel(point.x, point.y)) > 0) return true;
-        }
-        return false;
-    }
-
     async function validateDraft() {
         if (draftPoints.length < 2) {
             showMessage(gettext("Add at least two distinct passage points."));
@@ -2870,7 +2925,7 @@ const PassageEditor = (() => {
         const geometry = PassageRuntime.geometry();
         const dimensions = MaskLayer.dimensions?.();
         if (!geometry || !dimensions) return null;
-        if (!editingId && items().length >= LEVEL_PASSAGES_MAX_ITEMS) {
+        if (items().length >= LEVEL_PASSAGES_MAX_ITEMS) {
             showMessage(gettext("This map already has the maximum number of passages."));
             return null;
         }
@@ -2879,26 +2934,19 @@ const PassageEditor = (() => {
             showMessage(gettext("Passage points must stay inside the mask."));
             return null;
         }
-        const candidate = { id: editingId || makeUuid(), points: draftPoints, width: draftWidth };
+        const candidate = { id: makeUuid(), points: draftPoints, width: draftWidth };
         const result = geometry.rasterizePassage(candidate, {
             mapWidth: dimensions.width,
             mapHeight: dimensions.height,
         });
         if (!result.passage) {
-            const overlap = result.diagnostics?.some(d => d.code === "overlapping-entrances");
-            showMessage(overlap
-                ? gettext("Make the passage longer than its width so the entrances do not overlap.")
-                : gettext("This passage geometry is not valid."));
-            return null;
-        }
-        if (!capHasPassableCell(result.passage, "start") || !capHasPassableCell(result.passage, "end")) {
-            showMessage(gettext("Each passage entrance must overlap passable terrain."));
+            showMessage(gettext("This passage geometry is not valid."));
             return null;
         }
         return candidate;
     }
 
-    function validateProposedItems(nextItems) {
+    function validateProposedItems(nextItems, { showErrors = true } = {}) {
         const geometry = PassageRuntime.geometry();
         const dimensions = MaskLayer.dimensions?.();
         if (!geometry || !dimensions) return false;
@@ -2916,10 +2964,30 @@ const PassageEditor = (() => {
             || d.code === "raster-work-budget-exceeded"
             || d.code === "total-raster-work-budget-exceeded"
         ));
-        showMessage(overBudget
+        if (showErrors) showMessage(overBudget
             ? gettext("These passages exceed the pathfinding complexity limit.")
             : gettext("This passage geometry is not valid."));
         return false;
+    }
+
+    function validateEditedCandidate(candidate, nextItems, { showErrors = true } = {}) {
+        const geometry = PassageRuntime.geometry();
+        const dimensions = MaskLayer.dimensions?.();
+        if (!geometry || !dimensions || !MaskLayer.isLoaded?.()) return false;
+        if (candidate.points.some(point => point[0] < 0 || point[1] < 0
+                || point[0] >= dimensions.width || point[1] >= dimensions.height)) {
+            if (showErrors) showMessage(gettext("Passage points must stay inside the mask."));
+            return false;
+        }
+        const result = geometry.rasterizePassage(candidate, {
+            mapWidth: dimensions.width,
+            mapHeight: dimensions.height,
+        });
+        if (!result.passage) {
+            if (showErrors) showMessage(gettext("This passage geometry is not valid."));
+            return false;
+        }
+        return validateProposedItems(nextItems, { showErrors });
     }
 
     async function invalidateRouting() {
@@ -2938,50 +3006,41 @@ const PassageEditor = (() => {
         updateCPList();
     }
 
-    async function saveRecalculatedRoutes() {
-        await Promise.all((project.control_pairs || []).flatMap(cp => (
-            (cp.routes || []).map(route => saveRoute(cp, route))
-        )));
+    async function persistPassageChange() {
+        const routeRefresh = invalidateRouting();
+        render();
+        await routeRefresh;
+        return !!(await saveLevelPassages());
+    }
+
+    function discardUndoState(state) {
+        if (!state || undoStack[undoStack.length - 1] !== state) return;
+        undoStack.pop();
+        actionCount = Math.max(0, actionCount - 1);
+        updateUndoMenu();
     }
 
     async function finish() {
-        if (readOnly || (!draftPoints.length && !editingId)) return false;
+        if (readOnly || !draftPoints.length) return false;
         const candidate = await validateDraft();
         if (!candidate) return false;
         const document = normalizeLevelPassagesDocument(project.level_passages) || emptyLevelPassages();
-        const nextItems = document.items.slice();
-        const index = editingId ? nextItems.findIndex(item => item.id === editingId) : -1;
-        if (index >= 0) nextItems[index] = candidate;
-        else nextItems.push(candidate);
+        const nextItems = [...document.items, candidate];
         if (!validateProposedItems(nextItems)) return false;
-        pushUndoState(index >= 0 ? gettext("Passage width changed") : gettext("Passage added"));
         project.level_passages = { version: LEVEL_PASSAGES_VERSION, items: nextItems };
-        editingId = null;
+        addUndoState = null;
         draftPoints = [];
         previewPoint = null;
-        const routeRefresh = invalidateRouting();
-        render();
-        const saved = await saveLevelPassages();
-        await routeRefresh;
-        if (saved) await saveRecalculatedRoutes();
-        return true;
+        return persistPassageChange();
     }
 
     function cancel() {
-        editingId = null;
+        discardUndoState(addUndoState);
+        addUndoState = null;
         draftPoints = [];
         previewPoint = null;
         gesture = null;
-        render();
-    }
-
-    function beginEdit(passage) {
-        const source = items().find(item => item.id === passage?.id);
-        if (!source) return;
-        editingId = source.id;
-        draftPoints = source.points.map(point => point.slice());
-        draftWidth = source.width;
-        previewPoint = null;
+        hoverTarget = null;
         render();
     }
 
@@ -2994,40 +3053,31 @@ const PassageEditor = (() => {
         if (nextItems.length === document.items.length) return false;
         pushUndoState(gettext("Passage removed"));
         project.level_passages = { version: LEVEL_PASSAGES_VERSION, items: nextItems };
-        if (editingId === hit.id) cancel();
-        const routeRefresh = invalidateRouting();
-        render();
-        const saved = await saveLevelPassages();
-        await routeRefresh;
-        if (saved) await saveRecalculatedRoutes();
+        return persistPassageChange();
+    }
+
+    // D with no open draft deletes the most recently added passage.
+    function removeLastPassage() {
+        if (readOnly) return false;
+        const document = normalizeLevelPassagesDocument(project.level_passages) || emptyLevelPassages();
+        if (!document.items.length) return false;
+        pushUndoState(gettext("Passage removed"));
+        project.level_passages = { version: LEVEL_PASSAGES_VERSION, items: document.items.slice(0, -1) };
+        hoverTarget = null;
+        persistPassageChange();
         return true;
     }
 
-    function addAt(worldPoint, detail = 1) {
-        if (detail >= 2 && draftPoints.length) {
-            finish();
-            return;
-        }
+    function addAt(worldPoint) {
         const maskPoint = worldToMask(worldPoint);
         if (!Number.isFinite(maskPoint.x) || !Number.isFinite(maskPoint.y)) return;
-        if (editingId) {
-            const hit = hitAt(worldPoint);
-            if (hit?.id === editingId) return;
-            cancel();
-        }
-        if (!draftPoints.length) {
-            const hit = hitAt(worldPoint);
-            if (hit) {
-                beginEdit(hit);
-                return;
-            }
-        }
         const previous = draftPoints[draftPoints.length - 1];
         if (!previous || previous[0] !== maskPoint.x || previous[1] !== maskPoint.y) {
             if (draftPoints.length >= LEVEL_PASSAGES_MAX_POINTS) {
                 showMessage(gettext("A passage cannot contain any more points."));
                 return;
             }
+            if (!addUndoState) addUndoState = pushUndoState(gettext("Passage added"));
             draftPoints.push([maskPoint.x, maskPoint.y]);
         }
         previewPoint = maskPoint;
@@ -3038,16 +3088,107 @@ const PassageEditor = (() => {
         return typeof getMaskToolState === "function" ? getMaskToolState().action : "pan";
     }
 
+    function passagesAt(worldPoint) {
+        const geometry = PassageRuntime.geometry();
+        if (!geometry) return [];
+        const point = worldToMask(worldPoint);
+        const tolerance = HIT_TOLERANCE_SCREEN_PX / Math.max(0.01, camera.zoom * PATHING_MASK_TRAIN_SCALE);
+        return items().map((passage, renderIndex) => ({ passage, renderIndex }))
+            .filter(({ passage }) => geometry.hitTestPassage(passage, point.x, point.y, tolerance));
+    }
+
+    function editTargetAt(worldPoint) {
+        const hits = passagesAt(worldPoint);
+        if (!hits.length) return null;
+        const nodes = hits.flatMap(({ passage, renderIndex }) => passage.points.map((point, pointIndex) => {
+            const world = maskToWorld(point);
+            return {
+                passageId: passage.id,
+                pointIndex,
+                renderIndex,
+                distance: Math.hypot(world.x - worldPoint.x, world.y - worldPoint.y) * camera.zoom,
+            };
+        }));
+        nodes.sort((a, b) => a.distance - b.distance
+            || b.renderIndex - a.renderIndex
+            || String(a.passageId).localeCompare(String(b.passageId))
+            || a.pointIndex - b.pointIndex);
+        if (nodes[0]?.distance <= NODE_HIT_TOLERANCE_SCREEN_PX) return nodes[0];
+        const topmost = hits.sort((a, b) => b.renderIndex - a.renderIndex
+            || String(a.passage.id).localeCompare(String(b.passage.id)))[0];
+        return { passageId: topmost.passage.id, pointIndex: null, renderIndex: topmost.renderIndex };
+    }
+
+    function replaceCandidate(candidate) {
+        return items().map(item => item.id === candidate.id ? candidate : item);
+    }
+
+    function updateHover(worldPoint) {
+        const next = currentAction() === "edit" && !draftPoints.length
+            ? editTargetAt(worldPoint) : null;
+        if (next?.passageId === hoverTarget?.passageId && next?.pointIndex === hoverTarget?.pointIndex) return;
+        hoverTarget = next;
+        renderCommitted();
+    }
+
+    // One combined add/edit action: while a draft is open every primary click
+    // appends a point; otherwise a click on a passage node starts a drag, a
+    // click on a passage body does nothing, and a click on free map starts a
+    // new draft.
     function pointerDown(e, worldPoint) {
-        gesture = {
-            clientX: e.clientX,
-            clientY: e.clientY,
-            worldPoint,
-            detail: e.detail || 1,
-        };
+        if (currentAction() === "edit" && !draftPoints.length) {
+            const target = editTargetAt(worldPoint);
+            if (target && Number.isInteger(target.pointIndex)) {
+                const document = normalizeLevelPassagesDocument(project.level_passages) || emptyLevelPassages();
+                gesture = {
+                    type: "node",
+                    clientX: e.clientX,
+                    clientY: e.clientY,
+                    passageId: target.passageId,
+                    pointIndex: target.pointIndex,
+                    originalDocument: structuredClone(document),
+                    undoState: null,
+                    mutated: false,
+                    invalid: false,
+                };
+                return;
+            }
+            gesture = {
+                type: "pending",
+                clientX: e.clientX,
+                clientY: e.clientY,
+                worldPoint,
+                addAllowed: !target,
+            };
+            return;
+        }
+        gesture = { type: "pending", clientX: e.clientX, clientY: e.clientY, worldPoint, addAllowed: true };
     }
 
     function pointerMove(e, worldPoint) {
+        if (gesture?.type === "node") {
+            const source = items().find(item => item.id === gesture.passageId);
+            if (!source) return true;
+            const maskPoint = worldToMask(worldPoint);
+            const oldPoint = source.points[gesture.pointIndex];
+            if (oldPoint[0] === maskPoint.x && oldPoint[1] === maskPoint.y) return true;
+            const candidate = structuredClone(source);
+            candidate.points[gesture.pointIndex] = [maskPoint.x, maskPoint.y];
+            const nextItems = replaceCandidate(candidate);
+            if (!validateEditedCandidate(candidate, nextItems, { showErrors: false })) {
+                gesture.invalid = true;
+                return true;
+            }
+            gesture.invalid = false;
+            if (!gesture.mutated) {
+                gesture.undoState = pushUndoState(gettext("Passage node moved"));
+                gesture.mutated = true;
+            }
+            project.level_passages = { version: LEVEL_PASSAGES_VERSION, items: nextItems };
+            hoverTarget = { passageId: candidate.id, pointIndex: gesture.pointIndex };
+            render();
+            return true;
+        }
         if (gesture) {
             const moved = Math.hypot(e.clientX - gesture.clientX, e.clientY - gesture.clientY);
             if (moved > PAN_THRESHOLD_PX) {
@@ -3057,9 +3198,13 @@ const PassageEditor = (() => {
                 return true;
             }
         }
-        if (!pan.isActive() && currentAction() === "add" && !editingId) {
-            previewPoint = worldToMask(worldPoint);
-            renderPreview();
+        if (!pan.isActive() && currentAction() === "edit") {
+            if (draftPoints.length) {
+                previewPoint = worldToMask(worldPoint);
+                renderPreview();
+            } else {
+                updateHover(worldPoint);
+            }
         }
         return false;
     }
@@ -3068,8 +3213,77 @@ const PassageEditor = (() => {
         if (!gesture) return;
         const saved = gesture;
         gesture = null;
-        if (currentAction() === "add") addAt(worldPoint || saved.worldPoint, saved.detail);
-        else if (currentAction() === "remove") removeAt(worldPoint || saved.worldPoint);
+        if (saved.type === "node") {
+            if (saved.invalid) {
+                if (saved.mutated) {
+                    project.level_passages = saved.originalDocument;
+                    discardUndoState(saved.undoState);
+                }
+                showMessage(gettext("This passage geometry is not valid."));
+                render();
+                return;
+            }
+            if (!saved.mutated) return;
+            persistPassageChange();
+            return;
+        }
+        if (currentAction() === "edit") {
+            if (draftPoints.length || saved.addAllowed) addAt(worldPoint || saved.worldPoint);
+        } else if (currentAction() === "remove") {
+            removeAt(worldPoint || saved.worldPoint);
+        }
+    }
+
+    function removeLastDraftPoint() {
+        if (!draftPoints.length) return false;
+        draftPoints.pop();
+        if (!draftPoints.length) previewPoint = null;
+        renderPreview();
+        return true;
+    }
+
+    async function commitWheelEdit() {
+        if (!wheelEdit) return;
+        wheelEdit = null;
+        if (wheelEditTimer) clearTimeout(wheelEditTimer);
+        wheelEditTimer = null;
+        await persistPassageChange();
+    }
+
+    function wheel(e, worldPoint) {
+        if (currentAction() !== "edit" || draftPoints.length) return false;
+        const hit = hitAt(worldPoint);
+        const source = items().find(item => item.id === hit?.id);
+        if (!source) return false;
+        const width = Math.max(LEVEL_PASSAGES_MIN_WIDTH, Math.min(
+            LEVEL_PASSAGES_MAX_WIDTH, Number(source.width) + (e.deltaY < 0 ? 1 : -1)));
+        if (width === Number(source.width)) return true;
+        const candidate = structuredClone(source);
+        candidate.width = width;
+        const nextItems = replaceCandidate(candidate);
+        if (!validateEditedCandidate(candidate, nextItems)) return true;
+        if (wheelEdit && wheelEdit.passageId !== source.id) commitWheelEdit();
+        if (!wheelEdit) wheelEdit = {
+            passageId: source.id,
+            undoState: pushUndoState(gettext("Passage width changed")),
+        };
+        project.level_passages = { version: LEVEL_PASSAGES_VERSION, items: nextItems };
+        hoverTarget = { passageId: source.id, pointIndex: null };
+        render();
+        if (wheelEditTimer) clearTimeout(wheelEditTimer);
+        wheelEditTimer = setTimeout(commitWheelEdit, WIDTH_EDIT_DEBOUNCE_MS);
+        return true;
+    }
+
+    function resetTransient() {
+        if (wheelEditTimer) clearTimeout(wheelEditTimer);
+        wheelEditTimer = null;
+        wheelEdit = null;
+        addUndoState = null;
+        draftPoints = [];
+        previewPoint = null;
+        gesture = null;
+        hoverTarget = null;
     }
 
     function setWidth(value) {
@@ -3082,13 +3296,13 @@ const PassageEditor = (() => {
     }
 
     function syncControls() {
-        const state = typeof getMaskToolState === "function" ? getMaskToolState() : { family: "obstacles", action: "pan" };
-        const passageAdd = state.family === "passages" && state.action === "add";
+        const state = typeof getMaskToolState === "function" ? getMaskToolState() : { family: "lock", action: "view" };
+        const passageMode = state.family === "third-dimension";
+        const passageAdd = passageMode && state.action === "edit";
         const slider = document.getElementById("mask-size-slider");
         const label = document.getElementById("mask-size-label");
         const opacityRow = document.getElementById("mask-opacity-row");
         const sizeRow = document.getElementById("mask-size-row");
-        const actions = document.getElementById("passage-actions");
         const help = document.getElementById("passage-help");
         if (label) label.textContent = passageAdd ? gettext("Passage width") : gettext("Tool size");
         if (slider && passageAdd) {
@@ -3097,14 +3311,10 @@ const PassageEditor = (() => {
             slider.step = 1;
             slider.value = draftWidth;
         }
-        if (actions) actions.hidden = !passageAdd;
         if (help) help.hidden = !passageAdd;
-        if (opacityRow) opacityRow.hidden = state.family === "passages";
-        if (sizeRow) sizeRow.hidden = state.family === "passages" && !passageAdd;
+        if (opacityRow) opacityRow.hidden = passageMode;
+        if (sizeRow) sizeRow.hidden = passageMode && !passageAdd;
     }
-
-    document.getElementById("passage-finish-btn")?.addEventListener("click", finish);
-    document.getElementById("passage-cancel-btn")?.addEventListener("click", cancel);
 
     return {
         render,
@@ -3116,12 +3326,20 @@ const PassageEditor = (() => {
         pointerDown,
         pointerMove,
         pointerUp,
-        cancelGesture() { gesture = null; },
+        cancelGesture() {
+            gesture = null;
+            hoverTarget = null;
+            renderCommitted();
+        },
+        removeLastDraftPoint,
+        removeLastPassage,
+        wheel,
+        resetTransient,
         setWidth,
         adjustWidth,
         getWidth: () => draftWidth,
         syncControls,
-        isDrafting: () => draftPoints.length > 0 || !!editingId,
+        isDrafting: () => draftPoints.length > 0,
     };
 })();
 
@@ -3138,7 +3356,7 @@ const MaskTool = (() => {
 
     function sub() {
         const current = getMaskToolState();
-        if (current.family !== "obstacles") return current.action;
+        if (current.family !== "mask-edit") return "pan";
         return current.action === "add" ? "draw" : current.action === "remove" ? "erase" : "pan";
     }
     function state() { return getMaskToolState(); }
@@ -3164,12 +3382,12 @@ const MaskTool = (() => {
                 opacitySlider.oninput = () => { maskCanvas.style.opacity = opacitySlider.value; };
             }
             if (sizeSlider) {
-                const passageAdd = state().family === "passages" && state().action === "add";
+            const passageAdd = state().family === "third-dimension" && state().action === "edit";
                 sizeSlider.min   = passageAdd ? LEVEL_PASSAGES_MIN_WIDTH : MaskLayer.getBrushMin();
                 sizeSlider.max   = passageAdd ? LEVEL_PASSAGES_MAX_WIDTH : MaskLayer.getBrushMax();
                 sizeSlider.value = passageAdd ? PassageEditor.getWidth() : MaskLayer.getBrush();
                 sizeSlider.oninput = () => {
-                    if (state().family === "passages" && state().action === "add") {
+                    if (state().family === "third-dimension" && state().action === "edit") {
                         PassageEditor.setWidth(Number(sizeSlider.value));
                         return;
                     }
@@ -3198,7 +3416,7 @@ const MaskTool = (() => {
         onMouseDown(e, pt) {
             if (!mapContainer.contains(e.target)) return;
             if (e.button !== 0) return;
-            if (state().family === "passages") {
+            if (state().family === "third-dimension") {
                 PassageEditor.pointerDown(e, pt);
                 return;
             }
@@ -3211,8 +3429,8 @@ const MaskTool = (() => {
         },
 
         onMouseMove(e, pt) {
-            if (state().family === "passages") {
-                mapContainer.style.cursor = state().action === "pan" ? "grab" : "default";
+            if (state().family === "third-dimension") {
+                mapContainer.style.cursor = state().action === "view" ? "grab" : "default";
                 PassageEditor.pointerMove(e, pt);
                 brushCursorEl().style.display = "none";
                 return;
@@ -3241,7 +3459,7 @@ const MaskTool = (() => {
         },
 
         onMouseUp(e, pt) {
-            if (state().family === "passages") {
+            if (state().family === "third-dimension") {
                 PassageEditor.pointerUp(e, pt);
                 return;
             }
@@ -3259,14 +3477,20 @@ const MaskTool = (() => {
         },
 
         onKeyDown(e) {
-            if (state().family !== "passages") return;
+            if (state().family !== "third-dimension") return;
             if (e.key === "Escape") {
                 e.preventDefault();
                 PassageEditor.cancel();
-            } else if (e.key === "Enter" && state().action === "add") {
+            } else if (e.key === "Enter" && state().action === "edit") {
                 e.preventDefault();
                 PassageEditor.finish();
             }
+        },
+
+        handleDeleteKey() {
+            if (state().family !== "third-dimension") return false;
+            if (PassageEditor.removeLastDraftPoint()) return true;
+            return PassageEditor.removeLastPassage();
         },
     };
 })();
@@ -4029,9 +4253,11 @@ function activateTool(toolObj) {
 ========================================================= */
 
 const RCM = (() => {
-    // 4 tools in N/E/S/W positions; no_tool lives in the centre circle
-    const IR1 = 30, IR2 = 78;
-    const OR1 = IR2, OR2 = 130;          // outer ring directly attached (OR1 == IR2)
+    // Shared radii for the three-level menu. Non-mask tools use level 1 and
+    // level 2; Mask additionally uses level 3 for the chosen family actions.
+    const RCM_RADII = Object.freeze({ center: 30, level1: 78, level2: 130, level3: 182 });
+    const IR1 = RCM_RADII.center;
+    const IR2 = RCM_RADII.level1;
     const CLICK_MS = 200, MOVE_PX = 8;
 
     const MENU_TOOLS = [ToolMode.CONTROL_PAIR, ToolMode.ROUTE, ToolMode.MASK, ToolMode.BLOCK, ToolMode.INFINITY];
@@ -4047,7 +4273,7 @@ const RCM = (() => {
 
     let menuEl = null, overlayEl = null;
     let downAt = 0, downPos = null;
-    let hoveredTool = null, hoveredSub = null, open = false;
+    let hoveredTool = null, hoveredFamily = null, hoveredSub = null, open = false;
     let sticky = false;
     let lastRightUpTime = 0;
     let escHandler = null;
@@ -4121,7 +4347,7 @@ const RCM = (() => {
     }
 
     function buildMenu(x, y) {
-        const size = (OR2 + 22) * 2;
+        const size = (RCM_RADII.level3 + 22) * 2;
         const svg  = svgEl("svg");
         svg.id = "rcm";
         svg.style.cssText = `position:fixed;left:${x-size/2}px;top:${y-size/2}px;`
@@ -4167,15 +4393,56 @@ const RCM = (() => {
             g.addEventListener("animationend", () => g.remove(), { once: true });
         });
         if (!mode || mode === ToolMode.NONE) return;
+
+        const toolIdx = MENU_TOOLS.indexOf(mode);
+        const base = segA1(toolIdx);
+        if (mode === ToolMode.MASK) {
+            const familySector = SECTOR / MASK_TOOL_FAMILIES.length;
+            const familiesG = svgEl("g", { class: "rcm-subtools rcm-level2 rcm-subtools-enter" });
+            MASK_TOOL_FAMILIES.forEach((family, fi) => {
+                const a1 = base + fi * familySector;
+                const segment = makeSegment(
+                    RCM_RADII.level1, RCM_RADII.level2, a1, a1 + familySector,
+                    a1 + familySector / 2, family.icon, undefined, "family", family.id, COL_DARK,
+                );
+                familiesG.appendChild(segment);
+            });
+            outerG.appendChild(familiesG);
+
+            const branch = MASK_TOOL_FAMILIES.find(family => family.id === hoveredFamily);
+            const actions = branch ? MASK_ACTION_DEFS[branch.id] : [];
+            if (!branch || !actions.length) return;
+            const familyIndex = MASK_TOOL_FAMILIES.indexOf(branch);
+            const familyBase = base + familyIndex * familySector;
+            const actionSector = familySector / actions.length;
+            const actionsG = svgEl("g", { class: "rcm-subtools rcm-level3 rcm-subtools-enter" });
+            actions.forEach((action, ai) => {
+                const a1 = familyBase + ai * actionSector;
+                const segment = makeSegment(
+                    RCM_RADII.level2, RCM_RADII.level3, a1, a1 + actionSector,
+                    a1 + actionSector / 2, action.icon, action.transform,
+                    "sub", action.id, COL_DARK,
+                );
+                segment.dataset.rcmMode = mode;
+                segment.dataset.family = branch.id;
+                actionsG.appendChild(segment);
+            });
+            outerG.appendChild(actionsG);
+            return;
+        }
+
         const defs = SUBTOOL_DEFS[mode];
         if (!defs?.length) return;
-        const subtoolsG = svgEl("g", { class: "rcm-subtools rcm-subtools-enter" });
-        const base = segA1(MENU_TOOLS.indexOf(mode));
-        const sub  = SECTOR / defs.length;
+        const subtoolsG = svgEl("g", { class: "rcm-subtools rcm-level2 rcm-subtools-enter" });
+        const sub = SECTOR / defs.length;
         defs.forEach((def, si) => {
-            const a1 = base + si*sub;
-            subtoolsG.appendChild(makeSegment(OR1, OR2, a1, a1+sub, a1+sub/2,
-                def.icon, def.transform, "sub", def.id, COL_DARK));
+            const a1 = base + si * sub;
+            const segment = makeSegment(
+                RCM_RADII.level1, RCM_RADII.level2, a1, a1 + sub, a1 + sub / 2,
+                def.icon, def.transform, "sub", def.id, COL_DARK,
+            );
+            segment.dataset.rcmMode = mode;
+            subtoolsG.appendChild(segment);
         });
         outerG.appendChild(subtoolsG);
     }
@@ -4188,21 +4455,43 @@ const RCM = (() => {
         const norm = ((Math.atan2(dy,dx)*180/Math.PI)+HIT_OFFSET+360)%360; // 0 = start of slice 0
 
         // Centre circle → no_tool
-        if (dist < IR1) return { ring:"center", mode: ToolMode.NONE, sub: null };
+        if (dist < IR1) return { ring:"center", mode: ToolMode.NONE, family:null, sub: null };
 
         const toolIdx = Math.floor(norm/SECTOR) % N;
         const mode    = MENU_TOOLS[toolIdx];
-        const defs    = SUBTOOL_DEFS[mode];
+        const rel = (norm - toolIdx * SECTOR + 360) % 360;
 
-        let sub = null;
-        if (defs?.length) {
-            const rel = (norm - toolIdx*SECTOR + 360) % 360;
-            sub = defs[Math.min(Math.floor(rel/(SECTOR/defs.length)), defs.length-1)].id;
+        if (dist < IR2) return { ring:"inner", mode, family:null, sub:null };
+
+        if (mode === ToolMode.MASK) {
+            const familySector = SECTOR / MASK_TOOL_FAMILIES.length;
+            const familyIndex = Math.min(
+                Math.floor(rel / familySector), MASK_TOOL_FAMILIES.length - 1,
+            );
+            const family = MASK_TOOL_FAMILIES[familyIndex];
+            if (dist < RCM_RADII.level2) {
+                return { ring:"level2", mode, family:family.id, sub:null };
+            }
+            if (dist < RCM_RADII.level3) {
+                const actions = MASK_ACTION_DEFS[family.id] || [];
+                if (actions.length) {
+                    const familyRel = rel - familyIndex * familySector;
+                    const actionIndex = Math.min(
+                        Math.floor(familyRel / (familySector / actions.length)), actions.length - 1,
+                    );
+                    return { ring:"level3", mode, family:family.id, sub:actions[actionIndex].id };
+                }
+                return { ring:"level3", mode, family:null, sub:null };
+            }
+            return { ring:"extended", mode, family:family.id, sub:null };
         }
 
-        if (dist < IR2) return { ring:"inner",    mode, sub:null };
-        if (dist < OR2) return { ring:(dist < OR1 ? "gap" : "outer"), mode, sub };
-        return                 { ring:"extended",  mode, sub };
+        const defs = SUBTOOL_DEFS[mode];
+        const sub = defs?.length
+            ? defs[Math.min(Math.floor(rel / (SECTOR / defs.length)), defs.length - 1)].id
+            : null;
+        if (dist < RCM_RADII.level2) return { ring:"level2", mode, family:null, sub };
+        return { ring:"extended", mode, family:null, sub };
     }
 
     function segFill(isCurrentTool, isHovered) {
@@ -4230,7 +4519,12 @@ const RCM = (() => {
 
         const hit     = hitTest(cx, cy);
         const newTool = hit?.mode ?? null;
-        const newSub  = (hit && hit.ring !== "inner" && hit.ring !== "center") ? hit.sub : null;
+        const newFamily = hit?.family ?? null;
+        const newSub = hit && (
+            (hit.ring === "level2" && hit.mode !== ToolMode.MASK)
+            || hit.ring === "level3"
+            || hit.ring === "extended"
+        ) ? hit.sub : null;
 
         // Always keep the centre circle in sync (unconditional — it's cheap)
         const centerEl = menuEl.querySelector("#rcm-center circle");
@@ -4247,8 +4541,22 @@ const RCM = (() => {
             }
         }
 
-        if (newTool !== hoveredTool) {
+        // Only the currently active action is highlighted; for Mask that is
+        // the exact family/action pair, never a whole family's action ring.
+        const styleActionSegment = g => {
+            const rcmMode = g.dataset.rcmMode;
+            const active = rcmMode === ToolMode.MASK
+                ? (g.dataset.family === maskToolState.family
+                    && g.dataset.sub === maskToolState.action)
+                : g.dataset.sub === activeSubtool[rcmMode];
+            const isHovered = g.dataset.sub === newSub
+                && (rcmMode !== ToolMode.MASK || g.dataset.family === newFamily);
+            applySegmentState(g, active, isHovered, COL_DARK);
+        };
+
+        if (newTool !== hoveredTool || newFamily !== hoveredFamily) {
             hoveredTool = newTool;
+            hoveredFamily = newFamily;
 
             // Update inner tool segments
             menuEl.querySelectorAll("[data-mode]").forEach(g => {
@@ -4258,20 +4566,31 @@ const RCM = (() => {
             });
 
             rebuildOuter(hoveredTool === ToolMode.NONE ? null : hoveredTool);
-            menuEl.querySelectorAll("[data-sub]").forEach(g => {
-                applySegmentState(g, false, g.dataset.sub === newSub, COL_DARK);
-            });
+            menuEl.querySelectorAll("[data-sub]").forEach(styleActionSegment);
         }
         if (newSub !== hoveredSub) {
             hoveredSub = newSub;
-            menuEl.querySelectorAll("[data-sub]").forEach(g => {
-                applySegmentState(g, false, g.dataset.sub === hoveredSub, COL_DARK);
-            });
+            menuEl.querySelectorAll("[data-sub]").forEach(styleActionSegment);
         }
+        // Level-3 action segments also carry data-family for hit grouping;
+        // exclude them here so only true level-2 family segments are styled.
+        menuEl.querySelectorAll("[data-family]:not([data-sub])").forEach(g => {
+            const active = maskToolState.family === g.dataset.family;
+            const isHovered = newTool === ToolMode.MASK && g.dataset.family === newFamily;
+            applySegmentState(g, active, isHovered, COL_DARK);
+        });
     }
 
-    function applySelection(tool, sub) {
+    function applySelection(tool, family, sub) {
         if (!tool || tool === ToolMode.NONE) { setTool(ToolMode.NONE); return; }
+        if (tool === ToolMode.MASK) {
+            setTool(tool);
+            if (family) {
+                const familyDef = MASK_TOOL_FAMILIES.find(def => def.id === family);
+                setMaskToolState(family, sub || familyDef?.defaultAction);
+            }
+            return;
+        }
         if (sub) {
             activeSubtool[tool] = sub;
             if      (tool === ToolMode.CONTROL_PAIR && sub === "add") { setTool(tool); startNewPlacement(); }
@@ -4312,8 +4631,9 @@ const RCM = (() => {
         });
         overlayEl.addEventListener("wheel", e => {
             if (hoveredTool !== ToolMode.MASK) return;
-            const passageWidth = hoveredSub === "passage-add";
-            const obstacleBrush = hoveredSub === "obstacle-add" || hoveredSub === "obstacle-remove";
+            const passageWidth = hoveredFamily === "third-dimension" && hoveredSub === "edit";
+            const obstacleBrush = hoveredFamily === "mask-edit"
+                && (hoveredSub === "add" || hoveredSub === "remove");
             if (!passageWidth && !obstacleBrush) return;
             e.preventDefault();
             if (passageWidth) PassageEditor.adjustWidth(e.deltaY > 0 ? -1 : 1);
@@ -4337,7 +4657,7 @@ const RCM = (() => {
                 sticky = false;
                 downPos = null;
                 closeMenu();
-                hoveredTool = null; hoveredSub = null;
+                hoveredTool = null; hoveredFamily = null; hoveredSub = null;
             }
         };
         document.addEventListener("keydown", escHandler);
@@ -4358,10 +4678,10 @@ const RCM = (() => {
     }
 
     function stickySelect() {
-        const _tool = hoveredTool, _sub = hoveredSub;
+        const _tool = hoveredTool, _family = hoveredFamily, _sub = hoveredSub;
         closeMenu();
-        hoveredTool = null; hoveredSub = null;
-        applySelection(_tool, _sub);
+        hoveredTool = null; hoveredFamily = null; hoveredSub = null;
+        applySelection(_tool, _family, _sub);
     }
 
     return {
@@ -4369,7 +4689,7 @@ const RCM = (() => {
             if (readOnly) return;
             if (sticky && open) return;
             downAt = Date.now(); downPos = {x:e.clientX, y:e.clientY};
-            hoveredTool = null; hoveredSub = null; open = false;
+            hoveredTool = null; hoveredFamily = null; hoveredSub = null; open = false;
         },
         onMove(e) {
             if (sticky && open) { updateHover(e.clientX, e.clientY); return; }
@@ -4393,11 +4713,11 @@ const RCM = (() => {
                 return;
             }
             lastRightUpTime = now;
-            const wasOpen = open, _tool = hoveredTool, _sub = hoveredSub;
+            const wasOpen = open, _tool = hoveredTool, _family = hoveredFamily, _sub = hoveredSub;
             downPos = null;
             closeMenu();
-            hoveredTool = null; hoveredSub = null;
-            applySelection(wasOpen ? _tool : null, wasOpen ? _sub : null);
+            hoveredTool = null; hoveredFamily = null; hoveredSub = null;
+            applySelection(wasOpen ? _tool : null, wasOpen ? _family : null, wasOpen ? _sub : null);
         },
         cancel() { downPos = null; lastRightUpTime = 0; closeMenu(); },
     };
@@ -4421,18 +4741,28 @@ function initInput() {
 }
 
 function initTouchInput() {
+    const LONG_PRESS_MS = 600;
+    const LONG_PRESS_SLOP_PX = 10;
     let lastTouchDist = 0;
     let lastTouchMid = null;
     let touchPanning = false;
     let passageTouchActive = false;
+    let passageLongPress = null;   // { timer, startX, startY, fired }
 
     const passageTouchMode = () => currentToolMode === ToolMode.MASK
-        && getMaskToolState().family === "passages";
+        && getMaskToolState().family === "third-dimension";
+
+    function clearPassageLongPress() {
+        if (passageLongPress?.timer) clearTimeout(passageLongPress.timer);
+        if (!passageLongPress?.fired) passageLongPress = null;
+    }
 
     mapContainer.addEventListener("touchstart", e => {
         if (!mapContainer.contains(e.target) || e.target.closest("#overview-sidebar")) return;
         if (e.touches.length === 2) {
             e.preventDefault();
+            clearPassageLongPress();
+            passageLongPress = null;
             PassageEditor.cancelGesture();
             passageTouchActive = false;
             pan.stop();
@@ -4450,6 +4780,18 @@ function initTouchInput() {
                     { clientX: touch.clientX, clientY: touch.clientY, detail: 1 },
                     screenToWorld(touch.clientX, touch.clientY),
                 );
+                // Touch has no right click or Enter: holding still on an open
+                // draft finishes the passage instead of adding a point.
+                if (PassageEditor.isDrafting()) {
+                    const state = { startX: touch.clientX, startY: touch.clientY, fired: false, timer: 0 };
+                    state.timer = setTimeout(() => {
+                        if (passageLongPress !== state) return;
+                        state.fired = true;
+                        PassageEditor.cancelGesture();
+                        PassageEditor.finish();
+                    }, LONG_PRESS_MS);
+                    passageLongPress = state;
+                }
                 return;
             }
             touchPanning = true;
@@ -4478,6 +4820,11 @@ function initTouchInput() {
         } else if (e.touches.length === 1 && passageTouchActive && passageTouchMode()) {
             e.preventDefault();
             const touch = e.touches[0];
+            if (passageLongPress && !passageLongPress.fired
+                && Math.hypot(touch.clientX - passageLongPress.startX,
+                    touch.clientY - passageLongPress.startY) > LONG_PRESS_SLOP_PX) {
+                clearPassageLongPress();
+            }
             PassageEditor.pointerMove(
                 { clientX: touch.clientX, clientY: touch.clientY },
                 screenToWorld(touch.clientX, touch.clientY),
@@ -4495,10 +4842,14 @@ function initTouchInput() {
     }, { passive: false });
 
     mapContainer.addEventListener("touchend", e => {
+        const longPressFired = !!passageLongPress?.fired;
+        clearPassageLongPress();
+        passageLongPress = null;
         if (passageTouchActive && e.touches.length === 0) {
             e.preventDefault();
             const touch = e.changedTouches[0];
-            if (!pan.stop() && touch) {
+            if (longPressFired) pan.stop();   // the hold already finished the draft
+            else if (!pan.stop() && touch) {
                 PassageEditor.pointerUp(
                     { clientX: touch.clientX, clientY: touch.clientY, detail: 1 },
                     screenToWorld(touch.clientX, touch.clientY),
@@ -4512,6 +4863,8 @@ function initTouchInput() {
     }, { passive: false });
 
     mapContainer.addEventListener("touchcancel", () => {
+        clearPassageLongPress();
+        passageLongPress = null;
         PassageEditor.cancelGesture();
         pan.stop();
         lastTouchDist = 0;
@@ -4758,9 +5111,15 @@ const RegionEditor = (() => {
 
     function addDraftPoint(e, pt) {
         const hi = hitHandle(e);
-        if (verts.length >= 3 && hi === 0) {
-            finishDrawing();
-            return;
+        // Close on distance to the first vertex, not on the event target: the
+        // visible close-ring is larger than the 6 px handle, and a stacked
+        // vertex from a near miss would otherwise cover handle 0 for good.
+        if (verts.length >= 3) {
+            const closeRadius = (HANDLE_R * 1.8 + 2) / (camera.zoom || 1);
+            if (hi === 0 || Math.hypot(pt.x - verts[0].x, pt.y - verts[0].y) <= closeRadius) {
+                finishDrawing();
+                return;
+            }
         }
         if (hi >= 0) return;
         verts.push({ x: pt.x, y: pt.y });
@@ -5023,11 +5382,24 @@ window.updateNavInfinityBtn = NavInfinity.updateBtn;
 
 let _scaleDownPos    = null;   // screen pos at mousedown
 let _scalePanStarted = false;  // true once pan.start() has been called in this gesture
+let _passageFinishRightClick = false;
 const SCALE_PAN_THRESHOLD = 5;
 
 function onMouseDown(e) {
     invalidateMapRect();   // PERF-FIX #1: refresh cached rect at the start of every gesture
     if (e.button === 2) {
+        const passageAddDraft = currentToolMode === ToolMode.MASK
+            && getMaskToolState().family === "third-dimension"
+            && getMaskToolState().action === "edit"
+            && PassageEditor.isDrafting();
+        if (passageAddDraft && mapContainer.contains(e.target)) {
+            e.preventDefault();
+            e.stopPropagation();
+            _passageFinishRightClick = true;
+            RCM.cancel();
+            PassageEditor.finish();
+            return;
+        }
         if (mapContainer.contains(e.target)) RCM.onDown(e);
         return;
     }
@@ -5076,7 +5448,16 @@ function onMouseMove(e) {
 }
 
 function onMouseUp(e) {
-    if (e.button === 2) { RCM.onUp(e); return; }
+    if (e.button === 2) {
+        if (_passageFinishRightClick) {
+            _passageFinishRightClick = false;
+            e.preventDefault();
+            e.stopPropagation();
+            return;
+        }
+        RCM.onUp(e);
+        return;
+    }
     if (e.button !== 0) return;
 
     if (_scalingActive || _scaleFormOpen) {
@@ -5687,6 +6068,13 @@ function findEditableRoutePoint(x, y) {
 function onWheel(e) {
     if (!mapContainer.contains(e.target)) return;
     if (e.target.closest("#overview-sidebar")) return;
+    if (currentToolMode === ToolMode.MASK
+            && getMaskToolState().family === "third-dimension"
+            && PassageEditor.wheel(e, screenToWorld(e.clientX, e.clientY))) {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+    }
     e.preventDefault();
     const rect   = mapContainer.getBoundingClientRect();
     const mouseX = e.clientX - rect.left;
@@ -9088,16 +9476,9 @@ const SUBTOOL_DEFS = {
         { id: "new",    icon: "plus",   title: gettext("New route") },
         { id: "select", icon: "pencil", title: gettext("Select route") },
     ],
-    [ToolMode.MASK]: [
-        // The radial context menu has only two rings. Its Mask branch therefore
-        // flattens the exact sidebar hierarchy into five leaves; all leaves call
-        // setMaskToolState(), so both surfaces still share one state machine.
-        { id: "pan",             icon: "lock",   title: gettext("Pan") },
-        { id: "obstacle-add",    icon: "pencil", title: gettext("Add obstacle") },
-        { id: "obstacle-remove", icon: "eraser", title: gettext("Remove obstacle") },
-        { id: "passage-add",     icon: "plus",   title: gettext("Add passage") },
-        { id: "passage-remove",  icon: "eraser", title: gettext("Remove passage") },
-    ],
+    // Mask has its own nested hierarchy below. Keeping an empty entry here
+    // prevents generic toolbar code from treating it as a flat list.
+    [ToolMode.MASK]: [],
     [ToolMode.BLOCK]: [
         { id: "line",    icon: "slash",        title: gettext("Line") },
         { id: "polygon", icon: "draw-polygon", title: gettext("Polygon") },
@@ -9109,26 +9490,54 @@ const SUBTOOL_DEFS = {
     ],
 };
 
+const MASK_TOOL_FAMILIES = [
+    { id: "lock",             icon: "lock",      title: gettext("Lock / view only"), defaultAction: "view" },
+    { id: "mask-edit",        icon: "face-mask", title: gettext("Mask edit"),        defaultAction: "add" },
+    { id: "third-dimension",  icon: "bridge",    title: gettext("3rd dimension"),    defaultAction: "edit" },
+];
+
+const MASK_ACTION_DEFS = {
+    "lock": [],
+    "mask-edit": [
+        { id: "add",    icon: "pencil", title: gettext("Add") },
+        { id: "remove", icon: "eraser", title: gettext("Remove") },
+    ],
+    "third-dimension": [
+        // Add and edit are one direct-manipulation action: clicking free map
+        // draws a new passage, node clicks drag, the wheel adjusts width.
+        { id: "edit",   icon: "pencil", title: gettext("Add / edit") },
+        { id: "remove", icon: "eraser", title: gettext("Remove") },
+    ],
+};
+
 const activeSubtool = {
     [ToolMode.CONTROL_PAIR]: "add",
     [ToolMode.ROUTE]:        "new",
-    [ToolMode.MASK]:         "pan",
+    [ToolMode.MASK]:         "lock",
     [ToolMode.BLOCK]:        "line",
     [ToolMode.INFINITY]:     "edit",
 };
 
-const maskToolState = { family: "obstacles", action: "pan" };
+const maskToolState = { family: "lock", action: "view" };
 
 function maskLeaf(family, action) {
-    return action === "pan" ? "pan" : `${family === "passages" ? "passage" : "obstacle"}-${action}`;
+    if (family === "lock") return "lock";
+    return `${family}-${action}`;
 }
 
 function syncMaskToolStateFromLeaf(leaf) {
-    if (leaf === "passage-add") Object.assign(maskToolState, { family: "passages", action: "add" });
-    else if (leaf === "passage-remove") Object.assign(maskToolState, { family: "passages", action: "remove" });
-    else if (leaf === "obstacle-add" || leaf === "draw") Object.assign(maskToolState, { family: "obstacles", action: "add" });
-    else if (leaf === "obstacle-remove" || leaf === "erase") Object.assign(maskToolState, { family: "obstacles", action: "remove" });
-    else Object.assign(maskToolState, { action: "pan" });
+    if (leaf === "passage-add" || leaf === "third-dimension-add"
+            || leaf === "passage-edit" || leaf === "third-dimension-edit") {
+        Object.assign(maskToolState, { family: "third-dimension", action: "edit" });
+    } else if (leaf === "passage-remove" || leaf === "third-dimension-remove") {
+        Object.assign(maskToolState, { family: "third-dimension", action: "remove" });
+    } else if (leaf === "obstacle-add" || leaf === "mask-edit-add" || leaf === "draw") {
+        Object.assign(maskToolState, { family: "mask-edit", action: "add" });
+    } else if (leaf === "obstacle-remove" || leaf === "mask-edit-remove" || leaf === "erase") {
+        Object.assign(maskToolState, { family: "mask-edit", action: "remove" });
+    } else {
+        Object.assign(maskToolState, { family: "lock", action: "view" });
+    }
     activeSubtool[ToolMode.MASK] = maskLeaf(maskToolState.family, maskToolState.action);
 }
 
@@ -9137,22 +9546,36 @@ function getMaskToolState() {
 }
 
 function setMaskToolState(family, action) {
-    const nextFamily = family === "passages" ? "passages" : "obstacles";
-    const nextAction = ["pan", "add", "remove"].includes(action) ? action : "pan";
-    const leavingPassageAdd = maskToolState.family === "passages" && maskToolState.action === "add"
-        && (nextFamily !== "passages" || nextAction !== "add");
+    const familyAliases = {
+        obstacles: "mask-edit",
+        passages: "third-dimension",
+        "mask_edit": "mask-edit",
+        "third_dimension": "third-dimension",
+    };
+    const nextFamily = familyAliases[family] || (MASK_ACTION_DEFS[family] ? family : "lock");
+    const familyDef = MASK_TOOL_FAMILIES.find(def => def.id === nextFamily) || MASK_TOOL_FAMILIES[0];
+    const actions = MASK_ACTION_DEFS[familyDef.id];
+    const nextAction = familyDef.id === "lock"
+        ? "view"
+        : (actions.some(def => def.id === action) ? action : familyDef.defaultAction);
+    const leavingPassageAdd = maskToolState.family === "third-dimension" && maskToolState.action === "edit"
+        && (nextFamily !== "third-dimension" || nextAction !== "edit");
     if (leavingPassageAdd) PassageEditor.cancel();
+    else if (maskToolState.family === "third-dimension"
+            && (nextFamily !== "third-dimension" || nextAction !== maskToolState.action)) {
+        PassageEditor.cancelGesture();
+    }
     maskToolState.family = nextFamily;
     maskToolState.action = nextAction;
     activeSubtool[ToolMode.MASK] = maskLeaf(nextFamily, nextAction);
 
-    const obstacleEditing = nextFamily === "obstacles" && (nextAction === "add" || nextAction === "remove");
-    mapContainer.style.cursor = obstacleEditing ? "default" : (nextAction === "pan" ? "grab" : "default");
+    const obstacleEditing = nextFamily === "mask-edit" && (nextAction === "add" || nextAction === "remove");
+    mapContainer.style.cursor = obstacleEditing ? "default" : (nextFamily === "lock" ? "grab" : "default");
     mapContainer.classList.toggle("mask-editing", obstacleEditing);
     if (!obstacleEditing) document.getElementById("mask-brush-cursor").style.display = "none";
 
     const slider = document.getElementById("mask-size-slider");
-    if (slider && nextFamily === "obstacles") {
+    if (slider && nextFamily === "mask-edit") {
         slider.min = MaskLayer.getBrushMin();
         slider.max = MaskLayer.getBrushMax();
         slider.step = 1;
@@ -9169,11 +9592,12 @@ function getSubtool(mode) {
 
 function setSubtool(mode, id) {
     if (mode === ToolMode.MASK) {
-        if (id === "passage-add") setMaskToolState("passages", "add");
-        else if (id === "passage-remove") setMaskToolState("passages", "remove");
-        else if (id === "obstacle-add" || id === "draw") setMaskToolState("obstacles", "add");
-        else if (id === "obstacle-remove" || id === "erase") setMaskToolState("obstacles", "remove");
-        else setMaskToolState(maskToolState.family, "pan");
+        if (id === "passage-add" || id === "third-dimension-add"
+            || id === "passage-edit" || id === "third-dimension-edit") setMaskToolState("third-dimension", "edit");
+        else if (id === "passage-remove" || id === "third-dimension-remove") setMaskToolState("third-dimension", "remove");
+        else if (id === "obstacle-add" || id === "mask-edit-add" || id === "draw") setMaskToolState("mask-edit", "add");
+        else if (id === "obstacle-remove" || id === "mask-edit-remove" || id === "erase") setMaskToolState("mask-edit", "remove");
+        else setMaskToolState("lock", "view");
         return;
     }
     activeSubtool[mode] = id;
@@ -9198,39 +9622,37 @@ function updateSubtoolPanel(mode) {
     if (mode === ToolMode.MASK) {
         const tree = document.createElement("div");
         tree.className = "mask-tool-tree";
-        const panButton = document.createElement("button");
-        panButton.type = "button";
-        panButton.className = `subtool-btn mask-pan-btn${maskToolState.action === "pan" ? " active" : ""}`;
-        panButton.title = gettext("Pan");
-        panButton.setAttribute("aria-label", gettext("Pan"));
-        panButton.innerHTML = icon("lock", "16px");
-        panButton.addEventListener("click", () => setMaskToolState(maskToolState.family, "pan"));
-        tree.appendChild(panButton);
+        const level2 = document.createElement("div");
+        level2.className = "mask-tool-column mask-tool-level2";
+        const level3 = document.createElement("div");
+        level3.className = "mask-tool-column mask-tool-level3";
 
-        const addFamily = (family, label) => {
-            const group = document.createElement("div");
-            group.className = "mask-tool-family";
-            const heading = document.createElement("span");
-            heading.className = "mask-tool-family-label";
-            heading.textContent = label;
-            group.appendChild(heading);
-            const actions = document.createElement("div");
-            actions.className = "mask-tool-family-actions";
-            [["add", "plus", gettext("Add")], ["remove", "eraser", gettext("Remove")]].forEach(([action, iconName, title]) => {
-                const button = document.createElement("button");
-                button.type = "button";
-                button.className = `subtool-btn${maskToolState.family === family && maskToolState.action === action ? " active" : ""}`;
-                button.title = title;
-                button.setAttribute("aria-label", `${label}: ${title}`);
-                button.innerHTML = icon(iconName, "15px");
-                button.addEventListener("click", () => setMaskToolState(family, action));
-                actions.appendChild(button);
-            });
-            group.appendChild(actions);
-            tree.appendChild(group);
-        };
-        addFamily("obstacles", gettext("Obstacles"));
-        addFamily("passages", gettext("3rd dimension"));
+        MASK_TOOL_FAMILIES.forEach(family => {
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = `subtool-btn mask-family-btn${maskToolState.family === family.id ? " active" : ""}`;
+            button.title = family.title;
+            button.setAttribute("aria-label", family.title);
+            button.setAttribute("aria-pressed", String(maskToolState.family === family.id));
+            button.innerHTML = icon(family.icon, "16px");
+            button.addEventListener("click", () => setMaskToolState(family.id, family.defaultAction));
+            level2.appendChild(button);
+        });
+
+        (MASK_ACTION_DEFS[maskToolState.family] || []).forEach(action => {
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = `subtool-btn mask-action-btn${maskToolState.action === action.id ? " active" : ""}`;
+            button.title = action.title;
+            const familyTitle = MASK_TOOL_FAMILIES.find(def => def.id === maskToolState.family)?.title || "";
+            button.setAttribute("aria-label", `${familyTitle}: ${action.title}`);
+            button.setAttribute("aria-pressed", String(maskToolState.action === action.id));
+            button.innerHTML = icon(action.icon, "16px");
+            button.addEventListener("click", () => setMaskToolState(maskToolState.family, action.id));
+            level3.appendChild(button);
+        });
+
+        tree.append(level2, level3);
         subtoolPanel.appendChild(tree);
         return;
     }
@@ -9284,8 +9706,8 @@ setTool(currentToolMode);
 subtoolPanel.addEventListener("wheel", e => {
     if (currentToolMode !== ToolMode.MASK) return;
     const state = getMaskToolState();
-    const obstacleBrush = state.family === "obstacles" && (state.action === "add" || state.action === "remove");
-    const passageWidth = state.family === "passages" && state.action === "add";
+    const obstacleBrush = state.family === "mask-edit" && (state.action === "add" || state.action === "remove");
+    const passageWidth = state.family === "third-dimension" && state.action === "edit";
     if (!obstacleBrush && !passageWidth) return;
     e.preventDefault();
     e.stopPropagation();

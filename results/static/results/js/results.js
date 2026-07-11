@@ -128,11 +128,9 @@ function initModeToggle() {
             sessionStorage.setItem('playMode', playMode);
             slider.dataset.mode = playMode;
             setThumbIcon(playMode);
-            // The Controls column is hidden in infinity mode — don't leave the
-            // table sorted by a column that's no longer visible.
-            if (infinityMode() && sortState.key === 'cp_count') {
-                sortState = { key: 'last_edited', dir: -1 };
-            }
+            // Don't leave the table sorted by a column that's no longer visible.
+            if (infinityMode()  && sortState.key === 'cp_count')      sortState = { key: 'last_edited', dir: -1 };
+            if (!infinityMode() && sortState.key === 'infinite_done') sortState = { key: 'last_edited', dir: -1 };
             renderHeader();     // rebuild thead (column set depends on mode)
             applyFilters();     // re-filter (infinity → infinite_enabled only)
         });
@@ -188,6 +186,8 @@ function applyFilters() {
     filteredFiles = allFiles.filter(f => {
         // Infinity mode only lists maps opted in to infinite play.
         if (infinityMode() && !f.infinite_enabled) return false;
+        // Training/competition modes only show published files.
+        if (!infinityMode() && !f.published) return false;
         const matchSearch =
             (f.name   || '').toLowerCase().includes(search) ||
             (f.author || '').toLowerCase().includes(search) ||
@@ -229,9 +229,10 @@ function applySorting(data) {
         return [...arr].sort((a, b) => {
             const get = f => {
                 switch (key) {
-                    case 'name':        return (f.name || '').toLowerCase();
-                    case 'cp_count':    return f.cp_count || 0;
-                    case 'last_edited': return new Date(f.last_edited || 0).getTime();
+                    case 'name':          return (f.name || '').toLowerCase();
+                    case 'cp_count':      return f.cp_count || 0;
+                    case 'last_edited':   return new Date(f.last_edited || 0).getTime();
+                    case 'infinite_done': return f.infinite_done || 0;
                     default: return '';
                 }
             };
@@ -252,7 +253,8 @@ function applySorting(data) {
 
 function setSort(key) {
     if (sortState.key === key) sortState.dir *= -1;
-    else { sortState.key = key; sortState.dir = -1; }
+    // infinite_done defaults ascending (new/0 first); everything else descending
+    else { sortState.key = key; sortState.dir = key === 'infinite_done' ? 1 : -1; }
     applyFilters();
 }
 
@@ -280,7 +282,11 @@ function renderHeader() {
            </th>`;
 
     const cpCol = infinityMode()
-        ? `<th class="col-cp col-infinity-done" style="text-align:center;">${gettext('Done')}</th>`
+        ? `<th class="col-cp col-infinity-done" data-sort="infinite_done" style="text-align:center;">
+               <span class="sortable">${gettext('Progress')}
+                   <span id="sort-infinite_done" class="sort-indicator"></span>
+               </span>
+           </th>`
         : `<th class="col-cp" data-sort="cp_count" style="text-align:center;">
                <span class="sortable">${gettext('Controls')}
                    <span id="sort-cp_count" class="sort-indicator"></span>
@@ -341,7 +347,7 @@ function getSortIcon(k) {
 }
 
 function updateSortIndicators() {
-    ['name', 'cp_count', 'last_edited'].forEach(k => {
+    ['name', 'cp_count', 'last_edited', 'infinite_done'].forEach(k => {
         const el = document.getElementById(`sort-${k}`);
         if (el) el.innerHTML = getSortIcon(k);
     });
@@ -596,7 +602,7 @@ function renderTable() {
             tr.innerHTML = `
                 <td class="play-name-cell play-generated-name">${f.name}</td>
                 <td></td>
-                <td class="play-cp-cell play-infinity-done-cell">${infinityDoneText(f.infinite_done)}</td>
+                <td class="play-cp-cell play-infinity-done-cell">${infinityDoneCount(f.infinite_done)}</td>
                 <td>${f.author}</td>
                 ${kaderCell}
                 <td>—</td>`;
@@ -625,7 +631,7 @@ function renderTable() {
             ? ''
             : `<td class="col-status-cell" style="color:${st.color};font-weight:600;">${st.label}</td>`;
         const cpCell = infinityMode()
-            ? `<td class="play-cp-cell play-infinity-done-cell">${infinityDoneText(f.infinite_done)}</td>`
+            ? `<td class="play-cp-cell play-infinity-done-cell">${infinityDoneCount(f.infinite_done)}</td>`
             : `<td class="play-cp-cell">${f.cp_count}</td>`;
         tr.innerHTML = `
             <td class="play-name-cell">${f.name}</td>
@@ -665,9 +671,13 @@ function renderCards() {
                 ? `<span class="user-active-team">${f.team_name}</span>
                    <span class="play-card-sep">·</span>`
                 : '';
+            const cpSpan = infinityMode()
+                ? `<span class="play-card-cp">${infinityDoneText(f.infinite_done)}</span>`
+                : '';
             card.innerHTML = `
                 <div class="play-card-row1">
                     <span class="play-card-name">${f.name}</span>
+                    ${cpSpan}
                 </div>
                 <div class="play-card-row2">
                     ${kaderHtml}
@@ -740,7 +750,9 @@ function renderMobileControls() {
 
     const sortFields = [
         { key: 'name',        label: gettext('Name')     },
-        ...(infinityMode() ? [] : [{ key: 'cp_count', label: gettext('Controls') }]),
+        ...(infinityMode()
+            ? [{ key: 'infinite_done', label: gettext('Progress') }]
+            : [{ key: 'cp_count',     label: gettext('Controls') }]),
         { key: 'last_edited', label: gettext('Date')     },
     ];
     sortFields.forEach(({ key, label }) => {
@@ -808,6 +820,12 @@ function formatDate(iso) {
     return new Date(iso).toLocaleDateString('de-CH', { day: '2-digit', month: '2-digit', year: '2-digit' });
 }
 
+function infinityDoneCount(count) {
+    const n = Math.max(0, Number(count) || 0);
+    return n === 0 ? gettext('new') : n;
+}
+
 function infinityDoneText(count) {
-    return `${Math.max(0, Number(count) || 0)} ${gettext('done')}`;
+    const n = Math.max(0, Number(count) || 0);
+    return n === 0 ? gettext('new') : `${n} ${gettext('done')}`;
 }

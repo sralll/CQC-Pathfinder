@@ -161,7 +161,7 @@ const forcedNear = layeredRouteDistinct(bridgeNearA, [bridgeNearB], grid, width,
 assert.equal(forcedNear.distinct, true);
 assert.equal(forcedNear.perRoute[0].strategy, 'passage-lateral');
 assert.deepEqual(forcedNear.candidateClassification.passageSpans, [
-    { passageId: 'wide-horizontal', fromIndex: 0, toIndex: 5 },
+    { passageId: 'wide-horizontal', fromIndex: 1, toIndex: 4 },
 ]);
 
 // Multiple existing routes retain the legacy "must differ from every route"

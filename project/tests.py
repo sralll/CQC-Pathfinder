@@ -11,7 +11,7 @@ from django.urls import reverse
 
 from account.models import Profile, Team
 from project import views as project_views
-from project.models import File, FileSnapshot
+from project.models import ControlPair, File, FileSnapshot, Route
 from project.passage_validation import (
     MAX_LEVEL_PASSAGES_BYTES,
     MAX_PASSAGES,
@@ -337,6 +337,163 @@ class LevelPassagesPersistenceTests(TestCase):
         self.assertEqual(granular_response.json()['level_passages'], full_normalized)
         self.assertEqual(self.file.author, self.trainer.username)
         self.assertEqual(self.file.locked_by, self.trainer)
+
+    def test_passage_save_batches_derived_route_metrics_and_returns_canonical_values(self):
+        control_pair = ControlPair.objects.create(file=self.file, order=0)
+        first_route = Route.objects.create(
+            control_pair=control_pair, order=0, obstacle=1.0, run_time=10.0,
+        )
+        second_route = Route.objects.create(
+            control_pair=control_pair, order=1, obstacle=2.0, run_time=20.0,
+        )
+
+        response = self.client.post(
+            reverse('save_element'),
+            data=json.dumps({
+                'file_id': self.file.id,
+                'type': 'level_passages',
+                'level_passages': level_passages_document(width=30),
+                'route_updates': [
+                    {
+                        'cp_db_id': control_pair.id,
+                        'route': {
+                            'db_id': first_route.id,
+                            'obstacle': 3.5,
+                            'run_time': 12.5,
+                        },
+                    },
+                    {
+                        'cp_db_id': control_pair.id,
+                        'route': {
+                            'db_id': second_route.id,
+                            'obstacle': 4.5,
+                            'run_time': 22.5,
+                        },
+                    },
+                ],
+            }),
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.file.refresh_from_db()
+        first_route.refresh_from_db()
+        second_route.refresh_from_db()
+        self.assertEqual(self.file.level_passages, normalize_level_passages(level_passages_document(width=30)))
+        self.assertEqual((first_route.obstacle, first_route.run_time), (3.5, 12.5))
+        self.assertEqual((second_route.obstacle, second_route.run_time), (4.5, 22.5))
+        self.assertEqual(response.json()['route_updates'], [
+            {
+                'cp_db_id': control_pair.id,
+                'route_id': first_route.id,
+                'obstacle': 3.5,
+                'run_time': 12.5,
+            },
+            {
+                'cp_db_id': control_pair.id,
+                'route_id': second_route.id,
+                'obstacle': 4.5,
+                'run_time': 22.5,
+            },
+        ])
+
+    def test_passage_batch_rolls_back_when_any_metric_is_invalid(self):
+        original_document = normalize_level_passages(level_passages_document(width=24))
+        self.file.level_passages = original_document
+        self.file.save(update_fields=['level_passages'])
+        control_pair = ControlPair.objects.create(file=self.file, order=0)
+        first_route = Route.objects.create(
+            control_pair=control_pair, order=0, obstacle=1.0, run_time=10.0,
+        )
+        second_route = Route.objects.create(
+            control_pair=control_pair, order=1, obstacle=2.0, run_time=20.0,
+        )
+
+        response = self.client.post(
+            reverse('save_element'),
+            data=json.dumps({
+                'file_id': self.file.id,
+                'type': 'level_passages',
+                'level_passages': level_passages_document(width=30),
+                'route_updates': [
+                    {
+                        'cp_db_id': control_pair.id,
+                        'route': {
+                            'db_id': first_route.id,
+                            'obstacle': 3.5,
+                            'run_time': 12.5,
+                        },
+                    },
+                    {
+                        'cp_db_id': control_pair.id,
+                        'route': {
+                            'db_id': second_route.id,
+                            'obstacle': 4.5,
+                            'run_time': 'not-a-number',
+                        },
+                    },
+                ],
+            }),
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.file.refresh_from_db()
+        first_route.refresh_from_db()
+        second_route.refresh_from_db()
+        self.assertEqual(self.file.level_passages, original_document)
+        self.assertEqual((first_route.obstacle, first_route.run_time), (1.0, 10.0))
+        self.assertEqual((second_route.obstacle, second_route.run_time), (2.0, 20.0))
+
+    def test_passage_batch_rejects_route_from_another_file_without_mutating_target(self):
+        target_pair = ControlPair.objects.create(file=self.file, order=0)
+        target_route = Route.objects.create(
+            control_pair=target_pair, order=0, obstacle=1.0, run_time=10.0,
+        )
+        other_file = File.objects.create(name='Other passage batch map', team=self.other_team)
+        other_pair = ControlPair.objects.create(file=other_file, order=0)
+        other_route = Route.objects.create(
+            control_pair=other_pair, order=0, obstacle=8.0, run_time=80.0,
+        )
+        original_document = normalize_level_passages(level_passages_document(width=24))
+        self.file.level_passages = original_document
+        self.file.save(update_fields=['level_passages'])
+
+        response = self.client.post(
+            reverse('save_element'),
+            data=json.dumps({
+                'file_id': self.file.id,
+                'type': 'level_passages',
+                'level_passages': level_passages_document(width=30),
+                'route_updates': [
+                    {
+                        'cp_db_id': target_pair.id,
+                        'route': {
+                            'db_id': target_route.id,
+                            'obstacle': 3.5,
+                            'run_time': 12.5,
+                        },
+                    },
+                    {
+                        'cp_db_id': other_pair.id,
+                        'route': {
+                            'db_id': other_route.id,
+                            'obstacle': 9.5,
+                            'run_time': 90.0,
+                        },
+                    },
+                ],
+            }),
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 404)
+        self.file.refresh_from_db()
+        target_route.refresh_from_db()
+        other_route.refresh_from_db()
+        self.assertEqual(self.file.level_passages, original_document)
+        self.assertEqual((target_route.obstacle, target_route.run_time), (1.0, 10.0))
+        self.assertEqual((other_route.obstacle, other_route.run_time), (8.0, 80.0))
 
     def test_full_save_rejects_invalid_data_without_mutating_file(self):
         original = normalize_level_passages(level_passages_document())

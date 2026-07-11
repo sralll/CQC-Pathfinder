@@ -1,6 +1,9 @@
+from math import isfinite
+
 from django.shortcuts import get_object_or_404, render
 from django.http import JsonResponse, HttpResponseNotFound
 from django.views.decorators.http import require_GET, require_POST
+from django.db import transaction
 from django.db.models import Count, Q
 from .models import File, Label, ControlPair, Route
 from .passage_validation import (
@@ -40,6 +43,86 @@ def _invalid_level_passages_response(exc):
         'message': _('This file is not a valid project.'),
         'detail': str(exc),
     }, status=400)
+
+
+class InvalidPassageRouteUpdate(Exception):
+    """Developer-facing validation failure for a coalesced passage save."""
+
+    def __init__(self, message, status=400):
+        super().__init__(message)
+        self.status = status
+
+
+def _invalid_passage_route_update_response(exc, status=400):
+    return JsonResponse({
+        'error': 'invalid_route_updates',
+        'detail': str(exc),
+    }, status=status)
+
+
+def _validate_passage_route_updates(data, file):
+    """Validate and lock derived route metrics in a passage save batch."""
+    route_updates = data.get('route_updates', [])
+    if not isinstance(route_updates, list):
+        raise InvalidPassageRouteUpdate('route_updates must be a list')
+
+    validated = []
+    seen_route_ids = set()
+    allowed_fields = {'db_id', 'obstacle', 'run_time'}
+    metric_fields = ('obstacle', 'run_time')
+    for index, update in enumerate(route_updates):
+        if not isinstance(update, dict):
+            raise InvalidPassageRouteUpdate(f'route_updates[{index}] must be an object')
+
+        cp_db_id = update.get('cp_db_id')
+        route_data = update.get('route')
+        if (isinstance(cp_db_id, bool) or not isinstance(cp_db_id, int) or cp_db_id <= 0
+                or not isinstance(route_data, dict)):
+            raise InvalidPassageRouteUpdate(f'route_updates[{index}] has invalid ownership data')
+
+        unknown_fields = set(route_data) - allowed_fields
+        if unknown_fields or not all(field in route_data for field in metric_fields):
+            raise InvalidPassageRouteUpdate(
+                f'route_updates[{index}] must contain only db_id, obstacle, and run_time'
+            )
+
+        route_db_id = route_data.get('db_id')
+        if (isinstance(route_db_id, bool) or not isinstance(route_db_id, int)
+                or route_db_id <= 0):
+            raise InvalidPassageRouteUpdate(f'route_updates[{index}] has an invalid route id')
+        if route_db_id in seen_route_ids:
+            raise InvalidPassageRouteUpdate(f'route_updates[{index}] duplicates route {route_db_id}')
+
+        metrics = {}
+        for field in metric_fields:
+            value = route_data[field]
+            if value is not None and (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not isfinite(value)
+                or value < 0
+            ):
+                raise InvalidPassageRouteUpdate(
+                    f'route_updates[{index}].route.{field} must be a non-negative number or null'
+                )
+            metrics[field] = value
+
+        route = (
+            Route.objects
+            .select_for_update()
+            .filter(id=route_db_id, control_pair_id=cp_db_id, control_pair__file=file)
+            .first()
+        )
+        if route is None:
+            raise InvalidPassageRouteUpdate(
+                f'Route {route_db_id} does not belong to control pair {cp_db_id} in this file',
+                status=404,
+            )
+
+        seen_route_ids.add(route_db_id)
+        validated.append((route, metrics))
+
+    return validated
 
 
 def _normalize_order_payload(control_pairs):
@@ -1035,7 +1118,6 @@ def delete_element(request):
 def save_cp_order(request):
     """Atomically update order of all CPs for a file to avoid unique-constraint conflicts."""
     import json as _json
-    from django.db import transaction
     try:
         data    = _json.loads(request.body)
         file_id = data.get('file_id')
@@ -1151,17 +1233,37 @@ def save_element(request):
 
         # ── Additional level passages ─────────────────────────────────────────────────
         elif element_type == 'level_passages':
-            file.level_passages = normalize_level_passages(data.get('level_passages'))
-            file.author      = request.user.first_name or request.user.username
-            file.last_edited = tz.now()
-            file.locked_by   = request.user
-            file.locked_at   = tz.now()
-            file.save(update_fields=[
-                'author', 'level_passages', 'last_edited', 'locked_by', 'locked_at',
-            ])
+            level_passages = normalize_level_passages(data.get('level_passages'))
+            with transaction.atomic():
+                # Serialize the document and its derived route metrics together.
+                file = File.objects.select_for_update().get(id=file.id)
+                route_updates = _validate_passage_route_updates(data, file)
+                for route, metrics in route_updates:
+                    route.obstacle = metrics['obstacle']
+                    route.run_time = metrics['run_time']
+                    route.save(update_fields=['obstacle', 'run_time'])
+
+                file.level_passages = level_passages
+                file.author      = request.user.first_name or request.user.username
+                file.last_edited = tz.now()
+                file.locked_by   = request.user
+                file.locked_at   = tz.now()
+                file.save(update_fields=[
+                    'author', 'level_passages', 'last_edited', 'locked_by', 'locked_at',
+                ])
+
             return JsonResponse({
                 'status': 'ok',
                 'level_passages': file.level_passages,
+                'route_updates': [
+                    {
+                        'cp_db_id': route.control_pair_id,
+                        'route_id': route.id,
+                        'obstacle': route.obstacle,
+                        'run_time': route.run_time,
+                    }
+                    for route, _metrics in route_updates
+                ],
                 'last_edited': file.last_edited.isoformat(),
             })
 
@@ -1169,6 +1271,8 @@ def save_element(request):
 
     except LevelPassagesValidationError as exc:
         return _invalid_level_passages_response(exc)
+    except InvalidPassageRouteUpdate as exc:
+        return _invalid_passage_route_update_response(exc, status=exc.status)
     except Exception as e:
         traceback.print_exc()
         return JsonResponse({'error': str(e)}, status=500)
