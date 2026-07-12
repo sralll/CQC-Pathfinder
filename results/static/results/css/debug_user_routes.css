@@ -1,0 +1,224 @@
+html,
+body {
+    height: 100%;
+    overflow: hidden;
+}
+
+#debug-user-routes {
+    display: grid;
+    grid-template-columns: minmax(300px, 370px) minmax(0, 1fr);
+    height: calc(100vh - 52px);
+    min-height: 560px;
+    color: #1d2329;
+    background: #f5f7f8;
+}
+
+.dur-sidebar {
+    display: grid;
+    grid-template-rows: auto minmax(120px, 1fr) auto;
+    min-width: 0;
+    min-height: 0;
+    border-right: 1px solid #ccd3d8;
+    background: #fff;
+}
+
+.dur-heading,
+.dur-stage-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 11px 14px;
+    border-bottom: 1px solid #ccd3d8;
+}
+
+.dur-heading h1 {
+    margin: 0;
+    font-size: 18px;
+}
+
+.dur-heading p,
+.dur-help {
+    margin: 4px 0 0;
+    color: #606b73;
+    font-size: 12px;
+    line-height: 1.35;
+}
+
+.dur-heading button,
+.dur-controls button {
+    min-height: 34px;
+    padding: 6px 10px;
+    border: 1px solid #a8b2ba;
+    border-radius: 6px;
+    color: #1d2329;
+    background: #fff;
+    cursor: pointer;
+}
+
+.dur-heading button:hover,
+.dur-controls button:hover:not(:disabled),
+.dur-controls button.active {
+    background: #e6eef5;
+}
+
+.dur-controls button.dur-primary {
+    border-color: #23764a;
+    color: #fff;
+    background: #23764a;
+}
+
+.dur-controls button:disabled {
+    opacity: .42;
+    cursor: not-allowed;
+}
+
+.dur-file-list {
+    overflow: auto;
+    padding: 8px;
+}
+
+.dur-file-item {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 3px 8px;
+    width: 100%;
+    padding: 9px 10px;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    color: inherit;
+    background: transparent;
+    text-align: left;
+    cursor: pointer;
+}
+
+.dur-file-item:hover,
+.dur-file-item.active {
+    border-color: #9eb0bf;
+    background: #eef4f8;
+}
+
+.dur-file-name {
+    overflow: hidden;
+    font-weight: 700;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.dur-file-meta,
+.dur-file-state {
+    color: #606b73;
+    font-size: 12px;
+}
+
+.dur-file-state.ready { color: #23764a; }
+.dur-file-state.stale { color: #a03a32; }
+
+.dur-controls {
+    padding: 12px 14px 14px;
+    border-top: 1px solid #ccd3d8;
+}
+
+.dur-controls h2 {
+    margin: 0 0 8px;
+    font-size: 14px;
+}
+
+.dur-mode-buttons,
+.dur-action-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 7px;
+    margin-bottom: 8px;
+}
+
+.dur-swatch {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    margin-right: 6px;
+    border: 1px solid #333;
+    border-radius: 50%;
+}
+
+.dur-swatch.dur-start { background: #19ad4b; }
+.dur-swatch.dur-goal { background: #ee2d32; }
+
+.dur-controls > label:not(.dur-check) {
+    display: grid;
+    grid-template-columns: 55px 1fr;
+    align-items: center;
+    margin: 5px 0;
+}
+
+.dur-coordinate {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+}
+
+.dur-coordinate input {
+    min-width: 0;
+    padding: 5px 6px;
+    border: 1px solid #b7c0c7;
+    border-radius: 4px;
+}
+
+.dur-action-buttons { margin-top: 10px; }
+.dur-check { display: block; margin-top: 7px; }
+
+.dur-stage {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr) minmax(105px, 20vh);
+    min-width: 0;
+    min-height: 0;
+}
+
+.dur-stage-heading {
+    min-height: 48px;
+    background: #fff;
+}
+
+#dur-summary {
+    color: #606b73;
+    font-size: 12px;
+}
+
+.dur-map-wrap {
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+    background: #e9e7dc;
+    cursor: crosshair;
+}
+
+.dur-map-wrap.panning { cursor: grabbing; }
+
+#dur-map {
+    display: block;
+    width: 100%;
+    height: 100%;
+    touch-action: none;
+}
+
+.dur-output {
+    margin: 0;
+    overflow: auto;
+    padding: 11px 14px;
+    border-top: 1px solid #ccd3d8;
+    color: #e8eee8;
+    background: #202326;
+    font: 12px/1.45 ui-monospace, monospace;
+    white-space: pre-wrap;
+}
+
+@media (max-width: 820px) {
+    html, body { overflow: auto; }
+    #debug-user-routes {
+        grid-template-columns: 1fr;
+        grid-template-rows: auto minmax(650px, 1fr);
+        height: auto;
+    }
+    .dur-sidebar { min-height: 550px; border-right: 0; border-bottom: 1px solid #ccd3d8; }
+    .dur-stage { min-height: 700px; }
+}

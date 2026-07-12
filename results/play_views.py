@@ -102,14 +102,12 @@ def infinite_play(request, file_id=None):
 @login_required
 @require_GET
 def infinite_mask_maps(request):
-    """List maps opted in to infinite play (`File.infinite_enabled=True`)
-    that also have a navgraph artifact on disk (the opt-in toggle triggers a
-    rebuild, but this existence check keeps the picker from ever offering a
-    map whose build hasn't finished/failed). Team-scoped exactly like the
+    """List maps opted in to infinite play (`File.infinite_enabled=True`) whose
+    on-disk navgraph artifact is current for their canonical passages (CR 8.4).
+    The opt-in toggle triggers a rebuild, but this check keeps the picker from
+    ever offering a map whose build hasn't finished/failed or whose artifact was
+    left stale by a later passage/mask edit. Team-scoped exactly like the
     existing map-serving endpoints."""
-    import os
-    from django.conf import settings
-
     try:
         active_team = request.user.profile.active_team
     except Exception:
@@ -125,12 +123,15 @@ def infinite_mask_maps(request):
             qs = qs.filter(team=active_team)
     qs = qs.select_related('team').order_by('-last_edited')
 
-    masks_dir = os.path.join(settings.MEDIA_ROOT, 'masks')
+    from project.media_access import navgraph_artifact_is_current
+
     maps = []
     for f in qs:
-        stem, _ext = os.path.splitext(f.map_file)
-        bin_path = os.path.join(masks_dir, f'mask_{stem}.navgraph.bin')
-        if not os.path.isfile(bin_path):
+        # Existence alone is not enough: a passage/mask edit can leave a stale
+        # artifact on disk whose baked revision no longer matches the file
+        # (CR 8.4). Only offer maps whose artifact is current for their canonical
+        # passages so the picker never serves the wrong topology.
+        if not navgraph_artifact_is_current(f):
             continue
         maps.append({
             'id': f.id,

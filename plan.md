@@ -234,6 +234,23 @@ recorded in `scratch/phase3_progress.md` for WP 3.3. `collectstatic` + restart n
 Port the WP 2.1 functions into `project/static/project/js/pathing/` (new `navgraph_router.js` + additions to `worker.js`): load/cache artifact per map (existing worker cache pattern, keyed like the grid cache at worker.js:36-51), pair generation (endpoints sampled only inside the artifact's `coarse_hitzone` = coach region), graph A*, barriers, selection. For the accepted pair only: corridor + guided theta* refinement reusing `corridor.js`, `theta_star.js`, `simplify.js` on full-res subgrids along the graph path (mask decoded lazily, subgrid extraction via `preprocess.js`); recompute runtimes from refined paths and re-check the gap (re-reject if now > 0.5). Message protocol: `generatePair(mapId) → {start, goal, routes[2], runtimes, meta}`.
 Acceptance: from a test page or console, worker returns valid pairs on a staging mask; timings logged per stage like the existing `[theta-client]` logs.
 
+**Endpoint-density follow-up (2026-07-12):** uploaded-map start/goal cells are
+no longer selected uniformly. `navgraph_router.js` counts exact black (`0`)
+mask pixels in an approximately 100×100 px square around every eligible coarse
+cell using a coarse-grid summed-area table, ignoring black pixels outside the
+saved region so the unmapped exterior does not attract edge points. It then
+uses the squared counts as sampling weights. Selection is an 85%
+density-weighted / 15% uniform mixture, so
+alleys and obstacle-rich wards are strongly preferred while plazas remain
+occasionally possible. Starts additionally receive an exponential bias toward
+the area-centroid of the saved `coarse_hitzone` (the rasterized coach polygon);
+goals stay center-neutral to preserve route coverage. The window, density
+exponent, uniform mixture, and center strength are tunable through
+`endpointObstacleWindowPx`, `endpointDensityExponent`, `endpointUniformMix`,
+and `startCenterBiasStrength` in `DEFAULT_CONFIG`. The deterministic test covers
+the stronger obstacle preference, residual open-space probability, start-center
+bias, and center-neutral goal distribution.
+
 ### WP 3.3 — infinite_play wiring + prefetch buffer — **Opus** — ✅ DONE (2026-07-05)
 Implemented: scene-source switch in [infinite_play.js](results/static/results/js/infinite_play.js)
 (`?source=mask&file=<id>&filename=<name>` at play start; city path is the untouched
@@ -832,6 +849,15 @@ nodes—do not compare against the old global main-component score. Visually ins
 debug overlays at tight/concave boundaries. Existing runtime-region-gate tests stay
 green.
 
+**WP 6.1 implemented 2026-07-12:** the authoritative coach polygon is validated
+and rasterized once at full mask resolution. After snapping/deduplication, base
+nodes and topology index sets are compacted through an explicit remap before
+candidate generation; straight rays, skeleton fallback A*, and connectivity
+repair all use polygon-masked terrain. Component ids/connectivity are recomputed
+in-region, the requested prune/timing stats are recorded, and the in-progress v3
+passage topology remains compatible. Focused concave-boundary coverage lives in
+`project/test_navgraph_region_pruning.py` alongside the passage contract suites.
+
 ### WP 6.2 — Make build orchestration and suitability polygon-authoritative — **Sonnet / strong coding model** — **Complexity: medium**
 
 Update the opt-in/rebuild flow and `build_navgraph` management command so the
@@ -866,6 +892,15 @@ polygon builds the matching revision; a polygon edit makes the previous artifact
 stale and rebuilds it; suitability and connectivity cannot traverse the exterior;
 forced backfill reports deterministic prune statistics.
 
+**WP 6.2 implemented 2026-07-12:** `region_revision()` is stored in artifact
+stats and checked by the management command and background publish race. Forced
+backfills now report before/after node counts, retained edge count, binary bytes,
+build time, region revision, and in-region connectivity. The benchmark-only
+`prune_region=False` switch keeps the same polygon hit-zone authority for a
+like-for-like A/B baseline; production callers retain pruning.
+Serialized passage nodes, legs, and transition connectors use the same polygon
+legality check; there is no portal exception that can bypass the guarantee.
+
 ### WP 6.3 — Benchmark the real serving/build benefit and decide on grid compaction — **Sonnet / strong coding model** — **Complexity: low-medium**
 
 Run an A/B rebuild of the same representative maps before and after pruning and
@@ -897,6 +932,24 @@ backfilling production artifacts.
 Acceptance: phone-proxy average generation ≤ 2 s with buffer never empty during a 5-min session; documented tuning constants.
 
 ---
+
+**WP 6.3 harness implemented 2026-07-12:**
+`scripts/navgraph_wp63_benchmark.py` performs non-publishing A/B builds and
+records raw/gzip artifact bytes, N/E, stage timings, build wall time, and real
+Node-router state/snap/graph p50/p90 plus heap measurements via
+`scripts/navgraph_wp63_runtime.mjs`. A local 0.256 Mpx smoke map showed 8.07%
+node, 4.56% edge, and 1.48% raw-binary reduction; the seven-map run was bounded
+by shared-session build contention before completion. The smoke report is in
+`scratch/wp63-smoke.json`.
+
+**Grid compaction implemented 2026-07-12:** v4 adds a full-resolution origin for
+the polygon-bounding-box coarse grids and serializes the runtime's actual label
+requirement as a one-byte dominant-component eligibility mask instead of int32
+component ids. Python suitability and the JS router translate local cells back
+to full-mask coordinates. File 34 shrank from roughly 1.65 MiB to 829,570 bytes
+(~810 KiB), while the real router produced 5 valid pairs in 8 attempts. File 88
+shrunk from 808,922 to 418,654 bytes. Legacy v2/v3 readers remain migration-safe;
+the serving/build gate requires current v4 artifacts.
 
 ## Verification summary
 
@@ -954,11 +1007,20 @@ to every meaningful side of an impassable object.
    is at most 256 px and whose maximum span is at most 20 px. Full-resolution
    downstream any-angle refinement still avoids them; the dual area/span gate
    prevents long thin walls from being mistaken for disposable specks.
-9. In narrow corridors, discard only ordinary contour samples that are within
-   16 px of a snapped skeleton/bottleneck node with compatible terrain and
-   direct passable LOS. Keep all corner and simplified-segment anchors. This
-   collapses redundant wall-side chains onto the existing centerline without an
-   extra A* or a costly corridor-classification pass.
+9. In narrow corridors, sample the sparse skeleton edges every 8 px and retain
+   only passable samples whose clearance is `<=16 px`. Discard contour samples
+   within 24 px and direct passable LOS of those proven-narrow centerline
+   samples; the nearby skeleton already preserves bends and junctions. The
+   centerline must have an equal-or-higher mask value (equal-or-faster terrain),
+   so slow outline chains can collapse into a fast alley spine but fast mapped
+   path nodes cannot collapse into a slower vegetation-side spine. Deduplicate
+   bottleneck minima under the same conservative 12 px/LOS rule. Finally, make
+   only very-low-clearance (`<=8 px`) skeleton nodes
+   backbone-only during generic candidate generation so their authoritative
+   predecessor/successor chain does not become a mesh of collinear k-NN
+   shortcuts. The complete behaviour is guarded by
+   `NARROW_ALLEY_REDUCTION_ENABLED` and every affected block is marked
+   `NARROW_ALLEY_REDUCTION` for easy reversal.
 
 Acceptance on `mask_20250604_135955.png`: the north and south sides of long black
 walls both have close offset nodes; the reported northern city-wall opening has
@@ -973,12 +1035,17 @@ contours (`contour_downsample=1`), 2 px side-preserving offsets, protected
 full-resolution throat centers, noise-smoothed regular normals, incident-edge
 normals at true-mask concave corners, protected anchors on meaningful simplified
 segments, explicit legal same-contour adjacency, equivalent contours around
-very-slow value `135`, 24 px contour arc-length candidates, importance-aware 10
+very-slow value `135`, 24 px contour arc-length candidates, importance-aware 32
 px early suppression, protected post-thinning boundary coverage, and witness
 pruning only for ordinary open-area samples. On the reference mask the early
-passes skip 98 compact black contours and 301 compact very-slow contours, then
-merge 403 regular wall-side samples into directly visible centerlines. The
-rebuilt graph has 5,624 nodes / 22,549 edges and 100% main-component
+passes skip 98 compact black contours and 301 compact very-slow contours, merge
+1,467 wall-side samples plus 331 duplicate bottlenecks into directly visible
+centerlines, and keep 569 very-low-clearance skeleton nodes backbone-only. The
+polygon-scoped rebuilt graph has 4,017 nodes / 15,272 edges and 100%
+main-component
 connectivity. All retained black-border anchors survive at their exact 2 px
 offset locations; dynamic and layered third-dimension passage tests remain
-green.
+green. The conservative revision leaves 42 nodes / 99 internal edges in the
+reported building alley, accepting extra work in exchange for passage safety.
+The seeded real-route harness produced 5 valid pairs in 15 attempts with zero
+unreachable rejections; suitability is 30.1% and no longer warning-level.

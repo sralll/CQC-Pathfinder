@@ -37,6 +37,12 @@ urlpatterns = [
     path('debug/infinity/api/reports/<int:report_id>/', debug_views.debug_infinity_report_detail, name='debug_infinity_report_detail'),
     path('debug/infinity/api/files/<int:file_id>/map/', debug_views.debug_infinity_file_map, name='debug_infinity_file_map'),
     path('debug/infinity/api/files/<int:file_id>/mask/', debug_views.debug_infinity_file_mask, name='debug_infinity_file_mask'),
+    path('debug/user-routes/', debug_views.debug_user_routes, name='debug_user_routes'),
+    path('debug/user-routes/api/files/', debug_views.debug_user_route_files, name='debug_user_route_files'),
+    path('debug/user-routes/api/files/<int:file_id>/map/', debug_views.debug_user_route_file_map, name='debug_user_route_file_map'),
+    path('debug/user-routes/api/files/<int:file_id>/mask/', debug_views.debug_user_route_file_mask, name='debug_user_route_file_mask'),
+    path('debug/user-routes/api/files/<int:file_id>/navgraph/', debug_views.debug_user_route_file_navgraph, name='debug_user_route_file_navgraph'),
+    path('debug/user-routes/api/files/<int:file_id>/passages/', debug_views.debug_user_route_file_passages, name='debug_user_route_file_passages'),
 
     # Login must stay public, otherwise redirect-to-login would loop forever.
     path('login/', login_not_required(

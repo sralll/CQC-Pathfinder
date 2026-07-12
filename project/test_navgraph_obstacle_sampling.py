@@ -7,7 +7,9 @@ from project.navgraph import (
     _adaptive_lattice_nodes,
     _candidate_edges,
     _dedupe_appended_nodes,
-    _filter_regular_contours_near_centerline,
+    _filter_contours_near_centerline,
+    _filter_points_near_visible_nodes,
+    _visible_backbone_samples,
     _obstacle_offset_nodes,
     _prune_redundant_nodes,
     _very_slow_offset_nodes,
@@ -134,21 +136,66 @@ class ObstacleBiasedSamplingTests(SimpleTestCase):
         self.assertGreater(len(corners) + len(regular), 0)
         self.assertEqual(stats["tiny_contours_skipped"], 0)
 
-    def test_visible_centerline_removes_only_regular_corridor_samples(self):
+    def test_visible_centerline_removes_corridor_boundary_samples(self):
         mask = np.full((30, 60), 241, dtype=np.uint8)
         mask[:, :20] = 0
         mask[:, 40:] = 0
         corners = [(21, 5), (21, 25)]
         regular = [(22, 10), (22, 20)]
         centerline = [(30, 10), (30, 20)]
+        # Slow outline samples are intentionally replaced by the preferred fast
+        # centerline inside a proven narrow corridor.
+        for x, y in corners + regular:
+            mask[y, x] = 200
 
         kept_corners, kept_regular, _, removed = (
-            _filter_regular_contours_near_centerline(
+            _filter_contours_near_centerline(
                 mask, corners, regular, [], centerline, radius=12))
 
-        self.assertEqual(kept_corners, corners)
+        self.assertEqual(kept_corners, [])
         self.assertEqual(kept_regular, [])
-        self.assertEqual(removed, 2)
+        self.assertEqual(removed, 4)
+
+    def test_centerline_filter_keeps_point_without_direct_los(self):
+        mask = np.full((20, 30), 241, dtype=np.uint8)
+        mask[:, 14] = 0
+        kept, removed = _filter_points_near_visible_nodes(
+            mask, [(12, 10)], [(16, 10)], radius=12)
+        self.assertEqual(kept, [(12, 10)])
+        self.assertEqual(removed, 0)
+
+    def test_slower_centerline_cannot_replace_fast_path_node(self):
+        mask = np.full((20, 30), 241, dtype=np.uint8)
+        mask[10, 12] = 243
+        kept, removed = _filter_points_near_visible_nodes(
+            mask, [(12, 10)], [(16, 10)], radius=12)
+        self.assertEqual(kept, [(12, 10)])
+        self.assertEqual(removed, 0)
+
+        mask[10, 16] = 243
+        kept, removed = _filter_points_near_visible_nodes(
+            mask, [(12, 10)], [(16, 10)], radius=12)
+        self.assertEqual(kept, [])
+        self.assertEqual(removed, 1)
+
+    def test_backbone_only_node_gets_no_generic_knn_shortcuts(self):
+        nodes = [(10, 10), (20, 10), (30, 10), (40, 10)]
+        backbone = [(0, 1, 10.0), (1, 2, 10.0), (2, 3, 10.0)]
+        edges = _candidate_edges(
+            nodes, backbone, backbone_only_nodes=set(range(4)))
+        self.assertEqual(edges, {(0, 1), (1, 2), (2, 3)})
+
+    def test_dense_backbone_samples_cover_between_sparse_endpoints(self):
+        mask = np.full((30, 80), 241, dtype=np.uint8)
+        skeleton = [(10, 15), (70, 15)]
+        samples = _visible_backbone_samples(
+            mask, skeleton, [(0, 1, 60.0)], spacing=8)
+        self.assertTrue(any(36 <= x <= 44 and y == 15 for x, y in samples))
+
+        kept, removed = _filter_points_near_visible_nodes(
+            mask, [(40, 5)], samples, radius=12)
+        self.assertEqual(kept, [])
+        self.assertEqual(removed, 1)
 
     def test_noisy_u_shape_keeps_inner_arms_bottom_and_adjacency(self):
         mask = np.full((70, 90), 241, dtype=np.uint8)

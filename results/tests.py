@@ -1,5 +1,6 @@
 import json
 from datetime import timedelta
+from unittest.mock import patch
 
 from django.contrib.auth.models import Group, User
 from django.core.cache import cache
@@ -491,6 +492,12 @@ class InfinityDebugSecurityTests(TestCase):
             self.client.delete(reverse('debug_infinity_report_detail', args=[self.report.id])),
             self.client.get(reverse('debug_infinity_file_map', args=[self.report.seed])),
             self.client.get(reverse('debug_infinity_file_mask', args=[self.report.seed])),
+            self.client.get(reverse('debug_user_routes')),
+            self.client.get(reverse('debug_user_route_files')),
+            self.client.get(reverse('debug_user_route_file_map', args=[self.report.seed])),
+            self.client.get(reverse('debug_user_route_file_mask', args=[self.report.seed])),
+            self.client.get(reverse('debug_user_route_file_navgraph', args=[self.report.seed])),
+            self.client.get(reverse('debug_user_route_file_passages', args=[self.report.seed])),
         ]
 
         self.assertTrue(all(response.status_code in (403, 404) for response in responses))
@@ -511,12 +518,78 @@ class InfinityDebugSecurityTests(TestCase):
         self.assertEqual(detail_response.json()['report']['seed'], 12345)
         self.assertIsNone(detail_response.json()['report']['infinity_file'])
 
+    def test_legacy_mask_report_infers_lost_route_attempt_indexes(self):
+        self.report.route_indexes = []
+        self.report.route_result = {}
+        self.report.routes = [
+            {'routeIndex': 1, 'points': [{'x': 0, 'y': 0}, {'x': 10, 'y': 0}]},
+            {'routeIndex': 2, 'points': [{'x': 0, 'y': 10}, {'x': 10, 'y': 10}]},
+        ]
+        self.report.skipped_barriers = [
+            {'attemptIndex': attempt, 'ax': 5, 'ay': -1, 'bx': 5, 'by': 1}
+            for attempt in (2, 3, 4)
+        ]
+        self.report.save(update_fields=[
+            'route_indexes', 'route_result', 'routes', 'skipped_barriers'])
+        superuser = User.objects.create_superuser(username='legacy-admin', password='pw')
+        self.client.force_login(superuser)
+
+        response = self.client.get(
+            reverse('debug_infinity_report_detail', args=[self.report.id]))
+
+        self.assertEqual(response.status_code, 200)
+        report = response.json()['report']
+        self.assertEqual(report['route_indexes'], [1, 5])
+        self.assertEqual(report['route_index_source'], 'inferred_from_skipped_barriers')
+        self.assertEqual([route['routeIndex'] for route in report['routes']], [1, 5])
+        self.assertEqual(report['route_result']['routeIndexes'], [1, 5])
+
+    def test_superuser_route_debug_lists_files_and_serves_passages(self):
+        route_file = File.objects.create(
+            name='Passage test map',
+            team=self.team,
+            map_file='passage-map.png',
+            has_mask=True,
+            scale=0.625,
+            level_passages={
+                'version': 1,
+                'items': [{
+                    'id': '8cb8a384-c073-4a4d-9dce-b67e2c6de101',
+                    'points': [[10, 20], [30, 20]],
+                    'width': 4,
+                }],
+            },
+        )
+        superuser = User.objects.create_superuser(username='route-admin', password='pw')
+        self.client.force_login(superuser)
+
+        with patch('results.debug_views.navgraph_artifact_is_current', return_value=False):
+            page_response = self.client.get(reverse('debug_user_routes'))
+            list_response = self.client.get(reverse('debug_user_route_files'))
+        passage_response = self.client.get(
+            reverse('debug_user_route_file_passages', args=[route_file.id]))
+
+        self.assertEqual(page_response.status_code, 200)
+        self.assertEqual(list_response.status_code, 200)
+        listed = next(item for item in list_response.json()['files'] if item['id'] == route_file.id)
+        self.assertEqual(listed['passage_count'], 1)
+        self.assertEqual(listed['editor_scale'], 0.625)
+        self.assertFalse(listed['route_ready'])
+        self.assertIsNone(listed['navgraph_url'])
+        self.assertEqual(passage_response.status_code, 200)
+        self.assertEqual(
+            passage_response.json()['items'][0]['id'],
+            '8cb8a384-c073-4a4d-9dce-b67e2c6de101',
+        )
+
     def test_report_seed_matching_file_id_loads_uploaded_map_metadata(self):
         infinity_file = File.objects.create(
             id=self.report.seed,
             name='Reported uploaded map',
             team=self.team,
             map_file='reported-map.png',
+            scale=0.525,
+            map_scale=5000,
         )
         superuser = User.objects.create_superuser(username='admin', password='pw')
         self.client.force_login(superuser)
@@ -527,6 +600,8 @@ class InfinityDebugSecurityTests(TestCase):
         self.assertEqual(response.json()['report']['infinity_file'], {
             'id': infinity_file.id,
             'name': infinity_file.name,
+            'editor_scale': 0.525,
+            'map_scale': 5000,
             'map_url': reverse('debug_infinity_file_map', args=[infinity_file.id]),
             'mask_url': reverse('debug_infinity_file_mask', args=[infinity_file.id]),
         })

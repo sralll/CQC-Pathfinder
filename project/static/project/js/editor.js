@@ -1271,6 +1271,15 @@ function saveLevelPassages() {
         if (result.status === "superseded") return null;
         if (result.status === "saved") {
             if (result.data?.last_edited) project.last_edited = result.data.last_edited;
+            // Passage geometry is baked into the Infinity navgraph. The server
+            // revokes File.infinite_enabled and deletes the stale artifacts in
+            // the same successful save path; mirror only that authority flag
+            // locally. The passage document and route metrics remain frontend-
+            // authoritative and must never be overwritten by a stale response.
+            if (result.data?.infinite_enabled === false) {
+                project.infinite_enabled = false;
+                window.updateNavInfinityBtn?.();
+            }
             _clearSaveFailedWarning();
             return result.data;
         }
@@ -4920,6 +4929,11 @@ const RegionEditor = (() => {
         if (gRoot && gRoot.isConnected) return;
         const layer = document.getElementById("ui-layer");
         if (!layer) return;
+        // The UI layer is occasionally rebuilt wholesale.  The old pooled
+        // circles then remain referenced but detached, so handleAt() would
+        // reuse invisible/non-interactive nodes.  Rebuild the pool together
+        // with its root.
+        handlePool.length = 0;
         gRoot = svgNode("g", { class: "region-overlay" });
         outline = svgNode("polygon", {
             fill: "rgba(224,112,32,0.12)", stroke: "#e07020",
@@ -5017,6 +5031,12 @@ const RegionEditor = (() => {
         el.classList.toggle("region-status-error", !!isError);
     }
 
+    function updateDeleteButton() {
+        const button = document.getElementById("region-delete-btn");
+        if (!button) return;
+        button.disabled = !editing || (verts.length === 0 && !project.infinite_region_set);
+    }
+
     // ---- Public: enter/exit edit mode -----------------------------------
     // Driven by InfinityTool.onEnter/onExit (the tool owns the mode class).
     async function enter() {
@@ -5027,9 +5047,11 @@ const RegionEditor = (() => {
             return;
         }
         editing = true;
+        updateDeleteButton();
         setStatus(gettext("Loading region…"));
         await loadFromServer();
         render();
+        updateDeleteButton();
     }
 
     function exit() {
@@ -5039,6 +5061,7 @@ const RegionEditor = (() => {
         dragIdx = -1;
         drawGesture.cancel();
         clearRender();
+        updateDeleteButton();
     }
 
     // Fetch the saved region, or the whole-map frame for a fresh map.
@@ -5059,23 +5082,27 @@ const RegionEditor = (() => {
             setStatus(data.source === "saved"
                 ? gettext("Saved region loaded.")
                 : gettext("Click to place the first region point."));
+            updateDeleteButton();
         } catch (e) {
             setStatus(gettext("Could not load region."), true);
             verts = [];
             drawing = false;
             previewPt = null;
+            updateDeleteButton();
         }
     }
 
     // ---- Autosave (persist only — the navgraph build is deferred until the
-    // coach activates infinite play from the navbar). Coalesces rapid edits:
-    // if a save is in flight, one more save runs after it finishes.
-    let _saving = false, _saveAgain = false;
-    async function autosave() {
-        if (verts.length < 3) { setStatus(gettext("A region needs at least 3 points."), true); return; }
-        if (_saving) { _saveAgain = true; return; }
+    // coach activates infinite play from the navbar). Saves are serialized,
+    // with only the latest queued snapshot retained. This also guarantees
+    // that a queued deletion cannot be overtaken by an older polygon save.
+    let _saving = false, _queuedSave = null;
+    async function persistPolygon(polygon, successMessage) {
+        if (_saving) {
+            _queuedSave = { polygon, successMessage };
+            return;
+        }
         _saving = true;
-        const polygon = verts.map(w2m);
         try {
             const csrf = document.cookie.match(/csrftoken=([^;]+)/)?.[1] ?? "";
             const res = await fetch(`/editor/save-region/${project.id}/`, {
@@ -5085,24 +5112,77 @@ const RegionEditor = (() => {
             });
             const data = await res.json();
             if (data.error) { setStatus(data.error, true); return; }
-            project.infinite_region_set = true;
-            if (data.infinite_enabled === false) project.infinite_enabled = false;
-            window.updateNavInfinityBtn?.();
-            setStatus(gettext("Region saved."));
+            // Do not let an obsolete response overwrite the status/state of a
+            // newer queued edit. The queued snapshot is applied immediately
+            // after this request finishes.
+            if (!_queuedSave) {
+                project.infinite_region_set = polygon.length >= 3;
+                if (data.infinite_enabled === false) project.infinite_enabled = false;
+                window.updateNavInfinityBtn?.();
+                setStatus(successMessage);
+                updateDeleteButton();
+            }
         } catch (e) {
             setStatus(gettext("Save failed."), true);
         } finally {
             _saving = false;
-            if (_saveAgain) { _saveAgain = false; autosave(); }
+            if (_queuedSave) {
+                const queued = _queuedSave;
+                _queuedSave = null;
+                persistPolygon(queued.polygon, queued.successMessage);
+            }
         }
+    }
+
+    function autosave() {
+        if (verts.length < 3) {
+            setStatus(gettext("A region needs at least 3 points."), true);
+            return;
+        }
+        persistPolygon(verts.map(w2m), gettext("Region saved."));
+    }
+
+    function deleteRegion() {
+        if (!editing || (verts.length === 0 && !project.infinite_region_set)) return;
+        verts = [];
+        drawing = true;
+        previewPt = null;
+        dragIdx = -1;
+        moved = false;
+        drawGesture.cancel();
+        project.infinite_region_set = false;
+        project.infinite_enabled = false;
+        activeSubtool[ToolMode.INFINITY] = "edit";
+        updateSubtoolPanel(ToolMode.INFINITY);
+        window.updateNavInfinityBtn?.();
+        render();
+        updateDeleteButton();
+        persistPolygon([], gettext("Region deleted."));
     }
 
     // ---- Interaction (called from the input dispatcher) -----------------
     function isActive() { return editing; }
 
-    function hitHandle(e) {
+    function hitHandle(e, pt) {
         const h = e.target?.dataset?.regionHandle;
-        return h !== undefined ? Number(h) : -1;
+        if (h !== undefined) {
+            const index = Number(h);
+            if (Number.isInteger(index) && index >= 0 && index < verts.length) return index;
+        }
+        // SVG event targets are not dependable after layer rebuilds or when
+        // another overlay sits above a handle. Use the visible screen-sized
+        // handle as a geometric fallback.
+        if (!pt) return -1;
+        const radius = (HANDLE_R + 4) / (camera.zoom || 1);
+        let best = -1, bestDistance = radius;
+        for (let i = 0; i < verts.length; i++) {
+            const distance = Math.hypot(pt.x - verts[i].x, pt.y - verts[i].y);
+            if (distance <= bestDistance) {
+                best = i;
+                bestDistance = distance;
+            }
+        }
+        return best;
     }
 
     function subtool() { return getSubtool(ToolMode.INFINITY); }
@@ -5119,7 +5199,7 @@ const RegionEditor = (() => {
     }
 
     function addDraftPoint(e, pt) {
-        const hi = hitHandle(e);
+        const hi = hitHandle(e, pt);
         // Close on distance to the first vertex, not on the event target: the
         // visible close-ring is larger than the 6 px handle, and a stacked
         // vertex from a near miss would otherwise cover handle 0 for good.
@@ -5154,8 +5234,12 @@ const RegionEditor = (() => {
             const r = pointToSegmentDistance(pt.x, pt.y, a.x, a.y, b.x, b.y);
             if (r.distance < bestD) { bestD = r.distance; bestI = i; bestPt = { x: r.closestX, y: r.closestY }; }
         }
-        if (bestI >= 0) { verts.splice(bestI + 1, 0, bestPt); return true; }
-        return false;
+        if (bestI >= 0) {
+            const insertedIndex = bestI + 1;
+            verts.splice(insertedIndex, 0, bestPt);
+            return insertedIndex;
+        }
+        return -1;
     }
 
     function onMouseDown(e, pt) {
@@ -5164,7 +5248,7 @@ const RegionEditor = (() => {
             drawGesture.down(e, pt);
             return true;
         }
-        const hi = hitHandle(e);
+        const hi = hitHandle(e, pt);
 
         // "Remove point" subtool: clicking a vertex deletes it (min 3 kept).
         if (subtool() === "remove") {
@@ -5184,10 +5268,10 @@ const RegionEditor = (() => {
             dragIdx = hi; moved = false;
             return true;
         }
-        if (tryInsertOnEdge(pt)) {
+        const insertedIndex = tryInsertOnEdge(pt);
+        if (insertedIndex >= 0) {
             render();
-            // Newly inserted vertex is the one after the hit edge — find it by proximity.
-            dragIdx = verts.findIndex(v => Math.abs(v.x - pt.x) < 1e-6 && Math.abs(v.y - pt.y) < 1e-6);
+            dragIdx = insertedIndex;
             moved = false;
             autosave();     // persist the inserted point immediately
             return true;
@@ -5227,6 +5311,7 @@ const RegionEditor = (() => {
         previewPt = null;
         drawGesture.cancel();
         setStatus("");
+        updateDeleteButton();
     }
 
     function onCameraChanged() { if (editing) render(); }
@@ -5234,10 +5319,63 @@ const RegionEditor = (() => {
     return {
         isActive, enter, exit,
         onMouseDown, onMouseMove, onMouseUp,
-        onProjectChanged, onCameraChanged,
+        onProjectChanged, onCameraChanged, deleteRegion,
     };
 })();
 window.RegionEditor = RegionEditor;
+
+document.getElementById("region-delete-btn")?.addEventListener("click", () => {
+    RegionEditor.deleteRegion();
+});
+
+/* Checkbox confirmation dialog shown before enabling infinite play. */
+function showInfinityConfirmDialog() {
+    return new Promise(resolve => {
+        const overlay = document.createElement('div');
+        overlay.className = 'dialog-overlay';
+
+        const checks = [
+            gettext("Playable region limited?"),
+            gettext("Bridges, underground passages added?"),
+            gettext("Mask checked?"),
+        ];
+        const checkboxHtml = checks.map((label, i) =>
+            `<label class="infinity-check-item">
+                <input type="checkbox" class="infinity-check-cb" data-idx="${i}">
+                <span>${label}</span>
+            </label>`
+        ).join('');
+
+        overlay.innerHTML = `
+            <div class="dialog-box dialog-box-wide">
+                <div class="dialog-message">
+                    <div class="infinity-checklist">${checkboxHtml}</div>
+                </div>
+                <div class="dialog-buttons">
+                    <button class="dialog-btn dialog-btn-cancel">${gettext("Cancel")}</button>
+                    <button class="dialog-btn dialog-btn-confirm dialog-btn-infinity" disabled>
+                        ${gettext("Enable infinite play")}
+                    </button>
+                </div>
+            </div>`;
+
+        const close = result => { overlay.remove(); resolve(result); };
+        const confirmBtn = overlay.querySelector('.dialog-btn-confirm');
+
+        overlay.querySelectorAll('.infinity-check-cb').forEach(cb => {
+            cb.addEventListener('change', () => {
+                const allChecked = [...overlay.querySelectorAll('.infinity-check-cb')].every(c => c.checked);
+                confirmBtn.disabled = !allChecked;
+            });
+        });
+
+        confirmBtn.addEventListener('click', () => close(true));
+        overlay.querySelector('.dialog-btn-cancel').addEventListener('click', () => close(false));
+        overlay.addEventListener('click', e => { if (e.target === overlay) close(false); });
+
+        document.body.appendChild(overlay);
+    });
+}
 
 /* =========================================================
     NAVBAR INFINITY TOGGLE
@@ -5338,16 +5476,7 @@ const NavInfinity = (() => {
             return;
         }
         if (desired) {
-            // Releasing a mask for infinite play is a quality decision the
-            // coach must make consciously — generation trusts the mask blindly.
-            const confirmed = await window.showModal?.({
-                message: [
-                    gettext("Before enabling infinite play, check the mask in detail — every corridor, entrance, and barrier. Route generation relies entirely on the mask, and mask errors will serve athletes many bad routes."),
-                    gettext("Infinite play works best on dense urban maps, similar to the autogenerated ones. Routes over open terrain are often not ideal."),
-                ].join("<br><br>"),
-                confirmText: gettext("Enable infinite play"),
-                cancelText: gettext("Cancel"),
-            });
+            const confirmed = await showInfinityConfirmDialog();
             if (!confirmed) return;
         }
         const csrf = document.cookie.match(/csrftoken=([^;]+)/)?.[1] ?? "";

@@ -1765,6 +1765,67 @@ x-icon.spin svg { animation: spin 1s linear infinite; }
 }
 .dialog-btn-cancel:hover { color: #aaa; background: #252525; }
 
+.dialog-btn-confirm.dialog-btn-infinity {
+    background: rgba(230, 130, 0, 0.15);
+    border-color: #a05000;
+    color: #ffb347;
+}
+.dialog-btn-confirm.dialog-btn-infinity:hover:not(:disabled) {
+    background: rgba(230, 130, 0, 0.28);
+    border-color: #d06000;
+    color: #ffc860;
+}
+.dialog-btn-confirm.dialog-btn-infinity:disabled {
+    opacity: 0.35;
+    cursor: default;
+}
+.dialog-box-wide { max-width: 460px; }
+.infinity-checklist {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    text-align: left;
+    width: 100%;
+}
+.infinity-check-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
+    font-size: 13px;
+    color: #ccc;
+    line-height: 1.3;
+}
+.infinity-check-item input[type="checkbox"] {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+    cursor: pointer;
+    background: #1e1e1e;
+    border: 1px solid #444;
+    border-radius: 3px;
+    position: relative;
+    transition: background 0.12s, border-color 0.12s;
+}
+.infinity-check-item input[type="checkbox"]:checked {
+    background: #e08030;
+    border-color: #e08030;
+}
+.infinity-check-item input[type="checkbox"]:checked::after {
+    content: '';
+    position: absolute;
+    left: 4px;
+    top: 1px;
+    width: 5px;
+    height: 9px;
+    border: 2px solid #fff;
+    border-top: none;
+    border-left: none;
+    transform: rotate(45deg);
+}
+
 /* Scale form (integrated in the side panel, below the explanatory text) */
 #scale-form {
     display: flex;
@@ -1980,6 +2041,11 @@ x-icon.spin svg { animation: spin 1s linear infinite; }
     border-color: #2e2e2e;
     color: #ccc;
 }
+.region-btn-danger {
+    background: #b3261e;
+    border-color: #d9574f;
+    color: #fff;
+}
 .region-edit-tools {
     display: flex;
     flex-direction: column;
@@ -2027,6 +2093,19 @@ x-icon.spin svg { animation: spin 1s linear infinite; }
     background: rgba(255, 179, 71, 0.1);
     border: 1px solid rgba(255, 179, 71, 0.35);
     border-radius: 5px;
+}
+.infinity-quality-section {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding-top: 10px;
+    border-top: 1px solid #2a2a2a;
+}
+.infinity-quality-note {
+    margin: 0;
+    font-size: 12px;
+    line-height: 1.45;
+    color: #666;
 }
 .region-btn.region-active {
     background: var(--brand, #e07020);

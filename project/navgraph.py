@@ -61,13 +61,9 @@ or a big featureless field) is one class over a large area. It measures the
 coarse density of class boundaries and yields a *footprint* (the map body, used
 for the debug
 overlay and stats) and a *sample* mask (structured cells only; the stored hit
-zone where automatic mode may place route endpoints). The hit zone gates route
-*endpoints*, not graph topology: every free-space node is kept, because the
-off-map open area often links map regions that have no in-map connection and
-pruning it would fragment the graph. Boring uniform fields therefore stay
-crossable but are never chosen as endpoints. This replaces the earlier blob
-prefilter, which did little and modified topology; the graph now builds on the
-true free space.
+zone where automatic mode may place route endpoints). For a coach polygon, the
+full-resolution raster also prunes topology and makes the exterior impassable to
+every edge-building path. Automatic/legacy builds retain the global topology.
 
 
 Artifact contents
@@ -78,18 +74,40 @@ the mask:
 * ``<mask>.navgraph.npz`` — full arrays for Python/debug tooling.
 * ``<mask>.navgraph.bin`` — compact little-endian binary for the JS worker.
 
+Passage topology and compact grids (v4)
+---------------------------------------
+The artifact is a *typed* graph. Nodes ``[0, base_node_count)`` are ordinary base
+nodes; nodes ``[base_node_count, N)`` are protected passage-chain nodes, grouped
+by passage in canonical passage-id order (``passage_node_start`` / ``_count``).
+Every edge carries a ``kind`` — ``0`` base, ``1`` passage (a centreline-chain
+segment), ``2`` transition (an endpoint↔base connector) — and, for passage and
+transition edges, the owning passage ordinal (``-1`` for base edges). A
+``passage_revision`` string (canonical over the normalized passage document plus
+mask dimensions) lets a reader reject an artifact whose passages no longer match
+the served ``File.level_passages``. See ``plan_3rd_dimension.md`` CR 8. A base-only
+build is a valid v4 artifact with ``base_node_count == N`` and zero passages.
+
 Array keys (npz):
-    nodes         (N,2) int32   full-res (x, y) per node
-    edges         (E,2) int32   undirected, node index pairs (u < v)
+    nodes         (N,2) int32   full-res (x, y) per node (base then passage)
+    edges         (E,2) int32   node index pairs (base edges have u < v)
     weights       (E,)  float32 A* terrain-weighted cost of the edge
     components    (N,)  int32   free-space component id (unfiltered labels)
+    edge_kinds    (E,)  uint8   0 base, 1 passage, 2 transition
+    edge_passage  (E,)  int32   owning passage ordinal (passage/transition) or -1
+    passage_node_start (P,) int32  first node index of each passage (>= base_node_count)
+    passage_node_count (P,) int32  node count of each passage (>= 1)
+    passage_node_points (N-base_node_count,2) float64  original centreline points
+                                      (NPZ/debug metadata; not duplicated in .bin)
+    base_node_count     int32   count of base nodes; passage nodes follow
+    passage_revision    str     canonical passage/mask revision (see passage_revision)
     min_cost_per_px    float32  cheapest per-pixel step cost = 255 - max value
     mask_shape    (2,)  int32   (height, width) of the full-res mask
     version             int32   NAVGRAPH_VERSION
     coarse_scale        int32   sampling grid downsample factor (== SAMPLE_DS)
+    coarse_origin (2,)  int32   full-res (x,y) origin of cropped coarse grids
     coarse_minval (h,w) uint8   ÷SAMPLE_DS block-min terrain value (passability)
     coarse_clear  (h,w) uint8   ÷SAMPLE_DS block-max clearance (px, capped 255)
-    coarse_labels (h,w) int32   ÷SAMPLE_DS free-space component id (0 = none)
+    coarse_labels (h,w) uint8   dominant-component eligibility (1 = eligible)
     hitzone_scale       int32   hit-zone grid downsample factor (== HITZONE_DS)
     coarse_hitzone(hh,hw)uint8  ÷HITZONE_DS endpoint hit zone (1 = sampleable)
     stats               object  per-map dict (json-serializable)
@@ -98,33 +116,52 @@ Array keys (npz):
 
     offset  type            field
     0       char[4]         magic "NVG1"
-    4       uint32          version  (== 2)
+    4       uint32          version  (== 4)
     8       int32           mask height H
     12      int32           mask width  W
     16      float32         min_cost_per_px
-    20      uint32          N  (node count)
-    24      uint32          E  (edge count)
+    20      uint32          N  (node count: base + passage)
+    24      uint32          E  (edge count: base + passage + transition)
     28      int32           coarse_scale  (SAMPLE_DS)
     32      int32           coarse height  ch
     36      int32           coarse width   cw
     40      int32           hitzone_scale  (HITZONE_DS)
     44      int32           hitzone height hh
     48      int32           hitzone width  hw
-    52      int32[N*2]      nodes, row-major (x0,y0, x1,y1, ...)
+    52      uint32          base_node_count  (nodes [0, base_node_count) are base)
+    56      uint32          P  (passage count)
+    60      uint32          rev_len  (UTF-8 byte length of passage_revision)
+    64      int32           coarse_origin_x (full-res px)
+    68      int32           coarse_origin_y (full-res px)
+    72      char[rev_len]   passage_revision (ASCII)
+    ...     int32[N*2]      nodes, row-major (x0,y0, x1,y1, ...)
     ...     int32[E*2]      edges (u0,v0, u1,v1, ...)
     ...     float32[E]      weights
     ...     int32[N]        components
+    ...     uint8[E]        edge_kinds
+    ...     int32[E]        edge_passage  (owning passage ordinal, -1 for base)
+    ...     int32[P]        passage_node_start
+    ...     int32[P]        passage_node_count
     ...     uint8[ch*cw]    coarse_minval  (row-major)
     ...     uint8[ch*cw]    coarse_clear   (row-major)
-    ...     int32[ch*cw]    coarse_labels  (row-major)
+    ...     uint8[ch*cw]    coarse_labels eligibility mask (row-major)
     ...     uint8[hh*hw]    coarse_hitzone (row-major)
 
-Everything after the fixed 52-byte header is derivable from N, E, ch, cw, hh, hw.
+Everything after the ``72 + rev_len`` header is derivable from N, E, P, ch, cw,
+hh, hw, so every reader can validate the exact byte length.
+
+A legacy v2 artifact (fixed 52-byte header, no passage section) remains readable
+*only* for a file whose canonical passage list is empty; a passage-bearing file
+must rebuild to v4. Typed v3 artifacts are parsed for migration but considered
+stale by the serving gate.
 """
 
 import heapq
+import hashlib
 import json
+import math
 import os
+import struct
 import time
 
 import numpy as np
@@ -141,8 +178,40 @@ except Exception:  # pragma: no cover - dependency guard
     _HAVE_SKIMAGE = False
 
 
-NAVGRAPH_VERSION = 2  # v2: added coarse_hitzone + hitzone_scale (see .bin layout)
+NAVGRAPH_VERSION = 4  # v4: typed passages + region-cropped coarse-grid origin
+NAVGRAPH_VERSION_LEGACY_TYPED = 3
 NAVGRAPH_MAGIC = b"NVG1"
+
+# Legacy v2 (coarse_hitzone, base-only) is still parsed by readers for files that
+# have no passages; a passage-bearing file must rebuild to v3.
+NAVGRAPH_VERSION_LEGACY_BASE_ONLY = 2
+# Cap on the serialized passage-revision string (bounds check for every reader).
+NAVGRAPH_REVISION_MAX_LEN = 256
+
+# Typed edge kinds (mirror navgraph_router.js EDGE_KIND_*).
+EDGE_KIND_BASE = 0
+EDGE_KIND_PASSAGE = 1
+EDGE_KIND_TRANSITION = 2
+
+# --- Passage topology (CR 8.2) ----------------------------------------------
+# Passage bodies remove their projected longitudinal base topology.  Retained
+# or newly-created base crossings must be clearly transverse to the *local*
+# centreline tangent; ambiguous angles are rejected conservatively.
+PASSAGE_PORTAL_DEPTH = 3.0
+PASSAGE_FAST_VALUE = 241
+PASSAGE_MAX_RASTER_CELLS = 1_048_576
+PASSAGE_MAX_TOTAL_RASTER_CELLS = 2_097_152
+PASSAGE_MAX_RASTER_WORK = 16_777_216
+PASSAGE_MAX_TOTAL_RASTER_WORK = 33_554_432
+PASSAGE_BYPASS_RADIUS_PX = 350
+PASSAGE_TRANSVERSE_MAX_DOT = 0.50
+PASSAGE_LONGITUDINAL_MIN_DOT = math.cos(math.radians(45.0))
+PASSAGE_BYPASS_MAX_PER_PASSAGE = 64
+PASSAGE_BYPASS_NEIGHBORS_PER_NODE = 12
+PASSAGE_CONNECTOR_RADIUS_PX = 160
+PASSAGE_CONNECTOR_SECTORS = 8
+PASSAGE_CONNECTOR_MAX_PER_ENDPOINT = 8
+PASSAGE_GEOMETRY_EPSILON = 1e-9
 
 # --- Terrain -----------------------------------------------------------------
 IMPASSABLE = 0  # mask value that means "cannot enter" (both class schemes)
@@ -199,7 +268,12 @@ CONTOUR_TINY_AREA_PX = 256  # compact isolated obstacles need no local roadmap
 CONTOUR_TINY_SPAN_PX = 20   # long/thin walls are never classified as tiny
 CONTOUR_TARGET_PX = 20_000_000  # ds=1 normally; at most a light ds=2 on huge maps
 CONTOUR_MAX_DS = 2
-NARROW_CENTERLINE_MERGE_PX = 16  # discard regular wall samples near visible spine
+NARROW_CENTERLINE_MERGE_PX = 12  # conservative: connectivity beats extra nodes
+NARROW_CENTERLINE_SAMPLE_PX = 8  # sample between sparse skeleton endpoints
+# NARROW_ALLEY_REDUCTION: set this single flag to False to restore the previous
+# contour/bottleneck retention and ordinary k-NN behaviour in narrow alleys.
+NARROW_ALLEY_REDUCTION_ENABLED = True
+NARROW_BACKBONE_CLEARANCE_PX = 8  # only the tightest alleys become backbone-only
 NODE_DEDUPE_PX = 6           # merge only nearly coincident, mutually visible nodes
 NODE_DEDUPE_TERRAIN_DELTA = 16  # never merge a path node into nearby slow terrain
 NEAR_OBSTACLE_CLEARANCE_PX = 80  # denser lattice up to this clearance from obstacles
@@ -239,6 +313,657 @@ BRIDGE_TRIES = 4             # candidate main-node targets to try per fragment
 
 # --- Sampling metadata -------------------------------------------------------
 SAMPLE_DS = 4                # ÷4 sampling grids, matching the plan
+
+
+# =============================================================================
+# Passage document normalization + canonical revision
+# =============================================================================
+#
+# The revision string is the durable identity of the passage topology baked into
+# an artifact. It MUST be byte-for-byte reproducible on the client, so this code
+# mirrors ``canonicalPassageJson`` / ``passageRevision`` in
+# ``project/static/project/js/pathing/navgraph_passage_overlay.js`` exactly:
+# the same field order, the same ECMAScript number formatting, a codepoint sort
+# by passage id (deterministic across engines, unlike ``localeCompare``), and the
+# same two 32-bit FNV-1a passes. Change the two together or readiness breaks.
+
+
+def _passage_items(level_passages):
+    """Return the passage item list from a document, list, or ``None``.
+
+    Mirrors the JS ``itemsFrom``: a ``{version: 1, items: [...]}`` document or a
+    bare list yields its items; anything else (``None``, unknown version) is no
+    passages.
+    """
+    if isinstance(level_passages, list):
+        return level_passages
+    if (isinstance(level_passages, dict)
+            and level_passages.get("version") == 1
+            and isinstance(level_passages.get("items"), list)):
+        return level_passages["items"]
+    return []
+
+
+def _ecma_number(value):
+    """Format a finite number the way ECMAScript ``Number`` -> ``String`` does.
+
+    Integers print without a fractional part (``24.0`` -> ``"24"``); other finite
+    values use Python's shortest round-trip ``repr``, which matches V8 for the
+    decimal mask-pixel coordinates and widths this contract carries. Non-finite
+    input serializes as JSON ``null`` (matching ``JSON.stringify(NaN)``).
+    """
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return "null"
+    if not math.isfinite(f):
+        return "null"
+    if f == int(f) and abs(f) < 1e21:
+        return str(int(f))
+    return repr(f)
+
+
+def _canonical_passage_json(level_passages, map_width, map_height):
+    """Canonical JSON string for a passage document + mask dimensions.
+
+    Byte-identical to the JS ``canonicalPassageJson`` so the revision matches on
+    both sides. Items are normalized to ``{id, points, width}`` and sorted by
+    ``id`` codepoint order.
+    """
+    items = []
+    for item in _passage_items(level_passages):
+        item = item if isinstance(item, dict) else {}
+        pid = item.get("id")
+        pid = pid if isinstance(pid, str) else ""
+        raw_points = item.get("points")
+        points = []
+        if isinstance(raw_points, list):
+            for point in raw_points:
+                px = point[0] if isinstance(point, (list, tuple)) and len(point) > 0 else None
+                py = point[1] if isinstance(point, (list, tuple)) and len(point) > 1 else None
+                points.append((_ecma_number(px), _ecma_number(py)))
+        items.append((pid, points, _ecma_number(item.get("width"))))
+    items.sort(key=lambda it: [ord(c) for c in it[0]])
+
+    parts = [
+        '{"version":1,"mapWidth":', _ecma_number(map_width),
+        ',"mapHeight":', _ecma_number(map_height), ',"items":[',
+    ]
+    for i, (pid, points, width) in enumerate(items):
+        if i:
+            parts.append(",")
+        parts.append('{"id":')
+        parts.append(json.dumps(pid))
+        parts.append(',"points":[')
+        for j, (px, py) in enumerate(points):
+            if j:
+                parts.append(",")
+            parts.append("[")
+            parts.append(px)
+            parts.append(",")
+            parts.append(py)
+            parts.append("]")
+        parts.append('],"width":')
+        parts.append(width)
+        parts.append("}")
+    parts.append("]}")
+    return "".join(parts)
+
+
+def _fnv1a32(text, seed):
+    """32-bit FNV-1a over the (ASCII) canonical string, matching the JS hash32."""
+    h = seed & 0xFFFFFFFF
+    for ch in text:
+        h ^= ord(ch) & 0xFFFFFFFF
+        h = (h * 0x01000193) & 0xFFFFFFFF
+    return format(h, "08x")
+
+
+def passage_revision(level_passages, map_width, map_height):
+    """Deterministic revision string for a passage document + mask dimensions.
+
+    Reproduces ``passageRevision`` in ``navgraph_passage_overlay.js`` exactly, so
+    a client can compare the artifact's baked revision against the revision of the
+    ``File.level_passages`` it fetched and reject a stale build.
+    """
+    canonical = _canonical_passage_json(level_passages, map_width, map_height)
+    return f"p1-{_fnv1a32(canonical, 0x811c9dc5)}{_fnv1a32(canonical, 0x9e3779b9)}"
+
+
+def region_revision(region_polygon, map_width, map_height):
+    """Return a deterministic identity for a coach polygon + mask dimensions.
+
+    The revision is stored beside the human-readable polygon in artifact stats;
+    orchestration uses it for cheap stale-artifact checks and build-race guards.
+    Empty/legacy builds intentionally return ``None``.
+    """
+    if not isinstance(region_polygon, (list, tuple)) or len(region_polygon) < 3:
+        return None
+    points = []
+    for point in region_polygon:
+        if not isinstance(point, (list, tuple)) or len(point) != 2:
+            return None
+        try:
+            points.append([int(round(float(point[0]))), int(round(float(point[1])))])
+        except (TypeError, ValueError, OverflowError):
+            return None
+    canonical = json.dumps(
+        {"version": 1, "width": int(map_width), "height": int(map_height),
+         "points": points},
+        separators=(",", ":"), ensure_ascii=False,
+    ).encode("utf-8")
+    return "r1-" + hashlib.sha256(canonical).hexdigest()[:32]
+
+
+def mask_dimensions(mask_path):
+    """Return ``(width, height)`` of a mask PNG without decoding its pixels."""
+    from PIL import Image
+
+    Image.MAX_IMAGE_PIXELS = None
+    with Image.open(mask_path) as img:
+        return int(img.width), int(img.height)
+
+
+def read_bin_header(bin_path):
+    """Cheaply read a ``.navgraph.bin`` header without loading its arrays.
+
+    Returns ``{"version", "height", "width", "passage_revision"}`` or ``None``
+    when the file is missing, truncated, has a bad magic, or an out-of-range
+    revision length.  A legacy v2 artifact carries no baked revision, so its
+    ``passage_revision`` is ``None`` (see ``NAVGRAPH_VERSION_LEGACY_BASE_ONLY``).
+    Reading only the fixed header keeps the request/serving path off numpy.
+    """
+    try:
+        with open(bin_path, "rb") as f:
+            head = f.read(72)
+            if len(head) < 52 or head[:4] != NAVGRAPH_MAGIC:
+                return None
+            (version,) = struct.unpack_from("<I", head, 4)
+            height, width = struct.unpack_from("<ii", head, 8)
+            if version == NAVGRAPH_VERSION_LEGACY_BASE_ONLY:
+                return {"version": version, "height": height,
+                        "width": width, "passage_revision": None}
+            if version not in (NAVGRAPH_VERSION_LEGACY_TYPED, NAVGRAPH_VERSION):
+                return None
+            (rev_len,) = struct.unpack_from("<I", head, 60)
+            if rev_len > NAVGRAPH_REVISION_MAX_LEN:
+                return None
+            fixed = 72 if version == NAVGRAPH_VERSION else 64
+            if len(head) < fixed:
+                return None
+            f.seek(fixed)
+            rev_bytes = f.read(rev_len)
+        if len(rev_bytes) != rev_len:
+            return None
+        return {"version": version, "height": height, "width": width,
+                "passage_revision": rev_bytes.decode("ascii")}
+    except (OSError, ValueError, UnicodeDecodeError):
+        return None
+
+
+def artifact_matches_passage_document(bin_path, level_passages,
+                                      map_width, map_height):
+    """True when the on-disk artifact is current for a passage document.
+
+    A current v4 artifact must carry the exact baked ``passage_revision`` for the
+    normalized document + mask dimensions.  A legacy v2 artifact is current
+    only for an empty passage document (the documented base-only compatibility
+    path).  Any corruption, unknown version, or invalid document is treated as
+    a non-match so a stale/broken artifact is never served.
+    """
+    header = read_bin_header(bin_path)
+    if header is None:
+        return False
+    try:
+        from .passage_validation import normalize_level_passages
+        document = normalize_level_passages(level_passages)
+    except Exception:
+        return False
+    if header["version"] == NAVGRAPH_VERSION_LEGACY_BASE_ONLY:
+        return len(_passage_items(document)) == 0
+    # v3 remains readable for diagnostics/migration, but it contains the old
+    # full-map sampling grids and must never pass the current serving gate.
+    if header["version"] != NAVGRAPH_VERSION:
+        return False
+    return header["passage_revision"] == passage_revision(
+        document, map_width, map_height)
+
+
+def _point_segment_projection(px, py, ax, ay, bx, by):
+    """Return ``(distance_squared, t, nearest_x, nearest_y)`` for a segment."""
+    dx, dy = bx - ax, by - ay
+    length2 = dx * dx + dy * dy
+    if length2 <= PASSAGE_GEOMETRY_EPSILON:
+        return (px - ax) ** 2 + (py - ay) ** 2, 0.0, ax, ay
+    t = ((px - ax) * dx + (py - ay) * dy) / length2
+    t = min(1.0, max(0.0, t))
+    nx, ny = ax + t * dx, ay + t * dy
+    return (px - nx) ** 2 + (py - ny) ** 2, t, nx, ny
+
+
+def _orientation(a, b, c):
+    return ((b[0] - a[0]) * (c[1] - a[1])
+            - (b[1] - a[1]) * (c[0] - a[0]))
+
+
+def _on_segment(a, b, p):
+    eps = PASSAGE_GEOMETRY_EPSILON
+    return (min(a[0], b[0]) - eps <= p[0] <= max(a[0], b[0]) + eps
+            and min(a[1], b[1]) - eps <= p[1] <= max(a[1], b[1]) + eps)
+
+
+def _segments_intersect(a, b, c, d):
+    eps = PASSAGE_GEOMETRY_EPSILON
+    ab_c, ab_d = _orientation(a, b, c), _orientation(a, b, d)
+    cd_a, cd_b = _orientation(c, d, a), _orientation(c, d, b)
+    if (((ab_c > eps and ab_d < -eps) or (ab_c < -eps and ab_d > eps))
+            and ((cd_a > eps and cd_b < -eps) or (cd_a < -eps and cd_b > eps))):
+        return True
+    return ((abs(ab_c) <= eps and _on_segment(a, b, c))
+            or (abs(ab_d) <= eps and _on_segment(a, b, d))
+            or (abs(cd_a) <= eps and _on_segment(c, d, a))
+            or (abs(cd_b) <= eps and _on_segment(c, d, b)))
+
+
+def _segment_distance_squared(a, b, c, d):
+    if _segments_intersect(a, b, c, d):
+        return 0.0
+    return min(
+        _point_segment_projection(a[0], a[1], c[0], c[1], d[0], d[1])[0],
+        _point_segment_projection(b[0], b[1], c[0], c[1], d[0], d[1])[0],
+        _point_segment_projection(c[0], c[1], a[0], a[1], b[0], b[1])[0],
+        _point_segment_projection(d[0], d[1], a[0], a[1], b[0], b[1])[0],
+    )
+
+
+def _has_self_overlapping_corridor(points, width):
+    """Python parity for ``passage_geometry.js`` self-overlap rejection."""
+    cumulative = [0.0]
+    for a, b in zip(points, points[1:]):
+        cumulative.append(cumulative[-1] + math.hypot(b[0] - a[0], b[1] - a[1]))
+    threshold2 = width * width + PASSAGE_GEOMETRY_EPSILON
+    for first in range(1, len(points)):
+        for second in range(first + 2, len(points)):
+            if cumulative[second - 1] - cumulative[first] <= width + PASSAGE_GEOMETRY_EPSILON:
+                continue
+            if _segment_distance_squared(
+                    points[first - 1], points[first],
+                    points[second - 1], points[second]) <= threshold2:
+                return True
+    return False
+
+
+def _passage_terminal_frames(points):
+    start, end = points[0], points[-1]
+    sdx, sdy = points[1][0] - start[0], points[1][1] - start[1]
+    edx, edy = points[-2][0] - end[0], points[-2][1] - end[1]
+    sl, el = math.hypot(sdx, sdy), math.hypot(edx, edy)
+    if sl <= PASSAGE_GEOMETRY_EPSILON or el <= PASSAGE_GEOMETRY_EPSILON:
+        raise ValueError("passage has a zero-length terminal segment")
+    start_inward = (sdx / sl, sdy / sl)
+    end_inward = (edx / el, edy / el)
+    return {
+        "start": start,
+        "end": end,
+        "start_inward": start_inward,
+        "end_inward": end_inward,
+        "start_outer": (start[0] - start_inward[0] * PASSAGE_PORTAL_DEPTH,
+                        start[1] - start_inward[1] * PASSAGE_PORTAL_DEPTH),
+        "end_outer": (end[0] - end_inward[0] * PASSAGE_PORTAL_DEPTH,
+                      end[1] - end_inward[1] * PASSAGE_PORTAL_DEPTH),
+    }
+
+
+def _normalize_passages_for_build(level_passages, map_width, map_height):
+    """Validate the whole document and derive the small analytic build geometry.
+
+    Structural validation is owned by ``passage_validation``.  This second
+    layer intentionally mirrors only runtime geometry needed by the builder:
+    consecutive-point normalization, flat terminal caps, round interior joins,
+    self-overlap and the existing raster complexity budgets.
+    """
+    from .passage_validation import normalize_level_passages
+
+    document = normalize_level_passages(level_passages)
+    passages = []
+    total_cells = total_work = 0
+    for item in sorted(document["items"], key=lambda value: value["id"]):
+        points = []
+        for raw in item["points"]:
+            point = (float(raw[0]), float(raw[1]))
+            if not points or point != points[-1]:
+                points.append(point)
+        if len(points) < 2:
+            raise ValueError(f"passage {item['id']} has fewer than two distinct consecutive points")
+        for point_index, (x, y) in enumerate(points):
+            if not (math.isfinite(x) and math.isfinite(y)
+                    and 0 <= x < map_width and 0 <= y < map_height):
+                raise ValueError(
+                    f"passage {item['id']} point {point_index} is outside "
+                    f"the {map_width}x{map_height} mask")
+        width = float(item["width"])
+        if _has_self_overlapping_corridor(points, width):
+            raise ValueError(f"passage {item['id']} has a self-overlapping corridor")
+        frames = _passage_terminal_frames(points)
+        radius = width / 2.0
+        extent_points = points + [frames["start_outer"], frames["end_outer"]]
+        min_x = max(0, math.floor(min(p[0] for p in extent_points) - radius) - 1)
+        min_y = max(0, math.floor(min(p[1] for p in extent_points) - radius) - 1)
+        max_x = min(map_width - 1, math.ceil(max(p[0] for p in extent_points) + radius) + 1)
+        max_y = min(map_height - 1, math.ceil(max(p[1] for p in extent_points) + radius) + 1)
+        cells = max(0, max_x - min_x + 1) * max(0, max_y - min_y + 1)
+        work = 0
+        last = len(points) - 1
+        for segment in range(1, len(points)):
+            a = frames["start_outer"] if segment == 1 else points[segment - 1]
+            b = frames["end_outer"] if segment == last else points[segment]
+            from_x = max(min_x, math.floor(min(a[0], b[0]) - radius))
+            from_y = max(min_y, math.floor(min(a[1], b[1]) - radius))
+            to_x = min(max_x, math.ceil(max(a[0], b[0]) + radius))
+            to_y = min(max_y, math.ceil(max(a[1], b[1]) + radius))
+            work += max(0, to_x - from_x + 1) * max(0, to_y - from_y + 1)
+        if cells > PASSAGE_MAX_RASTER_CELLS:
+            raise ValueError(f"passage {item['id']} exceeds the raster cell budget")
+        if work > PASSAGE_MAX_RASTER_WORK:
+            raise ValueError(f"passage {item['id']} exceeds the raster work budget")
+        total_cells += cells
+        total_work += work
+        passages.append({
+            "id": item["id"], "points": points, "width": width,
+            "radius": radius, "frames": frames,
+            "bounds": (min_x, min_y, max_x, max_y),
+            "body_bounds": (
+                min(p[0] for p in points) - radius,
+                min(p[1] for p in points) - radius,
+                max(p[0] for p in points) + radius,
+                max(p[1] for p in points) + radius,
+            ),
+            "raster_cells": cells, "raster_work": work,
+        })
+    if total_cells > PASSAGE_MAX_TOTAL_RASTER_CELLS:
+        raise ValueError("passage document exceeds the aggregate raster cell budget")
+    if total_work > PASSAGE_MAX_TOTAL_RASTER_WORK:
+        raise ValueError("passage document exceeds the aggregate raster work budget")
+    return document, passages
+
+
+def _nearest_passage_segment(passage, x, y):
+    best = None
+    for index, (a, b) in enumerate(zip(passage["points"], passage["points"][1:])):
+        distance2, t, nx, ny = _point_segment_projection(x, y, *a, *b)
+        if best is None or distance2 < best[0]:
+            length = math.hypot(b[0] - a[0], b[1] - a[1])
+            best = (distance2, index, t, nx, ny,
+                    (b[0] - a[0]) / length, (b[1] - a[1]) / length)
+    return best
+
+
+def _passage_body_hits(passage, x, y):
+    """Return centreline segments whose flat-capped stroke contains a point.
+
+    Only the outward end of the first/last segment is flat-clipped.  Applying
+    terminal half-planes to the complete polyline would incorrectly erase a
+    later arm of a bent passage that happens to curl behind an endpoint plane.
+    Interior segment ends remain round and therefore form rounded joins.
+    """
+    min_x, min_y, max_x, max_y = passage["body_bounds"]
+    if x < min_x or x > max_x or y < min_y or y > max_y:
+        return []
+    hits = []
+    segments = list(zip(passage["points"], passage["points"][1:]))
+    for index, (a, b) in enumerate(segments):
+        dx, dy = b[0] - a[0], b[1] - a[1]
+        length2 = dx * dx + dy * dy
+        raw_t = ((x - a[0]) * dx + (y - a[1]) * dy) / length2
+        if index == 0 and raw_t < -PASSAGE_GEOMETRY_EPSILON:
+            continue
+        if index == len(segments) - 1 and raw_t > 1 + PASSAGE_GEOMETRY_EPSILON:
+            continue
+        distance2, t, nx, ny = _point_segment_projection(x, y, *a, *b)
+        if distance2 <= passage["radius"] ** 2 + PASSAGE_GEOMETRY_EPSILON:
+            length = math.sqrt(length2)
+            hits.append((distance2, index, t, nx, ny, dx / length, dy / length))
+    return hits
+
+
+def _point_in_passage_body(passage, x, y):
+    return bool(_passage_body_hits(passage, x, y))
+
+
+def _point_in_passage_entrance(passage, x, y):
+    """True only inside one of the two terminal entrance caps.
+
+    Separate passages may overlap at an entrance while remaining distinct
+    surfaces. Their transition connectors may share that initial cap contact,
+    then must leave the other passage body without re-entering it.
+    """
+    if not _point_in_passage_body(passage, x, y):
+        return False
+    radius2 = passage["radius"] ** 2 + PASSAGE_GEOMETRY_EPSILON
+    return any(
+        (x - endpoint[0]) ** 2 + (y - endpoint[1]) ** 2 <= radius2
+        for endpoint in (
+            passage["frames"]["start"],
+            passage["frames"]["end"],
+        )
+    )
+
+
+def _point_in_polygon(x, y, polygon):
+    """Boundary-inclusive even/odd point-in-polygon test."""
+    if polygon is None:
+        return True
+    point = (float(x), float(y))
+    inside = False
+    j = len(polygon) - 1
+    for i in range(len(polygon)):
+        a, b = polygon[j], polygon[i]
+        if abs(_orientation(a, b, point)) <= PASSAGE_GEOMETRY_EPSILON and _on_segment(a, b, point):
+            return True
+        if ((a[1] > y) != (b[1] > y)):
+            cross_x = (b[0] - a[0]) * (y - a[1]) / (b[1] - a[1]) + a[0]
+            if x < cross_x:
+                inside = not inside
+        j = i
+    return inside
+
+
+def _segment_in_polygon(a, b, polygon):
+    if polygon is None:
+        return True
+    if not (_point_in_polygon(a[0], a[1], polygon)
+            and _point_in_polygon(b[0], b[1], polygon)):
+        return False
+    # Split the segment at every proper polygon-boundary intersection, then
+    # test one midpoint per interval.  This catches arbitrarily small concave
+    # excursions without relying on a pixel-size sampling interval.
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    cuts = [0.0, 1.0]
+    vertices = list(polygon)
+    for c, d in zip(vertices, vertices[1:] + vertices[:1]):
+        ex, ey = d[0] - c[0], d[1] - c[1]
+        denominator = dx * ey - dy * ex
+        if abs(denominator) <= PASSAGE_GEOMETRY_EPSILON:
+            continue
+        acx, acy = c[0] - a[0], c[1] - a[1]
+        t = (acx * ey - acy * ex) / denominator
+        u = (acx * dy - acy * dx) / denominator
+        if (-PASSAGE_GEOMETRY_EPSILON <= t <= 1 + PASSAGE_GEOMETRY_EPSILON
+                and -PASSAGE_GEOMETRY_EPSILON <= u <= 1 + PASSAGE_GEOMETRY_EPSILON):
+            cuts.append(min(1.0, max(0.0, t)))
+    cuts = sorted(set(round(value, 14) for value in cuts))
+    return all(_point_in_polygon(
+        a[0] + dx * ((left + right) / 2),
+        a[1] + dy * ((left + right) / 2), polygon)
+        for left, right in zip(cuts, cuts[1:]) if right - left > 1e-13)
+
+
+def _edge_passage_relation(a, b, passage):
+    """Classify an edge against one footprint using its local crossing tangent.
+
+    Returns ``None`` when disjoint, otherwise ``(is_transverse, is_longitudinal,
+    dot, side_a, side_b)``.  The nearest centreline segment is selected where
+    the edge meets the footprint, which is important for bent passages.
+    """
+    length = math.hypot(b[0] - a[0], b[1] - a[1])
+    if length <= PASSAGE_GEOMETRY_EPSILON:
+        return None
+    min_x, min_y, max_x, max_y = passage["body_bounds"]
+    if (max(a[0], b[0]) < min_x or min(a[0], b[0]) > max_x
+            or max(a[1], b[1]) < min_y or min(a[1], b[1]) > max_y):
+        return None
+    samples = max(1, int(math.ceil(length)))
+    hits_by_segment = {}
+    for k in range(samples + 1):
+        t = k / samples
+        x, y = a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t
+        for hit in _passage_body_hits(passage, x, y):
+            previous = hits_by_segment.get(hit[1])
+            if previous is None or hit[0] < previous[0]:
+                hits_by_segment[hit[1]] = hit
+    if not hits_by_segment:
+        return None
+    ex, ey = (b[0] - a[0]) / length, (b[1] - a[1]) / length
+    relations = []
+    for hit in hits_by_segment.values():
+        tx, ty = hit[5], hit[6]
+        dot = abs(ex * tx + ey * ty)
+        cx, cy = hit[3], hit[4]
+        side_a = tx * (a[1] - cy) - ty * (a[0] - cx)
+        side_b = tx * (b[1] - cy) - ty * (b[0] - cx)
+        opposite = side_a * side_b < -PASSAGE_GEOMETRY_EPSILON
+        relations.append((opposite and dot <= PASSAGE_TRANSVERSE_MAX_DOT,
+                          dot >= PASSAGE_LONGITUDINAL_MIN_DOT, dot, side_a, side_b))
+    return (all(value[0] for value in relations),
+            any(value[1] for value in relations),
+            max(value[2] for value in relations),
+            relations[0][3], relations[0][4])
+
+
+def _segment_enters_passage_body(a, b, passage, allow_start_contact=False):
+    length = math.hypot(b[0] - a[0], b[1] - a[1])
+    steps = max(1, int(math.ceil(length)))
+    left_initial_contact = not allow_start_contact
+    for k in range(steps + 1):
+        inside = _point_in_passage_body(
+            passage,
+            a[0] + (b[0] - a[0]) * k / steps,
+            a[1] + (b[1] - a[1]) * k / steps,
+        )
+        if not left_initial_contact:
+            if inside:
+                continue
+            left_initial_contact = True
+            continue
+        if inside:
+            return True
+    return False
+
+
+def _round_graph_coordinate(value):
+    """Round non-negative mask coordinates like ECMAScript ``Math.round``."""
+    return int(math.floor(float(value) + 0.5))
+
+
+def _passage_endpoint_graph_coordinate(mask, passage, endpoint,
+                                       region_polygon=None):
+    """Choose a deterministic legal raster representative for an endpoint.
+
+    Persisted passage coordinates are continuous, but graph nodes are integer
+    mask pixels. Normal rounding can select an impassable pixel even when the
+    endpoint's existing outward portal band reaches legal base terrain. Search
+    only that bounded cap (portal depth longitudinally, passage radius
+    laterally), and only accept a fallback inside the inclusion polygon. This
+    resolves raster-boundary ambiguity without moving persisted geometry or
+    snapping an entrance across a genuine obstacle.
+    """
+    height, width = mask.shape
+    rounded = (_round_graph_coordinate(endpoint[0]),
+               _round_graph_coordinate(endpoint[1]))
+    rx = min(width - 1, max(0, rounded[0]))
+    ry = min(height - 1, max(0, rounded[1]))
+    rounded = (rx, ry)
+    if mask[ry, rx] != IMPASSABLE:
+        return rounded
+
+    search_radius = passage["radius"]
+    xs = range(
+        max(0, math.floor(endpoint[0] - search_radius)),
+        min(width - 1, math.ceil(endpoint[0] + search_radius)) + 1,
+    )
+    ys = range(
+        max(0, math.floor(endpoint[1] - search_radius)),
+        min(height - 1, math.ceil(endpoint[1] + search_radius)) + 1,
+    )
+    inward = (passage["frames"]["start_inward"]
+              if endpoint == passage["frames"]["start"]
+              else passage["frames"]["end_inward"])
+    candidates = []
+    for x in xs:
+        for y in ys:
+            x, y = int(x), int(y)
+            if mask[y, x] == IMPASSABLE:
+                continue
+            if not _point_in_polygon(x, y, region_polygon):
+                continue
+            displacement2 = ((x - endpoint[0]) ** 2
+                             + (y - endpoint[1]) ** 2)
+            if displacement2 > passage["radius"] ** 2 + PASSAGE_GEOMETRY_EPSILON:
+                continue
+            longitudinal = ((x - endpoint[0]) * inward[0]
+                            + (y - endpoint[1]) * inward[1])
+            if (longitudinal > PASSAGE_GEOMETRY_EPSILON
+                    or longitudinal < -PASSAGE_PORTAL_DEPTH - PASSAGE_GEOMETRY_EPSILON):
+                continue
+            candidates.append((displacement2, y, x))
+    if not candidates:
+        return rounded
+    _, y, x = min(candidates)
+    return (x, y)
+
+
+def filter_level_passages_for_region(level_passages, region_polygon,
+                                     map_width, map_height):
+    """Return the canonical passages wholly usable by one Infinity region.
+
+    Passage documents belong to the map and may legitimately contain corridors
+    for other game modes outside a smaller Infinity inclusion polygon. Such a
+    corridor is omitted as one object; it must not abort the navgraph build or
+    contribute shadow nodes/connectors. The same helper is used by building,
+    serving, and the worker payload so artifact ordinals/revisions stay aligned.
+
+    Containment mirrors the serialized topology checks: original and rounded
+    centreline points and every consecutive segment must remain in the polygon.
+    The persisted document itself is never modified.
+    """
+    from .passage_validation import normalize_level_passages
+
+    document = normalize_level_passages(level_passages)
+    if not isinstance(region_polygon, (list, tuple)) or len(region_polygon) < 3:
+        return document, []
+
+    included = []
+    ignored_ids = []
+    for item in document["items"]:
+        points = [(float(point[0]), float(point[1])) for point in item["points"]]
+        rounded = [
+            (min(map_width - 1, _round_graph_coordinate(x)),
+             min(map_height - 1, _round_graph_coordinate(y)))
+            for x, y in points
+        ]
+        contained = (
+            all(_point_in_polygon(x, y, region_polygon) for x, y in points)
+            and all(_point_in_polygon(x, y, region_polygon) for x, y in rounded)
+            and all(_segment_in_polygon(a, b, region_polygon)
+                    for a, b in zip(points, points[1:]))
+            and all(_segment_in_polygon(a, b, region_polygon)
+                    for a, b in zip(rounded, rounded[1:]))
+        )
+        if contained:
+            included.append(item)
+        else:
+            ignored_ids.append(item["id"])
+    return {"version": document["version"], "items": included}, ignored_ids
 
 
 # =============================================================================
@@ -335,23 +1060,73 @@ def _hitzone(mask):
     return fp, sample, ds
 
 
-def _rasterize_region(polygon, H, W, ds=HITZONE_DS):
+def _rasterize_region_full(polygon, H, W):
+    """Validate and rasterize the authoritative coach region at mask resolution.
+
+    This boolean array is the single source of truth for node pruning and
+    terrain/edge legality, including at concave polygon boundaries.
+    """
+    from PIL import Image, ImageDraw
+
+    if polygon is None or len(polygon) < 3:
+        raise ValueError("A coach region polygon needs at least 3 points")
+
+    points = []
+    for point in polygon:
+        if not isinstance(point, (list, tuple)) or len(point) != 2:
+            raise ValueError("Invalid coach region point")
+        try:
+            x, y = float(point[0]), float(point[1])
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Invalid coach region point") from exc
+        if not (math.isfinite(x) and math.isfinite(y)):
+            raise ValueError("Coach region coordinates must be finite")
+        if x < 0 or y < 0 or x > W - 1 or y > H - 1:
+            raise ValueError(
+                f"Coach region point ({x:g}, {y:g}) is outside the {W}x{H} mask")
+        points.append((x, y))
+
+    if len(set(points)) < 3:
+        raise ValueError("Coach region polygon needs 3 distinct points")
+    twice_area = abs(sum(
+        x0 * y1 - x1 * y0
+        for (x0, y0), (x1, y1) in zip(points, points[1:] + points[:1])
+    ))
+    if twice_area <= 1e-6:
+        raise ValueError("Coach region polygon must have non-zero area")
+
+    image = Image.new("L", (W, H), 0)
+    ImageDraw.Draw(image).polygon(points, fill=1)
+    raster = np.asarray(image, dtype=bool)
+    if not raster.any():
+        raise ValueError("Coach region polygon produced an empty raster")
+    return raster
+
+
+def _rasterize_region(polygon, H, W, ds=HITZONE_DS, full_raster=None):
     """Rasterize a coach-drawn map-region polygon to a coarse ÷ds bool grid.
 
     ``polygon`` is a sequence of full-res ``(x, y)`` vertices (same coordinate
     space as ``nodes``). Returns an ``(hh, hw)`` bool grid, True inside the
     polygon, matching the hit-zone grid resolution. This is the *authoritative*
     map region when a coach has drawn one; the automatic ``_hitzone`` is only a
-    fallback / initial suggestion (see the module note). Fewer than 3 vertices
-    yields an all-False grid (caller should fall back to ``_hitzone``).
+    fallback / initial suggestion (see the module note). Invalid non-empty coach
+    polygons are rejected by ``_rasterize_region_full`` before this helper runs.
     """
-    from PIL import Image, ImageDraw
+    full = (full_raster if full_raster is not None
+            else _rasterize_region_full(polygon, H, W))
     hh, hw = max(1, H // ds), max(1, W // ds)
-    img = Image.new("L", (hw, hh), 0)
-    if polygon is not None and len(polygon) >= 3:
-        pts = [(float(x) / ds, float(y) / ds) for (x, y) in polygon]
-        ImageDraw.Draw(img).polygon(pts, fill=1)
-    return np.asarray(img, dtype=bool)
+    # A coarse endpoint cell is eligible only when every full-res pixel in the
+    # cell is inside the authoritative raster. This conservative reduction is
+    # what lets client/Python endpoint stubs use the stored grid as a legality
+    # mask without crossing a concave exterior between two legal nodes.
+    out = np.zeros((hh, hw), dtype=bool)
+    for cy in range(hh):
+        y0, y1 = cy * ds, min(H, (cy + 1) * ds)
+        for cx in range(hw):
+            x0, x1 = cx * ds, min(W, (cx + 1) * ds)
+            out[cy, cx] = bool(full[y0:y1, x0:x1].all())
+    return out
 
 
 # =============================================================================
@@ -1194,18 +1969,24 @@ def _line_cost(mask, x0, y0, x1, y1):
     return cost
 
 
-def _filter_regular_contours_near_centerline(
+def _filter_contours_near_centerline(
         mask, corners, regular, pairs, centerline_xy,
         radius=NARROW_CENTERLINE_MERGE_PX):
-    """Drop ordinary boundary samples already represented by a visible spine.
+    """Drop boundary samples already represented by a visible narrow spine.
 
-    Corners and simplified-segment anchors are retained.  A regular contour
-    sample is removed only when a snapped skeleton/bottleneck node is close,
-    terrain-compatible, and directly visible on the authoritative mask.  This
-    cheaply collapses the two redundant wall-side chains in narrow alleys to
-    their centerline without doing another A* or affecting wider open borders.
+    A contour sample is removed only when a snapped skeleton/bottleneck node is
+    close and directly visible on the authoritative mask. The centerline must
+    also be at least as fast (mask value >= candidate value): slow outline pixels
+    (value 200) may collapse into a fast alley spine, but a fast mapped-path node
+    can never be replaced by a slower off-path/vegetation node.
+    This cheaply collapses the two redundant wall-side chains in narrow alleys
+    to their centerline without doing another A* or affecting wider borders.
+
+    NARROW_ALLEY_REDUCTION: this includes corner/segment anchors deliberately;
+    the nearby authoritative skeleton already encodes bends and junctions.
     """
-    if radius <= 0 or not regular or not centerline_xy:
+    if (not NARROW_ALLEY_REDUCTION_ENABLED or radius <= 0 or
+            not (corners or regular) or not centerline_xy):
         return list(corners), list(regular), list(pairs), 0
 
     cell = max(1, int(radius))
@@ -1215,39 +1996,105 @@ def _filter_regular_contours_near_centerline(
         buckets.setdefault((int(x) // cell, int(y) // cell), []).append(
             (int(x), int(y)))
 
-    keep_regular = []
-    removed = 0
-    old_to_new = {i: i for i in range(len(corners))}
-    for offset, (x, y) in enumerate(regular):
+    def is_represented(x, y):
         bx, by = int(x) // cell, int(y) // cell
         value = int(mask[int(y), int(x)])
-        represented = False
         for gx in (bx - 1, bx, bx + 1):
             for gy in (by - 1, by, by + 1):
                 for xx, yy in buckets.get((gx, gy), ()):
                     if (x - xx) ** 2 + (y - yy) ** 2 > radius2:
                         continue
-                    if abs(value - int(mask[yy, xx])) > NODE_DEDUPE_TERRAIN_DELTA:
+                    if int(mask[yy, xx]) < value:
                         continue
                     if _line_cost(mask, int(x), int(y), xx, yy) is not None:
-                        represented = True
-                        break
-                if represented:
-                    break
-            if represented:
-                break
-        old = len(corners) + offset
-        if represented:
-            removed += 1
-            continue
-        old_to_new[old] = len(corners) + len(keep_regular)
-        keep_regular.append((x, y))
+                        return True
+        return False
+
+    keep_corner_flags = [not is_represented(x, y) for x, y in corners]
+    keep_regular_flags = [not is_represented(x, y) for x, y in regular]
+    kept_corners = [
+        xy for xy, keep in zip(corners, keep_corner_flags) if keep]
+    kept_regular = [
+        xy for xy, keep in zip(regular, keep_regular_flags) if keep]
+    removed = (
+        len(corners) + len(regular) - len(kept_corners) - len(kept_regular))
+
+    old_to_new = {}
+    for old, keep in enumerate(keep_corner_flags):
+        if keep:
+            old_to_new[old] = len(old_to_new)
+    regular_base = len(corners)
+    regular_new_base = len(kept_corners)
+    regular_kept = 0
+    for offset, keep in enumerate(keep_regular_flags):
+        if keep:
+            old_to_new[regular_base + offset] = regular_new_base + regular_kept
+            regular_kept += 1
 
     kept_pairs = [
         (old_to_new[a], old_to_new[b]) for a, b in pairs
         if a in old_to_new and b in old_to_new and old_to_new[a] != old_to_new[b]
     ]
-    return list(corners), keep_regular, kept_pairs, removed
+    return kept_corners, kept_regular, kept_pairs, removed
+
+
+def _filter_points_near_visible_nodes(mask, points, anchors,
+                                      radius=NARROW_CENTERLINE_MERGE_PX):
+    """NARROW_ALLEY_REDUCTION: remove duplicate auxiliary centerline points."""
+    if (not NARROW_ALLEY_REDUCTION_ENABLED or radius <= 0 or
+            not points or not anchors):
+        return list(points), 0
+    cell = max(1, int(radius))
+    radius2 = radius * radius
+    buckets = {}
+    for x, y in anchors:
+        buckets.setdefault((int(x) // cell, int(y) // cell), []).append(
+            (int(x), int(y)))
+    kept = []
+    for x, y in points:
+        bx, by = int(x) // cell, int(y) // cell
+        value = int(mask[int(y), int(x)])
+        duplicate = any(
+            (x - xx) ** 2 + (y - yy) ** 2 <= radius2 and
+            int(mask[yy, xx]) >= value and
+            _line_cost(mask, int(x), int(y), xx, yy) is not None
+            for gx in (bx - 1, bx, bx + 1)
+            for gy in (by - 1, by, by + 1)
+            for xx, yy in buckets.get((gx, gy), ())
+        )
+        if not duplicate:
+            kept.append((x, y))
+    return kept, len(points) - len(kept)
+
+
+def _visible_backbone_samples(mask, skeleton_xy, skeleton_edges,
+                              spacing=NARROW_CENTERLINE_SAMPLE_PX):
+    """NARROW_ALLEY_REDUCTION: densify legal straight skeleton segments.
+
+    Skeleton graph nodes are roughly 48 px apart, so endpoint-only proximity
+    misses wall samples halfway along an alley.  This produces cheap comparison
+    anchors every few pixels. A curved/A*-backed segment may have a chord that
+    clips a stair-step wall, so validity is checked per interpolated anchor
+    rather than rejecting the whole segment. The later candidate-to-anchor LOS
+    check remains authoritative for every node removal.
+    """
+    out = list(skeleton_xy)
+    if not NARROW_ALLEY_REDUCTION_ENABLED or spacing <= 0:
+        return out
+    for a, b, _ in skeleton_edges:
+        if a == b or a >= len(skeleton_xy) or b >= len(skeleton_xy):
+            continue
+        x0, y0 = skeleton_xy[a]
+        x1, y1 = skeleton_xy[b]
+        length = float(np.hypot(x1 - x0, y1 - y0))
+        pieces = max(1, int(np.ceil(length / spacing)))
+        for k in range(1, pieces):
+            t = k / pieces
+            x = int(round(x0 + (x1 - x0) * t))
+            y = int(round(y0 + (y1 - y0) * t))
+            if mask[y, x] != IMPASSABLE:
+                out.append((x, y))
+    return out
 
 
 def _dedupe_appended_nodes(mask, nodes_xy, fixed_count, min_distance,
@@ -1377,7 +2224,8 @@ def _weight_edges(mask, nodes_xy, candidate_edges, astar_pairs):
     return edges_out, weights_out
 
 
-def _candidate_edges(nodes_xy, skeleton_edges, feature_nodes=None, mask=None):
+def _candidate_edges(nodes_xy, skeleton_edges, feature_nodes=None, mask=None,
+                     backbone_only_nodes=None):
     """Union of skeleton edges and local neighbour candidates.
 
     Feature/gate nodes select the nearest *visible* neighbour in angular sectors.
@@ -1389,6 +2237,7 @@ def _candidate_edges(nodes_xy, skeleton_edges, feature_nodes=None, mask=None):
         if a != b:
             cand.add((min(a, b), max(a, b)))
     feature_nodes = set(feature_nodes or ())
+    backbone_only_nodes = set(backbone_only_nodes or ())
     pts = np.asarray(nodes_xy, dtype=np.float64)
     n = len(pts)
     if n == 0:
@@ -1399,6 +2248,12 @@ def _candidate_edges(nodes_xy, skeleton_edges, feature_nodes=None, mask=None):
     for idx, (x, y) in enumerate(nodes_xy):
         buckets.setdefault((int(x // cell), int(y // cell)), []).append(idx)
     for idx, (x, y) in enumerate(nodes_xy):
+        # NARROW_ALLEY_REDUCTION: these low-clearance skeleton nodes already
+        # have authoritative predecessor/successor backbone edges. Skipping
+        # generic k-NN here prevents six nearly identical corridor shortcuts.
+        # Set NARROW_ALLEY_REDUCTION_ENABLED=False to restore the old behaviour.
+        if NARROW_ALLEY_REDUCTION_ENABLED and idx in backbone_only_nodes:
+            continue
         cx, cy = int(x // cell), int(y // cell)
         near = []
         for gx in (cx - 1, cx, cx + 1):
@@ -1677,11 +2532,338 @@ def _sampling_grids(mask, dist_full, labels_full):
     return coarse_minval, coarse_clear, coarse_labels.astype(np.int32)
 
 
+def _apply_passage_topology(artifact, mask, passages, level_passages,
+                            region_polygon=None):
+    """Isolate projected base topology, then append protected passage chains.
+
+    This is deliberately a final build stage.  All generic base-node creation,
+    k-NN, witness pruning and repair have already finished, and the result is
+    compacted and filtered here.  Passage nodes are appended afterwards, so no
+    generic pass can ever deduplicate them or invent an intermediate connector.
+    """
+    t_start = time.time()
+    old_nodes = np.asarray(artifact["nodes"], dtype=np.int32).reshape(-1, 2)
+    old_edges = np.asarray(artifact["edges"], dtype=np.int32).reshape(-1, 2)
+    old_weights = np.asarray(artifact["weights"], dtype=np.float32).reshape(-1)
+    old_components = np.asarray(artifact["components"], dtype=np.int32).reshape(-1)
+
+    shadowed_per_passage = []
+    shadowed = set()
+    outside_region = set()
+    for node_index, (x, y) in enumerate(old_nodes):
+        if region_polygon is not None and not _point_in_polygon(x, y, region_polygon):
+            outside_region.add(node_index)
+        for passage_index, passage in enumerate(passages):
+            if _point_in_passage_body(passage, float(x), float(y)):
+                while len(shadowed_per_passage) <= passage_index:
+                    shadowed_per_passage.append(0)
+                shadowed_per_passage[passage_index] += 1
+                shadowed.add(node_index)
+    while len(shadowed_per_passage) < len(passages):
+        shadowed_per_passage.append(0)
+
+    removed = shadowed | outside_region
+    kept = [idx for idx in range(len(old_nodes)) if idx not in removed]
+    remap = np.full(len(old_nodes), -1, dtype=np.int32)
+    remap[kept] = np.arange(len(kept), dtype=np.int32)
+    base_nodes = old_nodes[kept].copy()
+    base_components = old_components[kept].copy()
+
+    base_edges = []
+    base_weights = []
+    rejected_longitudinal = 0
+    rejected_ambiguous = 0
+    retained_transverse = 0
+    rejected_base_edge_geometry = []
+    seen_edges = set()
+    for (old_u, old_v), weight in zip(old_edges, old_weights):
+        if old_u in removed or old_v in removed:
+            continue
+        u, v = int(remap[old_u]), int(remap[old_v])
+        a, b = tuple(base_nodes[u]), tuple(base_nodes[v])
+        if region_polygon is not None and not _segment_in_polygon(a, b, region_polygon):
+            continue
+        relations = [relation for passage in passages
+                     if (relation := _edge_passage_relation(a, b, passage)) is not None]
+        if relations and not all(relation[0] for relation in relations):
+            if any(relation[1] for relation in relations):
+                rejected_longitudinal += 1
+            else:
+                rejected_ambiguous += 1
+            rejected_base_edge_geometry.append((a, b))
+            continue
+        if relations:
+            retained_transverse += 1
+        edge = (min(u, v), max(u, v))
+        if edge not in seen_edges:
+            seen_edges.add(edge)
+            base_edges.append(edge)
+            base_weights.append(float(weight))
+
+    # Recover genuine underpasses after body-node compaction.  Candidates are
+    # local to one passage bbox, directly visible on the authoritative mask,
+    # and accepted only when every crossed passage sees a transverse crossing.
+    bypasses_added = 0
+    bypasses_per_passage = []
+    for passage in passages:
+        min_x = min(p[0] for p in passage["points"]) - PASSAGE_BYPASS_RADIUS_PX
+        max_x = max(p[0] for p in passage["points"]) + PASSAGE_BYPASS_RADIUS_PX
+        min_y = min(p[1] for p in passage["points"]) - PASSAGE_BYPASS_RADIUS_PX
+        max_y = max(p[1] for p in passage["points"]) + PASSAGE_BYPASS_RADIUS_PX
+        nearby = [idx for idx, (x, y) in enumerate(base_nodes)
+                  if min_x <= x <= max_x and min_y <= y <= max_y]
+        candidates = []
+        if len(nearby) >= 2:
+            from scipy.spatial import cKDTree
+            points = base_nodes[nearby].astype(np.float64)
+            tree = cKDTree(points)
+            neighbour_count = min(
+                len(nearby), PASSAGE_BYPASS_NEIGHBORS_PER_NODE + 1)
+            distances, neighbours = tree.query(
+                points, k=neighbour_count,
+                distance_upper_bound=PASSAGE_BYPASS_RADIUS_PX)
+            bounded_pairs = set()
+            if neighbour_count == 1:
+                distances = distances[:, None]
+                neighbours = neighbours[:, None]
+            for local_u, (row_distances, row_neighbours) in enumerate(
+                    zip(distances, neighbours)):
+                for distance, local_v in zip(row_distances[1:], row_neighbours[1:]):
+                    if not math.isfinite(float(distance)) or int(local_v) >= len(nearby):
+                        continue
+                    bounded_pairs.add((min(local_u, int(local_v)),
+                                       max(local_u, int(local_v))))
+            for local_u, local_v in sorted(bounded_pairs):
+                u, v = nearby[local_u], nearby[local_v]
+                edge = (min(u, v), max(u, v))
+                if edge in seen_edges:
+                    continue
+                a, b = tuple(base_nodes[u]), tuple(base_nodes[v])
+                relation = _edge_passage_relation(a, b, passage)
+                if relation is None or not relation[0]:
+                    continue
+                if any((other_relation := _edge_passage_relation(a, b, other)) is not None
+                       and not other_relation[0] for other in passages):
+                    continue
+                if region_polygon is not None and not _segment_in_polygon(a, b, region_polygon):
+                    continue
+                cost = _line_cost(mask, *a, *b)
+                if cost is None:
+                    continue
+                distance2 = float(np.sum((base_nodes[u].astype(np.float64)
+                                          - base_nodes[v]) ** 2))
+                candidates.append((distance2, edge, float(cost)))
+        added_here = 0
+        for _, edge, cost in sorted(candidates, key=lambda value: (value[0], value[1])):
+            if added_here >= PASSAGE_BYPASS_MAX_PER_PASSAGE:
+                break
+            if edge in seen_edges:
+                continue
+            seen_edges.add(edge)
+            base_edges.append(edge)
+            base_weights.append(cost)
+            added_here += 1
+            bypasses_added += 1
+        bypasses_per_passage.append(added_here)
+
+    base_node_count = len(base_nodes)
+    all_nodes = [tuple(map(int, node)) for node in base_nodes]
+    all_components = [int(value) for value in base_components]
+    all_edges = list(base_edges)
+    all_weights = list(base_weights)
+    edge_kinds = [EDGE_KIND_BASE] * len(all_edges)
+    edge_passage = [-1] * len(all_edges)
+    passage_starts = []
+    passage_counts = []
+    original_passage_points = []
+    connector_base_nodes = []
+    unusable_endpoints = []
+    passage_edge_count = 0
+    connector_count = 0
+    endpoint_graph_adjustments = []
+
+    for ordinal, passage in enumerate(passages):
+        start_index = len(all_nodes)
+        passage_starts.append(start_index)
+        passage_counts.append(len(passage["points"]))
+        rounded = []
+        last_point_index = len(passage["points"]) - 1
+        for point_index, point in enumerate(passage["points"]):
+            if point_index in (0, last_point_index):
+                graph_point = _passage_endpoint_graph_coordinate(
+                    mask, passage, point, region_polygon)
+                normal_round = (
+                    min(mask.shape[1] - 1, _round_graph_coordinate(point[0])),
+                    min(mask.shape[0] - 1, _round_graph_coordinate(point[1])),
+                )
+                if graph_point != normal_round:
+                    endpoint_graph_adjustments.append({
+                        "id": passage["id"],
+                        "endpoint": "start" if point_index == 0 else "end",
+                        "from": normal_round,
+                        "to": graph_point,
+                    })
+            else:
+                graph_point = (
+                    min(mask.shape[1] - 1, _round_graph_coordinate(point[0])),
+                    min(mask.shape[0] - 1, _round_graph_coordinate(point[1])),
+                )
+            rounded.append(graph_point)
+        for point, graph_point in zip(passage["points"], rounded):
+            if not _point_in_polygon(point[0], point[1], region_polygon):
+                raise ValueError(f"passage {passage['id']} has a point outside the inclusion polygon")
+            if not _point_in_polygon(graph_point[0], graph_point[1], region_polygon):
+                raise ValueError(
+                    f"passage {passage['id']} rounds to a graph node outside the inclusion polygon")
+            all_nodes.append(graph_point)
+            all_components.append(0)  # filled after endpoint-component union
+            original_passage_points.append(point)
+        for offset, (a, b) in enumerate(zip(passage["points"], passage["points"][1:])):
+            if not _segment_in_polygon(a, b, region_polygon):
+                raise ValueError(f"passage {passage['id']} leaves the inclusion polygon")
+            u, v = start_index + offset, start_index + offset + 1
+            if not _segment_in_polygon(all_nodes[u], all_nodes[v], region_polygon):
+                raise ValueError(
+                    f"passage {passage['id']} rounded chain leaves the inclusion polygon")
+            length = math.hypot(b[0] - a[0], b[1] - a[1])
+            all_edges.append((u, v))
+            all_weights.append(length * (255 - PASSAGE_FAST_VALUE))
+            edge_kinds.append(EDGE_KIND_PASSAGE)
+            edge_passage.append(ordinal)
+            passage_edge_count += 1
+
+        passage_connectors = []
+        endpoint_specs = (
+            ("start", start_index, passage["frames"]["start"],
+             passage["frames"]["start_inward"]),
+            ("end", start_index + len(passage["points"]) - 1,
+             passage["frames"]["end"], passage["frames"]["end_inward"]),
+        )
+        for endpoint_name, passage_node, endpoint, inward in endpoint_specs:
+            graph_endpoint = all_nodes[passage_node]
+            per_sector = {}
+            for base_index, base_point_array in enumerate(base_nodes):
+                base_point = tuple(map(int, base_point_array))
+                dx, dy = base_point[0] - endpoint[0], base_point[1] - endpoint[1]
+                distance = math.hypot(dx, dy)
+                if distance > PASSAGE_CONNECTOR_RADIUS_PX:
+                    continue
+                # Connect only through the outward entrance half-space.  An
+                # inward connector would recreate a mid-body surface switch.
+                if dx * inward[0] + dy * inward[1] > PASSAGE_GEOMETRY_EPSILON:
+                    continue
+                if not (_segment_in_polygon(endpoint, base_point, region_polygon)
+                        and _segment_in_polygon(graph_endpoint, base_point, region_polygon)):
+                    continue
+                if any(_segment_enters_passage_body(
+                        graph_endpoint, base_point, other,
+                        allow_start_contact=(
+                            other is passage
+                            or _point_in_passage_entrance(
+                                other, graph_endpoint[0], graph_endpoint[1])))
+                       for other in passages):
+                    continue
+                cost = _line_cost(mask, base_point[0], base_point[1],
+                                  graph_endpoint[0], graph_endpoint[1])
+                if cost is None:
+                    continue
+                angle = math.atan2(dy, dx)
+                sector = int(((angle + math.pi) / (2 * math.pi)) * PASSAGE_CONNECTOR_SECTORS)
+                sector = min(PASSAGE_CONNECTOR_SECTORS - 1, max(0, sector))
+                candidate = (distance, base_index, float(cost))
+                if sector not in per_sector or candidate < per_sector[sector]:
+                    per_sector[sector] = candidate
+            selected = sorted(per_sector.values())[:PASSAGE_CONNECTOR_MAX_PER_ENDPOINT]
+            if not selected:
+                unusable_endpoints.append({"id": passage["id"], "endpoint": endpoint_name})
+                raise ValueError(
+                    f"passage {passage['id']} {endpoint_name} endpoint has no legal base connector")
+            endpoint_bases = []
+            for _, base_index, cost in selected:
+                all_edges.append((base_index, passage_node))
+                all_weights.append(cost)
+                edge_kinds.append(EDGE_KIND_TRANSITION)
+                edge_passage.append(ordinal)
+                endpoint_bases.append(base_index)
+                connector_count += 1
+            passage_connectors.extend(endpoint_bases)
+        connector_base_nodes.append(passage_connectors)
+
+    # A complete passage chain unions the base-mask components reachable at its
+    # endpoints.  Remap both node and coarse sampling labels so Infinity's
+    # component prefilter sees bridge-only connectivity.
+    max_component = max(
+        int(np.max(base_components)) if len(base_components) else 0,
+        int(np.max(artifact["coarse_labels"])) if np.size(artifact["coarse_labels"]) else 0)
+    component_uf = _UnionFind(max_component + 1)
+    for base_indices in connector_base_nodes:
+        labels = sorted({int(base_components[index]) for index in base_indices
+                         if int(base_components[index]) > 0})
+        for label in labels[1:]:
+            component_uf.union(labels[0], label)
+    component_map = np.arange(max_component + 1, dtype=np.int32)
+    for label in range(1, max_component + 1):
+        component_map[label] = component_uf.find(label)
+    for index in range(base_node_count):
+        value = all_components[index]
+        all_components[index] = int(component_map[value]) if value > 0 else 0
+    for ordinal, base_indices in enumerate(connector_base_nodes):
+        labels = [all_components[index] for index in base_indices if all_components[index] > 0]
+        component = min(labels) if labels else 0
+        start, count = passage_starts[ordinal], passage_counts[ordinal]
+        all_components[start:start + count] = [component] * count
+    coarse_labels = np.asarray(artifact["coarse_labels"], dtype=np.int32)
+    artifact["coarse_labels"] = component_map[coarse_labels]
+
+    artifact["nodes"] = np.asarray(all_nodes, dtype=np.int32).reshape(-1, 2)
+    artifact["edges"] = np.asarray(all_edges, dtype=np.int32).reshape(-1, 2)
+    artifact["weights"] = np.asarray(all_weights, dtype=np.float32)
+    artifact["components"] = np.asarray(all_components, dtype=np.int32)
+    artifact["base_node_count"] = np.int32(base_node_count)
+    artifact["edge_kinds"] = np.asarray(edge_kinds, dtype=np.uint8)
+    artifact["edge_passage"] = np.asarray(edge_passage, dtype=np.int32)
+    artifact["passage_node_start"] = np.asarray(passage_starts, dtype=np.int32)
+    artifact["passage_node_count"] = np.asarray(passage_counts, dtype=np.int32)
+    # NPZ/debug-only high precision geometry; the served worker already owns the
+    # canonical passage document and maps ordinals using the same id sort.
+    artifact["passage_node_points"] = np.asarray(
+        original_passage_points, dtype=np.float64).reshape(-1, 2)
+    artifact["shadowed_base_nodes"] = old_nodes[sorted(shadowed)].copy()
+    artifact["shadowed_base_edges"] = np.asarray([
+        (old_nodes[int(u)], old_nodes[int(v)]) for u, v in old_edges
+        if int(u) in shadowed or int(v) in shadowed
+    ] + rejected_base_edge_geometry, dtype=np.int32).reshape(-1, 2, 2)
+    artifact["min_cost_per_px"] = np.float32(min(
+        float(artifact["min_cost_per_px"]), 255 - PASSAGE_FAST_VALUE))
+    _attach_passage_topology(
+        artifact, level_passages=level_passages,
+        map_width=mask.shape[1], map_height=mask.shape[0])
+    return {
+        "n_passages": len(passages),
+        "passage_node_count": len(original_passage_points),
+        "passage_edge_count": passage_edge_count,
+        "passage_connector_count": connector_count,
+        "passage_endpoint_graph_adjustments": endpoint_graph_adjustments,
+        "base_nodes_shadowed_by_passages": shadowed_per_passage,
+        "base_nodes_outside_region_removed": len(outside_region - shadowed),
+        "retained_transverse_bypasses": retained_transverse + bypasses_added,
+        "retained_existing_transverse_edges": retained_transverse,
+        "added_transverse_bypasses": bypasses_added,
+        "transverse_bypasses_per_passage": bypasses_per_passage,
+        "rejected_longitudinal_edges": rejected_longitudinal,
+        "rejected_ambiguous_passage_edges": rejected_ambiguous,
+        "unusable_endpoints": unusable_endpoints,
+        "passage_revision": artifact["passage_revision"],
+        "topology_seconds": round(time.time() - t_start, 3),
+    }
+
+
 # =============================================================================
 # Build
 # =============================================================================
 
-def build_navgraph(mask_path, region_polygon=None, verbose=False):
+def build_navgraph(mask_path, region_polygon=None, level_passages=None,
+                   verbose=False, prune_region=True):
     """Build the navgraph artifact dict for one mask PNG.
 
     ``region_polygon`` (optional) is a coach-drawn map-region polygon: a sequence
@@ -1689,6 +2871,10 @@ def build_navgraph(mask_path, region_polygon=None, verbose=False):
     (rasterized into ``coarse_hitzone`` and used to confine the open-area lattice);
     the automatic ``_hitzone`` detection is used only as a fallback / suggestion
     when no polygon is supplied. See the module "Off-map hit zone" note.
+
+    ``prune_region=False`` is a benchmark-only switch: it keeps the polygon as
+    the endpoint/hitzone authority while retaining the pre-WP-6.1 topology.
+    Production builds must leave it enabled.
 
     Returns a dict with all arrays + stats (see module docstring). Pure
     computation; use ``save_navgraph()`` to persist.
@@ -1712,6 +2898,19 @@ def build_navgraph(mask_path, region_polygon=None, verbose=False):
     timings["load"] = time.time() - t
     _log(f"loaded {W}x{H} ({H*W/1e6:.1f} Mpx)")
 
+    # Normalize the complete canonical document before skeletonization or any
+    # other expensive build stage. Structurally invalid geometry aborts the
+    # whole build. Valid passages outside this Infinity region are deliberately
+    # omitted as whole objects: they may belong to another game mode.
+    t = time.time()
+    effective_passages, ignored_passage_ids = filter_level_passages_for_region(
+        level_passages, region_polygon, W, H)
+    canonical_passages, build_passages = _normalize_passages_for_build(
+        effective_passages, W, H)
+    timings["passage_normalization"] = time.time() - t
+    _log(f"passages: {len(build_passages)} included, "
+         f"{len(ignored_passage_ids)} outside region")
+
     min_cost_per_px = _min_cost_per_px(mask)
 
     # 2. Unfiltered free-space labels (for node component ids + coarse labels).
@@ -1727,10 +2926,13 @@ def build_navgraph(mask_path, region_polygon=None, verbose=False):
     #    otherwise fall back to automatic class-structure detection. Footprint
     #    confines the lattice; sample mask is the stored endpoint zone.
     t = time.time()
-    has_polygon = region_polygon is not None and len(region_polygon) >= 3
+    has_polygon = region_polygon is not None and len(region_polygon) > 0
+    region_full = None
     if has_polygon:
         hz_ds = HITZONE_DS
-        region = _rasterize_region(region_polygon, H, W, hz_ds)
+        region_full = _rasterize_region_full(region_polygon, H, W)
+        region = _rasterize_region(
+            region_polygon, H, W, hz_ds, full_raster=region_full)
         hz_footprint = hz_sample = region
         hz_source = "polygon"
     else:
@@ -1739,6 +2941,30 @@ def build_navgraph(mask_path, region_polygon=None, verbose=False):
     timings["hitzone"] = time.time() - t
     _log(f"hitzone[{hz_source}]: footprint {hz_footprint.mean()*100:.0f}% "
          f"sample {hz_sample.mean()*100:.0f}% (ds={hz_ds})")
+
+    # Full-image EDT and skeletonization intentionally remain global.  From the
+    # topology stage onward, polygon-exterior pixels are terrain-impassable, so
+    # straight rays, skeleton A* and connectivity-repair A* share one legality
+    # definition and cannot cut across a concavity or repair through the margin.
+    topology_mask = mask
+    if region_full is not None and prune_region:
+        topology_mask = mask.copy()
+        topology_mask[~region_full] = IMPASSABLE
+
+    # The polygon can split one globally connected terrain label when its old
+    # connection ran through the surrounding margin.  Use polygon-masked labels
+    # for node components, repair and connectivity metrics.
+    graph_labels = labels_full
+    graph_ncomp = ncomp
+    graph_comp_sizes = comp_sizes
+    if region_full is not None and prune_region:
+        t = time.time()
+        graph_labels, graph_ncomp = ndi.label(
+            topology_mask != IMPASSABLE, structure=struct8)
+        graph_comp_sizes = np.bincount(graph_labels.ravel())
+        main_comp = (
+            int(graph_comp_sizes[1:].argmax()) + 1 if graph_ncomp > 0 else 0)
+        timings["region_components"] = time.time() - t
 
     # 4. Full-res distance transform (clearance) on the true free space.
     t = time.time()
@@ -1823,20 +3049,32 @@ def build_navgraph(mask_path, region_polygon=None, verbose=False):
         slow_corners_xy, slow_regular_xy, slow_pairs)
 
     # 7. Snap coarse node coords to a genuinely passable full-res pixel (x, y).
-    #    Nodes are NOT pruned to the hit zone: the off-map open area often links
-    #    map regions that have no in-map connection, so removing it fragments the
-    #    graph below the connectivity bar. The hit zone gates route *endpoints*
-    #    (stored below), not graph topology; the skeleton backbone is kept
-    #    everywhere so the graph stays connected and open fields stay crossable.
+    #    Polygon pruning follows after all node families have been assembled and
+    #    deduplicated. Automatic/legacy builds still retain the global skeleton.
     skeleton_xy = _snap_nodes(mask, node_yx, ds)
     bottleneck_xy = _snap_bottleneck_nodes(mask, dist_full, bottleneck_yx, ds)
+    dense_skeleton_xy = _visible_backbone_samples(
+        mask, skeleton_xy, skeleton_edges)
+    # NARROW_ALLEY_REDUCTION: proximity to a skeleton is not enough. Wide roads
+    # also have a skeleton and still need wall-side alternatives. Only samples
+    # whose own centerline clearance proves a genuinely narrow corridor may
+    # absorb contour/bottleneck nodes.
+    narrow_dense_skeleton_xy = [
+        (x, y) for x, y in dense_skeleton_xy
+        if dist_full[y, x] <= NARROW_BACKBONE_CLEARANCE_PX
+    ]
+    # NARROW_ALLEY_REDUCTION: bottleneck minima are useful only when they fill a
+    # gap between skeleton samples. Remove ones already represented by a nearby
+    # visible skeleton node. Flip NARROW_ALLEY_REDUCTION_ENABLED to undo.
+    bottleneck_xy, bottleneck_skeleton_merged = _filter_points_near_visible_nodes(
+        mask, bottleneck_xy, narrow_dense_skeleton_xy)
     open_xy = _snap_nodes(mask, open_yx, ds)
-    centerline_xy = skeleton_xy + bottleneck_xy
+    centerline_xy = narrow_dense_skeleton_xy + bottleneck_xy
     (black_corners_xy, black_regular_xy, black_pairs,
-     black_centerline_removed) = _filter_regular_contours_near_centerline(
+     black_centerline_removed) = _filter_contours_near_centerline(
         mask, black_corners_xy, black_regular_xy, black_pairs, centerline_xy)
     (slow_corners_xy, slow_regular_xy, slow_pairs,
-     slow_centerline_removed) = _filter_regular_contours_near_centerline(
+     slow_centerline_removed) = _filter_contours_near_centerline(
         mask, slow_corners_xy, slow_regular_xy, slow_pairs, centerline_xy)
     snapped_xy = (
         skeleton_xy + bottleneck_xy +
@@ -1881,7 +3119,7 @@ def build_navgraph(mask_path, region_polygon=None, verbose=False):
     contour_pairs = {
         (u, v) for u, v in contour_pairs
         if _line_cost(
-            mask, nodes_xy[u][0], nodes_xy[u][1],
+            topology_mask, nodes_xy[u][0], nodes_xy[u][1],
             nodes_xy[v][0], nodes_xy[v][1]) is not None
     }
     feature_nodes = {
@@ -1894,6 +3132,53 @@ def build_navgraph(mask_path, region_polygon=None, verbose=False):
     }
     protected_nodes = set(range(n_skeleton_nodes)) | feature_nodes
     n_lattice_nodes = len(nodes_xy) - n_skeleton_nodes
+
+    # Polygon pruning happens after every source family has been snapped and
+    # deduplicated, but before candidate generation/weighting/repair.  Filtering
+    # in original-index order preserves the skeleton-prefix invariant while the
+    # explicit remap keeps every topology-bearing index collection correct.
+    nodes_before_region_prune = len(nodes_xy)
+    region_prune_started = time.time()
+    if region_full is not None and prune_region:
+        kept_old = [
+            old for old, (x, y) in enumerate(nodes_xy)
+            if region_full[int(y), int(x)]
+        ]
+        remap = np.full(len(nodes_xy), -1, dtype=np.int32)
+        remap[kept_old] = np.arange(len(kept_old), dtype=np.int32)
+
+        def remap_index_set(values):
+            return {
+                int(remap[old]) for old in values
+                if 0 <= old < len(remap) and remap[old] >= 0
+            }
+
+        nodes_xy = [nodes_xy[old] for old in kept_old]
+        node_source_indices = [node_source_indices[old] for old in kept_old]
+        skeleton_edges = [
+            (int(remap[a]), int(remap[b]), length)
+            for a, b, length in skeleton_edges
+            if remap[a] >= 0 and remap[b] >= 0 and remap[a] != remap[b]
+        ]
+        contour_pairs = {
+            (min(int(remap[a]), int(remap[b])),
+             max(int(remap[a]), int(remap[b])))
+            for a, b in contour_pairs
+            if remap[a] >= 0 and remap[b] >= 0 and remap[a] != remap[b]
+        }
+        feature_nodes = remap_index_set(feature_nodes)
+        obstacle_edge_nodes = remap_index_set(obstacle_edge_nodes)
+        protected_nodes = remap_index_set(protected_nodes)
+        n_skeleton_nodes = sum(old < n_skeleton_nodes for old in kept_old)
+        n_lattice_nodes = len(nodes_xy) - n_skeleton_nodes
+    nodes_after_region_prune = len(nodes_xy)
+    timings["region_prune"] = time.time() - region_prune_started
+    region_pruned_fraction = (
+        (nodes_before_region_prune - nodes_after_region_prune)
+        / nodes_before_region_prune
+        if nodes_before_region_prune else 0.0
+    )
+
     obstacle_sampling.update({
         "black_contours": black_contour_stats,
         "very_slow_contours": slow_contour_stats,
@@ -1904,6 +3189,9 @@ def build_navgraph(mask_path, region_polygon=None, verbose=False):
         "footprint_very_slow_regular": len(slow_regular_xy),
         "black_centerline_merged": black_centerline_removed,
         "very_slow_centerline_merged": slow_centerline_removed,
+        "bottleneck_skeleton_merged": bottleneck_skeleton_merged,
+        "dense_centerline_samples": len(dense_skeleton_xy),
+        "narrow_dense_centerline_samples": len(narrow_dense_skeleton_xy),
         "footprint_open_candidates": len(open_yx),
         "deduplicated_count": len(snapped_xy) - len(nodes_xy),
         "n_feature_nodes": len(feature_nodes),
@@ -1919,22 +3207,34 @@ def build_navgraph(mask_path, region_polygon=None, verbose=False):
     # 8. Component id per node (from unfiltered labels) — needed for repair.
     nodes_arr = np.asarray(nodes_xy, dtype=np.int32).reshape(-1, 2)
     if len(nodes_arr):
-        components = labels_full[nodes_arr[:, 1], nodes_arr[:, 0]].astype(np.int32)
+        components = graph_labels[
+            nodes_arr[:, 1], nodes_arr[:, 0]].astype(np.int32)
     else:
         components = np.zeros(0, dtype=np.int32)
 
     # 9. Candidate edges -> weighting (A* fallback for skeleton backbone only).
     t = time.time()
+    # NARROW_ALLEY_REDUCTION: low-clearance skeleton nodes already form a
+    # topologically authoritative chain. Do not let generic k-NN turn that chain
+    # back into a dense mesh of collinear shortcuts. Disable the feature flag
+    # near the constants to restore all former candidate edges.
+    narrow_backbone_nodes = {
+        idx for idx, (x, y) in enumerate(nodes_xy[:n_skeleton_nodes])
+        if dist_full[y, x] <= NARROW_BACKBONE_CLEARANCE_PX
+    } if NARROW_ALLEY_REDUCTION_ENABLED else set()
+    obstacle_sampling["narrow_backbone_only_nodes"] = len(narrow_backbone_nodes)
     backbone_edges = list(skeleton_edges) + [
         (u, v, 0.0) for u, v in contour_pairs]
     skeleton_pairs = {
         (min(a, b), max(a, b)) for a, b, _ in backbone_edges if a != b}
     cand = _candidate_edges(
-        nodes_xy, backbone_edges, obstacle_edge_nodes, mask=mask)
-    edges, weights = _weight_edges(mask, nodes_xy, cand, skeleton_pairs)
+        nodes_xy, backbone_edges, obstacle_edge_nodes, mask=topology_mask,
+        backbone_only_nodes=narrow_backbone_nodes)
+    edges, weights = _weight_edges(
+        topology_mask, nodes_xy, cand, skeleton_pairs)
     n_before = len(edges)
     edges, weights = _repair_connectivity(
-        mask, nodes_xy, edges, weights, components, main_comp)
+        topology_mask, nodes_xy, edges, weights, components, main_comp)
     nodes_xy, edges, weights, components, pruned_nodes = _prune_redundant_nodes(
         nodes_xy, edges, weights, components, protected_nodes)
     if pruned_nodes:
@@ -1950,6 +3250,18 @@ def build_navgraph(mask_path, region_polygon=None, verbose=False):
     # 10. Sampling metadata.
     t = time.time()
     coarse_minval, coarse_clear, coarse_labels = _sampling_grids(mask, dist_full, labels_full)
+    coarse_origin = np.asarray([0, 0], dtype=np.int32)
+    if has_polygon and prune_region and region_full is not None and region_full.any():
+        region_y, region_x = np.where(region_full)
+        gy0 = max(0, int(region_y.min()) // SAMPLE_DS)
+        gx0 = max(0, int(region_x.min()) // SAMPLE_DS)
+        gy1 = min(coarse_minval.shape[0], int(region_y.max()) // SAMPLE_DS + 1)
+        gx1 = min(coarse_minval.shape[1], int(region_x.max()) // SAMPLE_DS + 1)
+        coarse_minval = coarse_minval[gy0:gy1, gx0:gx1].copy()
+        coarse_clear = coarse_clear[gy0:gy1, gx0:gx1].copy()
+        coarse_labels = coarse_labels[gy0:gy1, gx0:gx1].copy()
+        coarse_origin = np.asarray(
+            [gx0 * SAMPLE_DS, gy0 * SAMPLE_DS], dtype=np.int32)
     timings["sampling"] = time.time() - t
 
     edges_arr = np.asarray(edges, dtype=np.int32).reshape(-1, 2)
@@ -1959,6 +3271,7 @@ def build_navgraph(mask_path, region_polygon=None, verbose=False):
     main_conn = _main_component_connectivity(nodes_arr, edges_arr, components, main_comp)
 
     free_total = int((mask != IMPASSABLE).sum())
+    graph_free_total = int((topology_mask != IMPASSABLE).sum())
     stats = {
         "mask_shape": [int(H), int(W)],
         "mpx": round(H * W / 1e6, 2),
@@ -1968,17 +3281,25 @@ def build_navgraph(mask_path, region_polygon=None, verbose=False):
         "n_lattice_nodes": int(n_lattice_nodes),
         "n_feature_nodes": int(len(feature_nodes)),
         "n_edges": int(len(edges_arr)),
-        "n_components": int(ncomp),
+        "nodes_before_region_prune": int(nodes_before_region_prune),
+        "nodes_after_region_prune": int(nodes_after_region_prune),
+        "edges_after_region_prune": int(len(edges_arr)),
+        "region_pruned_fraction": round(float(region_pruned_fraction), 4),
+        "region_prune_enabled": bool(prune_region),
+        "n_components": int(graph_ncomp),
         "main_component_fraction": round(
-            float(comp_sizes[main_comp]) / free_total, 4) if free_total and main_comp else 0.0,
+            float(graph_comp_sizes[main_comp]) / graph_free_total, 4)
+            if graph_free_total and main_comp else 0.0,
         "free_fraction": round(free_total / (H * W), 4),
         "main_component_connectivity": round(main_conn, 4),
+        "region_component_connectivity": round(main_conn, 4),
         "hitzone_source": hz_source,
         "hitzone_footprint_fraction": round(float(hz_footprint.mean()), 4),
         "hitzone_sample_fraction": round(float(hz_sample.mean()), 4),
         "hitzone_scale": int(hz_ds),
         "region_polygon": (
             [[int(x), int(y)] for (x, y) in region_polygon] if has_polygon else None),
+        "region_revision": region_revision(region_polygon, W, H) if has_polygon else None,
         "min_cost_per_px": min_cost_per_px,
         "lattice": {
             "obstacle_clearance_px": int(OBSTACLE_CLEARANCE_PX),
@@ -2007,6 +3328,7 @@ def build_navgraph(mask_path, region_polygon=None, verbose=False):
         "min_cost_per_px": np.float32(min_cost_per_px),
         "mask_shape": np.asarray([H, W], dtype=np.int32),
         "coarse_scale": np.int32(SAMPLE_DS),
+        "coarse_origin": coarse_origin,
         "coarse_minval": coarse_minval,
         "coarse_clear": coarse_clear,
         "coarse_labels": coarse_labels,
@@ -2014,6 +3336,45 @@ def build_navgraph(mask_path, region_polygon=None, verbose=False):
         "coarse_hitzone": hz_sample.astype(np.uint8),
         "stats": stats,
     }
+    if build_passages:
+        passage_stats = _apply_passage_topology(
+            artifact, mask, build_passages, canonical_passages,
+            region_polygon=region_polygon if has_polygon else None)
+        stats.update(passage_stats)
+        stats["n_nodes"] = int(len(artifact["nodes"]))
+        stats["n_edges"] = int(len(artifact["edges"]))
+        stats["base_node_count"] = int(artifact["base_node_count"])
+        timings["passage_topology"] = passage_stats["topology_seconds"]
+    else:
+        # Empty passage data preserves the established base graph exactly.
+        _attach_passage_topology(
+            artifact, level_passages=canonical_passages,
+            map_width=W, map_height=H)
+        stats["passage_revision"] = artifact["passage_revision"]
+        stats["base_node_count"] = int(artifact["base_node_count"])
+        stats["n_passages"] = 0
+        stats["passage_node_count"] = 0
+        stats["passage_edge_count"] = 0
+        stats["passage_connector_count"] = 0
+        stats["base_nodes_shadowed_by_passages"] = []
+        stats["retained_transverse_bypasses"] = 0
+        stats["rejected_longitudinal_edges"] = 0
+        stats["unusable_endpoints"] = []
+
+    stats["ignored_passages_outside_region"] = len(ignored_passage_ids)
+    stats["ignored_passage_ids_outside_region"] = ignored_passage_ids
+
+    # v4 stores the only coarse-label fact consumed at runtime: whether a cell
+    # belongs to the dominant sample component. This is lossless for endpoint
+    # sampling and cuts the former int32 grid to one byte per cell.
+    labels = np.asarray(artifact["coarse_labels"])
+    nonzero = labels[labels > 0]
+    if nonzero.size:
+        dominant = int(np.bincount(nonzero.astype(np.int64)).argmax())
+        artifact["coarse_labels"] = (labels == dominant).astype(np.uint8)
+    else:
+        artifact["coarse_labels"] = np.zeros(labels.shape, dtype=np.uint8)
+    stats["coarse_labels_compacted"] = True
 
     # 11. Suitability estimate (WP 4.3) — lightweight pair-generation
     #     simulation mirroring the client pipeline (scripts/navgraph_harness.mjs
@@ -2162,25 +3523,174 @@ def _main_component_connectivity(nodes_arr, edges_arr, components, main_comp):
 # Serialization
 # =============================================================================
 
+def _attach_passage_topology(artifact, level_passages, map_width, map_height):
+    """Fill the v3 typed-passage fields on ``artifact`` in place.
+
+    A base-only artifact gets the degenerate topology (all edges ``base``, no passages,
+    ``base_node_count == N``). Fields already present (e.g. from a future passage
+    builder) are validated and kept. Always computes ``passage_revision`` from the
+    canonical document + mask dimensions.
+
+    Validates the invariants every reader also enforces, so a malformed in-memory
+    artifact is rejected here rather than producing an unreadable ``.bin``.
+    """
+    N = int(np.asarray(artifact["nodes"], dtype=np.int64).reshape(-1, 2).shape[0])
+    E = int(np.asarray(artifact["edges"], dtype=np.int64).reshape(-1, 2).shape[0])
+
+    base_node_count = int(artifact.get("base_node_count", N))
+    edge_kinds = artifact.get("edge_kinds")
+    edge_passage = artifact.get("edge_passage")
+    p_start = artifact.get("passage_node_start")
+    p_count = artifact.get("passage_node_count")
+
+    if edge_kinds is None:
+        edge_kinds = np.zeros(E, dtype=np.uint8)
+    else:
+        edge_kinds = np.ascontiguousarray(edge_kinds, dtype=np.uint8).reshape(-1)
+    if edge_passage is None:
+        edge_passage = np.full(E, -1, dtype=np.int32)
+    else:
+        edge_passage = np.ascontiguousarray(edge_passage, dtype=np.int32).reshape(-1)
+    p_start = (np.zeros(0, dtype=np.int32) if p_start is None
+               else np.ascontiguousarray(p_start, dtype=np.int32).reshape(-1))
+    p_count = (np.zeros(0, dtype=np.int32) if p_count is None
+               else np.ascontiguousarray(p_count, dtype=np.int32).reshape(-1))
+
+    P = int(p_start.shape[0])
+    if p_count.shape[0] != P:
+        raise ValueError("passage_node_start and passage_node_count length mismatch")
+    if edge_kinds.shape[0] != E or edge_passage.shape[0] != E:
+        raise ValueError("edge_kinds/edge_passage length must equal edge count")
+    if not (0 <= base_node_count <= N):
+        raise ValueError(f"base_node_count {base_node_count} out of range [0,{N}]")
+
+    # Passage node ranges are contiguous, ordered, and cover exactly the tail.
+    expected = base_node_count
+    for p in range(P):
+        s, c = int(p_start[p]), int(p_count[p])
+        if c < 1:
+            raise ValueError(f"passage {p} has non-positive node count {c}")
+        if s != expected:
+            raise ValueError(f"passage {p} start {s} not contiguous (expected {expected})")
+        expected += c
+    if P and expected != N:
+        raise ValueError(f"passage node ranges end at {expected}, expected N={N}")
+    if P == 0 and base_node_count != N:
+        raise ValueError("no passages but base_node_count != N")
+
+    edges = np.asarray(artifact["edges"], dtype=np.int64).reshape(-1, 2)
+    if E and (int(edges.min()) < 0 or int(edges.max()) >= N):
+        raise ValueError("edge endpoint out of node range")
+
+    # Edge kind / owning-ordinal and endpoint-topology consistency.
+    for e in range(E):
+        kind = int(edge_kinds[e])
+        owner = int(edge_passage[e])
+        u, v = map(int, edges[e])
+        if kind == EDGE_KIND_BASE:
+            if owner != -1:
+                raise ValueError(f"base edge {e} must have passage ordinal -1")
+            if u >= base_node_count or v >= base_node_count:
+                raise ValueError(f"base edge {e} touches a passage node")
+        elif kind in (EDGE_KIND_PASSAGE, EDGE_KIND_TRANSITION):
+            if not (0 <= owner < P):
+                raise ValueError(f"typed edge {e} owner {owner} out of range [0,{P})")
+            else:
+                start, count = int(p_start[owner]), int(p_count[owner])
+                end = start + count - 1
+                u_in = start <= u <= end
+                v_in = start <= v <= end
+                if kind == EDGE_KIND_PASSAGE:
+                    if not (u_in and v_in and abs(u - v) == 1):
+                        raise ValueError(
+                            f"passage edge {e} must join consecutive nodes of owner {owner}")
+                elif not ((u < base_node_count and v in (start, end))
+                          or (v < base_node_count and u in (start, end))):
+                    raise ValueError(
+                        f"transition edge {e} must join base to an endpoint of owner {owner}")
+        else:
+            raise ValueError(f"edge {e} has unknown kind {kind}")
+
+    artifact["base_node_count"] = np.int32(base_node_count)
+    artifact["edge_kinds"] = edge_kinds
+    artifact["edge_passage"] = edge_passage
+    artifact["passage_node_start"] = p_start
+    artifact["passage_node_count"] = p_count
+    artifact["passage_revision"] = passage_revision(level_passages, map_width, map_height)
+    return artifact
+
+
 def save_navgraph(artifact, mask_path):
     """Write ``.navgraph.npz`` and ``.navgraph.bin`` next to ``mask_path``.
 
+    Both files are written to temporary siblings first and then atomically
+    ``os.replace``-d into place, so a crashed/interrupted build never leaves a
+    half-written binary that a reader or the serving path could pick up.
+
     Returns ``(npz_path, bin_path)``.
     """
+    import tempfile
+
     base, _ = os.path.splitext(mask_path)
     npz_path = base + ".navgraph.npz"
     bin_path = base + ".navgraph.bin"
 
+    if "passage_revision" not in artifact:
+        H, W = int(artifact["mask_shape"][0]), int(artifact["mask_shape"][1])
+        _attach_passage_topology(artifact, level_passages=None, map_width=W, map_height=H)
+
+    out_dir = os.path.dirname(npz_path) or "."
+    tmp_npz = tmp_bin = None
+    try:
+        # Pass an open handle (not a path) to ``savez_compressed`` so it writes
+        # exactly where we point it — a bare path lacking ``.npz`` would get the
+        # suffix appended, defeating the atomic rename.
+        fd, tmp_npz = tempfile.mkstemp(prefix=".navgraph-", suffix=".npztmp", dir=out_dir)
+        with os.fdopen(fd, "wb") as handle:
+            _save_npz(handle, artifact)
+
+        fd, tmp_bin = tempfile.mkstemp(prefix=".navgraph-", suffix=".bintmp", dir=out_dir)
+        os.close(fd)
+        _write_bin(tmp_bin, artifact)
+
+        os.replace(tmp_npz, npz_path)
+        tmp_npz = None
+        os.replace(tmp_bin, bin_path)
+        tmp_bin = None
+    finally:
+        for leftover in (tmp_npz, tmp_bin):
+            if leftover and os.path.exists(leftover):
+                try:
+                    os.remove(leftover)
+                except OSError:
+                    pass
+    return npz_path, bin_path
+
+
+def _save_npz(npz_file, artifact):
     np.savez_compressed(
-        npz_path,
+        npz_file,
         version=np.int32(artifact["version"]),
         nodes=artifact["nodes"],
         edges=artifact["edges"],
         weights=artifact["weights"],
         components=artifact["components"],
+        edge_kinds=artifact["edge_kinds"],
+        edge_passage=artifact["edge_passage"],
+        passage_node_start=artifact["passage_node_start"],
+        passage_node_count=artifact["passage_node_count"],
+        passage_node_points=artifact.get(
+            "passage_node_points", np.zeros((0, 2), dtype=np.float64)),
+        shadowed_base_nodes=artifact.get(
+            "shadowed_base_nodes", np.zeros((0, 2), dtype=np.int32)),
+        shadowed_base_edges=artifact.get(
+            "shadowed_base_edges", np.zeros((0, 2, 2), dtype=np.int32)),
+        base_node_count=np.int32(artifact["base_node_count"]),
+        passage_revision=artifact["passage_revision"],
         min_cost_per_px=artifact["min_cost_per_px"],
         mask_shape=artifact["mask_shape"],
         coarse_scale=artifact["coarse_scale"],
+        coarse_origin=artifact.get("coarse_origin", np.zeros(2, dtype=np.int32)),
         coarse_minval=artifact["coarse_minval"],
         coarse_clear=artifact["coarse_clear"],
         coarse_labels=artifact["coarse_labels"],
@@ -2188,19 +3698,25 @@ def save_navgraph(artifact, mask_path):
         coarse_hitzone=artifact["coarse_hitzone"],
         stats=json.dumps(artifact["stats"]),
     )
-    _write_bin(bin_path, artifact)
-    return npz_path, bin_path
 
 
 def _write_bin(bin_path, artifact):
-    """Serialize the compact little-endian binary (see module docstring)."""
+    """Serialize the compact little-endian v4 binary (see module docstring)."""
+    if "passage_revision" not in artifact:
+        H0, W0 = int(artifact["mask_shape"][0]), int(artifact["mask_shape"][1])
+        _attach_passage_topology(artifact, level_passages=None, map_width=W0, map_height=H0)
+
     nodes = np.ascontiguousarray(artifact["nodes"], dtype="<i4")
     edges = np.ascontiguousarray(artifact["edges"], dtype="<i4")
     weights = np.ascontiguousarray(artifact["weights"], dtype="<f4")
     components = np.ascontiguousarray(artifact["components"], dtype="<i4")
+    edge_kinds = np.ascontiguousarray(artifact["edge_kinds"], dtype="<u1")
+    edge_passage = np.ascontiguousarray(artifact["edge_passage"], dtype="<i4")
+    passage_node_start = np.ascontiguousarray(artifact["passage_node_start"], dtype="<i4")
+    passage_node_count = np.ascontiguousarray(artifact["passage_node_count"], dtype="<i4")
     coarse_minval = np.ascontiguousarray(artifact["coarse_minval"], dtype="<u1")
     coarse_clear = np.ascontiguousarray(artifact["coarse_clear"], dtype="<u1")
-    coarse_labels = np.ascontiguousarray(artifact["coarse_labels"], dtype="<i4")
+    coarse_labels = np.ascontiguousarray(artifact["coarse_labels"], dtype="<u1")
     coarse_hitzone = np.ascontiguousarray(artifact["coarse_hitzone"], dtype="<u1")
 
     H, W = int(artifact["mask_shape"][0]), int(artifact["mask_shape"][1])
@@ -2208,8 +3724,16 @@ def _write_bin(bin_path, artifact):
     E = edges.shape[0]
     ch, cw = coarse_minval.shape
     hh_, hw_ = coarse_hitzone.shape
+    base_node_count = int(artifact["base_node_count"])
+    P = int(passage_node_start.shape[0])
+    rev_bytes = str(artifact["passage_revision"]).encode("ascii")
+    coarse_origin = np.asarray(
+        artifact.get("coarse_origin", (0, 0)), dtype="<i4").reshape(2)
+    if len(rev_bytes) > NAVGRAPH_REVISION_MAX_LEN:
+        raise ValueError(
+            f"passage_revision too long ({len(rev_bytes)} > {NAVGRAPH_REVISION_MAX_LEN})")
 
-    # Fixed 52-byte header (magic + scalars), then tightly packed arrays.
+    # Fixed 72-byte v4 header + revision string, then tightly packed arrays.
     with open(bin_path, "wb") as f:
         f.write(NAVGRAPH_MAGIC)
         f.write(np.array([artifact["version"]], dtype="<u4").tobytes())
@@ -2218,10 +3742,17 @@ def _write_bin(bin_path, artifact):
         f.write(np.array([N, E], dtype="<u4").tobytes())
         f.write(np.array([int(artifact["coarse_scale"]), ch, cw], dtype="<i4").tobytes())
         f.write(np.array([int(artifact["hitzone_scale"]), hh_, hw_], dtype="<i4").tobytes())
+        f.write(np.array([base_node_count, P, len(rev_bytes)], dtype="<u4").tobytes())
+        f.write(coarse_origin.tobytes())
+        f.write(rev_bytes)
         f.write(nodes.tobytes())
         f.write(edges.tobytes())
         f.write(weights.tobytes())
         f.write(components.tobytes())
+        f.write(edge_kinds.tobytes())
+        f.write(edge_passage.tobytes())
+        f.write(passage_node_start.tobytes())
+        f.write(passage_node_count.tobytes())
         f.write(coarse_minval.tobytes())
         f.write(coarse_clear.tobytes())
         f.write(coarse_labels.tobytes())

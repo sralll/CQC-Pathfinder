@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% load static i18n %}
+
+{% block styles %}
+<link rel="stylesheet" href="{% static 'results/css/debug_user_routes.css' %}">
+{% endblock %}
+
+{% block scripts %}
+<script type="module" src="{% static 'results/js/debug_user_routes.js' %}"></script>
+{% endblock %}
+
+{% block content %}
+<main id="debug-user-routes" data-files-url="{% url 'debug_user_route_files' %}">
+    <aside class="dur-sidebar">
+        <div class="dur-heading">
+            <div>
+                <h1>{% trans "User-map route debug" %}</h1>
+                <p>{% trans "Load a routed map, place both endpoints, and run the real Infinity navgraph pathfinder." %}</p>
+            </div>
+            <button id="dur-reload" type="button">{% trans "Reload" %}</button>
+        </div>
+
+        <div id="dur-file-list" class="dur-file-list" aria-label="{% trans 'Maps' %}"></div>
+
+        <section class="dur-controls" aria-label="{% trans 'Route points' %}">
+            <h2>{% trans "Route points" %}</h2>
+            <div class="dur-mode-buttons">
+                <button id="dur-set-start" class="active" type="button">
+                    <span class="dur-swatch dur-start"></span>{% trans "Set start" %}
+                </button>
+                <button id="dur-set-goal" type="button">
+                    <span class="dur-swatch dur-goal"></span>{% trans "Set goal" %}
+                </button>
+            </div>
+            <label>{% trans "Start" %}
+                <span class="dur-coordinate"><input id="dur-start-x" type="number" step="0.1"><input id="dur-start-y" type="number" step="0.1"></span>
+            </label>
+            <label>{% trans "Goal" %}
+                <span class="dur-coordinate"><input id="dur-goal-x" type="number" step="0.1"><input id="dur-goal-y" type="number" step="0.1"></span>
+            </label>
+            <div class="dur-action-buttons">
+                <button id="dur-first-passage" type="button" disabled>{% trans "Place around first passage" %}</button>
+                <button id="dur-find" class="dur-primary" type="button" disabled>{% trans "Find routes" %}</button>
+            </div>
+            <label class="dur-check"><input id="dur-show-passages" type="checkbox" checked> {% trans "Show passage corridors" %}</label>
+            <label class="dur-check"><input id="dur-full-refinement" type="checkbox"> {% trans "Full route refinement (slow)" %}</label>
+            <p class="dur-help">{% trans "Click to place the selected endpoint. Use the mouse wheel to zoom; Shift-drag or middle-drag to pan." %}</p>
+        </section>
+    </aside>
+
+    <section class="dur-stage">
+        <div class="dur-stage-heading">
+            <strong id="dur-title">{% trans "Select a map" %}</strong>
+            <span id="dur-summary"></span>
+        </div>
+        <div id="dur-map-wrap" class="dur-map-wrap">
+            <svg id="dur-map" viewBox="0 0 100 100" aria-label="{% trans 'User-map route debug map' %}">
+                <g id="dur-map-layer"></g>
+                <g id="dur-passage-layer"></g>
+                <g id="dur-route-layer"></g>
+                <g id="dur-point-layer"></g>
+            </svg>
+        </div>
+        <pre id="dur-output" class="dur-output">{% trans "Loading maps…" %}</pre>
+    </section>
+</main>
+{% endblock %}

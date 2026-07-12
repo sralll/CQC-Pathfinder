@@ -7,16 +7,6 @@
 import { routeDistinct } from './distinct.js';
 import { classificationFromPassageSpans, classifyRoutePassages } from './passage_classifier.js';
 
-const DEFAULT_PASSAGE_SAMPLE_STEP_PX = 4;
-const DEFAULT_PASSAGE_MIN_SEPARATION_PX = 3;
-const DEFAULT_PASSAGE_MAX_SEPARATION_PX = 24;
-const DEFAULT_PASSAGE_WIDTH_FRACTION = 0.25;
-const DEFAULT_PASSAGE_MIN_SEPARATED_SAMPLES = 3;
-const DEFAULT_PASSAGE_MIN_SEPARATED_FRACTION = 0.35;
-const DEFAULT_PASSAGE_ENDPOINT_FRACTION = 0.1;
-const DEFAULT_PASSAGE_MAX_SAMPLES = 64;
-const EPSILON = 1e-9;
-
 function routeToFlat(route) {
     if (!Array.isArray(route)) return null;
     if (route.length === 0) return [];
@@ -43,105 +33,6 @@ function classificationForRoute(route, flat, passages, classifierOptions) {
     return classifyRoutePassages(flat, passages, classifierOptions);
 }
 
-function flatToPoints(flat) {
-    const points = [];
-    for (let i = 0; i + 1 < flat.length; i += 2) {
-        points.push({ x: flat[i], y: flat[i + 1] });
-    }
-    return points;
-}
-
-function cumulativeDistances(points) {
-    const cumulative = [0];
-    for (let i = 1; i < points.length; i++) {
-        cumulative.push(cumulative[i - 1]
-            + Math.hypot(points[i].x - points[i - 1].x, points[i].y - points[i - 1].y));
-    }
-    return cumulative;
-}
-
-function pointAtDistance(points, cumulative, distance) {
-    if (points.length === 0) return null;
-    if (distance <= 0) return points[0];
-    const total = cumulative[cumulative.length - 1];
-    if (distance >= total) return points[points.length - 1];
-    let low = 0;
-    let high = cumulative.length - 1;
-    while (low + 1 < high) {
-        const middle = (low + high) >>> 1;
-        if (cumulative[middle] <= distance) low = middle;
-        else high = middle;
-    }
-    const span = cumulative[low + 1] - cumulative[low];
-    const fraction = span > 0 ? (distance - cumulative[low]) / span : 0;
-    const a = points[low];
-    const b = points[low + 1];
-    return {
-        x: a.x + (b.x - a.x) * fraction,
-        y: a.y + (b.y - a.y) * fraction,
-    };
-}
-
-function pointSegmentDistance(point, a, b) {
-    const dx = b.x - a.x;
-    const dy = b.y - a.y;
-    const lengthSquared = dx * dx + dy * dy;
-    if (lengthSquared <= EPSILON) return Math.hypot(point.x - a.x, point.y - a.y);
-    let fraction = ((point.x - a.x) * dx + (point.y - a.y) * dy) / lengthSquared;
-    fraction = Math.max(0, Math.min(1, fraction));
-    return Math.hypot(point.x - (a.x + dx * fraction), point.y - (a.y + dy * fraction));
-}
-
-function pointPolylineDistance(point, polyline) {
-    let distance = Infinity;
-    for (let i = 1; i < polyline.length; i++) {
-        distance = Math.min(distance, pointSegmentDistance(point, polyline[i - 1], polyline[i]));
-    }
-    return distance;
-}
-
-function positiveNumber(value, fallback) {
-    return Number.isFinite(value) && value > 0 ? value : fallback;
-}
-
-function nonNegativeFraction(value, fallback) {
-    return Number.isFinite(value) && value >= 0 && value <= 1 ? value : fallback;
-}
-
-function positiveInteger(value, fallback) {
-    return Number.isInteger(value) && value > 0 ? value : fallback;
-}
-
-function passageOptions(options) {
-    return {
-        sampleStepPx: positiveNumber(options.passageSampleStepPx, DEFAULT_PASSAGE_SAMPLE_STEP_PX),
-        minSeparationPx: Number.isFinite(options.passageMinSeparationPx)
-            && options.passageMinSeparationPx > 0 ? options.passageMinSeparationPx : null,
-        minSeparationFloorPx: positiveNumber(
-            options.passageMinSeparationFloorPx,
-            DEFAULT_PASSAGE_MIN_SEPARATION_PX,
-        ),
-        maxSeparationPx: positiveNumber(
-            options.passageMaxSeparationPx,
-            DEFAULT_PASSAGE_MAX_SEPARATION_PX,
-        ),
-        widthFraction: positiveNumber(options.passageWidthFraction, DEFAULT_PASSAGE_WIDTH_FRACTION),
-        minSeparatedSamples: positiveInteger(
-            options.passageMinSeparatedSamples,
-            DEFAULT_PASSAGE_MIN_SEPARATED_SAMPLES,
-        ),
-        minSeparatedFraction: nonNegativeFraction(
-            options.passageMinSeparatedFraction,
-            DEFAULT_PASSAGE_MIN_SEPARATED_FRACTION,
-        ),
-        endpointFraction: nonNegativeFraction(
-            options.passageEndpointFraction,
-            DEFAULT_PASSAGE_ENDPOINT_FRACTION,
-        ),
-        maxSamples: positiveInteger(options.passageMaxSamples, DEFAULT_PASSAGE_MAX_SAMPLES),
-    };
-}
-
 function surfaceSequence(classification) {
     return classification.legs
         .filter((leg) => leg.surface !== 'base')
@@ -160,86 +51,8 @@ function classificationSummary(classification) {
     };
 }
 
-function passageLegs(classification) {
-    return classification.legs.filter((leg) => leg.surface !== 'base');
-}
-
 function baseLegs(classification) {
     return classification.legs.filter((leg) => leg.surface === 'base');
-}
-
-function separationThreshold(passage, options) {
-    if (options.minSeparationPx !== null) return options.minSeparationPx;
-    return Math.max(
-        options.minSeparationFloorPx,
-        Math.min(options.maxSeparationPx, passage.width * options.widthFraction),
-    );
-}
-
-function directionalSeparation(source, target, threshold, options) {
-    const cumulative = cumulativeDistances(source);
-    const length = cumulative[cumulative.length - 1];
-    if (!(length > 0) || target.length < 2) {
-        return { samples: 0, separatedSamples: 0, separatedFraction: 0, maxDistance: 0 };
-    }
-    const sampleCount = Math.min(
-        options.maxSamples,
-        Math.max(8, Math.ceil(length / options.sampleStepPx)),
-    );
-    let samples = 0;
-    let separatedSamples = 0;
-    let maxDistance = 0;
-    for (let i = 1; i < sampleCount; i++) {
-        const fraction = i / sampleCount;
-        if (fraction < options.endpointFraction || fraction > 1 - options.endpointFraction) continue;
-        const point = pointAtDistance(source, cumulative, length * fraction);
-        const distance = pointPolylineDistance(point, target);
-        samples++;
-        maxDistance = Math.max(maxDistance, distance);
-        if (distance + EPSILON >= threshold) separatedSamples++;
-    }
-    return {
-        samples,
-        separatedSamples,
-        separatedFraction: samples > 0 ? separatedSamples / samples : 0,
-        maxDistance,
-    };
-}
-
-function comparePassageLegs(candidateLeg, existingLeg, passage, options) {
-    const thresholdPx = separationThreshold(passage, options);
-    const candidatePoints = flatToPoints(candidateLeg.points);
-    const existingPoints = flatToPoints(existingLeg.points);
-    const candidateToExisting = directionalSeparation(
-        candidatePoints,
-        existingPoints,
-        thresholdPx,
-        options,
-    );
-    const existingToCandidate = directionalSeparation(
-        existingPoints,
-        candidatePoints,
-        thresholdPx,
-        options,
-    );
-    const requiredSamples = Math.min(
-        options.minSeparatedSamples,
-        candidateToExisting.samples,
-        existingToCandidate.samples,
-    );
-    const meaningful = requiredSamples > 0
-        && candidateToExisting.separatedSamples >= requiredSamples
-        && existingToCandidate.separatedSamples >= requiredSamples
-        && candidateToExisting.separatedFraction + EPSILON >= options.minSeparatedFraction
-        && existingToCandidate.separatedFraction + EPSILON >= options.minSeparatedFraction;
-    return {
-        passageId: passage.id,
-        meaningful,
-        thresholdPx,
-        requiredSamples,
-        candidateToExisting,
-        existingToCandidate,
-    };
 }
 
 function compareSurroundingBaseLegs(candidateClassification, existingClassification,
@@ -268,7 +81,7 @@ function compareSurroundingBaseLegs(candidateClassification, existingClassificat
 }
 
 function compareClassifiedPair(candidateFlat, candidateClassification, existingFlat,
-    existingClassification, grid, w, h, passagesById, options) {
+    existingClassification, grid, w, h, options) {
     const candidateSequence = surfaceSequence(candidateClassification);
     const existingSequence = surfaceSequence(existingClassification);
     if (!sequencesEqual(candidateSequence, existingSequence)) {
@@ -296,32 +109,13 @@ function compareClassifiedPair(candidateFlat, candidateClassification, existingF
         };
     }
 
-    const candidateLegList = passageLegs(candidateClassification);
-    const existingLegList = passageLegs(existingClassification);
-    const localOptions = passageOptions(options);
-    const passageComparisons = [];
-    for (let i = 0; i < candidateLegList.length; i++) {
-        const passageId = candidateSequence[i];
-        const passage = passagesById.get(passageId);
-        if (!passage) continue;
-        passageComparisons.push(comparePassageLegs(
-            candidateLegList[i],
-            existingLegList[i],
-            passage,
-            localOptions,
-        ));
-    }
-    if (passageComparisons.some((comparison) => comparison.meaningful)) {
-        return {
-            distinct: true,
-            reason: 'meaningful lateral separation on shared passage',
-            strategy: 'passage-lateral',
-            candidatePassages: candidateSequence,
-            existingPassages: existingSequence,
-            passageComparisons,
-            legacy,
-        };
-    }
+    // A passage is one route choice, regardless of where each refined line runs
+    // inside its corridor. Only compare the surrounding base-surface legs for
+    // real obstacle separation; the level-0 mask beneath a passage is irrelevant.
+    const passageComparisons = candidateSequence.map((passageId) => ({
+        passageId,
+        ignoredForDistinctness: true,
+    }));
     const surroundingBase = compareSurroundingBaseLegs(
         candidateClassification,
         existingClassification,
@@ -344,7 +138,7 @@ function compareClassifiedPair(candidateFlat, candidateClassification, existingF
     }
     return {
         distinct: false,
-        reason: 'no meaningful separation on shared passage',
+        reason: 'differences confined to shared passages',
         strategy: 'same-passage-overlap',
         candidatePassages: candidateSequence,
         existingPassages: existingSequence,
@@ -397,7 +191,6 @@ export function layeredRouteDistinct(candidateRoute, existingRoutes, grid, w, h,
         );
     }
 
-    const passagesById = new Map(passages.map((passage) => [passage.id, passage]));
     const perRoute = [];
     for (let i = 0; i < validExistingRoutes.length; i++) {
         const existing = validExistingRoutes[i];
@@ -409,7 +202,6 @@ export function layeredRouteDistinct(candidateRoute, existingRoutes, grid, w, h,
             grid,
             w,
             h,
-            passagesById,
             options,
         );
         perRoute.push({

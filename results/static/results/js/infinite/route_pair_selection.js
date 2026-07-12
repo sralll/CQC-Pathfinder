@@ -156,8 +156,18 @@ export function selectWeightedRoutePair(paths, { start, goal, config = {}, rng =
 
 export function skippedBarriersForSelection(paths, selected) {
     const selectedSet = new Set(selected || []);
-    const highestSelectedIndex = Math.max(...(selected || []).map((p) => p.routeIndex || 0), 0);
+    // A barrier placed after route R was active only while computing routes
+    // with routeIndex > R.  The rendered scene applies each skipped barrier to
+    // BOTH selected routes, so it is safe to draw only barriers that predate
+    // the lower selected index.  Using the former highest-selected bound made
+    // pairs such as routes 1 + 5 render barriers 2..4 across route 1 even though
+    // that route existed before those barriers were placed.
+    const lowestSelectedIndex = Math.min(
+        ...(selected || []).map((p) => p.routeIndex || Infinity),
+        Infinity,
+    );
+    if (!Number.isFinite(lowestSelectedIndex)) return [];
     return (paths || [])
-        .filter((p) => p.routeIndex < highestSelectedIndex && !selectedSet.has(p) && p.barrier)
+        .filter((p) => p.routeIndex < lowestSelectedIndex && !selectedSet.has(p) && p.barrier)
         .map((p) => p.barrier);
 }

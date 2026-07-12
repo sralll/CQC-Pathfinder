@@ -1,4 +1,7 @@
-import { MaskSceneSource } from './infinite/mask_scene_source.js';
+import {
+    MaskSceneSource,
+    maskBarrierStrokeWidthMapUnits,
+} from './infinite/mask_scene_source.js';
 
 /* =========================================================
    INFINITE PLAY — procedurally-generated sprint route-choice
@@ -121,7 +124,7 @@ function controlStrokeWidthForScene(sc = scene) {
 
 function blockingStrokeWidthForScene(sc = scene) {
     return sc?.kind === 'mask'
-        ? PLAY_BLOCKING_STROKE_WIDTH * maskVisualScaleForScene(sc)
+        ? maskBarrierStrokeWidthMapUnits(sc.mapScaleDenominator, sc.editorScale)
         : BLOCKING_STROKE_WIDTH;
 }
 
@@ -796,7 +799,6 @@ async function next() {
     if (ct) ct.textContent = '';
     const bar = SVG('play-btn-bar');
     if (bar) bar.innerHTML = '';
-    const startTime = performance.now();
     showMapSpinner();
     try {
         scene = await takeNextScene();
@@ -810,8 +812,6 @@ async function next() {
         cameraDuration: 1000,
         onCameraReady: beginChoice,
     });
-    const elapsed = performance.now() - startTime;
-    console.log(`infinite map swap took ${elapsed.toFixed(1)} ms`);
     scheduleUpcomingScenePrerender();
     scheduleBatchPreparation();
 }
@@ -870,11 +870,9 @@ function scheduleBatchPreparation() {
         prepareTimer = null;
         if (preparedBatch || preparingBatch) return;
         preparingBatch = true;
-        const startTime = performance.now();
         try {
             const batch = await generateSceneBatchAsync();
             if (batch !== currentBatch) preparedBatch = batch;
-            console.log(`prepared next infinite map in ${(performance.now() - startTime).toFixed(1)} ms`);
             scheduleScenePrerender(preparedBatch?.scenes?.[0]);
         } catch (err) {
             console.warn('failed to prepare next infinite map:', err);
@@ -2127,7 +2125,7 @@ function buildMaskScene(pair) {
             obstacle,
             run_time: runTime,
             time: runTime,
-            routeIndex: r.index + 1,
+            routeIndex: Number.isFinite(r.routeIndex) ? r.routeIndex : r.index + 1,
             pos: side,
             side,
             sideLabel: side > 0 ? 'R' : side < 0 ? 'L' : 'C',
@@ -2140,6 +2138,7 @@ function buildMaskScene(pair) {
         ziel,
         routes,
         routeResult: {
+            routeIndexes: routes.map((route) => route.routeIndex),
             skippedBarriers: pair.skippedBarriers || [],
             blockFastest: (pair.skippedBarriers || []).length > 0,
             barriers: pair.barriers || [],
@@ -2687,9 +2686,7 @@ function scheduleScenePrerender(sceneToRender) {
     const run = () => {
         _prerenderTimer = null;
         if (!sceneToRender._renderCache) {
-            const startTime = performance.now();
             buildRenderedScene(sceneToRender);
-            console.log(`prerendered infinite scene in ${(performance.now() - startTime).toFixed(1)} ms`);
         }
     };
     if ('requestIdleCallback' in window) {

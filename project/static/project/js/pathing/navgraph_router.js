@@ -34,19 +34,23 @@ import {
 
 // ------------------------------------------------------------------ constants
 export const IMPASSABLE = 0;
-export const SUPPORTED_VERSION = 2; // .bin layout with coarse_hitzone (navgraph.py NAVGRAPH_VERSION)
+// Current typed-passage .bin layout (navgraph.py NAVGRAPH_VERSION). A legacy v2
+// artifact (base-only, no passage section) is still parsed, but only a file with
+// no passages may run on it — the caller compares passageRevision (CR 8.3/8.4).
+export const SUPPORTED_VERSION = 4;
+export const LEGACY_TYPED_VERSION = 3;
+export const LEGACY_BASE_ONLY_VERSION = 2;
+// Typed edge kinds (mirror navgraph.py EDGE_KIND_*).
+export const EDGE_KIND_BASE = 0;
+export const EDGE_KIND_PASSAGE = 1;
+export const EDGE_KIND_TRANSITION = 2;
+// Bounds cap for the serialized passage-revision string (mirror navgraph.py).
+const NAVGRAPH_REVISION_MAX_LEN = 256;
 const SQRT2 = Math.SQRT2;
 
-// Shared barrier ENFORCEMENT width in mask px (WP 5.2/5.3 single source of
-// truth). Used by (a) refine_theta's subgrid rasterisation, (b) the
-// countBarrierViolations legality band and (c) the isClearOfRouteNodes gate in
-// findBarrier. The purple bar the player sees is drawn separately by
-// drawRouteBlocks at BLOCKING_STROKE_WIDTH.
-//
-// Normal play draws blocking marks 5 editor px wide. At the pathing mask's
-// 0.710 lift scale that is round(5 / 0.710) = 7 full-resolution mask px. This
-// is also safely above the minimum watertight stamp width of 3 measured during
-// WP 5.3. Defined here because refine_theta imports and re-exports it.
+// Default barrier width for editor/headless callers without rendered-map
+// metadata. Infinite play overrides it per file with the exact mask-space
+// projection of its unchanged SVG stroke.
 export const BARRIER_DRAW_WIDTH_MASK_PX = 7;
 
 // Default tuning config. Every threshold that Phase 5 may tune lives here so
@@ -56,6 +60,18 @@ export const DEFAULT_CONFIG = Object.freeze({
 	// --- endpoint cell prefilters (evaluated once when indexing sample cells) --
 	clearanceMinPx: 12,        // require coarse_clear >= this (≈3 coarse px)
 	terrainMinValue: 200,      // start/goal pixels must be on bright terrain (grayscale >= 200)
+	// Prefer endpoints in obstacle-rich streets/alleys instead of sampling large
+	// open plazas in direct proportion to their area. The weighted branch uses
+	// the exact count of black pixels in this square neighbourhood; the uniform
+	// branch deliberately keeps occasional open-space endpoints possible. Squared
+	// density makes genuinely intricate areas beat merely non-empty open areas.
+	endpointObstacleWindowPx: 100,
+	endpointDensityExponent: 2,
+	endpointUniformMix: 0.15,
+	// Start points additionally favour the area-centroid of the saved region.
+	// At the most distant region edge exp(-strength) remains as its relative
+	// center weight; goals stay center-neutral to preserve route coverage.
+	startCenterBiasStrength: 0.8,
 	// --- pair prefilters -----------------------------------------------------
 	distMinPx: 500,
 	distMaxPx: 1500,
@@ -83,9 +99,11 @@ export const DEFAULT_CONFIG = Object.freeze({
 	barrierAnchorMinAreaPx: 60,
 	barrierElongationRatio: 8,
 	barrierFloodCapPx: 250,
-	// isClearOfRouteNodes gate: the probe midpoint must sit this far (px) from the
-	// adjacent route vertices. City uses ROUTE_BARRIER_DRAW_WIDTH (1); the mask
-	// equivalent is the enforcement width BARRIER_DRAW_WIDTH_MASK_PX (7).
+	// Overridden for uploaded maps with the exact mask-space projection of the
+	// existing player SVG stroke. Seven remains the editor/default fallback.
+	barrierWidthPx: BARRIER_DRAW_WIDTH_MASK_PX,
+	// Uploaded-map callers override this together with barrierWidthPx so
+	// placement uses the same per-map stroke dimension.
 	barrierClearNodeDistPx: BARRIER_DRAW_WIDTH_MASK_PX,
 	// --- selection (shared route_pair_selection.js, injected) ----------------
 	sideGapMinPx: 40,          // minSideGap in px (side is normalized to px on masks)
@@ -150,54 +168,162 @@ function magic4(buf) {
 	return String.fromCharCode(buf[0], buf[1], buf[2], buf[3]);
 }
 
+const REBUILD_HINT =
+	'rebuild with: python manage.py build_navgraph --file <mask> --force';
+
+/** Reject a non-finite or out-of-range unsigned count. */
+function requireCount(name, value, max) {
+	if (!Number.isInteger(value) || value < 0 || value > max)
+		throw new Error(`navgraph artifact has invalid ${name} (${value})`);
+	return value;
+}
+
 /**
- * Parse a `.navgraph.bin` (v2, magic `NVG1`, with `coarse_hitzone`) from an
- * ArrayBuffer or Uint8Array. Returns a plain object with typed arrays + scalar
- * header fields. Mirrors the harness `loadArtifact` parser exactly; rejects
- * non-v2 artifacts with a rebuild hint.
+ * Parse a `.navgraph.bin` (magic `NVG1`) from an ArrayBuffer or Uint8Array.
+ * Returns a plain object with typed arrays + scalar header fields, including the
+ * v3 typed-passage topology (`baseNodeCount`, `passageCount`, `passageRevision`,
+ * `edgeKinds`, `edgePassage`, `passageNodeStart`, `passageNodeCount`).
+ *
+ * v3 is the current typed format. A legacy v2 artifact (base-only, no passage
+ * section) is still parsed for backward compatibility and reported as
+ * `baseNodeCount === N`, zero passages, `passageRevision === null`; the caller
+ * decides whether the served file may run on it (CR 8.3/8.4). Every count is
+ * bounds-checked and the exact byte length is verified, so a truncated or
+ * overflowing artifact is rejected rather than read as silent zeros.
  *
  * @param {ArrayBuffer|Uint8Array} input  raw bytes of the .navgraph.bin
  */
 export function loadArtifact(input) {
-	const buf = input instanceof Uint8Array
-		? input
-		: new Uint8Array(input);
+	const buf = input instanceof Uint8Array ? input : new Uint8Array(input);
 	if (buf.length < 52) throw new Error('navgraph artifact too small (truncated header)');
 	const magic = magic4(buf);
 	if (magic !== 'NVG1') throw new Error(`bad magic ${JSON.stringify(magic)} in navgraph artifact`);
 	const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
 	const version = dv.getUint32(4, true);
-	if (version !== SUPPORTED_VERSION)
+	if (version !== SUPPORTED_VERSION && version !== LEGACY_TYPED_VERSION
+		&& version !== LEGACY_BASE_ONLY_VERSION)
 		throw new Error(`unsupported navgraph version ${version} ` +
-			`(need v${SUPPORTED_VERSION}); rebuild with: python manage.py build_navgraph --file <mask> --force`);
+			`(need v${SUPPORTED_VERSION}); ${REBUILD_HINT}`);
 	const H = dv.getInt32(8, true);
 	const W = dv.getInt32(12, true);
 	const minCostPerPx = dv.getFloat32(16, true);
-	const N = dv.getUint32(20, true);
-	const E = dv.getUint32(24, true);
+	const N = requireCount('node count', dv.getUint32(20, true), 0x7fffffff);
+	const E = requireCount('edge count', dv.getUint32(24, true), 0x7fffffff);
 	const coarseScale = dv.getInt32(28, true);
-	const ch = dv.getInt32(32, true);
-	const cw = dv.getInt32(36, true);
+	const ch = requireCount('coarse height', dv.getInt32(32, true), 0x7fffffff);
+	const cw = requireCount('coarse width', dv.getInt32(36, true), 0x7fffffff);
 	const hitzoneScale = dv.getInt32(40, true);
-	const hh = dv.getInt32(44, true);
-	const hw = dv.getInt32(48, true);
+	const hh = requireCount('hitzone height', dv.getInt32(44, true), 0x7fffffff);
+	const hw = requireCount('hitzone width', dv.getInt32(48, true), 0x7fffffff);
+	if (H <= 0 || W <= 0 || coarseScale <= 0 || hitzoneScale <= 0)
+		throw new Error('navgraph artifact has invalid mask/scale dimensions');
 
-	let off = 52;
+	// --- passage section header (v3/v4) + cropped-grid origin (v4) ---
+	let headerEnd = 52;
+	let baseNodeCount = N;
+	let passageCount = 0;
+	let passageRevision = null;
+	let coarseOriginX = 0, coarseOriginY = 0;
+	const typedVersion = version === SUPPORTED_VERSION || version === LEGACY_TYPED_VERSION;
+	if (typedVersion) {
+		if (buf.length < 64) throw new Error('navgraph v3 artifact too small (truncated header)');
+		baseNodeCount = requireCount('base node count', dv.getUint32(52, true), N);
+		passageCount = requireCount('passage count', dv.getUint32(56, true), N);
+		const revLen = requireCount('revision length', dv.getUint32(60, true), NAVGRAPH_REVISION_MAX_LEN);
+		const fixedEnd = version === SUPPORTED_VERSION ? 72 : 64;
+		if (buf.length < fixedEnd) throw new Error('navgraph v4 artifact too small (truncated header)');
+		if (version === SUPPORTED_VERSION) {
+			coarseOriginX = dv.getInt32(64, true);
+			coarseOriginY = dv.getInt32(68, true);
+		}
+		if (fixedEnd + revLen > buf.length) throw new Error('navgraph artifact revision string overruns buffer');
+		passageRevision = revLen ? new TextDecoder('ascii').decode(buf.subarray(fixedEnd, fixedEnd + revLen)) : '';
+		headerEnd = fixedEnd + revLen;
+	}
+	const P = passageCount;
+
+	// --- exact byte-length check (rejects truncation and overflow) ---
+	const kindsBytes = typedVersion ? E : 0;
+	const edgePassageBytes = typedVersion ? E * 4 : 0;
+	const passageRangeBytes = typedVersion ? P * 4 * 2 : 0;
+	const expected = headerEnd
+		+ N * 2 * 4 + E * 2 * 4 + E * 4 + N * 4
+		+ kindsBytes + edgePassageBytes + passageRangeBytes
+		+ ch * cw + ch * cw + ch * cw * (version === SUPPORTED_VERSION ? 1 : 4) + hh * hw;
+	if (expected !== buf.length)
+		throw new Error(`navgraph artifact byte length ${buf.length} != expected ${expected} (corrupt/truncated); ${REBUILD_HINT}`);
+
+	let off = headerEnd;
 	const nodes = sliceTyped(buf, off, N * 2, Int32Array); off += N * 2 * 4;
 	const edges = sliceTyped(buf, off, E * 2, Int32Array); off += E * 2 * 4;
 	const weights = sliceTyped(buf, off, E, Float32Array); off += E * 4;
 	const components = sliceTyped(buf, off, N, Int32Array); off += N * 4;
+	let edgeKinds = null;
+	let edgePassage = null;
+	let passageNodeStart = new Int32Array(0);
+	let passageNodeCount = new Int32Array(0);
+	if (typedVersion) {
+		edgeKinds = sliceTyped(buf, off, E, Uint8Array); off += E;
+		edgePassage = sliceTyped(buf, off, E, Int32Array); off += E * 4;
+		passageNodeStart = sliceTyped(buf, off, P, Int32Array); off += P * 4;
+		passageNodeCount = sliceTyped(buf, off, P, Int32Array); off += P * 4;
+	}
 	const coarseMinval = sliceTyped(buf, off, ch * cw, Uint8Array); off += ch * cw;
 	const coarseClear = sliceTyped(buf, off, ch * cw, Uint8Array); off += ch * cw;
-	const coarseLabels = sliceTyped(buf, off, ch * cw, Int32Array); off += ch * cw * 4;
+	const coarseLabels = version === SUPPORTED_VERSION
+		? sliceTyped(buf, off, ch * cw, Uint8Array)
+		: sliceTyped(buf, off, ch * cw, Int32Array);
+	off += ch * cw * (version === SUPPORTED_VERSION ? 1 : 4);
 	const coarseHitzone = sliceTyped(buf, off, hh * hw, Uint8Array); off += hh * hw;
+
+	if (typedVersion)
+		validatePassageTopology(N, E, P, baseNodeCount, edges, edgeKinds, edgePassage,
+			passageNodeStart, passageNodeCount);
 
 	return {
 		version, H, W, minCostPerPx, N, E,
-		coarseScale, ch, cw, hitzoneScale, hh, hw,
+		coarseScale, coarseOriginX, coarseOriginY, ch, cw, hitzoneScale, hh, hw,
 		nodes, edges, weights, components,
 		coarseMinval, coarseClear, coarseLabels, coarseHitzone,
+		baseNodeCount, passageCount: P, passageRevision,
+		edgeKinds, edgePassage, passageNodeStart, passageNodeCount,
 	};
+}
+
+/**
+ * Strict topology validation for a parsed v3 artifact: edge endpoints in range,
+ * every edge kind known and its owning-passage ordinal consistent, and passage
+ * node ranges contiguous, ordered, and covering exactly the tail `[baseNodeCount, N)`.
+ * Throws on the first violation — a reader never invents a mid-passage transition
+ * from corrupt data.
+ */
+function validatePassageTopology(N, E, P, baseNodeCount, edges, edgeKinds, edgePassage,
+	passageNodeStart, passageNodeCount) {
+	for (let e = 0; e < E; e++) {
+		const u = edges[2 * e], v = edges[2 * e + 1];
+		if (u < 0 || u >= N || v < 0 || v >= N)
+			throw new Error(`navgraph edge ${e} endpoint out of range`);
+		const kind = edgeKinds[e];
+		const owner = edgePassage[e];
+		if (kind === EDGE_KIND_BASE) {
+			if (owner !== -1) throw new Error(`navgraph base edge ${e} must have passage ordinal -1`);
+		} else if (kind === EDGE_KIND_PASSAGE || kind === EDGE_KIND_TRANSITION) {
+			if (owner < 0 || owner >= P) throw new Error(`navgraph typed edge ${e} owner ${owner} out of range`);
+		} else {
+			throw new Error(`navgraph edge ${e} has unknown kind ${kind}`);
+		}
+	}
+	let expected = baseNodeCount;
+	for (let p = 0; p < P; p++) {
+		const s = passageNodeStart[p], c = passageNodeCount[p];
+		if (c < 1) throw new Error(`navgraph passage ${p} has non-positive node count ${c}`);
+		if (s !== expected) throw new Error(`navgraph passage ${p} start ${s} not contiguous (expected ${expected})`);
+		expected += c;
+	}
+	if (P > 0 && expected !== N)
+		throw new Error(`navgraph passage node ranges end at ${expected}, expected N=${N}`);
+	if (P === 0 && baseNodeCount !== N)
+		throw new Error('navgraph has no passages but baseNodeCount != N');
 }
 
 // =============================================================================
@@ -249,12 +375,13 @@ export class MinHeap {
  * `deadlineMs` (absolute `nowMs()` timestamp, optional) aborts the search
  * (returns null) when exceeded — checked every ~1024 expansions.
  */
-export function astarSubgrid(mask, W, subX0, subY0, subW, subH, sx, sy, gx, gy, wantPath = false, maxExpansions = 200000, deadlineMs = null) {
+export function astarSubgrid(mask, W, subX0, subY0, subW, subH, sx, sy, gx, gy, wantPath = false, maxExpansions = 200000, deadlineMs = null, regionAllowed = null) {
 	const lsx = sx - subX0, lsy = sy - subY0, lgx = gx - subX0, lgy = gy - subY0;
 	if (lsx < 0 || lsy < 0 || lgx < 0 || lgy < 0 || lsx >= subW || lsy >= subH || lgx >= subW || lgy >= subH)
 		return null;
 	const at = (lx, ly) => mask[(subY0 + ly) * W + (subX0 + lx)];
-	if (at(lsx, lsy) === IMPASSABLE || at(lgx, lgy) === IMPASSABLE) return null;
+	if (at(lsx, lsy) === IMPASSABLE || at(lgx, lgy) === IMPASSABLE
+		|| (regionAllowed && (!regionAllowed(sx, sy) || !regionAllowed(gx, gy)))) return null;
 	const n = subW * subH;
 	const g = new Float32Array(n).fill(Infinity);
 	const parent = wantPath ? new Int32Array(n).fill(-1) : null;
@@ -296,6 +423,7 @@ export function astarSubgrid(mask, W, subX0, subY0, subW, subH, sx, sy, gx, gy, 
 			if (closed[ni]) continue;
 			const val = mask[(subY0 + ny) * W + (subX0 + nx)];
 			if (val === IMPASSABLE) continue;
+			if (regionAllowed && !regionAllowed(subX0 + nx, subY0 + ny)) continue;
 			const step = (dx !== 0 && dy !== 0) ? SQRT2 : 1;
 			const tentative = gc + step * (255 - val);
 			if (tentative < g[ni]) {
@@ -311,7 +439,7 @@ export function astarSubgrid(mask, W, subX0, subY0, subW, subH, sx, sy, gx, gy, 
 
 /** Terrain-weighted cost of the straight segment, or null if it crosses
  *  impassable. Also usable as a legality raycast (null == blocked). */
-export function lineCost(mask, W, x0, y0, x1, y1) {
+export function lineCost(mask, W, x0, y0, x1, y1, regionAllowed = null) {
 	const dx = x1 - x0, dy = y1 - y0;
 	const steps = Math.max(Math.abs(dx), Math.abs(dy)) | 0;
 	if (steps === 0) return 0;
@@ -320,6 +448,7 @@ export function lineCost(mask, W, x0, y0, x1, y1) {
 	let cost = 0;
 	for (let k = 1; k <= steps; k++) {
 		const xi = Math.round(x0 + sx * k), yi = Math.round(y0 + sy * k);
+		if (regionAllowed && !regionAllowed(xi, yi)) return null;
 		const val = mask[yi * W + xi];
 		if (val === IMPASSABLE) return null;
 		cost += seg * (255 - val);
@@ -340,6 +469,8 @@ export function buildState(artifact, mask, config = DEFAULT_CONFIG) {
 	const cfg = { ...DEFAULT_CONFIG, ...config };
 	const { N, E, ch, cw, coarseScale, hitzoneScale, coarseLabels, coarseMinval,
 		coarseClear, coarseHitzone, hh, hw, nodes, edges, weights } = artifact;
+	const coarseOriginX = artifact.coarseOriginX || 0;
+	const coarseOriginY = artifact.coarseOriginY || 0;
 
 	// Main free component = most frequent nonzero label in coarse_labels.
 	let maxLabel = 0;
@@ -361,7 +492,8 @@ export function buildState(artifact, mask, config = DEFAULT_CONFIG) {
 			if (coarseClear[ci] < cfg.clearanceMinPx) continue;
 			if (coarseMinval[ci] < cfg.terrainMinValue) {
 				let hasEligiblePixel = false;
-				const x0 = cx * coarseScale, y0 = cy * coarseScale;
+				const x0 = coarseOriginX + cx * coarseScale;
+				const y0 = coarseOriginY + cy * coarseScale;
 				for (let dy = 0; dy < coarseScale && y0 + dy < artifact.H && !hasEligiblePixel; dy++) {
 					for (let dx = 0; dx < coarseScale && x0 + dx < artifact.W; dx++) {
 						if (mask[(y0 + dy) * artifact.W + x0 + dx] >= cfg.terrainMinValue) {
@@ -372,12 +504,18 @@ export function buildState(artifact, mask, config = DEFAULT_CONFIG) {
 				}
 				if (!hasEligiblePixel) continue;
 			}
-			const hy = Math.floor((cy * coarseScale) / hitzoneScale);
-			const hx = Math.floor((cx * coarseScale) / hitzoneScale);
+			const hy = Math.floor((coarseOriginY + cy * coarseScale) / hitzoneScale);
+			const hx = Math.floor((coarseOriginX + cx * coarseScale) / hitzoneScale);
 			if (hy >= hh || hx >= hw || !coarseHitzone[hy * hw + hx]) continue;
 			sampleCells.push(ci);
 		}
 	}
+	const endpointDensity = buildEndpointDensitySampler(artifact, mask, sampleCells, cfg);
+	const regionAllowed = (x, y) => {
+		const hx = Math.floor(x / hitzoneScale), hy = Math.floor(y / hitzoneScale);
+		return hx >= 0 && hy >= 0 && hx < hw && hy < hh
+			&& coarseHitzone[hy * hw + hx] !== 0;
+	};
 
 	// Region gate: the stored hit zone (the coach-drawn polygon when one was
 	// supplied at build time) is authoritative for the WHOLE route, not only
@@ -390,6 +528,12 @@ export function buildState(artifact, mask, config = DEFAULT_CONFIG) {
 		nodeInRegion[i] = (hy >= 0 && hx >= 0 && hy < hh && hx < hw
 			&& coarseHitzone[hy * hw + hx]) ? 1 : 0;
 	}
+	// Serialized passage nodes (v3, indices [baseNodeCount, N)) were already
+	// polygon-checked at build time; the coarse hit-zone raster can clip a node
+	// that is legitimately inside the drawn region, so trust the build here and
+	// keep every passage node routable (CR 8.3). Base-only artifacts have
+	// baseNodeCount === N and this loop is empty.
+	for (let i = artifact.baseNodeCount; i < N; i++) nodeInRegion[i] = 1;
 
 	// Node bucket grid for snapping (cell = snapMaxDistPx).
 	const cell = Math.max(1, cfg.snapMaxDistPx);
@@ -419,12 +563,115 @@ export function buildState(artifact, mask, config = DEFAULT_CONFIG) {
 
 	return {
 		artifact, mask, cfg, mainComp, sampleCells, nodeInRegion,
-		buckets, bucketCell: cell,
+		endpointDensityCumulative: endpointDensity.cumulative,
+		endpointDensityTotal: endpointDensity.total,
+		startDensityCumulative: endpointDensity.startCumulative,
+		startDensityTotal: endpointDensity.startTotal,
+		endpointRegionCenter: endpointDensity.regionCenter,
+		buckets, bucketCell: cell, regionAllowed,
 		adjStart, adjTo, adjW, adjEdge,
 		// Per-pixel memo for inSignificantObstacle (WP 5.3). Sparse Map keyed by
 		// flat pixel index — only probed components are stored, each bounded to
 		// cfg.barrierFloodCapPx, so memory stays tiny even on the 75 Mpx mask.
 		sigMemo: new Map(),
+	};
+}
+
+/**
+ * Build cumulative obstacle-density scores for eligible endpoint cells.
+ *
+ * A summed-area table on the artifact's existing coarse grid keeps peak memory
+ * bounded (roughly W*H/coarseScale² uint32s) while still counting every black
+ * full-resolution pixel exactly. Window boundaries are coarse-cell aligned;
+ * with the normal 4 px coarse scale this approximates the configured 100 px
+ * square to within at most 4 px on each side.
+ */
+function buildEndpointDensitySampler(artifact, mask, sampleCells, cfg) {
+	const { W, H, cw, ch, coarseScale, coarseHitzone, hw, hh, hitzoneScale } = artifact;
+	const coarseOriginX = artifact.coarseOriginX || 0;
+	const coarseOriginY = artifact.coarseOriginY || 0;
+	const cumulative = new Float64Array(sampleCells.length);
+	const startCumulative = new Float64Array(sampleCells.length);
+	if (!sampleCells.length || cfg.endpointUniformMix >= 1 || cfg.endpointObstacleWindowPx <= 0)
+		return { cumulative, total: 0, startCumulative, startTotal: 0, regionCenter: null };
+
+	const stride = cw + 1;
+	const integral = new Uint32Array((ch + 1) * stride);
+	for (let cy = 0; cy < ch; cy++) {
+		const y0 = coarseOriginY + cy * coarseScale, y1 = Math.min(H, y0 + coarseScale);
+		let rowRunning = 0;
+		for (let cx = 0; cx < cw; cx++) {
+			const x0 = coarseOriginX + cx * coarseScale, x1 = Math.min(W, x0 + coarseScale);
+			let black = 0;
+			// Ignore black pixels outside the coach-drawn region. Otherwise the
+			// unmapped exterior can look like an enormous "object" and attract
+			// endpoints to precisely the region edge we want to de-emphasize.
+			const hy = Math.floor((y0 + (y1 - y0) / 2) / hitzoneScale);
+			const hx = Math.floor((x0 + (x1 - x0) / 2) / hitzoneScale);
+			if (hy >= 0 && hx >= 0 && hy < hh && hx < hw && coarseHitzone[hy * hw + hx]) {
+				for (let y = y0; y < y1; y++) {
+					const row = y * W;
+					for (let x = x0; x < x1; x++) if (mask[row + x] === IMPASSABLE) black++;
+				}
+			}
+			rowRunning += black;
+			integral[(cy + 1) * stride + cx + 1] = integral[cy * stride + cx + 1] + rowRunning;
+		}
+	}
+
+	const halfCells = Math.max(1, Math.ceil(cfg.endpointObstacleWindowPx / (2 * coarseScale)));
+	let densityTotal = 0;
+	for (let i = 0; i < sampleCells.length; i++) {
+		const ci = sampleCells[i], cx = ci % cw, cy = (ci - cx) / cw;
+		const x0 = Math.max(0, cx - halfCells), x1 = Math.min(cw, cx + halfCells + 1);
+		const y0 = Math.max(0, cy - halfCells), y1 = Math.min(ch, cy + halfCells + 1);
+		const blackCount = integral[y1 * stride + x1] - integral[y0 * stride + x1]
+			- integral[y1 * stride + x0] + integral[y0 * stride + x0];
+		const score = Math.pow(blackCount, Math.max(1, cfg.endpointDensityExponent));
+		densityTotal += score;
+		cumulative[i] = score;
+	}
+
+	// Area-centroid of the rasterized coach polygon. This is the geometrical
+	// centroid of the region to hitzone-grid precision, not the map-image center.
+	let regionCount = 0, centerX = 0, centerY = 0;
+	for (let hy = 0; hy < hh; hy++) {
+		for (let hx = 0; hx < hw; hx++) {
+			if (!coarseHitzone[hy * hw + hx]) continue;
+			regionCount++;
+			centerX += (hx + 0.5) * hitzoneScale;
+			centerY += (hy + 0.5) * hitzoneScale;
+		}
+	}
+	if (regionCount) { centerX /= regionCount; centerY /= regionCount; }
+	else { centerX = W / 2; centerY = H / 2; }
+	let radiusSq = 1;
+	for (let hy = 0; hy < hh; hy++) {
+		for (let hx = 0; hx < hw; hx++) {
+			if (!coarseHitzone[hy * hw + hx]) continue;
+			const dx = (hx + 0.5) * hitzoneScale - centerX;
+			const dy = (hy + 0.5) * hitzoneScale - centerY;
+			radiusSq = Math.max(radiusSq, dx * dx + dy * dy);
+		}
+	}
+
+	let total = 0, startTotal = 0;
+	const centerStrength = Math.max(0, cfg.startCenterBiasStrength);
+	for (let i = 0; i < sampleCells.length; i++) {
+		const ci = sampleCells[i], cx = ci % cw, cy = (ci - cx) / cw;
+		const score = cumulative[i];
+		total += score;
+		cumulative[i] = total;
+		const dx = coarseOriginX + (cx + 0.5) * coarseScale - centerX;
+		const dy = coarseOriginY + (cy + 0.5) * coarseScale - centerY;
+		const centerWeight = Math.exp(-centerStrength * (dx * dx + dy * dy) / radiusSq);
+		// A completely obstacle-free region still gets useful start centering.
+		startTotal += (densityTotal > 0 ? score : 1) * centerWeight;
+		startCumulative[i] = startTotal;
+	}
+	return {
+		cumulative, total, startCumulative, startTotal,
+		regionCenter: { x: centerX, y: centerY },
 	};
 }
 
@@ -449,6 +696,106 @@ export function attachLevelPassages(state, documentOrItems) {
 	};
 }
 
+// -----------------------------------------------------------------------------
+// CR 8.3 — consume the *serialized* v3 passage topology instead of a dynamic
+// overlay. Passage nodes are already baked into the CSR (`[baseNodeCount, N)`);
+// the only thing the runtime still needs from the canonical document is the
+// per-passage raster (for surface-aware refinement, obstacle scoring, and
+// layered distinctness). `attachSerializedPassages` verifies the fetched
+// document against the artifact's baked revision (a mismatch is a stale build,
+// never an empty-passage fallback) and indexes the rasters by passage id, using
+// the same codepoint id sort as project/navgraph.py to map ordinal -> id.
+// -----------------------------------------------------------------------------
+
+/** Passage ids in the artifact's canonical ordinal order (codepoint id sort). */
+function canonicalOrdinalIds(passages) {
+	return passages
+		.map((passage) => String(passage.id))
+		.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+}
+
+export function attachSerializedPassages(state, documentOrItems) {
+	const { artifact } = state;
+	const { W, H, N } = artifact;
+	if (artifact.version !== SUPPORTED_VERSION || !artifact.edgeKinds)
+		throw new Error('serialized passages require a v3 navgraph artifact');
+	const revision = passageRevision(documentOrItems, W, H);
+	if (revision !== artifact.passageRevision)
+		throw new Error(`passage document revision ${revision} != artifact ${artifact.passageRevision} `
+			+ `(stale build); ${REBUILD_HINT}`);
+	const normalized = normalizePassagesForRuntime(documentOrItems, { mapWidth: W, mapHeight: H });
+	if (normalized.passages.length !== artifact.passageCount)
+		throw new Error(`passage document has ${normalized.passages.length} runtime passages `
+			+ `but artifact serialized ${artifact.passageCount}; ${REBUILD_HINT}`);
+
+	const passageById = new Map();
+	for (const passage of normalized.passages) passageById.set(String(passage.id), passage);
+	// Ordinal p (0..P-1) is the p-th passage in codepoint id order — the exact
+	// order project/navgraph.py appended passage node ranges and typed edges in.
+	const ordinalIds = canonicalOrdinalIds(normalized.passages);
+
+	// Per-node owning-passage ordinal (base nodes = -1). Drives typed-leg
+	// classification and surface-aware barrier matching from the CSR alone.
+	const nodeToOrdinal = new Int32Array(N).fill(-1);
+	for (let p = 0; p < artifact.passageCount; p++) {
+		const start = artifact.passageNodeStart[p];
+		const count = artifact.passageNodeCount[p];
+		for (let n = start; n < start + count; n++) nodeToOrdinal[n] = p;
+	}
+
+	// Cheapest per-pixel cost across base + every passage surface — keeps the
+	// graph A* heuristic admissible now that passage edges are in the CSR.
+	let minCostPerPx = Number.isFinite(artifact.minCostPerPx) ? artifact.minCostPerPx : 0;
+	for (const passage of normalized.passages) {
+		for (let i = 0; i < passage.grid.length; i++) {
+			const value = passage.grid[i];
+			if (value > 0) minCostPerPx = Math.min(minCostPerPx, 255 - value);
+		}
+	}
+
+	state.serializedPassages = {
+		passageById,
+		ordinalIds,
+		nodeToOrdinal,
+		passages: normalized.passages,
+		minCostPerPx,
+		diagnostics: normalized.diagnostics,
+	};
+	// A serialized v3 artifact is the single source of passage topology — never
+	// also run the dynamic overlay on the same state (CR 8.3).
+	state.passageOverlay = null;
+	state.passageRevision = revision;
+	state.passageDiagnostics = normalized.diagnostics;
+	return {
+		revision,
+		diagnostics: normalized.diagnostics,
+		passageCount: artifact.passageCount,
+		passageNodeCount: N - artifact.baseNodeCount,
+		passageEdges: countEdgesOfKind(artifact, EDGE_KIND_PASSAGE),
+		transitions: countEdgesOfKind(artifact, EDGE_KIND_TRANSITION),
+	};
+}
+
+function countEdgesOfKind(artifact, kind) {
+	if (!artifact.edgeKinds) return 0;
+	let count = 0;
+	for (let e = 0; e < artifact.E; e++) if (artifact.edgeKinds[e] === kind) count++;
+	return count;
+}
+
+/** Runtime passage raster for a leg's passage id (serialized or dynamic overlay). */
+function passageForId(state, passageId) {
+	const key = String(passageId);
+	return state.serializedPassages?.passageById?.get(key)
+		|| state.passageOverlay?.passageById?.get(key)
+		|| null;
+}
+
+/** Active runtime passages regardless of topology source. */
+function activePassages(state) {
+	return state.serializedPassages?.passages || state.passageOverlay?.passages || [];
+}
+
 // =============================================================================
 // 1. Pair sampling + prefilters
 // =============================================================================
@@ -469,7 +816,8 @@ function pixelInCell(state, ci, rng) {
 	const { artifact, mask, cfg } = state;
 	const { cw, coarseScale, W, H } = artifact;
 	const cx = ci % cw, cy = (ci - cx) / cw;
-	const x0 = cx * coarseScale, y0 = cy * coarseScale;
+	const x0 = (artifact.coarseOriginX || 0) + cx * coarseScale;
+	const y0 = (artifact.coarseOriginY || 0) + cy * coarseScale;
 	// Try a few random pixels; fall back to a scan for a passable one.
 	for (let t = 0; t < 6; t++) {
 		const px = Math.min(W - 1, x0 + (rng() * coarseScale | 0));
@@ -508,12 +856,12 @@ export function samplePair(state, rng) {
 	const { sampleCells, artifact, mask, cfg } = state;
 	const { W } = artifact;
 	if (sampleCells.length < 2) return { reason: 'empty' };
-	const start = pixelInCell(state, sampleCells[(rng() * sampleCells.length) | 0], rng);
+	const start = pixelInCell(state, sampleEndpointCell(state, rng, true), rng);
 	if (!start) return { reason: 'empty' };
 	// Sample a goal inside the distance band.
 	let goal = null, dist = 0;
 	for (let t = 0; t < cfg.goalSampleTries; t++) {
-		const g = pixelInCell(state, sampleCells[(rng() * sampleCells.length) | 0], rng);
+		const g = pixelInCell(state, sampleEndpointCell(state, rng), rng);
 		if (!g) continue;
 		const d = Math.hypot(g.x - start.x, g.y - start.y);
 		if (d >= cfg.distMinPx && d <= cfg.distMaxPx) { goal = g; dist = d; break; }
@@ -521,6 +869,23 @@ export function samplePair(state, rng) {
 	if (!goal) return { reason: 'distance' };
 	if (!crossesObstacle(mask, W, start, goal, cfg.obstacleMinRunPx)) return { reason: 'obstacle' };
 	return { start, goal, dist };
+}
+
+/** Choose an eligible coarse cell from the uniform/density mixture. */
+function sampleEndpointCell(state, rng, start = false) {
+	const { sampleCells, cfg } = state;
+	const cumulative = start ? state.startDensityCumulative : state.endpointDensityCumulative;
+	const total = start ? state.startDensityTotal : state.endpointDensityTotal;
+	if (!(total > 0) || rng() < cfg.endpointUniformMix)
+		return sampleCells[(rng() * sampleCells.length) | 0];
+	const target = rng() * total;
+	let lo = 0, hi = cumulative.length - 1;
+	while (lo < hi) {
+		const mid = (lo + hi) >>> 1;
+		if (target < cumulative[mid]) hi = mid;
+		else lo = mid + 1;
+	}
+	return sampleCells[lo];
 }
 
 // =============================================================================
@@ -543,6 +908,11 @@ export function snapEndpoint(state, pt, deadline = null) {
 			const arr = buckets.get(gx * 100003 + gy);
 			if (!arr) continue;
 			for (const ni of arr) {
+				// Control endpoints and sample targets snap to BASE nodes only —
+				// a serialized passage node is reachable only by first traversing a
+				// transition edge, never by a direct snap (CR 8.3). Base-only
+				// artifacts have baseNodeCount === N, so this excludes nothing.
+				if (ni >= artifact.baseNodeCount) continue;
 				// Routes must never touch a node outside the stored region.
 				if (state.nodeInRegion && !state.nodeInRegion[ni]) continue;
 				const nx = nodes[2 * ni], ny = nodes[2 * ni + 1];
@@ -557,12 +927,12 @@ export function snapEndpoint(state, pt, deadline = null) {
 		if (out.length >= cfg.snapMaxTargets) break;
 		const nx = nodes[2 * c.node], ny = nodes[2 * c.node + 1];
 		// Fast path: straight-line legal → use its cost directly.
-		let cost = lineCost(mask, W, pt.x, pt.y, nx, ny);
+		let cost = lineCost(mask, W, pt.x, pt.y, nx, ny, state.regionAllowed);
 		if (cost === null) {
 			const m = cfg.snapAstarMargin;
 			const x0 = Math.max(0, Math.min(pt.x, nx) - m), y0 = Math.max(0, Math.min(pt.y, ny) - m);
 			const x1 = Math.min(W, Math.max(pt.x, nx) + m + 1), y1 = Math.min(H, Math.max(pt.y, ny) + m + 1);
-			const res = astarSubgrid(mask, W, x0, y0, x1 - x0, y1 - y0, pt.x, pt.y, nx, ny, false, 200000, deadline);
+			const res = astarSubgrid(mask, W, x0, y0, x1 - x0, y1 - y0, pt.x, pt.y, nx, ny, false, 200000, deadline, state.regionAllowed);
 			if (!res) continue;
 			cost = res.cost;
 		}
@@ -599,7 +969,8 @@ export function graphAstar(state, goalPt, startSnap, goalSnap, blockedEdges, dea
 	const heap = new MinHeap();
 	g[START] = 0;
 	heap.push(0, START);
-	const heuristicCostPerPx = state.passageOverlay?.minCostPerPx ?? minCostPerPx;
+	const heuristicCostPerPx = state.serializedPassages?.minCostPerPx
+		?? state.passageOverlay?.minCostPerPx ?? minCostPerPx;
 	const hEuclid = (nx, ny) => Math.hypot(goalX - nx, goalY - ny) * heuristicCostPerPx;
 	let popCount = 0;
 	while (heap.size > 0) {
@@ -666,6 +1037,74 @@ function nodePathToCoords(state, nodePath, start, goal) {
 		else pts.push({ x: nodes[2 * id], y: nodes[2 * id + 1] });
 	}
 	return pts;
+}
+
+/** Append `path` to `legs`, merging into the trailing leg when identity matches. */
+function appendTypedLeg(legs, surface, passageId, direction, path) {
+	if (!path?.length) return;
+	let leg = legs[legs.length - 1];
+	if (!leg || leg.surface !== surface || (surface !== 'base' && leg.direction !== direction)) {
+		leg = { surface, passageId, direction, points: [] };
+		legs.push(leg);
+	}
+	for (const point of path) {
+		const previous = leg.points[leg.points.length - 1];
+		if (!previous || previous.x !== point.x || previous.y !== point.y) leg.points.push({ x: point.x, y: point.y });
+	}
+}
+
+/**
+ * Convert a serialized-topology node path (virtual START=N, GOAL=N+1) into
+ * surface-typed legs directly from the baked node ordinals (CR 8.3). Consecutive
+ * same-ordinal passage nodes form one `passage:<id>` leg; a transition edge
+ * (base <-> passage endpoint) reads as base up to the shared endpoint coordinate,
+ * so identity changes exactly at the serialized endpoint. Base edges that merely
+ * cross a passage projection stay base.
+ */
+export function nodePathToTypedRouteSerialized(state, nodePath, start, goal) {
+	const { artifact, serializedPassages } = state;
+	const { N, nodes } = artifact;
+	const { nodeToOrdinal, ordinalIds } = serializedPassages;
+	const coordOf = (id) => (id === N ? { x: start.x, y: start.y }
+		: id === N + 1 ? { x: goal.x, y: goal.y }
+			: { x: nodes[2 * id], y: nodes[2 * id + 1] });
+	const legs = [];
+	for (let i = 1; i < nodePath.length; i++) {
+		const from = nodePath[i - 1];
+		const to = nodePath[i];
+		let surface = 'base';
+		let passageId = null;
+		let direction = null;
+		if (from < N && to < N) {
+			const of = nodeToOrdinal[from];
+			const ot = nodeToOrdinal[to];
+			if (of >= 0 && of === ot) {
+				passageId = ordinalIds[of];
+				surface = `passage:${passageId}`;
+				// Passage nodes are stored in centreline order, so a rising index
+				// travels from the start endpoint toward the end endpoint.
+				direction = from < to ? 'from-start' : 'from-end';
+			}
+		}
+		appendTypedLeg(legs, surface, passageId, direction, [coordOf(from), coordOf(to)]);
+	}
+	const path = [];
+	for (const leg of legs) {
+		for (const point of leg.points) {
+			const previous = path[path.length - 1];
+			if (!previous || previous.x !== point.x || previous.y !== point.y) path.push({ x: point.x, y: point.y });
+		}
+	}
+	return { path, legs };
+}
+
+/** Pick the typed-route builder for the active topology source (CR 8.3). */
+function typedRouteFor(state, nodePath, start, goal) {
+	if (state.serializedPassages?.passages?.length)
+		return nodePathToTypedRouteSerialized(state, nodePath, start, goal);
+	if (state.passageOverlay?.nodeCount)
+		return nodePathToTypedRoute(state, nodePath, start, goal);
+	return { path: nodePathToCoords(state, nodePath, start, goal), legs: null };
 }
 
 // =============================================================================
@@ -903,24 +1342,73 @@ function segIntersect(ax, ay, bx, by, cx, cy, dx, dy) {
 	return o1 !== o2 && o3 !== o4;
 }
 
-/** Edge indices whose node-node segment crosses any active barrier. */
-function blockedByBarriers(state, barriers) {
-	const { artifact } = state;
-	const { E, edges, nodes } = artifact;
+/**
+ * Edge indices whose node-node segment crosses any active barrier, matched by
+ * surface. A serialized base/transition edge is tested only against base
+ * barriers; a serialized passage edge only against its own `passage:<id>`
+ * barrier — so a projected base barrier never blocks the passage chain and a
+ * passage barrier never blocks the underpass (CR 8.3). Legacy dynamic overlays
+ * keep their separate dynamic-edge blocking.
+ */
+export function blockedByBarriers(state, barriers) {
+	const { artifact, cfg } = state;
+	const { E, edges, nodes, edgeKinds, edgePassage } = artifact;
+	const ordinalIds = state.serializedPassages?.ordinalIds;
 	const blocked = new Set();
-	if (!barriers.length) return blocked;
+	if (!barriers.length) {
+		return state.passageOverlay?.nodeCount ? { baseEdges: blocked, dynamicEdges: new Set() } : blocked;
+	}
+	const width = Number.isFinite(cfg?.barrierWidthPx) && cfg.barrierWidthPx > 0
+		? cfg.barrierWidthPx
+		: BARRIER_DRAW_WIDTH_MASK_PX;
+	const intersectsStroke = (x0, y0, x1, y1, b) => {
+		const dx = b.bx - b.ax, dy = b.by - b.ay;
+		const len = Math.hypot(dx, dy);
+		if (len < 1e-9) return false;
+		const ux = dx / len, uy = dy / len;
+		const toLocal = (x, y) => {
+			const rx = x - b.ax, ry = y - b.ay;
+			return { x: rx * ux + ry * uy, y: -rx * uy + ry * ux };
+		};
+		const a = toLocal(x0, y0), c = toLocal(x1, y1);
+		const half = width / 2;
+		// Liang-Barsky segment-vs-rectangle test. The rectangle matches an SVG
+		// line with stroke-linecap="butt": no hidden round-cap extension.
+		let t0 = 0, t1 = 1;
+		const clip = (p, q) => {
+			if (Math.abs(p) < 1e-12) return q >= 0;
+			const r = q / p;
+			if (p < 0) { if (r > t1) return false; if (r > t0) t0 = r; }
+			else { if (r < t0) return false; if (r < t1) t1 = r; }
+			return true;
+		};
+		const ex = c.x - a.x, ey = c.y - a.y;
+		return clip(-ex, a.x) && clip(ex, len - a.x)
+			&& clip(-ey, a.y + half) && clip(ey, half - a.y);
+	};
 	for (let e = 0; e < E; e++) {
 		const u = edges[2 * e], v = edges[2 * e + 1];
 		const ux = nodes[2 * u], uy = nodes[2 * u + 1], vx = nodes[2 * v], vy = nodes[2 * v + 1];
+		// A serialized passage edge lives on its passage surface; base and
+		// transition (endpoint connector) edges are base terrain.
+		let surface = 'base';
+		if (edgeKinds && edgeKinds[e] === EDGE_KIND_PASSAGE && ordinalIds) {
+			surface = `passage:${ordinalIds[edgePassage[e]]}`;
+		}
 		for (const b of barriers) {
-			if (b.surface && b.surface !== 'base') continue;
-			if (segIntersect(ux, uy, vx, vy, b.ax, b.ay, b.bx, b.by)) { blocked.add(e); break; }
+			if ((b.surface || 'base') !== surface) continue;
+			if (intersectsStroke(ux, uy, vx, vy, b)) { blocked.add(e); break; }
 		}
 	}
 	if (!state.passageOverlay?.nodeCount) return blocked;
 	return {
 		baseEdges: blocked,
-		dynamicEdges: blockedDynamicEdges(state, barriers, segIntersect),
+		dynamicEdges: blockedDynamicEdges(
+			state,
+			barriers,
+			(x0, y0, x1, y1, ax, ay, bx, by) =>
+				intersectsStroke(x0, y0, x1, y1, { ax, ay, bx, by }),
+		),
 	};
 }
 
@@ -981,9 +1469,7 @@ export function computeRouteOptions(state, start, goal, startSnap, goalSnap, opt
 		const sig = pathSignature(res.nodePath);
 		if (seen.has(sig)) break; // barrier didn't change the route
 		seen.add(sig);
-		const typed = state.passageOverlay?.nodeCount
-			? nodePathToTypedRoute(state, res.nodePath, start, goal)
-			: { path: nodePathToCoords(state, res.nodePath, start, goal), legs: null };
+		const typed = typedRouteFor(state, res.nodePath, start, goal);
 		const coords = typed.path;
 		const rec = {
 			path: coords, nodePath: res.nodePath, len: routePathLength(coords),
@@ -1040,7 +1526,7 @@ export function refineRouteLegal(state, path) {
 	let cost = 0;
 	for (let i = 1; i < path.length; i++) {
 		const a = path[i - 1], b = path[i];
-		const straight = lineCost(mask, W, a.x, a.y, b.x, b.y);
+		const straight = lineCost(mask, W, a.x, a.y, b.x, b.y, state.regionAllowed);
 		if (straight !== null) { out.push({ x: b.x, y: b.y }); cost += straight; continue; }
 		// Margin grows with the segment span so long bridge edges have room to
 		// detour; the floor (48) exceeds the builder's own skeleton-backbone A*
@@ -1051,7 +1537,7 @@ export function refineRouteLegal(state, path) {
 		const m = Math.min(160, Math.max(48, Math.round(0.75 * span)));
 		const x0 = Math.max(0, Math.min(a.x, b.x) - m), y0 = Math.max(0, Math.min(a.y, b.y) - m);
 		const x1 = Math.min(W, Math.max(a.x, b.x) + m + 1), y1 = Math.min(H, Math.max(a.y, b.y) + m + 1);
-		const res = astarSubgrid(mask, W, x0, y0, x1 - x0, y1 - y0, a.x, a.y, b.x, b.y, true, 1500000);
+		const res = astarSubgrid(mask, W, x0, y0, x1 - x0, y1 - y0, a.x, a.y, b.x, b.y, true, 1500000, null, state.regionAllowed);
 		if (res && res.path) {
 			for (let k = 1; k < res.path.length; k++) out.push(res.path[k]);
 			cost += res.cost;
@@ -1076,7 +1562,8 @@ export function countLegalityViolations(state, path) {
 		for (let k = 0; k <= steps; k++) {
 			const xi = Math.round(a.x + (b.x - a.x) * (k / (steps || 1)));
 			const yi = Math.round(a.y + (b.y - a.y) * (k / (steps || 1)));
-			if (mask[yi * W + xi] === IMPASSABLE) hits++;
+			if (mask[yi * W + xi] === IMPASSABLE
+				|| (state.regionAllowed && !state.regionAllowed(xi, yi))) hits++;
 		}
 	}
 	return hits;
@@ -1151,7 +1638,10 @@ export function calcRouteObstacle(mask, width, height, path, passageSpans = []) 
 		}
 	}
 
-	return seconds;
+	// editor.js rounds the auto-detected value to one decimal before assigning
+	// route.obstacle and calculating route.run_time. Return that route-level
+	// value here as well so Infinity's total and its one-decimal breakdown agree.
+	return Math.max(0, Math.round(seconds * 10) / 10);
 }
 
 function passagePolylineCost(passage, path) {
@@ -1170,7 +1660,7 @@ function passagePolylineCost(passage, path) {
 }
 
 function refinePassageLeg(state, leg) {
-	const passage = state.passageOverlay?.passageById?.get(String(leg.passageId));
+	const passage = passageForId(state, leg.passageId);
 	if (!passage || !leg.points?.length) return { mode: 'unusable', tTheta: 0 };
 	const legalPath = leg.points.map((point) => ({ x: point.x, y: point.y }));
 	const legalCost = passagePolylineCost(passage, legalPath);
@@ -1295,20 +1785,24 @@ export function countTypedLegalityViolations(state, typedLegs) {
 		if (leg.surface === 'base') {
 			hits += countLegalityViolations(state, leg.points);
 		} else {
-			const passage = state.passageOverlay?.passageById?.get(String(leg.passageId));
+			const passage = passageForId(state, leg.passageId);
 			if (!passage || passagePolylineCost(passage, leg.points) === null) hits++;
 		}
 	}
 	return hits;
 }
 
-function countTypedBarrierViolations(refined) {
-	if (!refined.typedLegs) return countBarrierViolations(refined.path, refined.activeBarriers);
+function countTypedBarrierViolations(state, refined) {
+	const width = Number.isFinite(state.cfg?.barrierWidthPx)
+		? state.cfg.barrierWidthPx
+		: BARRIER_DRAW_WIDTH_MASK_PX;
+	if (!refined.typedLegs) return countBarrierViolations(refined.path, refined.activeBarriers, width);
 	let hits = 0;
 	for (const leg of refined.typedLegs) {
-		hits += countBarrierViolations(
+			hits += countBarrierViolations(
 			leg.points,
 			activeSurfaceBarriers(refined.activeBarriers, refined.routeIndex, leg.surface),
+			width,
 		);
 	}
 	return hits;
@@ -1449,8 +1943,22 @@ export function generateOnePair(state, { rng, maxAttempts = 4000, now, selection
 		// refinement failed to produce a barrier-clean route in budget).
 		const barrierRefA = { ...refA, path: pathA, typedLegs: typedA };
 		const barrierRefB = { ...refB, path: pathB, typedLegs: typedB };
-		if (countTypedBarrierViolations(barrierRefA)
-			+ countTypedBarrierViolations(barrierRefB) > 0) {
+		if (countTypedBarrierViolations(state, barrierRefA)
+			+ countTypedBarrierViolations(state, barrierRefB) > 0) {
+			bump('timeout'); lastReason = 'timeout'; retries++; continue;
+		}
+		// The purple bars are scene-wide visual obstacles.  Keep an explicit
+		// invariant against the exact rendered subset as defence in depth: both
+		// selected routes must avoid every rendered barrier on the matching
+		// surface, independent of their individual attempt histories.
+		const renderedBarrierRefA = {
+			...barrierRefA, activeBarriers: skippedBarriers, routeIndex: Infinity,
+		};
+		const renderedBarrierRefB = {
+			...barrierRefB, activeBarriers: skippedBarriers, routeIndex: Infinity,
+		};
+		if (countTypedBarrierViolations(state, renderedBarrierRefA)
+			+ countTypedBarrierViolations(state, renderedBarrierRefB) > 0) {
 			bump('timeout'); lastReason = 'timeout'; retries++; continue;
 		}
 
@@ -1471,8 +1979,8 @@ export function generateOnePair(state, { rng, maxAttempts = 4000, now, selection
 		// underneath the passage technically separates the two lines. Reuse the
 		// editor's layered distinctness on the refined pair; base-only pairs keep
 		// the established selection tuning untouched.
-		if ((passageSpansA.length || passageSpansB.length)
-			&& state.passageOverlay?.passages?.length) {
+		const layeredPassages = activePassages(state);
+		if ((passageSpansA.length || passageSpansB.length) && layeredPassages.length) {
 			const candidateRoute = pathA.slice();
 			candidateRoute.passageSpans = passageSpansA;
 			const existingRoute = pathB.slice();
@@ -1480,7 +1988,7 @@ export function generateOnePair(state, { rng, maxAttempts = 4000, now, selection
 			const verdict = layeredRouteDistinct(
 				candidateRoute, [existingRoute],
 				state.mask, state.artifact.W, state.artifact.H,
-				state.passageOverlay.passages,
+				layeredPassages,
 			);
 			if (!verdict.distinct) { bump('distinct'); lastReason = 'distinct'; retries++; continue; }
 		}
@@ -1495,6 +2003,7 @@ export function generateOnePair(state, { rng, maxAttempts = 4000, now, selection
 			start: sp.start,
 			goal: sp.goal,
 			routes: [pathA, pathB],
+			routeIndexes: [ordered[0].routeIndex, ordered[1].routeIndex],
 			runtimes: [rtA, rtB],
 			obstacles: [
 				calcRouteObstacle(state.mask, state.artifact.W, state.artifact.H, pathA, passageSpansA),

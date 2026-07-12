@@ -17,13 +17,16 @@ function itemsFrom(documentOrItems) {
 }
 
 function canonicalPassageJson(documentOrItems, mapWidth, mapHeight) {
+    // Sort by id in codepoint order (not localeCompare): this is engine- and
+    // language-independent, so project/navgraph.py can reproduce the exact same
+    // canonical string and revision. Change the two together (CR 8.1).
     const items = itemsFrom(documentOrItems).map((item) => ({
         id: typeof item?.id === 'string' ? item.id : '',
         points: Array.isArray(item?.points)
             ? item.points.map((point) => [Number(point?.[0]), Number(point?.[1])])
             : [],
         width: Number(item?.width),
-    })).sort((a, b) => a.id.localeCompare(b.id));
+    })).sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
     return JSON.stringify({ version: 1, mapWidth, mapHeight, items });
 }
 

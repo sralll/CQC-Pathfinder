@@ -72,7 +72,7 @@ WARN_VALID_RATE_MIN = 0.15    # below this fraction of attempts yielding a serve
 WARN_MEAN_RETRIES_MAX = 6.0   # above this many rejected attempts per valid pair
 
 
-def _line_cost(mask, W, x0, y0, x1, y1):
+def _line_cost(mask, W, x0, y0, x1, y1, region_allowed=None):
     """Full-res straight-line terrain cost, or ``None`` if it crosses an
     impassable pixel. Same model as ``navgraph._line_cost`` but takes a flat
     ``mask`` + width so it can be called against the raw 2-D array directly."""
@@ -88,6 +88,8 @@ def _line_cost(mask, W, x0, y0, x1, y1):
     for k in range(1, steps + 1):
         xi = int(round(x0 + sx * k))
         yi = int(round(y0 + sy * k))
+        if region_allowed is not None and not region_allowed(xi, yi):
+            return None
         val = mask[yi, xi]
         if val == IMPASSABLE:
             return None
@@ -119,7 +121,8 @@ def _crosses_obstacle(mask, ax, ay, bx, by, min_run_px):
     return max_run >= min_run_px
 
 
-def _astar_subgrid_xy(mask, W, H, x0, y0, x1, y1, sx, sy, gx, gy, max_expansions=200_000):
+def _astar_subgrid_xy(mask, W, H, x0, y0, x1, y1, sx, sy, gx, gy,
+                      max_expansions=200_000, region_allowed=None):
     """Weighted 8-connected A* on ``mask[y0:y1, x0:x1]`` between full-res
     points (sx,sy)->(gx,gy). Returns cost or ``None``. Reimplemented (rather
     than reusing ``navgraph._astar_subgrid``) to take full-res coordinates
@@ -130,7 +133,10 @@ def _astar_subgrid_xy(mask, W, H, x0, y0, x1, y1, sx, sy, gx, gy, max_expansions
     if lsx < 0 or lsy < 0 or lgx < 0 or lgy < 0 or lsx >= w or lsy >= h or lgx >= w or lgy >= h:
         return None
     data = sub.tobytes()
-    if data[lsy * w + lsx] == IMPASSABLE or data[lgy * w + lgx] == IMPASSABLE:
+    if (data[lsy * w + lsx] == IMPASSABLE
+            or data[lgy * w + lgx] == IMPASSABLE
+            or (region_allowed is not None
+                and (not region_allowed(sx, sy) or not region_allowed(gx, gy)))):
         return None
     n = w * h
     INF = float("inf")
@@ -167,6 +173,9 @@ def _astar_subgrid_xy(mask, W, H, x0, y0, x1, y1, sx, sy, gx, gy, max_expansions
                 ni = ny * w + nx
                 if closed[ni]:
                     continue
+                if (region_allowed is not None
+                        and not region_allowed(x0 + nx, y0 + ny)):
+                    continue
                 val = data[ni]
                 if val == IMPASSABLE:
                     continue
@@ -185,20 +194,24 @@ class _State:
 
     __slots__ = (
         "mask", "W", "H", "min_cost_per_px", "sample_cells", "coarse_scale",
+        "coarse_origin_x", "coarse_origin_y",
         "buckets", "bucket_cell", "nodes", "node_in_region", "adj_start",
         "adj_to", "adj_w", "adj_edge", "edge_ux", "edge_uy", "edge_vx",
-        "edge_vy",
+        "edge_vy", "region_allowed",
     )
 
 
 def _build_state(nodes, edges, weights, coarse_minval, coarse_clear, coarse_labels,
-                  coarse_hitzone, coarse_scale, hitzone_scale, mask, min_cost_per_px):
+                  coarse_hitzone, coarse_scale, hitzone_scale, mask, min_cost_per_px,
+                  coarse_origin=(0, 0)):
     st = _State()
     st.mask = mask
     st.H, st.W = mask.shape
     st.min_cost_per_px = float(min_cost_per_px)
     st.nodes = nodes
     st.coarse_scale = int(coarse_scale)
+    st.coarse_origin_x = int(coarse_origin[0])
+    st.coarse_origin_y = int(coarse_origin[1])
 
     ch, cw = coarse_minval.shape
     hh, hw = coarse_hitzone.shape
@@ -220,8 +233,8 @@ def _build_state(nodes, edges, weights, coarse_minval, coarse_clear, coarse_labe
     cy_idx, cx_idx = np.nonzero(clear_ok & val_ok & comp_ok)
     sample_cells = []
     if cy_idx.size:
-        hy = np.minimum((cy_idx * coarse_scale) // hitzone_scale, hh - 1)
-        hx = np.minimum((cx_idx * coarse_scale) // hitzone_scale, hw - 1)
+        hy = np.minimum((st.coarse_origin_y + cy_idx * coarse_scale) // hitzone_scale, hh - 1)
+        hx = np.minimum((st.coarse_origin_x + cx_idx * coarse_scale) // hitzone_scale, hw - 1)
         in_hz = coarse_hitzone[hy, hx] != 0
         sample_cells = list(zip(cy_idx[in_hz].tolist(), cx_idx[in_hz].tolist()))
     st.sample_cells = sample_cells
@@ -237,6 +250,11 @@ def _build_state(nodes, edges, weights, coarse_minval, coarse_clear, coarse_labe
         st.node_in_region = coarse_hitzone[nhy, nhx] != 0
     else:
         st.node_in_region = np.zeros(0, dtype=bool)
+
+    def region_allowed(x, y):
+        hx, hy = int(x) // hitzone_scale, int(y) // hitzone_scale
+        return 0 <= hx < hw and 0 <= hy < hh and bool(coarse_hitzone[hy, hx])
+    st.region_allowed = region_allowed
 
     # Node bucket grid for snapping.
     cell = max(1, CONFIG["snapMaxDistPx"])
@@ -287,7 +305,8 @@ def _build_state(nodes, edges, weights, coarse_minval, coarse_clear, coarse_labe
 def _pixel_in_cell(st, cy, cx, rng):
     """Random passable full-res pixel inside coarse cell (cy, cx), or None."""
     ds = st.coarse_scale
-    x0, y0 = cx * ds, cy * ds
+    x0 = st.coarse_origin_x + cx * ds
+    y0 = st.coarse_origin_y + cy * ds
     W, H = st.W, st.H
     for _ in range(6):
         px = min(W - 1, x0 + rng.randrange(ds))
@@ -356,14 +375,16 @@ def _snap_endpoint(st, pt):
         if len(out) >= CONFIG["snapMaxTargets"]:
             break
         nx, ny = st.nodes[ni]
-        cost = _line_cost(st.mask, W, px, py, nx, ny)
+        cost = _line_cost(st.mask, W, px, py, nx, ny, st.region_allowed)
         if cost is None:
             m = CONFIG["snapAstarMargin"]
             x0 = max(0, min(px, nx) - m)
             y0 = max(0, min(py, ny) - m)
             x1 = min(W, max(px, nx) + m + 1)
             y1 = min(H, max(py, ny) + m + 1)
-            cost = _astar_subgrid_xy(st.mask, W, H, x0, y0, x1, y1, px, py, nx, ny)
+            cost = _astar_subgrid_xy(
+                st.mask, W, H, x0, y0, x1, y1, px, py, nx, ny,
+                region_allowed=st.region_allowed)
             if cost is None:
                 continue
         out.append((ni, cost))
@@ -673,12 +694,14 @@ def simulate_suitability(artifact, mask, n=SUITABILITY_N, seed=SUITABILITY_SEED,
     coarse_labels = artifact["coarse_labels"]
     coarse_hitzone = artifact["coarse_hitzone"]
     coarse_scale = int(artifact["coarse_scale"])
+    coarse_origin = np.asarray(
+        artifact.get("coarse_origin", (0, 0)), dtype=np.int32).reshape(2)
     hitzone_scale = int(artifact["hitzone_scale"])
     min_cost_per_px = float(artifact["min_cost_per_px"])
 
     st = _build_state(nodes, edges, weights, coarse_minval, coarse_clear,
                        coarse_labels, coarse_hitzone, coarse_scale, hitzone_scale,
-                       mask, min_cost_per_px)
+                       mask, min_cost_per_px, coarse_origin=coarse_origin)
 
     rng = random.Random(seed)
     t_deadline = _time.time() + time_budget_s

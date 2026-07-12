@@ -20,9 +20,8 @@
 //   2. subgrid      = bbox(spine) + (corridorRadius + 8) margin, from the true
 //      full-res mask (no margin-growth loop — the spine tells us the region).
 //   3. barriers     = every barrier with attemptIndex < routeIndex stamped into
-//      the subgrid as impassable thick lines (the mask-mode analogue of the
-//      editor's applyBlockedTerrain overlay). Single width constant
-//      BARRIER_DRAW_WIDTH_MASK_PX (WP 5.3's shared source of truth).
+//      the subgrid as a butt-capped rectangle using state.cfg.barrierWidthPx,
+//      the exact mask-space projection of the visible player stroke.
 //   4. corridorMask -> applyCorridor -> guidedThetaStar (switch radius 10, with
 //      an optional deadline) -> simplifyThetaPath (10°, 5 px).
 //   5. runtime      = Σ lineCost over the FINAL polyline on the TRUE mask (bars
@@ -37,7 +36,6 @@ import { refineRouteLegal, countLegalityViolations, lineCost, BARRIER_DRAW_WIDTH
 import { corridorMask, applyCorridor, snapToFree } from './preprocess.js';
 import { guidedThetaStar } from './theta_star.js';
 import { simplifyThetaPath } from './simplify.js';
-import { bresenhamPoints } from './bresenham.js';
 
 // θ* / simplify defaults — identical to pipeline.js so the refined polyline
 // mirrors the editor's output.
@@ -46,15 +44,8 @@ const SIMPLIFY_ANGLE_DEG = 10.0;
 const SIMPLIFY_DIST_PX = 5.0;
 const IMPASSABLE = 0;
 
-// Shared barrier enforcement width (WP 5.2/5.3 interface). ONE source of truth
-// used by (a) the subgrid rasterisation here, (b) the refined-route barrier
-// legality band (countBarrierViolations below) and (c) findBarrier's
-// isClearOfRouteNodes gate. The constant is DEFINED in navgraph_router.js (the
-// dependency root of the circular pair — defining it here would put the
-// router's module-init reference in the ESM temporal dead zone when this file
-// is the import entry); re-exported so WP 5.2 consumers keep their import path.
-// Rationale for the value (=3, not the naive round(BLOCKING_STROKE_WIDTH /
-// TRAIN_SCALE_VALUE)=1) is documented at the definition.
+// Default for callers without display metadata; uploaded-map state overrides
+// it with the exact visible stroke width. Re-exported for legacy consumers.
 export { BARRIER_DRAW_WIDTH_MASK_PX };
 
 // Module-level monotonic clock (Node >=16 + browser workers both expose
@@ -74,18 +65,20 @@ const nowMs = (typeof performance !== 'undefined' && performance.now)
  * into the caller's local subgrid coordinate frame.
  */
 function stampBarrierLine(sub, sw, sh, x0, y0, x1, y1, width) {
-	const pts = bresenhamPoints(x0 | 0, y0 | 0, x1 | 0, y1 | 0);
-	const r = Math.max(0, Math.floor((width - 1) / 2));
-	for (let i = 0; i < pts.length; i += 2) {
-		const cx = pts[i], cy = pts[i + 1];
-		for (let dy = -r; dy <= r; dy++) {
-			const yy = cy + dy;
-			if (yy < 0 || yy >= sh) continue;
-			const dxMax = Math.floor(Math.sqrt(r * r - dy * dy + 1e-9));
-			const base = yy * sw;
-			const lo = Math.max(0, cx - dxMax);
-			const hi = Math.min(sw - 1, cx + dxMax);
-			for (let xx = lo; xx <= hi; xx++) sub[base + xx] = IMPASSABLE;
+	const dx = x1 - x0, dy = y1 - y0, len2 = dx * dx + dy * dy;
+	if (len2 < 1e-9) return;
+	const len = Math.sqrt(len2);
+	const half = Math.max(0, width / 2);
+	const minX = Math.max(0, Math.floor(Math.min(x0, x1) - half));
+	const maxX = Math.min(sw - 1, Math.ceil(Math.max(x0, x1) + half));
+	const minY = Math.max(0, Math.floor(Math.min(y0, y1) - half));
+	const maxY = Math.min(sh - 1, Math.ceil(Math.max(y0, y1) + half));
+	for (let y = minY; y <= maxY; y++) {
+		for (let x = minX; x <= maxX; x++) {
+			const t = ((x - x0) * dx + (y - y0) * dy) / len2;
+			if (t < 0 || t > 1) continue; // SVG butt cap
+			const cross = Math.abs((x - x0) * dy - (y - y0) * dx);
+			if (cross / len <= half) sub[y * sw + x] = IMPASSABLE;
 		}
 	}
 }
@@ -126,17 +119,21 @@ function pointSegDist2(px, py, ax, ay, bx, by) {
  */
 export function countBarrierViolations(path, barriers, width = BARRIER_DRAW_WIDTH_MASK_PX) {
 	if (!barriers || !barriers.length || !path || path.length < 2) return 0;
-	const r = Math.max(0, Math.floor((width - 1) / 2));
-	const thr = (r + 0.5) * (r + 0.5); // within the stamped disk radius (+ pixel rounding)
+	const half = Math.max(0, width / 2);
 	let hits = 0;
 	for (let i = 1; i < path.length; i++) {
 		const a = path[i - 1], b = path[i];
-		const steps = Math.max(Math.abs(b.x - a.x), Math.abs(b.y - a.y)) | 0;
+		const steps = Math.max(1, Math.ceil(Math.max(Math.abs(b.x - a.x), Math.abs(b.y - a.y))));
 		for (let k = 0; k <= steps; k++) {
 			const t = steps ? k / steps : 0;
 			const px = a.x + (b.x - a.x) * t, py = a.y + (b.y - a.y) * t;
 			for (const bar of barriers) {
-				if (pointSegDist2(px, py, bar.ax, bar.ay, bar.bx, bar.by) <= thr) { hits++; break; }
+				const dx = bar.bx - bar.ax, dy = bar.by - bar.ay;
+				const len2 = dx * dx + dy * dy;
+				if (len2 < 1e-9) continue;
+				const projection = ((px - bar.ax) * dx + (py - bar.ay) * dy) / len2;
+				if (projection < 0 || projection > 1) continue; // SVG butt cap
+				if (pointSegDist2(px, py, bar.ax, bar.ay, bar.bx, bar.by) <= half * half) { hits++; break; }
 			}
 		}
 	}
@@ -284,7 +281,9 @@ function tryTheta(state, spine, activeBarriers, corridorRadius, deadline, diag =
 	for (const b of activeBarriers) {
 		stampBarrierLine(sub, sw, sh,
 			b.ax - x0, b.ay - y0, b.bx - x0, b.by - y0,
-			BARRIER_DRAW_WIDTH_MASK_PX);
+			Number.isFinite(state.cfg?.barrierWidthPx)
+				? state.cfg.barrierWidthPx
+				: BARRIER_DRAW_WIDTH_MASK_PX);
 	}
 
 	// Spine in local flat form for the corridor + θ* guidance.
@@ -399,6 +398,9 @@ export function refineRouteTheta(state, path, barriers, opts = {}) {
 
 	const base = {
 		legalPath, legalCost, activeBarriers, routeIndex, tRefine,
+		barrierWidthPx: Number.isFinite(cfg?.barrierWidthPx)
+			? cfg.barrierWidthPx
+			: BARRIER_DRAW_WIDTH_MASK_PX,
 	};
 
 	// If the legal spine itself is illegal, the route is unusable (pair should

@@ -8,7 +8,12 @@ import { runLayeredPipeline } from './layered_pipeline.js';
 import { normalizePassagesForRuntime } from './passage_geometry.js';
 import { routeDistinct } from './distinct.js';
 import { layeredRouteDistinct } from './layered_distinct.js';
-import { loadArtifact, buildState, attachLevelPassages, makeRng, generateOnePair } from './navgraph_router.js';
+import {
+    loadArtifact, buildState, attachSerializedPassages, makeRng, generateOnePair,
+    snapEndpoint, computeRouteOptions, refineTypedNavgraphRoute,
+    calcRouteObstacle, countLegalityViolations, countTypedLegalityViolations,
+    SUPPORTED_VERSION,
+} from './navgraph_router.js';
 import { passageRevision } from './navgraph_passage_overlay.js';
 // route_pair_selection.js is a pure, dependency-free module in the results app.
 // navgraph_router.js must stay importable in Node (harness) too, so it cannot
@@ -76,6 +81,32 @@ function ensureGridAndLabels(blocked) {
     return { ok: true, cached: false };
 }
 
+/** Count passage items in a canonical document or bare items array. */
+function documentItemCount(document) {
+    if (Array.isArray(document)) return document.length;
+    if (document && document.version === 1 && Array.isArray(document.items)) return document.items.length;
+    return 0;
+}
+
+/**
+ * Bind the fetched passage document to a freshly built navgraph state.
+ * A v3 artifact carries the passage topology in its CSR; the document only
+ * supplies rasters and is validated against the artifact's baked revision
+ * (a mismatch is a stale build, never an empty-passage fallback — CR 8.3). A
+ * legacy v2 base-only artifact may run only for a file with no passages.
+ */
+function attachPassageDocument(state, artifact, document) {
+    if (artifact.version === SUPPORTED_VERSION) {
+        return attachSerializedPassages(state, document);
+    }
+    if (documentItemCount(document) > 0) {
+        throw new Error('passage-bearing file requires a v3 navgraph rebuild');
+    }
+    const revision = passageRevision(document, artifact.W, artifact.H);
+    state.passageRevision = revision;
+    return { revision, passageCount: 0, passageNodeCount: 0, passageEdges: 0, transitions: 0 };
+}
+
 function passageKey(document) {
     try {
         return JSON.stringify(document || null);
@@ -137,6 +168,31 @@ function routesToGrid(existingRoutes) {
     return out;
 }
 
+function flattenTypedLegsForDebug(typedLegs, fallbackPath) {
+    if (!typedLegs?.length) {
+        return { path: fallbackPath || [], passageSpans: [] };
+    }
+    const path = [];
+    const passageSpans = [];
+    for (const leg of typedLegs) {
+        const fromIndex = path.length ? path.length - 1 : 0;
+        for (const point of leg.points || []) {
+            const previous = path[path.length - 1];
+            if (!previous || previous.x !== point.x || previous.y !== point.y) {
+                path.push({ x: point.x, y: point.y });
+            }
+        }
+        if (leg.surface !== 'base') {
+            passageSpans.push({
+                passageId: leg.passageId,
+                fromIndex,
+                toIndex: path.length - 1,
+            });
+        }
+    }
+    return { path, passageSpans };
+}
+
 self.addEventListener('message', async (e) => {
     const msg = e.data;
     if (!msg || typeof msg !== 'object') return;
@@ -196,8 +252,11 @@ self.addEventListener('message', async (e) => {
             navgraph?.key === key ? navgraph.w : msg.width,
             navgraph?.key === key ? navgraph.h : msg.height,
         );
-        // Fast path: same map already built → ignore (main thread can skip the
-        // re-transfer, but if it does re-send we don't rebuild needlessly).
+        // Fast path: same map + same passage revision already built → reuse. A
+        // v3 artifact bakes its passages in, so a changed passage document arrives
+        // as a *new* artifact with a different baked revision; this comparison then
+        // misses and the artifact below is rebuilt from scratch (CR 8.3 — there is
+        // no "same base artifact, new passages" rebuild any more).
         if (navgraph && navgraph.key === key && navgraph.passageRevision === revision) {
             // eslint-disable-next-line no-console
             console.log(`[${LOG_PREFIX}] navgraph already cached for ${key}`);
@@ -205,31 +264,13 @@ self.addEventListener('message', async (e) => {
                 type: 'navgraph', mapId: msg.mapId, ready: true,
                 nodes: navgraph.state.artifact.N, edges: navgraph.state.artifact.E,
                 sampleCells: navgraph.state.sampleCells.length,
-                passageRevision: revision,
-                passageOverlay: navgraph.state.passageOverlay?.stats || null,
+                passageRevision: navgraph.passageRevision,
                 cached: true,
             });
             return;
         }
         try {
             const t0 = performance.now();
-            if (navgraph && navgraph.key === key
-                && navgraph.w === msg.width && navgraph.h === msg.height) {
-                const passageStats = attachLevelPassages(navgraph.state, msg.levelPassages);
-                navgraph.passageRevision = passageStats.revision;
-                const dt = performance.now() - t0;
-                console.log(`[${LOG_PREFIX}] navgraph passage overlay rebuilt for ${key}: ` +
-                    `${passageStats.passageCount} passages, ${passageStats.portalCount} portals (${Math.round(dt)}ms)`);
-                self.postMessage({
-                    type: 'navgraph', mapId: msg.mapId, ready: true,
-                    nodes: navgraph.state.artifact.N, edges: navgraph.state.artifact.E,
-                    sampleCells: navgraph.state.sampleCells.length,
-                    passageRevision: passageStats.revision,
-                    passageOverlay: navgraph.state.passageOverlay?.stats || null,
-                    cachedBase: true,
-                });
-                return;
-            }
             const artifact = loadArtifact(msg.binBuffer);
             // Prefer the transferred mask; else reuse the editor's active raw
             // mask if it's the same map (avoids a second transfer).
@@ -247,7 +288,7 @@ self.addEventListener('message', async (e) => {
                 console.log(`[${LOG_PREFIX}] navgraph dims ${artifact.W}x${artifact.H} != mask ${msg.width}x${msg.height}`);
             }
             const state = buildState(artifact, mask, msg.config);
-            const passageStats = attachLevelPassages(state, msg.levelPassages);
+            const passageStats = attachPassageDocument(state, artifact, msg.levelPassages);
             navgraph = {
                 key, filename: msg.filename, w: artifact.W, h: artifact.H, state,
                 passageRevision: passageStats.revision,
@@ -255,12 +296,14 @@ self.addEventListener('message', async (e) => {
             const dt = performance.now() - t0;
             // eslint-disable-next-line no-console
             console.log(`[${LOG_PREFIX}] navgraph built for ${key}: ${artifact.N} nodes, ${artifact.E} edges, ` +
+                `v${artifact.version} ${passageStats.passageCount} passages ` +
+                `(${passageStats.passageNodeCount} nodes, ${passageStats.passageEdges} edges, ` +
+                `${passageStats.transitions} transitions), ` +
                 `${state.sampleCells.length} sample cells (${Math.round(dt)}ms)`);
             self.postMessage({
                 type: 'navgraph', mapId: msg.mapId, ready: true,
                 nodes: artifact.N, edges: artifact.E, sampleCells: state.sampleCells.length,
                 passageRevision: passageStats.revision,
-                passageOverlay: state.passageOverlay?.stats || null,
             });
         } catch (err) {
             navgraph = null;
@@ -328,6 +371,7 @@ self.addEventListener('message', async (e) => {
             start: res.start,
             goal: res.goal,
             routes: res.routes,
+            routeIndexes: res.routeIndexes,
             runtimes: res.runtimes,
             obstacles: res.obstacles,
             passageSpans: res.passageSpans || [[], []],
@@ -336,6 +380,120 @@ self.addEventListener('message', async (e) => {
             skippedBarriers: res.skippedBarriers,
             meta: res.meta,
         });
+        return;
+    }
+
+    // Superuser route-debug page: run the same snapping, typed navgraph A*,
+    // barrier alternatives, and surface-aware refinement as Infinity, but for
+    // explicitly placed endpoints instead of random samples. The HTTP assets
+    // that can initialize this state are all served by superuser-only views.
+    if (msg.type === 'debugRoute') {
+        const { msgId, start, goal } = msg;
+        if (!navgraph || !navgraph.state) {
+            self.postMessage({ type: 'debugRoutes', msgId, error: 'no navgraph loaded' });
+            return;
+        }
+        if (msg.mapId != null && navgraph.key !== String(msg.mapId)) {
+            self.postMessage({ type: 'debugRoutes', msgId, error: `navgraph mismatch (have ${navgraph.key})` });
+            return;
+        }
+        if (msg.passageRevision && msg.passageRevision !== navgraph.passageRevision) {
+            self.postMessage({
+                type: 'debugRoutes', msgId,
+                error: `passage revision mismatch (have ${navgraph.passageRevision})`,
+            });
+            return;
+        }
+        const finitePoint = (point) => point
+            && Number.isFinite(point.x) && Number.isFinite(point.y);
+        if (!finitePoint(start) || !finitePoint(goal)) {
+            self.postMessage({ type: 'debugRoutes', msgId, error: 'invalid endpoints' });
+            return;
+        }
+        try {
+            const t0 = performance.now();
+            const startSnap = snapEndpoint(navgraph.state, start);
+            const goalSnap = snapEndpoint(navgraph.state, goal);
+            if (!startSnap.length || !goalSnap.length) {
+                self.postMessage({
+                    type: 'debugRoutes', msgId,
+                    error: !startSnap.length ? 'start cannot snap to the navgraph' : 'goal cannot snap to the navgraph',
+                    startSnapCount: startSnap.length,
+                    goalSnapCount: goalSnap.length,
+                });
+                return;
+            }
+            const routeResult = computeRouteOptions(
+                navgraph.state, start, goal, startSnap, goalSnap,
+            );
+            const debugPaths = routeResult.paths.filter((route) => (
+                route.routeIndex === 1
+                || (route.typedLegs || []).some((leg) => leg.surface !== 'base')
+            ));
+            const routes = debugPaths.map((route) => {
+                // Full-res refinement is the expensive part on large real
+                // masks. Production Infinity refines only the two routes it
+                // selects for serving; the original debug implementation
+                // instead refined every explored alternative. Keep the primary
+                // route plus every passage-using route as a fast, explicitly
+                // unverified graph preview unless full refinement is requested.
+                const preview = flattenTypedLegsForDebug(route.typedLegs, route.path);
+                const refined = msg.fullRefinement
+                    ? refineTypedNavgraphRoute(
+                        navgraph.state, route, routeResult.barriers,
+                        { routeIndex: route.routeIndex },
+                    )
+                    : {
+                        path: preview.path,
+                        cost: route.cost,
+                        mode: 'graph-preview',
+                        typedLegs: route.typedLegs,
+                        passageSpans: preview.passageSpans,
+                    };
+                const path = refined.path || route.path;
+                const passageSpans = refined.passageSpans || [];
+                const legality = msg.fullRefinement
+                    ? (refined.typedLegs
+                        ? countTypedLegalityViolations(navgraph.state, refined.typedLegs)
+                        : countLegalityViolations(navgraph.state, path))
+                    : null;
+                return {
+                    routeIndex: route.routeIndex,
+                    path,
+                    passageSpans,
+                    surfaces: (refined.typedLegs || route.typedLegs || [])
+                        .map((leg) => leg.surface),
+                    runtime: refined.cost,
+                    obstacle: msg.fullRefinement
+                        ? calcRouteObstacle(
+                            navgraph.state.mask,
+                            navgraph.state.artifact.W,
+                            navgraph.state.artifact.H,
+                            path,
+                            passageSpans,
+                        )
+                        : null,
+                    refineMode: refined.mode,
+                    legality,
+                };
+            });
+            self.postMessage({
+                type: 'debugRoutes', msgId,
+                routes,
+                barriers: routeResult.barriers,
+                reason: routeResult.reason,
+                startSnapCount: startSnap.length,
+                goalSnapCount: goalSnap.length,
+                passageRevision: navgraph.passageRevision,
+                workerMs: +(performance.now() - t0).toFixed(2),
+                fullRefinement: Boolean(msg.fullRefinement),
+            });
+        } catch (err) {
+            self.postMessage({
+                type: 'debugRoutes', msgId,
+                error: String(err && err.message || err),
+            });
+        }
         return;
     }
 

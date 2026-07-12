@@ -1,4 +1,5 @@
 import { ROUTE_BARRIER_DRAW_WIDTH } from './infinite/citygen/core/RoutePlanner.js';
+import { maskBarrierStrokeWidthMapUnits } from './infinite/mask_scene_source.js';
 import { TRAIN_SCALE_VALUE } from '/static/project/js/pathing/pipeline.js';
 
 const NS = 'http://www.w3.org/2000/svg';
@@ -804,6 +805,12 @@ function drawReport(report, city, mapBounds = null) {
     // Blocking bars, drawn like infinite_play's drawRouteBlocks. They live in
     // the control layer (not the route layer) so they stay visible when the
     // route overlay is toggled off — they are part of the scene, not a route.
+    const barrierStrokeWidth = report.infinity_file
+        ? maskBarrierStrokeWidthMapUnits(
+            report.infinity_file.map_scale,
+            report.infinity_file.editor_scale,
+        )
+        : ROUTE_BARRIER_DRAW_WIDTH;
     for (const b of report.skipped_barriers || []) {
         if (![b?.ax, b?.ay, b?.bx, b?.by].every(Number.isFinite)) continue;
         const line = el('line');
@@ -812,7 +819,7 @@ function drawReport(report, city, mapBounds = null) {
         line.setAttribute('x2', b.bx);
         line.setAttribute('y2', b.by);
         line.setAttribute('stroke', CONTROL_COLOR);
-        line.setAttribute('stroke-width', ROUTE_BARRIER_DRAW_WIDTH);
+        line.setAttribute('stroke-width', barrierStrokeWidth);
         line.setAttribute('stroke-linecap', 'butt');
         controlLayer.appendChild(line);
     }
@@ -835,6 +842,8 @@ function drawReport(report, city, mapBounds = null) {
             start: report.start,
             goal: report.goal,
             route_indexes: report.route_indexes,
+            route_index_source: report.route_index_source,
+            displayed_route_indexes: (report.routes || []).map((route) => route.routeIndex ?? null),
             route_runtime_slots: report.route_result?.routeRuntimeSlots,
             route_noa_slots: report.route_result?.routeNoASlots,
             user_agent: report.user_agent,

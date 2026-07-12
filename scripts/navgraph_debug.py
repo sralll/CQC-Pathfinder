@@ -52,6 +52,10 @@ OFFMAP_COLOR = (200, 40, 40)   # outside the map footprint (nodes pruned)
 BORING_COLOR = (235, 200, 45)  # in footprint but boring (crossable, no endpoints)
 OVERLAY_ALPHA = 0.55         # tint strength for hit-zone overlays
 NODE_COLOR = (20, 20, 20)
+PASSAGE_NODE_COLOR = (155, 55, 220)
+PASSAGE_EDGE_COLOR = (190, 70, 240)
+TRANSITION_EDGE_COLOR = (0, 210, 255)
+SHADOWED_COLOR = (255, 120, 20)
 NODE_RADIUS = 2
 PATH_COLOR = (0, 230, 255)   # bright cyan
 PATH_WIDTH = 4
@@ -172,10 +176,13 @@ def _build_adjacency(edges, weights):
     return adj
 
 
-def _nearest_node(nodes_xy, x, y):
+def _nearest_node(nodes_xy, x, y, limit=None):
     """Index of the node nearest to (x, y) (full-res px)."""
-    d2 = (nodes_xy[:, 0].astype(np.float64) - x) ** 2 + \
-         (nodes_xy[:, 1].astype(np.float64) - y) ** 2
+    candidates = nodes_xy if limit is None else nodes_xy[:limit]
+    if not len(candidates):
+        raise ValueError("artifact has no base node available for endpoint snapping")
+    d2 = (candidates[:, 0].astype(np.float64) - x) ** 2 + \
+         (candidates[:, 1].astype(np.float64) - y) ** 2
     return int(np.argmin(d2))
 
 
@@ -213,13 +220,17 @@ def _dijkstra(adj, src, dst, n_nodes):
 # Rendering
 # =============================================================================
 
-def _render_overlay(mask_path, artifact, out_path, pair=None):
+def _render_overlay(mask_path, artifact, out_path, pair=None, show_shadowed=False):
     mask = _load_mask(mask_path)
     H, W = mask.shape
 
     nodes = np.asarray(artifact["nodes"]).reshape(-1, 2)   # (x, y) full-res
     edges = np.asarray(artifact["edges"]).reshape(-1, 2)
     weights = np.asarray(artifact["weights"]).reshape(-1)
+    edge_kinds = np.asarray(
+        artifact.get("edge_kinds", np.zeros(len(edges), dtype=np.uint8)),
+        dtype=np.uint8).reshape(-1)
+    base_node_count = _scalar_int(artifact.get("base_node_count"), len(nodes))
 
     # --- Hit zone: footprint (map body) + sample (endpoint zone), using the
     #     artifact's stored endpoint zone so polygon-built graphs visualize the
@@ -272,11 +283,17 @@ def _render_overlay(mask_path, artifact, out_path, pair=None):
                 continue
             xi, yi = nodes[u[i]]
             xj, yj = nodes[v[i]]
-            t = (cost_per_px[i] - ramp_min) / (ramp_max - ramp_min)
-            color = _ramp_color(t)
+            kind = int(edge_kinds[i])
+            if kind == 1:
+                color = PASSAGE_EDGE_COLOR
+            elif kind == 2:
+                color = TRANSITION_EDGE_COLOR
+            else:
+                t = (cost_per_px[i] - ramp_min) / (ramp_max - ramp_min)
+                color = _ramp_color(t)
             draw.line(
                 [(xi * scale, yi * scale), (xj * scale, yj * scale)],
-                fill=color, width=1,
+                fill=color, width=2 if kind else 1,
             )
         print(f"[navgraph_debug]   weight/px ramp: min={ramp_min:.3f} "
               f"max={ramp_max:.3f} (2nd/98th percentile of {len(edges)} edges)")
@@ -286,17 +303,34 @@ def _render_overlay(mask_path, artifact, out_path, pair=None):
 
     # --- Nodes.
     r = NODE_RADIUS
-    for x, y in nodes:
+    for node_index, (x, y) in enumerate(nodes):
         cx, cy = x * scale, y * scale
-        draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill=NODE_COLOR)
+        color = NODE_COLOR if node_index < base_node_count else PASSAGE_NODE_COLOR
+        draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill=color)
+
+    # Removed projected base topology is diagnostic-only.  The default image
+    # always shows exactly the effective serialized graph.
+    if show_shadowed:
+        shadow_edges = np.asarray(
+            artifact.get("shadowed_base_edges", np.zeros((0, 2, 2), dtype=np.int32)),
+            dtype=np.int32).reshape(-1, 2, 2)
+        shadow_nodes = np.asarray(
+            artifact.get("shadowed_base_nodes", np.zeros((0, 2), dtype=np.int32)),
+            dtype=np.int32).reshape(-1, 2)
+        for (x0, y0), (x1, y1) in shadow_edges:
+            draw.line([(x0 * scale, y0 * scale), (x1 * scale, y1 * scale)],
+                      fill=SHADOWED_COLOR, width=2)
+        for x, y in shadow_nodes:
+            cx, cy = x * scale, y * scale
+            draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill=SHADOWED_COLOR)
 
     # --- Optional shortest path.
     path_info = None
     if pair is not None:
         y1, x1, y2, x2 = pair
         adj = _build_adjacency(edges, weights)
-        src = _nearest_node(nodes, x1, y1)
-        dst = _nearest_node(nodes, x2, y2)
+        src = _nearest_node(nodes, x1, y1, limit=base_node_count)
+        dst = _nearest_node(nodes, x2, y2, limit=base_node_count)
         path, total = _dijkstra(adj, src, dst, len(nodes))
         if path is None:
             print(f"[navgraph_debug]   --pair: NO PATH between node {src} "
@@ -335,7 +369,7 @@ def _render_overlay(mask_path, artifact, out_path, pair=None):
                f"footprint={hitzone_stats['footprint_fraction']*100:.0f}%  "
                f"sample={hitzone_stats['sample_fraction']*100:.0f}%  "
                f"hitzone={hitzone_stats['source']}  "
-               f"(red=off-map, yellow=boring)")
+               f"(purple=passage, cyan=transition)")
 
     canvas.save(out_path)
     print(f"[navgraph_debug]   wrote {out_path}")
@@ -346,7 +380,8 @@ def _render_overlay(mask_path, artifact, out_path, pair=None):
     }
 
 
-def render_overlay_for_mask(mask_path, artifact=None, pair=None, out_path=None):
+def render_overlay_for_mask(mask_path, artifact=None, pair=None, out_path=None,
+                            show_shadowed=False):
     """Render a ``.navgraph.debug.png`` overlay for ``mask_path``.
 
     ``artifact`` may be the in-memory dict returned by ``build_navgraph()`` or a
@@ -363,7 +398,9 @@ def render_overlay_for_mask(mask_path, artifact=None, pair=None, out_path=None):
           f"{stats.get('mpx', '?')} Mpx, nodes={stats.get('n_nodes')}, "
           f"edges={stats.get('n_edges')}, "
           f"main_conn={stats.get('main_component_connectivity')}")
-    return _render_overlay(mask_path, artifact, out_path, pair=pair)
+    return _render_overlay(
+        mask_path, artifact, out_path, pair=pair,
+        show_shadowed=show_shadowed)
 
 
 def _draw_text(draw, xy, text):
@@ -395,13 +432,17 @@ def main():
         "--pair", type=_parse_pair, default=None,
         help="y1,x1,y2,x2 — snap to nearest nodes and draw the shortest path "
              "(applied to every mask given)")
+    parser.add_argument(
+        "--show-shadowed", action="store_true",
+        help="draw base nodes/edges removed beneath passage bodies in orange")
     args = parser.parse_args()
 
     for mask_path in args.masks:
         if not os.path.isfile(mask_path):
             print(f"[navgraph_debug] SKIP missing file: {mask_path}")
             continue
-        render_overlay_for_mask(mask_path, pair=args.pair)
+        render_overlay_for_mask(
+            mask_path, pair=args.pair, show_shadowed=args.show_shadowed)
 
 
 if __name__ == "__main__":

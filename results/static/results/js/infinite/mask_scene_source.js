@@ -20,6 +20,9 @@ const PAIR_TIMEOUT_MS = 20000;
 const PAIR_WARN_MS = 5000;
 const REFERENCE_MAP_SCALE = 4000;
 const EDITOR_PX_TO_METRES = 0.48;
+// Existing player rendering contract: blockers are five source-map pixels
+// wide, then scaled exactly like the uploaded map image.
+export const MASK_BLOCKING_STROKE_SOURCE_PX = 5;
 
 // Route-choice limits are real metres. Convert them to the full-resolution
 // mask pixels consumed by navgraph_router using the normal editor/play scale.
@@ -29,13 +32,39 @@ const ROUTE_SIDE_MIN_METRES = 12;
 
 export { TRAIN_SCALE_VALUE };
 
-export function maskScaleForMap(mapScale = REFERENCE_MAP_SCALE) {
+export function maskBarrierStrokeWidthMapUnits(mapScale = REFERENCE_MAP_SCALE, editorScale = 1) {
+    const parsedMapScale = Number(mapScale);
+    const safeMapScale = Number.isFinite(parsedMapScale) && parsedMapScale > 0
+        ? parsedMapScale
+        : REFERENCE_MAP_SCALE;
+    const parsedEditorScale = Number(editorScale);
+    const safeEditorScale = Number.isFinite(parsedEditorScale) && parsedEditorScale > 0
+        ? parsedEditorScale
+        : 1;
+    return MASK_BLOCKING_STROKE_SOURCE_PX
+        * (REFERENCE_MAP_SCALE / safeMapScale)
+        * safeEditorScale;
+}
+
+export function maskBarrierStrokeWidthMaskPx(
+    mapScale = REFERENCE_MAP_SCALE,
+    editorScale = 1,
+    mapUnitScale = TRAIN_SCALE_VALUE,
+) {
+    const safeMapUnitScale = Number.isFinite(Number(mapUnitScale)) && Number(mapUnitScale) > 0
+        ? Number(mapUnitScale)
+        : TRAIN_SCALE_VALUE;
+    return maskBarrierStrokeWidthMapUnits(mapScale, editorScale) / safeMapUnitScale;
+}
+
+export function maskScaleForMap(mapScale = REFERENCE_MAP_SCALE, editorScale = 1) {
     const parsedScale = Number(mapScale);
     const safeMapScale = Number.isFinite(parsedScale) && parsedScale > 0
         ? parsedScale
         : REFERENCE_MAP_SCALE;
     const metresPerMapUnit = EDITOR_PX_TO_METRES * (safeMapScale / REFERENCE_MAP_SCALE);
     const metresPerMaskPixel = metresPerMapUnit * TRAIN_SCALE_VALUE;
+    const barrierWidthPx = maskBarrierStrokeWidthMaskPx(safeMapScale, editorScale);
     return {
         mapScale: safeMapScale,
         metresPerMapUnit,
@@ -44,6 +73,10 @@ export function maskScaleForMap(mapScale = REFERENCE_MAP_SCALE) {
             distMinPx: ROUTE_PICK_MIN_METRES / metresPerMaskPixel,
             distMaxPx: ROUTE_PICK_MAX_METRES / metresPerMaskPixel,
             sideGapMinPx: ROUTE_SIDE_MIN_METRES / metresPerMaskPixel,
+            // The routing rectangle is the exact mask-space projection of the
+            // unchanged SVG stroke used by infinite_play.
+            barrierWidthPx,
+            barrierClearNodeDistPx: barrierWidthPx,
         },
     };
 }
@@ -121,7 +154,7 @@ export class MaskSceneSource {
         this.editorScale = Number.isFinite(parsedEditorScale) && parsedEditorScale > 0
             ? parsedEditorScale
             : 1;
-        this.scale = maskScaleForMap(mapScale);
+        this.scale = maskScaleForMap(mapScale, this.editorScale);
         this.mapScale = this.scale.mapScale;
         this.metresPerMapUnit = this.scale.metresPerMapUnit;
         this.mapImageUrl = `/editor/map/${filename}`;
@@ -299,6 +332,7 @@ export class MaskSceneSource {
         });
         const routes = (pairMsg.routes || []).map((poly, i) => ({
             index: i,
+            routeIndex: pairMsg.routeIndexes?.[i] ?? null,
             points: (poly || []).map(toMapUnits),
             runtime: pairMsg.runtimes?.[i] ?? null,
             obstacle: pairMsg.obstacles?.[i] ?? 0,
@@ -309,6 +343,7 @@ export class MaskSceneSource {
             start,
             goal,
             routes,
+            routeIndexes: pairMsg.routeIndexes || [],
             runtimes: pairMsg.runtimes || [],
             barriers: (pairMsg.barriers || []).map(toMapBarrier),
             skippedBarriers: (pairMsg.skippedBarriers || []).map(toMapBarrier),

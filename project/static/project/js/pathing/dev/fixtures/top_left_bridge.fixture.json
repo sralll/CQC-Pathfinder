@@ -1,0 +1,33 @@
+{
+  "_comment": [
+    "CR 8.1 frozen real-map fixture for the reported top-left bridge in",
+    "mask_20250604_135955.png. CR 8.1 freezes the mask, the region of interest,",
+    "and the exact typed-topology invariants below. The concrete passage document",
+    "(centreline points + width matching the coach placement) and the live",
+    "assertions against real builder output are CR 8.2 (build) and CR 8.5 (human",
+    "map review). Do NOT fabricate centreline coordinates here — they must come",
+    "from the editor-authored File.level_passages once CR 8.2 wires the builder to",
+    "the canonical document. Until then passage_document is null."
+  ],
+  "mask": "media/masks/mask_20250604_135955.png",
+  "mask_shape": [1674, 2739],
+  "region_of_interest": {
+    "note": "Top-left quadrant; the bridge crosses the diagonal grey band.",
+    "bbox_full_res": [300, 100, 900, 500]
+  },
+  "passage_document": null,
+  "frozen_invariants": [
+    "one continuous typed passage chain endpoint-to-endpoint over the bridge",
+    "base connectivity beneath the bridge (a genuine transverse underpass remains)",
+    "no base/passage turn at the projected crossing (base walk never enters a passage node)",
+    "transitions only at the two saved passage endpoint nodes",
+    "every intermediate passage node has same-passage degree two",
+    "no generic k-NN / skeleton / witness / repair edge touches an intermediate passage node",
+    "no cross-passage edge; overlapping passages stay independent",
+    "region legality preserved for every typed leg"
+  ],
+  "consumed_by": [
+    "CR 8.2 acceptance (real builder output on this mask)",
+    "CR 8.5 rollout gate (manual map review, both directions)"
+  ]
+}

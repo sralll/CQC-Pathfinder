@@ -23,6 +23,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 
 from .media_access import (
+    delete_navgraph_artifacts,
     safe_media_filename,
     serve_map_file,
     serve_mask_file,
@@ -124,6 +125,46 @@ def _validate_passage_route_updates(data, file):
         validated.append((route, metrics))
 
     return validated
+
+
+def _passage_document_changed(old_value, new_normalized):
+    """True when a passage save actually changes the canonical document.
+
+    A no-op save (same passages resent) must not needlessly revoke infinite
+    play, so both sides are compared in their normalized v1 form."""
+    try:
+        old_normalized = normalize_level_passages(old_value)
+    except LevelPassagesValidationError:
+        # An unreadable stored document is, for these purposes, different.
+        return True
+    return old_normalized != new_normalized
+
+
+def _revoke_infinite_for_passage_change(file, update_fields):
+    """Passage-authoritative navgraph invalidation (CR 8.4).
+
+    A committed passage add/edit/remove makes the baked Infinity artifact stale,
+    so infinite play is disabled in the same transaction (reactivation rebuilds
+    the new revision) and any in-flight build is invalidated so it cannot
+    re-enable the file when it finishes. Mutates ``file`` and ``update_fields``
+    in place; call only inside the row-locking transaction once the passage
+    document is known to have changed."""
+    if file.infinite_enabled:
+        file.infinite_enabled = False
+        if 'infinite_enabled' not in update_fields:
+            update_fields.append('infinite_enabled')
+    progress = file.batch_progress
+    if (isinstance(progress, dict)
+            and progress.get('type') == 'navgraph_build'
+            and progress.get('status') == 'building'):
+        file.batch_progress = {
+            **progress,
+            'status': 'invalidated',
+            'infinite_enabled': False,
+            'updated_at': timezone.now().isoformat(),
+        }
+        if 'batch_progress' not in update_fields:
+            update_fields.append('batch_progress')
 
 
 def _normalize_order_payload(control_pairs):
@@ -488,12 +529,22 @@ def get_navgraph(request, file_id):
 @role_required('Trainer')
 @require_GET
 def get_level_passages(request, file_id):
-    """Return canonical passage data without acquiring an editor lock."""
+    """Return the effective Infinity passage data without an editor lock."""
     file = get_object_or_404(File, id=file_id, deleted=False)
     if not user_can_access_file(request, file):
         return HttpResponseNotFound()
     try:
-        return JsonResponse(normalize_level_passages(file.level_passages))
+        from .navgraph import filter_level_passages_for_region, mask_dimensions
+
+        document = normalize_level_passages(file.level_passages)
+        mask_path = _mask_path_for_file(file)
+        if (mask_path and os.path.isfile(mask_path)
+                and isinstance(file.infinite_region, list)
+                and len(file.infinite_region) >= 3):
+            width, height = mask_dimensions(mask_path)
+            document, _ignored = filter_level_passages_for_region(
+                document, file.infinite_region, width, height)
+        return JsonResponse(document)
     except LevelPassagesValidationError as exc:
         return _invalid_level_passages_response(exc)
 
@@ -579,13 +630,20 @@ def region_suggest(request, file_id):
 
 
 def _rebuild_navgraph_for_file(file_id, enable_on_success=False, build_token=None):
-    """Background rebuild of a File's navgraph honouring its saved region.
+    """Background rebuild of a File's navgraph honouring its saved region *and*
+    its canonical passage document (CR 8.4).
 
     Surfaces state in ``File.batch_progress`` (type ``navgraph_build``) so the
-    editor can poll ``navgraph_build_status``. When ``enable_on_success`` is set
-    (the coach activated infinite play), ``File.infinite_enabled`` is flipped on
-    only *after* the graph is built — never before — so a half-built map can
-    never be served to players."""
+    editor can poll ``navgraph_build_status``. The region polygon and the
+    ``level_passages`` document are read from one coherent snapshot and the
+    artifact is built for *that* revision. Immediately before publishing, the
+    row is locked again and both the region and the baked passage revision are
+    re-confirmed: if either changed during the build the temporary output is
+    discarded and the build is reported ``stale`` — an artifact for a superseded
+    passage document is never published. When ``enable_on_success`` is set (the
+    coach activated infinite play), ``File.infinite_enabled`` is flipped on only
+    *after* that check succeeds, so a stale or half-built map can never be
+    served to players."""
     from django.db import close_old_connections
     close_old_connections()
     try:
@@ -614,10 +672,19 @@ def _rebuild_navgraph_for_file(file_id, enable_on_success=False, build_token=Non
             'build_token': build_token,
             'updated_at': timezone.now().isoformat(),
         })
-        from .navgraph import build_navgraph, save_navgraph
+        from .navgraph import (
+            build_navgraph, filter_level_passages_for_region, save_navgraph,
+            passage_revision, region_revision,
+        )
+        # One coherent snapshot of everything the build depends on.
         region = file.infinite_region if isinstance(file.infinite_region, list) else None
-        artifact = build_navgraph(mask_path, region_polygon=region)
-        save_navgraph(artifact, mask_path)
+        passages = file.level_passages
+        artifact = build_navgraph(
+            mask_path, region_polygon=region, level_passages=passages)
+        H, W = int(artifact['mask_shape'][0]), int(artifact['mask_shape'][1])
+        built_passage_revision = artifact['passage_revision']
+        built_region_revision = artifact['stats'].get(
+            'region_revision', region_revision(region, W, H))
         with transaction.atomic():
             file = File.objects.select_for_update().get(id=file_id)
             progress = file.batch_progress
@@ -630,13 +697,42 @@ def _rebuild_navgraph_for_file(file_id, enable_on_success=False, build_token=Non
                     and progress.get('build_token') == build_token
                 )
             )
-            if not build_is_current:
-                # A mask/region edit invalidated this build while it was running.
-                # The artifact may have been written, but it must never make the
-                # file playable until a later, current build succeeds.
+            # Re-derive the current region + passage revision under the lock and
+            # confirm they still match what we built for. A mask edit already
+            # invalidates the token (save_mask), so region/passage identity plus
+            # the token together cover every mutation that can happen mid-build.
+            current_region = (
+                file.infinite_region if isinstance(file.infinite_region, list) else None)
+            current_passage_revision = passage_revision(
+                filter_level_passages_for_region(
+                    file.level_passages, current_region, W, H)[0], W, H)
+            current_region_revision = region_revision(current_region, W, H)
+            revisions_match = (
+                current_region_revision == built_region_revision
+                and current_passage_revision == built_passage_revision
+            )
+            if not build_is_current or not revisions_match:
+                # A mask/region/passage edit superseded this build while it was
+                # running. Discard the freshly built (but unwritten) artifact and
+                # never let it make the file playable.
                 file.infinite_enabled = False
-                file.save(update_fields=['infinite_enabled'])
+                stale_progress = {
+                    'type': 'navgraph_build', 'status': 'stale',
+                    'build_token': build_token,
+                    'infinite_enabled': False,
+                    'updated_at': timezone.now().isoformat(),
+                }
+                # Preserve an existing 'invalidated' marker set by a concurrent
+                # mask/region edit rather than masking why the build was dropped.
+                if (isinstance(progress, dict)
+                        and progress.get('status') == 'invalidated'):
+                    file.save(update_fields=['infinite_enabled'])
+                else:
+                    file.batch_progress = stale_progress
+                    file.save(update_fields=['infinite_enabled', 'batch_progress'])
                 return
+            # Current: publish the artifact atomically, then flip the flag.
+            save_navgraph(artifact, mask_path)
             file.infinite_enabled = bool(enable_on_success)
             file.batch_progress = {
                 'type': 'navgraph_build', 'status': 'done',
@@ -645,6 +741,9 @@ def _rebuild_navgraph_for_file(file_id, enable_on_success=False, build_token=Non
                 'hitzone_source': artifact['stats'].get('hitzone_source'),
                 'n_nodes': artifact['stats'].get('n_nodes'),
                 'n_edges': artifact['stats'].get('n_edges'),
+                'passage_revision': built_passage_revision,
+                'region_revision': built_region_revision,
+                'n_passages': artifact['stats'].get('n_passages'),
                 'updated_at': timezone.now().isoformat(),
             }
             file.save(update_fields=['infinite_enabled', 'batch_progress'])
@@ -705,6 +804,7 @@ def save_region(request, file_id):
             }
             update_fields.append('batch_progress')
         file.save(update_fields=update_fields)
+        delete_navgraph_artifacts(file)
 
         return JsonResponse({
             'status': 'ok',
@@ -1052,6 +1152,13 @@ def save_file(request):
             if not _map_file_is_claimable(request, incoming_map_file):
                 return JsonResponse({'error': 'Permission denied for map file'}, status=403)
 
+        # A full save can also change the passage document; if it does, the
+        # baked Infinity artifact for this file is stale (CR 8.4). Read the
+        # stored document before it is overwritten below.
+        passages_changed = (
+            file.pk is not None
+            and _passage_document_changed(file.level_passages, level_passages)
+        )
         file.name            = data.get('name', _('New project'))
         file.scale           = data.get('scale')
         file.map_scale       = _map_scale_value(data.get('map_scale'))
@@ -1063,7 +1170,11 @@ def save_file(request):
         file.last_edited     = tz.now()
         file.locked_by       = request.user   # refresh lock
         file.locked_at       = tz.now()
+        if passages_changed:
+            _revoke_infinite_for_passage_change(file, [])
         file.save()
+        if passages_changed:
+            delete_navgraph_artifacts(file)
 
         # Rebuild control pairs atomically using bulk_create (2 INSERTs vs N×M)
         from django.db import transaction as _tx
@@ -1300,18 +1411,28 @@ def save_element(request):
                     route.run_time = metrics['run_time']
                     route.save(update_fields=['obstacle', 'run_time'])
 
+                passages_changed = _passage_document_changed(
+                    file.level_passages, level_passages)
                 file.level_passages = level_passages
                 file.author      = request.user.first_name or request.user.username
                 file.last_edited = tz.now()
                 file.locked_by   = request.user
                 file.locked_at   = tz.now()
-                file.save(update_fields=[
+                update_fields = [
                     'author', 'level_passages', 'last_edited', 'locked_by', 'locked_at',
-                ])
+                ]
+                if passages_changed:
+                    # The baked Infinity artifact is now stale for this file.
+                    _revoke_infinite_for_passage_change(file, update_fields)
+                file.save(update_fields=update_fields)
+
+            if passages_changed:
+                delete_navgraph_artifacts(file)
 
             return JsonResponse({
                 'status': 'ok',
                 'level_passages': file.level_passages,
+                'infinite_enabled': file.infinite_enabled,
                 'route_updates': [
                     {
                         'cp_db_id': route.control_pair_id,
@@ -1460,6 +1581,7 @@ def save_mask(request):
                     temp_file.write(chunk)
             os.replace(temp_path, mask_path)
             temp_path = None
+        delete_navgraph_artifacts(file)
     finally:
         if temp_path and os.path.exists(temp_path):
             os.remove(temp_path)

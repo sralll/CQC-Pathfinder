@@ -73,10 +73,11 @@ const bridgeNearA = flat([[5, 18], [15, 18], [30, 18], [50, 18], [65, 18], [75, 
 const bridgeNearB = flat([[5, 19], [15, 19], [30, 19], [50, 19], [65, 19], [75, 19]]);
 const near = layeredRouteDistinct(bridgeNearA, [bridgeNearB], grid, width, height, passages);
 assert.equal(near.distinct, false);
-assert.equal(near.reason, 'no meaningful separation on shared passage');
+assert.equal(near.reason, 'differences confined to shared passages');
 assert.equal(near.perRoute[0].strategy, 'same-passage-overlap');
-assert.equal(near.perRoute[0].passageComparisons[0].meaningful, false);
-assert.equal(near.perRoute[0].passageComparisons[0].thresholdPx, 5);
+assert.deepEqual(near.perRoute[0].passageComparisons, [
+    { passageId: 'wide-horizontal', ignoredForDistinctness: true },
+]);
 
 // The layered search's explicit empty classification is authoritative. Two
 // routes with identical projected geometry can still be a legal over/under
@@ -164,24 +165,22 @@ assert.equal(surrounding.distinct, true);
 assert.equal(surrounding.perRoute[0].strategy, 'legacy-surrounding');
 assert.equal(surrounding.perRoute[0].surroundingBase.distinct, true);
 
-// A sustained lateral choice across the same wide passage is meaningful. The
-// symmetric point-to-polyline test avoids treating longitudinal resampling
-// differences as lateral separation.
+// Even opposite sides of a wide passage are the same route choice when no
+// base-surface obstacle separates the approach or exit.
 const bridgeUpper = flat([[5, 12], [15, 12], [30, 12], [50, 12], [65, 12], [75, 12]]);
 const bridgeLower = flat([[5, 28], [15, 28], [30, 28], [50, 28], [65, 28], [75, 28]]);
 const lateral = layeredRouteDistinct(bridgeUpper, [bridgeLower], grid, width, height, passages);
-assert.equal(lateral.distinct, true);
-assert.equal(lateral.perRoute[0].strategy, 'passage-lateral');
-assert.equal(lateral.perRoute[0].passageComparisons[0].meaningful, true);
-assert.ok(lateral.perRoute[0].passageComparisons[0].candidateToExisting.separatedFraction >= 0.35);
+assert.equal(lateral.distinct, false);
+assert.equal(lateral.perRoute[0].strategy, 'same-passage-overlap');
 
-// Caller thresholds are honored and diagnostics retain transient classifier
-// spans without adding anything to the route payload itself.
+// Passage-local distance thresholds cannot turn one corridor into two route
+// choices. Diagnostics still retain transient classifier spans without adding
+// anything to the route payload itself.
 const forcedNear = layeredRouteDistinct(bridgeNearA, [bridgeNearB], grid, width, height, passages, {
     passageMinSeparationPx: 0.5,
 });
-assert.equal(forcedNear.distinct, true);
-assert.equal(forcedNear.perRoute[0].strategy, 'passage-lateral');
+assert.equal(forcedNear.distinct, false);
+assert.equal(forcedNear.perRoute[0].strategy, 'same-passage-overlap');
 assert.deepEqual(forcedNear.candidateClassification.passageSpans, [
     { passageId: 'wide-horizontal', fromIndex: 1, toIndex: 4 },
 ]);
@@ -189,7 +188,7 @@ assert.deepEqual(forcedNear.candidateClassification.passageSpans, [
 // Multiple existing routes retain the legacy "must differ from every route"
 // aggregation rule and report the original existing-route index.
 const mixed = layeredRouteDistinct(bridgeUpper, [under, bridgeNearA], grid, width, height, passages);
-assert.equal(mixed.distinct, true);
+assert.equal(mixed.distinct, false);
 assert.equal(mixed.comparedRoutes, 2);
 assert.deepEqual(mixed.perRoute.map((entry) => entry.routeIndex), [0, 1]);
 
@@ -202,4 +201,4 @@ assert.deepEqual(
     { distinct: true, reason: 'first route', comparedRoutes: 0 },
 );
 
-console.log('layered distinctness: base regression, topology, lateral separation, and diagnostics passed');
+console.log('layered distinctness: base regression, topology, shared-passage culling, and diagnostics passed');
