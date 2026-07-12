@@ -27,6 +27,7 @@
 // point lies inside a portal polygon (or inside a gate disc radius) is allowed.
 
 import { thickenPolyline } from './Obstacles.js';
+import { dcos, dhypot, dsin } from './dmath.js';
 
 const EPS = 1e-9;
 const POINT_EPS = 1e-6;
@@ -192,8 +193,8 @@ export class LazyVisibilityGraph {
 				const verts = new Float64Array(GATE_DISC_SEGMENTS * 2);
 				for (let i = 0; i < GATE_DISC_SEGMENTS; i++) {
 					const a = (i / GATE_DISC_SEGMENTS) * Math.PI * 2;
-					verts[i * 2] = p.cx + Math.cos(a) * p.r;
-					verts[i * 2 + 1] = p.cy + Math.sin(a) * p.r;
+					verts[i * 2] = p.cx + dcos(a) * p.r;
+					verts[i * 2 + 1] = p.cy + dsin(a) * p.r;
 				}
 				portalPolys.push(verts);
 			} else {
@@ -379,7 +380,7 @@ export class LazyVisibilityGraph {
 			if (p.kind === 'gate') {
 				for (let i = 0; i < GATE_DISC_SEGMENTS; i++) {
 					const a = (i / GATE_DISC_SEGMENTS) * Math.PI * 2;
-					addNode(p.cx + Math.cos(a) * p.r, p.cy + Math.sin(a) * p.r, -1);
+					addNode(p.cx + dcos(a) * p.r, p.cy + dsin(a) * p.r, -1);
 				}
 			} else {
 				const n = p.poly.length / 2;
@@ -474,7 +475,7 @@ export class LazyVisibilityGraph {
 		// bar (segment inflated perpendicularly), not just its centerline —
 		// otherwise routes can squeeze through the drawn stroke near the ends.
 		let segs = [ax, ay, bx, by];
-		const len = Math.hypot(bx - ax, by - ay);
+		const len = dhypot(bx - ax, by - ay);
 		if (halfWidth > 0 && len > EPS) {
 			const ox = -((by - ay) / len) * halfWidth;
 			const oy = ((bx - ax) / len) * halfWidth;
@@ -552,7 +553,7 @@ export class LazyVisibilityGraph {
 	}
 
 	_segmentInteriorBlocked(ax, ay, bx, by) {
-		const len = Math.hypot(bx - ax, by - ay);
+		const len = dhypot(bx - ax, by - ay);
 		const samples = Math.max(4, Math.min(32, Math.ceil(len / 1.5)));
 		for (let i = 1; i < samples; i++) {
 			const t = i / samples;
@@ -732,7 +733,7 @@ export class LazyVisibilityGraph {
 	}
 
 	edgeCost(ax, ay, bx, by) {
-		return Math.hypot(bx - ax, by - ay);
+		return dhypot(bx - ax, by - ay);
 	}
 
 	pathCost(path, from, to) {
@@ -839,7 +840,7 @@ export class LazyVisibilityGraph {
 			const j = candidates[k];
 			const vx = this.nodeX[j], vy = this.nodeY[j];
 			if (!this.losClear(ux, uy, vx, vy, i, j, true)) continue;
-			const w = Math.hypot(vx - ux, vy - uy);
+			const w = dhypot(vx - ux, vy - uy);
 			out.push({ to: j, w, cost: w });
 		}
 		this.adjCache[i] = out;
@@ -859,7 +860,7 @@ export class LazyVisibilityGraph {
 			if (j === i || this.nodeBlocked[j]) continue;
 			const vx = this.nodeX[j], vy = this.nodeY[j];
 			if (!this.losClear(ux, uy, vx, vy, i, j, true)) continue;
-			const w = Math.hypot(vx - ux, vy - uy);
+			const w = dhypot(vx - ux, vy - uy);
 			out.push({ to: j, w, cost: w });
 		}
 		this.exactAdjCache[i] = out;
@@ -875,7 +876,7 @@ export class LazyVisibilityGraph {
 			if (j === i || this.nodeBlocked[j]) continue;
 			const vx = this.nodeX[j], vy = this.nodeY[j];
 			if (!this.losClearRaw(ux, uy, vx, vy, true)) continue;
-			const w = Math.hypot(vx - ux, vy - uy);
+			const w = dhypot(vx - ux, vy - uy);
 			out.push({ to: j, w, cost: w });
 		}
 		this.rawExactAdjCache[i] = out;
@@ -944,7 +945,7 @@ export class LazyVisibilityGraph {
 				const vx = this.nodeX[j], vy = this.nodeY[j];
 				if (acceptPoint && !acceptPoint(vx, vy)) continue;
 				if (this.losClearRaw(px, py, vx, vy))
-					links.push({ to: j, w: Math.hypot(vx - px, vy - py), cost: Math.hypot(vx - px, vy - py) });
+					links.push({ to: j, w: dhypot(vx - px, vy - py), cost: dhypot(vx - px, vy - py) });
 			}
 			return { index: -1, x: px, y: py, _links: links, _isQuery: true };
 		}
@@ -957,7 +958,7 @@ export class LazyVisibilityGraph {
 				const vx = this.nodeX[j], vy = this.nodeY[j];
 				if (acceptPoint && !acceptPoint(vx, vy)) continue;
 				if (inDilation ? this.losClearRaw(px, py, vx, vy) : this.losClear(px, py, vx, vy, -1, j))
-					links.push({ to: j, w: Math.hypot(vx - px, vy - py), cost: Math.hypot(vx - px, vy - py) });
+					links.push({ to: j, w: dhypot(vx - px, vy - py), cost: dhypot(vx - px, vy - py) });
 			}
 			return { index: -1, x: px, y: py, _links: links, _isQuery: true };
 		}
@@ -983,7 +984,7 @@ export class LazyVisibilityGraph {
 						const vx = this.nodeX[j], vy = this.nodeY[j];
 						if (acceptPoint && !acceptPoint(vx, vy)) continue;
 						if (inDilation ? this.losClearRaw(px, py, vx, vy) : this.losClear(px, py, vx, vy, -1, j)) {
-							links.push({ to: j, w: Math.hypot(vx - px, vy - py), cost: Math.hypot(vx - px, vy - py) });
+							links.push({ to: j, w: dhypot(vx - px, vy - py), cost: dhypot(vx - px, vy - py) });
 						}
 					}
 				}
@@ -1016,7 +1017,7 @@ export class LazyVisibilityGraph {
 		const startY = (typeof start === 'number') ? this.nodeY[start] : start.y;
 		const sgDx = goalX - startX;
 		const sgDy = goalY - startY;
-		const sgLen = Math.hypot(sgDx, sgDy);
+		const sgLen = dhypot(sgDx, sgDy);
 		let acceptRouteNode = null;
 		if (Number.isFinite(opts.maxStartGoalPerpendicularFactor) && opts.maxStartGoalPerpendicularFactor >= 0 && sgLen > EPS) {
 			// Reject graph nodes whose perpendicular distance from the direct
@@ -1049,7 +1050,7 @@ export class LazyVisibilityGraph {
 		// Weighted A*: f = g + W·h. W>1 trims the frontier (fewer node expansions,
 		// fewer lazy-visibility computations) at the cost of paths up to W× optimal.
 		const W = Number.isFinite(opts.heuristicWeight) ? opts.heuristicWeight : ASTAR_HEURISTIC_WEIGHT;
-		const h = (nx, ny) => W * Math.hypot(nx - goalX, ny - goalY);
+		const h = (nx, ny) => W * dhypot(nx - goalX, ny - goalY);
 		const open = [];
 		const push = (idx, x, y, g, f, parent) => {
 			open.push({ idx, x, y, g, f, parent });
@@ -1127,7 +1128,7 @@ export class LazyVisibilityGraph {
 				if (_goalEdgeClear(cur.x, cur.y, -1))
 					goalLink = {
 						to: GOAL_IDX,
-						w: Math.hypot(goalX - cur.x, goalY - cur.y),
+						w: dhypot(goalX - cur.x, goalY - cur.y),
 						cost: this.edgeCost(cur.x, cur.y, goalX, goalY),
 					};
 			} else if (goalLinkMap.has(cur.idx) && _goalEdgeClear(cur.x, cur.y, cur.idx)) {
@@ -1186,7 +1187,7 @@ export function dilatePolygon(pts, r) {
 	for (let i = 0; i < n; i++) {
 		const j = (i + 1) % n;
 		const dx = pts[j].x - pts[i].x, dy = pts[j].y - pts[i].y;
-		const len = Math.hypot(dx, dy) || 1;
+		const len = dhypot(dx, dy) || 1;
 		if (ccw) normals[i] = { x: dy / len, y: -dx / len };
 		else normals[i] = { x: -dy / len, y: dx / len };
 	}
@@ -1215,8 +1216,8 @@ export function dilatePolygon(pts, r) {
 		if (!isConvex) {
 			// Reflex vertex — miter into the free (concave-side) area, but clamp the
 			// displacement so it can't bevel-spike or jump across a narrow notch.
-			const dispLen = Math.abs(factor) * Math.hypot(sumX, sumY);
-			const edgeClamp = REFLEX_EDGE_FRAC * Math.min(Math.hypot(e1x, e1y), Math.hypot(e2x, e2y));
+			const dispLen = Math.abs(factor) * dhypot(sumX, sumY);
+			const edgeClamp = REFLEX_EDGE_FRAC * Math.min(dhypot(e1x, e1y), dhypot(e2x, e2y));
 			const maxLen = Math.min(REFLEX_MITER_LIMIT * Math.abs(r), edgeClamp);
 			if (dispLen > maxLen && dispLen > 1e-12) factor *= maxLen / dispLen;
 			reflexIdx.push(i);
@@ -1276,7 +1277,7 @@ export function shrinkMinorAxis(pts, r) {
 	}
 	const bj = (bi + 1) % n;
 	const mx = pts[bj].x - pts[bi].x, my = pts[bj].y - pts[bi].y;
-	const ml = Math.hypot(mx, my) || 1;
+	const ml = dhypot(mx, my) || 1;
 	const ax = -my / ml, ay = mx / ml; // unit normal to the longest edge
 	// Half-width = max |projection onto minor axis| over all vertices.
 	let half = 0;

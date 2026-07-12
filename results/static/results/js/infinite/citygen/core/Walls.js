@@ -5,6 +5,7 @@ import { Point } from './Point.js';
 import { Polygon } from './Polygon.js';
 import { Random } from './Random.js';
 import { difference, replace } from './arrays.js';
+import { dhypot } from './dmath.js';
 
 function addEdge(map, a, b) {
 	let s = map.get(a);
@@ -167,7 +168,7 @@ export function displaceWallTowers(wall, river) {
 		else continue;
 		const v = wall.shape[i];
 		const dx = neighbour.x - v.x, dy = neighbour.y - v.y;
-		const len = Math.hypot(dx, dy) || 1;
+		const len = dhypot(dx, dy) || 1;
 		displaced.set(v, { x: v.x + (dx / len) * halfRiver, y: v.y + (dy / len) * halfRiver });
 	}
 	const remap = (arr) => arr.map((t) => displaced.get(t) || t);
@@ -210,7 +211,7 @@ function crossingConnection(neighbours, v, prev, next) {
 	if (!neighbours || neighbours.size < 4 || !prev || !next) return null;
 	const tx = next.x - prev.x;
 	const ty = next.y - prev.y;
-	if (Math.hypot(tx, ty) < 1e-6) return null;
+	if (dhypot(tx, ty) < 1e-6) return null;
 
 	const sides = { negative: null, positive: null };
 	for (const n of neighbours) {

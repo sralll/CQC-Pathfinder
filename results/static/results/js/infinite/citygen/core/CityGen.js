@@ -29,6 +29,7 @@ import {
 	OPEN_TYPES,
 } from './wards.js';
 import { clearFeatures, recordFeature, takeFeatures } from './features.js';
+import { dcos, dhypot, dsin } from './dmath.js';
 
 // reference constant: pc.LTOWER_RADIUS = 2.5 (used as the junction-merge floor 3*LTOWER_RADIUS)
 const LTOWER_RADIUS = 2.5;
@@ -38,7 +39,7 @@ const LTOWER_RADIUS = 2.5;
 const TEMP_OUTER_WARD_EDGE_LIMIT = 2;
 
 function polar(r, a) {
-	return new Point(r * Math.cos(a), r * Math.sin(a));
+	return new Point(r * dcos(a), r * dsin(a));
 }
 
 function serializePoint(p) {
@@ -147,16 +148,16 @@ function markCoast(cells, b, coastDir) {
 	Random.reset(saved); // restore — coast randomness must not perturb the rest
 
 	const h = dir * Math.PI;
-	const q = Math.cos(h);
-	const m = Math.sin(h);
+	const q = dcos(h);
+	const m = dsin(h);
 	const g = new Point(n + f, k);
 	for (const c of cells) {
 		const u0 = c.centroid;
 		const rx = u0.x * q - u0.y * m;
 		const ry = u0.y * q + u0.x * m;
-		let u = Math.hypot(g.x - rx, g.y - ry) - n;
+		let u = dhypot(g.x - rx, g.y - ry) - n;
 		if (rx > g.x) u = Math.min(u, Math.abs(ry - k) - n);
-		const r2 = fractal.get((rx + b) / (2 * b), (ry + b) / (2 * b)) * n * Math.sqrt(Math.hypot(rx, ry) / b);
+		const r2 = fractal.get((rx + b) / (2 * b), (ry + b) / (2 * b)) * n * Math.sqrt(dhypot(rx, ry) / b);
 		if (u + r2 < 0) c.water = true;
 	}
 	return dir;
@@ -515,7 +516,7 @@ function clipObstacleCorners(poly, sourceShape, ctx) {
 function lineSignedDistance(a, b, p) {
 	const dx = b.x - a.x;
 	const dy = b.y - a.y;
-	const len = Math.hypot(dx, dy);
+	const len = dhypot(dx, dy);
 	if (!(len > 1e-6)) return 0;
 	return ((dx * (p.y - a.y)) - (dy * (p.x - a.x))) / len;
 }
@@ -571,7 +572,7 @@ function pointSegmentDistance(p, a, b) {
 	const l2 = dx * dx + dy * dy || 1;
 	let t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / l2;
 	t = Math.max(0, Math.min(1, t));
-	return Math.hypot(p.x - (a.x + dx * t), p.y - (a.y + dy * t));
+	return dhypot(p.x - (a.x + dx * t), p.y - (a.y + dy * t));
 }
 
 function segmentsIntersect(a, b, c, d) {
@@ -666,7 +667,7 @@ function longestEdgeAxis(poly) {
 		const b = poly[(i + 1) % poly.length];
 		const dx = b.x - a.x;
 		const dy = b.y - a.y;
-		const len = Math.hypot(dx, dy);
+		const len = dhypot(dx, dy);
 		if (len > bestLen) {
 			bestLen = len;
 			best = len > 1e-6 ? new Point(dx / len, dy / len) : null;
@@ -716,7 +717,7 @@ function renderedDeltaMouth(river, path) {
 	const p1 = path[1];
 	const dx = p1.x - p0.x;
 	const dy = p1.y - p0.y;
-	const len = Math.hypot(dx, dy) || 1;
+	const len = dhypot(dx, dy) || 1;
 	const tx = dx / len;
 	const ty = dy / len;
 	const hw = (river.width || 0) / 2;
@@ -923,9 +924,9 @@ function cleanupBuildablePolygon(poly) {
 			const height = base > 1e-6 ? Math.abs((c.x - a.x) * (b.y - a.y) - (c.y - a.y) * (b.x - a.x)) / base : 0;
 			const ux = a.x - b.x, uy = a.y - b.y;
 			const vx = c.x - b.x, vy = c.y - b.y;
-			const ul = Math.hypot(ux, uy), vl = Math.hypot(vx, vy);
+			const ul = dhypot(ux, uy), vl = dhypot(vx, vy);
 			const cos = ul > 1e-6 && vl > 1e-6 ? (ux * vx + uy * vy) / (ul * vl) : -1;
-			if (Math.min(prevLen, nextLen) < 1.2 || height < 1.0 || (cos > Math.cos(Math.PI / 3) && height < 2.0)) {
+			if (Math.min(prevLen, nextLen) < 1.2 || height < 1.0 || (cos > dcos(Math.PI / 3) && height < 2.0)) {
 				cleaned.splice(i, 1);
 				removed = true;
 				break;
@@ -1070,7 +1071,7 @@ function addPlazaTreeRings(plaza, riverData) {
 		const b = frame[(i + 1) % frame.length];
 		const dx = b.x - a.x;
 		const dy = b.y - a.y;
-		const length = Math.hypot(dx, dy);
+		const length = dhypot(dx, dy);
 		if (!(length > 1e-6)) continue;
 		const margin = Math.min(spacing * 0.55, length * 0.32);
 		const usable = Math.max(0, length - margin * 2);

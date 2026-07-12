@@ -4,6 +4,7 @@ import {
 	selectWeightedRoutePair,
 	skippedBarriersForSelection,
 } from '../../route_pair_selection.js';
+import { dhypot } from './dmath.js';
 
 export const ROUTE_VISIBILITY_GRAPH_OPTIONS = {
 	// Physical runner clearance: routes keep this far from every wall.
@@ -37,7 +38,7 @@ export function buildRouteVisibilityGraph(data, options = ROUTE_VISIBILITY_GRAPH
 export function routePathLength(path) {
 	let len = 0;
 	for (let i = 1; i < path.length; i++)
-		len += Math.hypot(path[i].x - path[i - 1].x, path[i].y - path[i - 1].y);
+		len += dhypot(path[i].x - path[i - 1].x, path[i].y - path[i - 1].y);
 	return len;
 }
 
@@ -86,7 +87,7 @@ function findSmartBarrier(path, visGraph) {
 		const targetLen = total * frac;
 		let accum = 0;
 		for (let i = 1; i < path.length; i++) {
-			const segLen = Math.hypot(path[i].x - path[i - 1].x, path[i].y - path[i - 1].y);
+			const segLen = dhypot(path[i].x - path[i - 1].x, path[i].y - path[i - 1].y);
 			if (accum + segLen >= targetLen) {
 				const t = (targetLen - accum) / (segLen || 1);
 				const mx = path[i - 1].x + (path[i].x - path[i - 1].x) * t;
@@ -280,7 +281,7 @@ export function computeRouteOptions(startPt, goalPt, visGraph, options = {}) {
 		return failedRoute(timeout ? 'timeout' : 'distinct', paths, null, { ...baseExtras, routeIndexes: [1] });
 
 	const sgDx = goalPt.x - startPt.x, sgDy = goalPt.y - startPt.y;
-	const sgLen = Math.hypot(sgDx, sgDy) || 1;
+	const sgLen = dhypot(sgDx, sgDy) || 1;
 	for (const p of paths) {
 		let sum = 0;
 		for (const pt of p.path) sum += sgDx * (pt.y - startPt.y) - sgDy * (pt.x - startPt.x);

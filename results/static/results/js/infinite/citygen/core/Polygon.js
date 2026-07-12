@@ -9,6 +9,7 @@ import { Point } from './Point.js';
 import { GeomUtils } from './GeomUtils.js';
 import { MathUtils } from './MathUtils.js';
 import { remove as arrRemove } from './arrays.js';
+import { dcos, dsin } from './dmath.js';
 
 const DELTA = 0.000001;
 
@@ -110,8 +111,8 @@ export class Polygon extends Array {
 	}
 
 	rotate(a) {
-		const cosA = Math.cos(a);
-		const sinA = Math.sin(a);
+		const cosA = dcos(a);
+		const sinA = dsin(a);
 		for (const v of this) {
 			const vx = v.x * cosA - v.y * sinA;
 			const vy = v.y * cosA + v.x * sinA;
@@ -640,7 +641,7 @@ export class Polygon extends Array {
 		const pts = [];
 		for (let i = 0; i < n; i++) {
 			const a = (i / n) * Math.PI * 2;
-			pts.push(new Point(r * Math.cos(a), r * Math.sin(a)));
+			pts.push(new Point(r * dcos(a), r * dsin(a)));
 		}
 		return new Polygon(pts);
 	}

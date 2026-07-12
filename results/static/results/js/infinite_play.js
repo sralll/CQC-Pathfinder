@@ -163,7 +163,7 @@ function routeStrokeWidthForZoom(baseWidth, scale = cam.scale) {
 function routeDisplayBaseWidthForScene(baseWidth, sc = scene) {
     return sc?.kind === 'mask'
         ? baseWidth * maskVisualScaleForScene(sc)
-        : baseWidth;
+        : baseWidth * (2 / 3);
 }
 
 function setAdaptiveRouteStroke(el, baseWidth) {

@@ -832,6 +832,8 @@ function drawReport(report, city, mapBounds = null) {
             timestamp: report.timestamp,
             seed: report.seed,
             pair_index: report.pair_index,
+            start: report.start,
+            goal: report.goal,
             route_indexes: report.route_indexes,
             route_runtime_slots: report.route_result?.routeRuntimeSlots,
             route_noa_slots: report.route_result?.routeNoASlots,

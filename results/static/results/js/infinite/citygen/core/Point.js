@@ -6,6 +6,8 @@
 // while the *Eq / set / setTo / offset / normalize variants MUTATE in place.
 // Do not change which methods mutate vs. return — callers depend on it.
 
+import { datan2 } from './dmath.js';
+
 export class Point {
 	constructor(x = 0, y = 0) {
 		this.x = x;
@@ -89,7 +91,7 @@ export class Point {
 	}
 
 	atan() {
-		return Math.atan2(this.y, this.x);
+		return datan2(this.y, this.x);
 	}
 
 	dot(q) {

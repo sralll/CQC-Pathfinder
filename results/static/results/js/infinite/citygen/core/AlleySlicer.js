@@ -29,6 +29,7 @@ import { Polygon } from './Polygon.js';
 import { GeomUtils } from './GeomUtils.js';
 import { Random } from './Random.js';
 import { recordRemovedTriangle } from './features.js';
+import { dacos, datan2, dcos, dhypot, dpow, dsin, dtan } from './dmath.js';
 
 // drawMapFeatures renders fountain symbols with radius 0.5 map units. Post-slice
 // chamfers should leave a visible bevel edge big enough to hold that symbol.
@@ -47,7 +48,7 @@ class Circle {
 
 // I.polar
 function polar(r, angle) {
-	return new Point(r * Math.cos(angle), r * Math.sin(angle));
+	return new Point(r * dcos(angle), r * dsin(angle));
 }
 
 // wd.project(v, p): scalar projection of p onto v (v not necessarily unit).
@@ -187,7 +188,7 @@ function getArc(circle, a0, a1, minSeg) {
 		const pts = [];
 		for (let k = 0; k < count; k++) {
 			const t = k / (count - 1);
-			pts.push(new Point(circle.c.x + r * Math.cos(a0 + (a1 - a0) * t), circle.c.y + r * Math.sin(a0 + (a1 - a0) * t)));
+			pts.push(new Point(circle.c.x + r * dcos(a0 + (a1 - a0) * t), circle.c.y + r * dsin(a0 + (a1 - a0) * t)));
 		}
 		return pts;
 	}
@@ -202,8 +203,8 @@ function fitArc(b, c, d, v1, v2, n, p, minFront) {
 		const c2 = new Point(c.x + v2.x * r, c.y + v2.y * r);
 		const circ = getCircle(b, v1, c2, v2);
 		if (!circ) return null;
-		const a0 = Math.atan2(b.y - circ.c.y, b.x - circ.c.x);
-		const a1 = Math.atan2(c2.y - circ.c.y, c2.x - circ.c.x);
+		const a0 = datan2(b.y - circ.c.y, b.x - circ.c.x);
+		const a1 = datan2(c2.y - circ.c.y, c2.x - circ.c.x);
 		const arc = getArc(circ, a0, a1, minFront);
 		if (arc != null) {
 			arc.push(d);
@@ -215,8 +216,8 @@ function fitArc(b, c, d, v1, v2, n, p, minFront) {
 		const c2 = new Point(c.x + v1.x * r, c.y + v1.y * r);
 		const circ = getCircle(c2, v1, d, v2);
 		if (!circ) return null;
-		const a0 = Math.atan2(c2.y - circ.c.y, c2.x - circ.c.x);
-		const a1 = Math.atan2(d.y - circ.c.y, d.x - circ.c.x);
+		const a0 = datan2(c2.y - circ.c.y, c2.x - circ.c.x);
+		const a1 = datan2(d.y - circ.c.y, d.x - circ.c.x);
 		const arc = getArc(circ, a0, a1, minFront);
 		if (arc != null) {
 			arc.unshift(b);
@@ -363,7 +364,7 @@ function offsetCutChainEdges(half, start, count, gap) {
 		const b = rotated[i + 1];
 		const dx = b.x - a.x;
 		const dy = b.y - a.y;
-		const len = Math.hypot(dx, dy);
+		const len = dhypot(dx, dy);
 		if (len < 1e-9) return half;
 		const nx = (-dy / len) * d * areaSign;
 		const ny = (dx / len) * d * areaSign;
@@ -481,7 +482,7 @@ export class Bisector {
 
 	isSmallEnough(a) {
 		const jitter = Math.abs((Random.float() + Random.float() + Random.float() + Random.float()) / 2 - 1);
-		return Math.abs(a.square) < this.minArea * Math.pow(this.variance, jitter);
+		return Math.abs(a.square) < this.minArea * dpow(this.variance, jitter);
 	}
 
 	// makeCut: split polygon `a` with an arc cut. Uses the OBB long axis to pick the cut
@@ -496,7 +497,7 @@ export class Bisector {
 		// Cut axis: OBB on the first attempt, rotated AABB on retries.
 		let corners;
 		if (this.primaryDir) {
-			const base = Math.atan2(this.primaryDir.y, this.primaryDir.x);
+			const base = datan2(this.primaryDir.y, this.primaryDir.x);
 			const jitter = (Random.float() - 0.5) * this.directionJitter + attempt * 0.17;
 			const dir = polar(1, base + jitter);
 			corners = orientedAABB(a, dir);
@@ -639,7 +640,7 @@ export class Bisector {
 		const n = new Point(-chord.y / len, chord.x / len);
 		const side = Math.sign((fallback.x - entry.x) * chord.y - (fallback.y - entry.y) * chord.x) || (Random.bool() ? 1 : -1);
 		const turn = this.elbowAngleMin + Random.float() * (this.elbowAngleMax - this.elbowAngleMin);
-		const height = Math.tan(turn / 2) * len * 0.5;
+		const height = dtan(turn / 2) * len * 0.5;
 		for (const s of [side, -side]) {
 			for (const scale of [1, 0.75, 0.5, 0.3]) {
 				const p = new Point(mid.x + n.x * height * scale * s, mid.y + n.y * height * scale * s);
@@ -688,7 +689,7 @@ export function sliceWard(block, params) {
 	bisector.preserveElbowPocket = !!params.preserveElbowPocket;
 	if (params.elbowAngleMin != null) bisector.elbowAngleMin = params.elbowAngleMin;
 	if (params.elbowAngleMax != null) bisector.elbowAngleMax = params.elbowAngleMax;
-	bisector.isAtomic = (p) => Math.abs(p.square) < minSq * Math.pow(2, 4 * sizeChaos * (Random.float() - 0.5));
+	bisector.isAtomic = (p) => Math.abs(p.square) < minSq * dpow(2, 4 * sizeChaos * (Random.float() - 0.5));
 	const minLotWidth = gap > 0 ? 2 * gap : 0;
 	// Reject/remove lots that pinch to a thin neck (a waist OBB min-width can't see). The
 	// cutter validates full-size lots, which lose ~gap of neck to the later shrink(gap/2),
@@ -780,8 +781,8 @@ function inwardNormal(poly, edgeIndex) {
 }
 
 function rotateDir(v, angle) {
-	const c = Math.cos(angle);
-	const s = Math.sin(angle);
+	const c = dcos(angle);
+	const s = dsin(angle);
 	return new Point(v.x * c - v.y * s, v.x * s + v.y * c);
 }
 
@@ -818,7 +819,7 @@ function minAngle(poly) {
 		const v = c.subtract(b);
 		if (u.length < 1e-6 || v.length < 1e-6) return 0;
 		const cos = Math.max(-1, Math.min(1, u.dot(v) / (u.length * v.length)));
-		best = Math.min(best, Math.acos(cos));
+		best = Math.min(best, dacos(cos));
 	}
 	return best;
 }
@@ -842,9 +843,9 @@ function chamferSharpCorners(poly, minAngle, size, edgeFrac = 0.4, minEdgeLength
 		const lw = w.length;
 		if (lu < 1e-9 || lw < 1e-9) continue;
 		const cos = Math.max(-1, Math.min(1, u.dot(w) / (lu * lw)));
-		const angle = Math.acos(cos);
+		const angle = dacos(cos);
 		if (angle >= minAngle) continue;
-		const sinHalf = Math.sin(angle / 2);
+		const sinHalf = dsin(angle / 2);
 		const edgeTargetDistance = minEdgeLength > 0 && sinHalf > 1e-6 ? minEdgeLength / (2 * sinHalf) : 0;
 		const d = Math.min(Math.max(size, edgeTargetDistance), Math.min(lu, lw) * edgeFrac);
 		if (!(d > 1e-9)) continue;
@@ -991,7 +992,7 @@ function splitOneSideInset(lot, edgeIndex, distance) {
 	const b = lot[(edgeIndex + 1) % n];
 	const dx = b.x - a.x;
 	const dy = b.y - a.y;
-	const len = Math.hypot(dx, dy);
+	const len = dhypot(dx, dy);
 	const areaSign = lot.square >= 0 ? 1 : -1;
 	if (len < 1e-9) return null;
 
@@ -1049,7 +1050,7 @@ function pointSegmentDistance(p, a, b) {
 	if (l2 < 1e-12) return Point.distance(p, a);
 	let t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / l2;
 	t = t < 0 ? 0 : t > 1 ? 1 : t;
-	return Math.hypot(p.x - (a.x + dx * t), p.y - (a.y + dy * t));
+	return dhypot(p.x - (a.x + dx * t), p.y - (a.y + dy * t));
 }
 
 // Minimum "neck" width: the smallest distance from any vertex to any edge NOT incident to
@@ -1150,7 +1151,7 @@ function wardEdgeAlignedDirs(poly, entryEdge, inward, angleMin, angleMax) {
 		for (const dir of [nrm, nrm.scale(-1), tan, tan.scale(-1)]) {
 			if (dir.length < 1e-6) continue;
 			const dot = Math.max(-1, Math.min(1, inward.x * dir.x + inward.y * dir.y));
-			const turn = Math.acos(dot);
+			const turn = dacos(dot);
 			if (turn >= angleMin && turn <= angleMax) out.push(dir);
 		}
 	}

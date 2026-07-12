@@ -4,6 +4,7 @@ import {
     buildRouteVisibilityGraph,
     computeRouteOptions,
 } from './citygen/core/RoutePlanner.js';
+import { datan2, dhypot, dpow } from './citygen/core/dmath.js';
 import {
     DEFAULT_ROUTE_PAIR_SELECTION,
     ensureRouteSides,
@@ -130,7 +131,7 @@ function calcRuntimeRouteLength(path) {
     for (let i = 1; i < path.length; i++) {
         const dx = path[i].x - path[i - 1].x;
         const dy = path[i].y - path[i - 1].y;
-        total += Math.hypot(dx, dy) * metresPerUnit;
+        total += dhypot(dx, dy) * metresPerUnit;
     }
     return Math.round(total);
 }
@@ -152,7 +153,7 @@ function simplifiedNoAPoints(points) {
         if (!Number.isFinite(p?.x) || !Number.isFinite(p?.y)) continue;
         const current = { x: p.x, y: p.y };
         const prev = out[out.length - 1];
-        if (!prev || Math.hypot(current.x - prev.x, current.y - prev.y) >= minStep) out.push(current);
+        if (!prev || dhypot(current.x - prev.x, current.y - prev.y) >= minStep) out.push(current);
     }
     const last = points?.[points.length - 1];
     if (out.length && last && Number.isFinite(last.x) && Number.isFinite(last.y)) {
@@ -173,10 +174,10 @@ function calcRuntimeRouteNoA(path) {
     for (let i = 1; i < rP.length; i++) {
         const dx = rP[i].x - rP[i - 1].x;
         const dy = rP[i].y - rP[i - 1].y;
-        const len = Math.hypot(dx, dy) * metresPerUnit;
+        const len = dhypot(dx, dy) * metresPerUnit;
         cum.push(cum[i - 1] + len);
         segLen.push(len);
-        headings.push((dx === 0 && dy === 0) ? null : Math.atan2(dy, dx));
+        headings.push((dx === 0 && dy === 0) ? null : datan2(dy, dx));
     }
 
     const turns = [];
@@ -507,9 +508,9 @@ function routePickWardBbox(ward) {
 function routePickPointSegmentDistance(pt, a, b) {
     const dx = b.x - a.x, dy = b.y - a.y;
     const len2 = dx * dx + dy * dy;
-    if (len2 <= 1e-9) return Math.hypot(pt.x - a.x, pt.y - a.y);
+    if (len2 <= 1e-9) return dhypot(pt.x - a.x, pt.y - a.y);
     const t = Math.max(0, Math.min(1, ((pt.x - a.x) * dx + (pt.y - a.y) * dy) / len2));
-    return Math.hypot(pt.x - (a.x + dx * t), pt.y - (a.y + dy * t));
+    return dhypot(pt.x - (a.x + dx * t), pt.y - (a.y + dy * t));
 }
 
 function routePickDistanceToClosedPolyline(pt, pts) {
@@ -559,7 +560,7 @@ function routePickPoint(candidates, visGraph, wall = null, rng = createRng()) {
                 wardType: item.ward.type || 'generic',
                 area,
                 boundaryDist,
-                weight: Math.pow(biasedDist, ROUTE_PICK_INTERIOR_BIAS_POWER),
+                weight: dpow(biasedDist, ROUTE_PICK_INTERIOR_BIAS_POWER),
             });
             if (pool.length >= ROUTE_PICK_POINT_POOL_SIZE) {
                 const picked = routePickWeightedPoint(pool, rng);
@@ -580,7 +581,7 @@ function routePickPair(candidates, visGraph, wall = null, rng = createRng()) {
         const start = routePickPoint(candidates, visGraph, wall, rng);
         const goal = routePickPoint(candidates, visGraph, wall, rng);
         if (!start || !goal) return null;
-        const straightLine = Math.hypot(goal.x - start.x, goal.y - start.y);
+        const straightLine = dhypot(goal.x - start.x, goal.y - start.y);
         if (straightLine >= ROUTE_PICK_MIN_DIST && straightLine <= ROUTE_PICK_MAX_DIST) return { start, goal, straightLine };
     }
     return null;
@@ -588,8 +589,8 @@ function routePickPair(candidates, visGraph, wall = null, rng = createRng()) {
 
 function routePairTooCloseToUsed(pair, usedEndpoints) {
     for (const endpoint of usedEndpoints) {
-        if (Math.hypot(pair.start.x - endpoint.x, pair.start.y - endpoint.y) < CONTROL_PAIR_ENDPOINT_MIN_GAP) return true;
-        if (Math.hypot(pair.goal.x - endpoint.x, pair.goal.y - endpoint.y) < CONTROL_PAIR_ENDPOINT_MIN_GAP) return true;
+        if (dhypot(pair.start.x - endpoint.x, pair.start.y - endpoint.y) < CONTROL_PAIR_ENDPOINT_MIN_GAP) return true;
+        if (dhypot(pair.goal.x - endpoint.x, pair.goal.y - endpoint.y) < CONTROL_PAIR_ENDPOINT_MIN_GAP) return true;
     }
     return false;
 }

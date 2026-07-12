@@ -1,3 +1,5 @@
+import { dexp, dhypot } from './citygen/core/dmath.js';
+
 export const DEFAULT_ROUTE_PAIR_SELECTION = Object.freeze({
     minSideGap: 10,
     maxRelativeGap: 0.40,
@@ -23,7 +25,7 @@ export function routeSlotsFor(paths, field, minSlots = 5) {
 export function ensureRouteSides(paths, start, goal) {
     const sgDx = goal.x - start.x;
     const sgDy = goal.y - start.y;
-    const directLength = Math.hypot(sgDx, sgDy) || 1;
+    const directLength = dhypot(sgDx, sgDy) || 1;
     for (const p of paths || []) {
         if (Number.isFinite(p.side)) continue;
         let sum = 0;
@@ -42,7 +44,7 @@ function rngFloat(rng) {
 
 function pairWeight(pair, maxRouteIndex, cfg) {
     const z = (pair.relativeGap - cfg.targetRelativeGap) / Math.max(1e-6, cfg.relativeGapStdDev);
-    const bell = Math.exp(-0.5 * z * z);
+    const bell = dexp(-0.5 * z * z);
     const broad = cfg.uniformPairWeight + (1 - cfg.uniformPairWeight) * bell;
     const indexDenom = Math.max(1, maxRouteIndex - 1);
     const indexNorm = Math.max(0, (pair.maxRouteIndex - 1) / indexDenom);

@@ -1,0 +1,208 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Infinity route editor — seed debug</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin:0; font:13px/1.4 system-ui, sans-serif; background:#1e1e1e; color:#ddd; display:flex; height:100vh; overflow:hidden; }
+  #side { width:320px; flex:0 0 320px; padding:12px; overflow:auto; background:#262626; border-right:1px solid #000; }
+  #stage { flex:1; position:relative; }
+  svg { width:100%; height:100%; display:block; background:#f4eeda; cursor:crosshair; }
+  h1 { font-size:15px; margin:0 0 8px; }
+  h2 { font-size:12px; text-transform:uppercase; letter-spacing:.05em; color:#8ab; margin:16px 0 6px; }
+  label { display:block; margin:4px 0; }
+  input[type=number] { width:110px; background:#111; color:#eee; border:1px solid #444; padding:3px 5px; }
+  button { background:#345; color:#fff; border:1px solid #567; padding:6px 10px; margin:3px 3px 3px 0; cursor:pointer; border-radius:4px; }
+  button.active { background:#0a6; }
+  button:hover { filter:brightness(1.2); }
+  .row { display:flex; gap:6px; align-items:center; }
+  .pill { display:inline-block; padding:1px 6px; border-radius:8px; font-size:11px; }
+  .ok { background:#164; color:#8f8; } .bad { background:#611; color:#f99; }
+  #out { white-space:pre-wrap; font:11px/1.4 ui-monospace, monospace; background:#111; padding:8px; border-radius:4px; margin-top:8px; }
+  .sw { display:inline-block; width:11px; height:11px; border-radius:2px; vertical-align:middle; margin-right:4px; }
+  small { color:#999; }
+</style>
+</head>
+<body>
+<div id="side">
+  <h1>Infinity route editor</h1>
+  <small>Recreates a generated city, lets you place start/goal, and runs the real vis‑graph route finder (<code>computeRouteOptions</code>).</small>
+
+  <h2>City</h2>
+  <label>seed <input id="seed" type="number" value="321144451"></label>
+  <label>size <input id="size" type="number" value="35"></label>
+  <div class="row"><label><input type="checkbox" id="walls" checked> walls</label>
+  <label><input type="checkbox" id="river"> river</label>
+  <label><input type="checkbox" id="coast"> coast</label></div>
+  <label>plaza <input type="checkbox" id="plaza" checked> · streets <input type="checkbox" id="streets" checked></label>
+  <button id="regen">Regenerate city</button>
+
+  <h2>Endpoints</h2>
+  <div class="row"><button id="setStart" class="active"><span class="sw" style="background:#00c000"></span>Set start</button>
+  <button id="setGoal"><span class="sw" style="background:#ff2020"></span>Set goal</button></div>
+  <label>start <input id="sx" type="number" step="0.1"> <input id="sy" type="number" step="0.1"></label>
+  <label>goal <input id="gx" type="number" step="0.1"> <input id="gy" type="number" step="0.1"></label>
+  <div>start in building: <span id="sIn" class="pill">–</span> · goal: <span id="gIn" class="pill">–</span></div>
+  <button id="snapStart">Snap start → open</button><button id="snapGoal">Snap goal → open</button>
+  <div><button id="find">Find routes</button><button id="loadReport">Load reported pair</button></div>
+
+  <h2>Overlays</h2>
+  <label><input type="checkbox" id="showReported"> reported routes (dashed)</label>
+  <label><input type="checkbox" id="showAll" checked> all explored paths (faint)</label>
+  <label><input type="checkbox" id="markCuts" checked> highlight obstacle cuts (magenta)</label>
+
+  <div id="out">Ready.</div>
+  <small>Legend: <span class="sw" style="background:#c0392b;opacity:.6"></span>building
+  <span class="sw" style="background:#009218"></span>hedge
+  <span class="sw" style="background:#555"></span>wall
+  <span class="sw" style="background:#0033ff"></span>route
+  <span class="sw" style="background:#a033f0"></span>barrier</small>
+</div>
+<div id="stage"><svg id="map" preserveAspectRatio="xMidYMid meet"></svg></div>
+
+<script type="module">
+import { generateWards } from './infinite/citygen/core/CityGen.js';
+import { extractObstacles } from './infinite/citygen/core/Obstacles.js';
+import { buildRouteVisibilityGraph, computeRouteOptions } from './infinite/citygen/core/RoutePlanner.js';
+
+const SVGNS='http://www.w3.org/2000/svg';
+const map=document.getElementById('map');
+const out=document.getElementById('out');
+const $=id=>document.getElementById(id);
+
+// The originally reported broken pair (seed 321144451, pair 2).
+const REPORT={
+  start:{x:107.69524882054435,y:34.02176236616524},
+  goal:{x:84.80644234710888,y:-17.32780881896003},
+  routes:[
+    [[107.69524882054435,34.02176236616524],[96.29746866883508,51.39666987802073],[95.32615989949676,50.99784751830843],[97.99372617303017,39.38735159811948],[101.45070145940093,17.104456155200943],[99.53387605031676,-2.4865806204283665],[85.32072767374993,-4.897035791583276],[78.98184956346233,-12.220544048232139],[84.80644234710888,-17.32780881896003]],
+    [[107.69524882054435,34.02176236616524],[103.62985703569522,29.282370429847106],[106.44374339269454,23.066500951980643],[123.1780802676607,29.000346114481093],[124.10258139602772,28.502553322600694],[126.34149305197705,21.642214048708347],[145.8008062948641,-1.6758550934337606],[121.37332095331072,-6.237027107686291],[96.8445021610915,-4.685026527311834],[85.32072767374993,-4.897035791583276],[78.98184956346233,-12.220544048232139],[84.80644234710888,-17.32780881896003]]
+  ]
+};
+
+let city=null, obs=null, graph=null, bounds=null;
+let start={...REPORT.start}, goal={...REPORT.goal};
+let placing='start';
+let vb={x:0,y:0,w:100,h:100};
+
+function settings(){
+  return { seed:+$('seed').value, size:+$('size').value, coast:$('coast').checked, gates:-1,
+    plaza:$('plaza').checked, river:$('river').checked, walls:$('walls').checked,
+    streets:$('streets').checked, outerRatio:4, roadDensity:5 };
+}
+function freshGraph(){ return buildRouteVisibilityGraph(city); }
+
+function regen(){
+  city=generateWards(settings());
+  obs=extractObstacles(city);
+  graph=freshGraph();
+  bounds=city.bounds;
+  const pad=Math.max(bounds.maxX-bounds.minX,bounds.maxY-bounds.minY)*0.04;
+  vb={x:bounds.minX-pad,y:bounds.minY-pad,w:(bounds.maxX-bounds.minX)+2*pad,h:(bounds.maxY-bounds.minY)+2*pad};
+  applyVb();
+  draw();
+  log(`city: ${city.buildings.length} buildings, ${city.hedges.length} hedges, wall=${!!city.wall}`);
+}
+function applyVb(){ map.setAttribute('viewBox',`${vb.x} ${vb.y} ${vb.w} ${vb.h}`); }
+
+function el(t,a){ const n=document.createElementNS(SVGNS,t); for(const k in a) n.setAttribute(k,a[k]); return n; }
+function polyPts(a){ return a.map(p=>`${(p.x??p[0])},${(p.y??p[1])}`).join(' '); }
+
+let lastResult=null;
+function draw(){
+  map.replaceChildren();
+  const pad=Math.max(bounds.maxX-bounds.minX,bounds.maxY-bounds.minY)*0.06;
+  map.appendChild(el('rect',{x:bounds.minX-pad,y:bounds.minY-pad,width:(bounds.maxX-bounds.minX)+2*pad,height:(bounds.maxY-bounds.minY)+2*pad,fill:'#f4eeda'}));
+  // obstacles
+  for(const p of obs.polygons||[]){ const P=p.polygon; if(!P||P.length<3) continue;
+    const col=p.kind==='water'?'#00adef':p.kind==='building'?'#c0392b':'#999';
+    map.appendChild(el('polygon',{points:polyPts(P),fill:col,'fill-opacity':0.5,stroke:'#600','stroke-width':0.2})); }
+  for(const l of obs.lines||[]){ const P=l.polyline; if(!P||P.length<2) continue;
+    const col=l.kind==='hedge'?'#009218':'#333';
+    map.appendChild(el('polyline',{points:polyPts(P),fill:'none',stroke:col,'stroke-width':(l.thickness||0.6),'stroke-opacity':0.85})); }
+
+  // reported routes overlay
+  if($('showReported').checked){
+    for(const r of REPORT.routes)
+      map.appendChild(el('polyline',{points:polyPts(r),fill:'none',stroke:'#000','stroke-width':0.5,'stroke-dasharray':'1.2 1','stroke-opacity':0.8}));
+    marker(REPORT.start,'#00c000',true); marker(REPORT.goal,'#ff2020',true);
+  }
+
+  // computed routes
+  if(lastResult){
+    const {drawn,rr}=lastResult;
+    if($('showAll').checked) for(const p of (rr.paths||[])){ const P=p.path||p.points||[]; map.appendChild(el('polyline',{points:polyPts(P),fill:'none',stroke:'#06c','stroke-width':0.3,'stroke-opacity':0.35})); }
+    const COLORS=['#0033ff','#111','#0aa','#c60'];
+    drawn.forEach((p,i)=>{ const P=p.path||p.points||[];
+      map.appendChild(el('polyline',{points:polyPts(P),fill:'none',stroke:'#fff','stroke-width':1.3,'stroke-opacity':0.9}));
+      map.appendChild(el('polyline',{points:polyPts(P),fill:'none',stroke:COLORS[i%4],'stroke-width':0.6}));
+      if($('markCuts').checked) drawCuts(P);
+    });
+    for(const bar of rr.barriers||[]) map.appendChild(el('line',{x1:bar.ax,y1:bar.ay,x2:bar.bx,y2:bar.by,stroke:'#a033f0','stroke-width':1,'stroke-opacity':0.7}));
+  }
+  marker(start,'#00c000'); marker(goal,'#ff2020');
+  syncInputs();
+}
+function marker(p,color,ghost){
+  map.appendChild(el('circle',{cx:p.x,cy:p.y,r:ghost?1.1:1.7,fill:ghost?'none':color,stroke:ghost?color:'#000','stroke-width':0.3,...(ghost?{'stroke-dasharray':'0.6 0.5'}:{})}));
+}
+function drawCuts(P){
+  for(let i=1;i<P.length;i++){ const a={x:P[i-1].x??P[i-1][0],y:P[i-1].y??P[i-1][1]},b={x:P[i].x??P[i][0],y:P[i].y??P[i][1]};
+    const len=Math.hypot(b.x-a.x,b.y-a.y),steps=Math.max(2,Math.round(len/0.5));
+    for(let k=0;k<steps;k++){ const t0=k/steps,t1=(k+1)/steps,mx=a.x+(b.x-a.x)*(t0+t1)/2,my=a.y+(b.y-a.y)*(t0+t1)/2;
+      if(graph._inRawObstacle(mx,my)) map.appendChild(el('line',{x1:a.x+(b.x-a.x)*t0,y1:a.y+(b.y-a.y)*t0,x2:a.x+(b.x-a.x)*t1,y2:a.y+(b.y-a.y)*t1,stroke:'#ff00ff','stroke-width':1.1})); }
+  }
+}
+function cutFrac(P){ let inN=0,tot=0; for(let i=1;i<P.length;i++){ const a={x:P[i-1].x??P[i-1][0],y:P[i-1].y??P[i-1][1]},b={x:P[i].x??P[i][0],y:P[i].y??P[i][1]};
+  const len=Math.hypot(b.x-a.x,b.y-a.y),steps=Math.max(2,Math.round(len/0.5));
+  for(let k=1;k<steps;k++){const t=k/steps;tot++;if(graph._inRawObstacle(a.x+(b.x-a.x)*t,a.y+(b.y-a.y)*t))inN++;}} return {inN,tot}; }
+
+function pill(id,inObstacle){ const e=$(id); e.textContent=inObstacle?'YES':'no'; e.className='pill '+(inObstacle?'bad':'ok'); }
+function syncInputs(){ $('sx').value=start.x.toFixed(2);$('sy').value=start.y.toFixed(2);$('gx').value=goal.x.toFixed(2);$('gy').value=goal.y.toFixed(2);
+  pill('sIn',graph._inRawObstacle(start.x,start.y)); pill('gIn',graph._inRawObstacle(goal.x,goal.y)); }
+
+function snapOpen(p){ if(!graph._inRawObstacle(p.x,p.y)) return {...p};
+  for(let r=0.5;r<=15;r+=0.5){ let best=null,bd=1e9; for(let a=0;a<360;a+=10){ const rad=a*Math.PI/180,x=p.x+Math.cos(rad)*r,y=p.y+Math.sin(rad)*r; if(!graph._inRawObstacle(x,y)){ const d=r; if(d<bd){bd=d;best={x,y};} } } if(best) return best; } return {...p}; }
+
+function find(){
+  graph=freshGraph(); // computeRouteOptions mutates (temp blockers); always start clean
+  const t=performance.now();
+  const rr=computeRouteOptions(start,goal,graph,{maxRoutes:6});
+  const dt=(performance.now()-t).toFixed(0);
+  const drawn=(rr.selected&&rr.selected.length)?rr.selected:(rr.paths||[]);
+  lastResult={drawn,rr};
+  draw();
+  let s=`reason: ${rr.reason}\npaths explored: ${(rr.paths||[]).length}   selected pair: ${(rr.selected||[]).length}\ntime: ${dt} ms\n`;
+  s+=`start in building: ${graph._inRawObstacle(start.x,start.y)}   goal in building: ${graph._inRawObstacle(goal.x,goal.y)}\n`;
+  drawn.forEach((p,i)=>{ const P=p.path||p.points||[]; const f=cutFrac(P);
+    s+=`route ${i}: ${P.length} pts, len ${(p.len||p.length||0).toFixed(0)}, cuts ${f.inN}/${f.tot}${f.inN?'  ⚠ CROSSES BUILDINGS':''}\n`; });
+  if((rr.barriers||[]).length) s+=`barriers placed: ${rr.barriers.length}\n`;
+  log(s);
+}
+function log(m){ out.textContent=m; }
+
+// ---- interaction ----
+function clientToWorld(evt){ const pt=map.createSVGPoint(); pt.x=evt.clientX; pt.y=evt.clientY; return pt.matrixTransform(map.getScreenCTM().inverse()); }
+map.addEventListener('click',e=>{ const w=clientToWorld(e); const p={x:+w.x.toFixed(3),y:+w.y.toFixed(3)}; if(placing==='start') start=p; else goal=p; syncInputs(); draw(); });
+map.addEventListener('wheel',e=>{ e.preventDefault(); const w=clientToWorld(e); const f=e.deltaY<0?0.85:1/0.85; vb={x:w.x-(w.x-vb.x)*f,y:w.y-(w.y-vb.y)*f,w:vb.w*f,h:vb.h*f}; applyVb(); },{passive:false});
+let drag=null;
+map.addEventListener('pointerdown',e=>{ if(e.shiftKey){ drag={x:e.clientX,y:e.clientY,vb:{...vb}}; map.setPointerCapture(e.pointerId);} });
+map.addEventListener('pointermove',e=>{ if(!drag) return; const r=map.getBoundingClientRect(); vb={...drag.vb,x:drag.vb.x-(e.clientX-drag.x)*vb.w/r.width,y:drag.vb.y-(e.clientY-drag.y)*vb.h/r.height}; applyVb(); });
+map.addEventListener('pointerup',()=>drag=null);
+
+$('setStart').onclick=()=>{placing='start';$('setStart').classList.add('active');$('setGoal').classList.remove('active');};
+$('setGoal').onclick=()=>{placing='goal';$('setGoal').classList.add('active');$('setStart').classList.remove('active');};
+$('regen').onclick=regen;
+$('find').onclick=find;
+$('snapStart').onclick=()=>{start=snapOpen(start);syncInputs();draw();};
+$('snapGoal').onclick=()=>{goal=snapOpen(goal);syncInputs();draw();};
+$('loadReport').onclick=()=>{start={...REPORT.start};goal={...REPORT.goal};$('showReported').checked=true;syncInputs();draw();};
+for(const id of ['sx','sy','gx','gy']) $(id).onchange=()=>{ start={x:+$('sx').value,y:+$('sy').value}; goal={x:+$('gx').value,y:+$('gy').value}; draw(); };
+for(const id of ['showReported','showAll','markCuts']) $(id).onchange=draw;
+
+regen();
+find();
+</script>
+</body>
+</html>

@@ -904,3 +904,81 @@ Acceptance: phone-proxy average generation ≤ 2 s with buffer never empty durin
 - Legality is asserted mechanically (no route crosses impassable full-res pixels) at every phase.
 - Browser checks via `/dev/agent-login/` (trainer role), preview tools, CPU throttling; `collectstatic` after JS edits.
 - Visual checkpoints for Lars: WP 1.3 overlays, WP 2.2 rendered pairs, Phase 3 live play.
+
+---
+
+## Active implementation goal — side-preserving obstacle-offset roadmap
+
+Replace the experimental clearance-maximizing obstacle sampler in
+`project/navgraph.py` with a boundary-faithful roadmap whose nodes remain close
+to every meaningful side of an impassable object.
+
+1. Label full-resolution `mask == 0` obstacle blobs and extract their boundaries
+   at full resolution or with only the smallest topology-safe downsample. A
+   downsample is acceptable only when a conservative check confirms that every
+   full-resolution opening remains open; otherwise process that area at full
+   resolution. Never use block-min obstacle expansion as the authoritative
+   contour source because it can close narrow passages.
+2. Sample along obstacle contours by arc length, preserving corners, wall ends,
+   and gap-facing turns regardless of regular spacing. For each boundary sample,
+   derive the local normal and choose the direction that moves from black into
+   passable terrain. Place the graph node about 2 full-resolution pixels into
+   that same free-space side. Verify the offset and boundary-to-node segment on
+   the true mask; fall back to 1 px when a 2 px offset is unavailable.
+3. Detect narrow openings independently of contour spacing. Retain both facing
+   wall-end anchors and add a protected centerline portal when opposing 2 px
+   offsets collide or the opening is too narrow to contain both. These nodes must
+   survive deduplication and witness pruning.
+4. Deduplicate only mutually visible, same-side, terrain-compatible nodes. Never
+   merge across a wall or from opposite sides of a narrow gap. Keep skeleton
+   junctions, contour corners, wall ends, bottlenecks, and gap-center portals
+   protected. Once contour-local thinning has established the requested border
+   spacing, keep every surviving boundary coverage anchor protected and
+   witness-prune only ordinary open-area samples whose local weighted
+   connections already have a <=3% alternative.
+5. Preserve the v2 artifact format and dynamic third-dimension overlay. Base
+   nodes stay on the base mask; passage portal nodes remain runtime surface-typed
+   nodes and must still snap legally to visible base nodes on each entrance side.
+6. Apply the same contour/concavity/adjacency logic to `very_slow` mask value
+   `135` (shown as rgb(47) only because the debug background is dimmed). Its
+   offset nodes must land in non-135 passable terrain; black value `0` remains
+   authoritative and may never contain a node or explicit contour edge.
+7. Keep dense raw contour generation, then run an importance-ordered 32 px
+   suppression before global k-NN construction: concave/corner anchors outrank
+   segment anchors, which outrank regular samples. Suppression is legal only
+   between nearby positions on the same contour run, with compatible terrain
+   and a direct passable line of sight. This aggressively collapses redundant
+   straight-run samples while retaining opposite sides of thin walls, facing
+   U-cavity sides, and nodes belonging to separate nearby obstacles.
+8. Skip local contour roadmaps for compact isolated features whose enclosed area
+   is at most 256 px and whose maximum span is at most 20 px. Full-resolution
+   downstream any-angle refinement still avoids them; the dual area/span gate
+   prevents long thin walls from being mistaken for disposable specks.
+9. In narrow corridors, discard only ordinary contour samples that are within
+   16 px of a snapped skeleton/bottleneck node with compatible terrain and
+   direct passable LOS. Keep all corner and simplified-segment anchors. This
+   collapses redundant wall-side chains onto the existing centerline without an
+   extra A* or a costly corridor-classification pass.
+
+Acceptance on `mask_20250604_135955.png`: the north and south sides of long black
+walls both have close offset nodes; the reported northern city-wall opening has
+nodes on the path and a usable through-connection; no offset node crosses into a
+neighbouring obstacle; main-component connectivity remains 100%; the debug graph
+is materially smaller than the 8.7k-node global-grid experiment; Python sampler,
+region-gate, dynamic-passage, layered-passage, wall-hugging, and end-to-end
+legality tests pass.
+
+**Implemented 2026-07-12:** the reference mask uses full-resolution obstacle
+contours (`contour_downsample=1`), 2 px side-preserving offsets, protected
+full-resolution throat centers, noise-smoothed regular normals, incident-edge
+normals at true-mask concave corners, protected anchors on meaningful simplified
+segments, explicit legal same-contour adjacency, equivalent contours around
+very-slow value `135`, 24 px contour arc-length candidates, importance-aware 10
+px early suppression, protected post-thinning boundary coverage, and witness
+pruning only for ordinary open-area samples. On the reference mask the early
+passes skip 98 compact black contours and 301 compact very-slow contours, then
+merge 403 regular wall-side samples into directly visible centerlines. The
+rebuilt graph has 5,624 nodes / 22,549 edges and 100% main-component
+connectivity. All retained black-border anchors survive at their exact 2 px
+offset locations; dynamic and layered third-dimension passage tests remain
+green.

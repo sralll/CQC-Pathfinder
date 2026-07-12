@@ -1,6 +1,7 @@
 # Third-dimension passages for mask pathfinding
 
-**Status:** baseline implemented; post-implementation change request specified and pending
+**Status:** baseline and runtime overlay implemented; build-time navgraph passage-chain
+replacement specified below and pending
 
 **Date:** 2026-07-10
 
@@ -10,8 +11,9 @@ integration with mask-based Infinity mode
 ## Implementation progress and resume protocol
 
 **Execution status:** active  
-**Last orchestrator update:** 2026-07-10  
-**Current milestone:** follow-up CR 1-7 implementation pending; baseline Phase 7 visual QA also pending
+**Last orchestrator update:** 2026-07-12
+**Current milestone:** CR 8 build-time navgraph passage topology pending; baseline
+Phase 7 visual QA also pending
 
 This table is the authoritative resumable state. The primary agent updates it after
 reviewing each delegated package. Delegated agents report back to the primary agent;
@@ -40,6 +42,11 @@ they should not independently broaden scope or mark their own package accepted.
 | WP 7.1 | accepted | primary + independent reviewers / high | Django, geometry, layered, distinctness, and navgraph suites pass. |
 | WP 7.2 | accepted | primary / medium | Typical and maximum-point rasterization plus layered benchmarks recorded. |
 | WP 7.3 | review needed | primary + human review / medium | Authenticated HTTP/static smoke passed; in-app browser policy blocked localhost visual QA. |
+| CR 8.1 | pending | senior navgraph agent / high | Freeze the serialized passage-chain contract and the false-junction fixture. |
+| CR 8.2 | pending | senior Python/navgraph agent / very high | Build passage chains and isolate projected base topology. |
+| CR 8.3 | pending | senior JS integration agent / high | Parse typed graph topology and reuse surface-aware refinement. |
+| CR 8.4 | pending | Django/repository agent / high | Make build identity, staleness, serving, and backfill passage-authoritative. |
+| CR 8.5 | pending | independent review agent / high | Real-map, regression, artifact, and performance acceptance. |
 
 ### Resume procedure after a usage reset
 
@@ -119,6 +126,370 @@ only the primary agent may mark a package `accepted` after review and verificati
   rejection is translated in DE/FR/IT. Recalculated route metrics are saved only
   after passage persistence succeeds. The editor contract test and the final 20/20
   isolated Django rerun pass.
+- **2026-07-12 - CR 8 specified:** after review of `plan.md`, this plan, the Python
+  builder, the v2 binary, and the dynamic overlay, the Infinity design changed to
+  build protected centreline chains into a typed navgraph artifact. CR 8.1-8.5 below
+  define the false-junction fixture, projected-base isolation, v3 contract, worker
+  integration, passage-authoritative activation/staleness, and rollout evidence.
+  No implementation was performed in this planning update.
+
+## Third follow-up change request - build passages into the navgraph
+
+**Requested:** 2026-07-12
+**Status:** specified; implementation pending
+**Authority:** this section supersedes the original Phase-6 decision to keep
+`.navgraph.bin` base-only and dynamically add all passage topology in the worker.
+It also supersedes references in `plan.md` to preserving the v2 artifact plus a
+dynamic third-dimension overlay. The editor's full-width layered pathfinder,
+surface-aware refinement, route classifier, persistence schema, and no-Route-field
+decision remain authoritative and are not replaced.
+
+### Product decision and intended simplification
+
+For Infinity mode, passage topology is now part of navgraph construction. After the
+ordinary base nodes have been created, append one protected graph node for every
+persisted centreline point of every valid passage. A passage's intermediate nodes
+connect only to the previous and next point in that same passage. Its first and last
+nodes may additionally connect to nearby base nodes with direct legal line of sight.
+No other base/passage transition is permitted.
+
+This chain is deliberately a **rough first-stage representation**. It need not model
+all lateral choices across the passage width. Once the graph selects a passage, the
+existing typed, full-passage-raster refinement remains responsible for choosing a
+legal any-angle line across the complete width, optimizing portal anchors, computing
+the final terrain-weighted runtime, and producing transient `passageSpans`. The
+centreline chain therefore does not revive the rejected "one fixed final route per
+passage" design: it is only the high-level spine.
+
+The build order for an Infinity artifact is authoritative:
+
+```text
+saved mask + canonical File.level_passages + saved inclusion polygon
+    -> base navgraph nodes/topology
+    -> projected-crossing isolation
+    -> protected passage chains and endpoint connectors
+    -> typed artifact serialization
+    -> suitability/debug output
+    -> explicit Infinity activation
+```
+
+### Non-negotiable topology correction
+
+Appending a disconnected passage chain alone does **not** fix the reported bridge
+bug. The old planar base graph would still contain its false four-way junction, so a
+route could ignore the passage chain and turn between the bridge projection and the
+underpass. CR 8 is accepted only if both facts are true:
+
+1. the upper/lower passage exists as a separately typed endpoint-to-endpoint chain;
+2. the corresponding longitudinal route through the passage body no longer exists
+   in base topology, while a genuine transverse underpass remains connected.
+
+Passage nodes must also be quarantined from all generic graph machinery. They are
+never deduplicated with base nodes or with another passage, even at identical
+coordinates. They do not enter global k-NN candidate generation, contour adjacency,
+witness pruning, or connectivity repair. Those passes must never invent a
+mid-passage transition or a passage-to-passage edge.
+
+### CR 8.1 - freeze the artifact and topology contract
+
+**Agent effort:** High
+**Recommended owner:** senior navgraph/geometry agent
+**Primary files:** `project/navgraph.py`, binary readers in
+`navgraph_router.js`/the Node harness, `passage_geometry.js`, and focused fixtures
+
+Before changing production topology, add a minimal synthetic graph fixture and a
+real-map fixture covering the top-left bridge in
+`mask_20250604_135955.png`. The synthetic fixture must contain a horizontal base
+underpass and a crossing passage whose centreline is vertical or diagonal. It must
+assert all of the following at graph-path level, before Theta* can hide a defect:
+
+- base-left can reach base-right through the underpass;
+- passage-start can reach passage-end through the passage chain;
+- passage-start cannot leave into the base graph at the projected middle;
+- the base path cannot turn onto the passage-aligned route at the crossing;
+- transitions occur only at the two passage endpoint nodes;
+- two overlapping passage chains remain independent;
+- a passage with two points works in both directions;
+- a multi-point passage visits its points in order and cannot skip an intermediate
+  point through an ordinary visibility edge;
+- empty passage data preserves the established base topology.
+
+The present v2 binary contains no durable surface identity. Do not infer identity
+from coincident coordinates. Introduce one documented typed artifact revision
+(expected `NAVGRAPH_VERSION = 3`) with the minimum metadata required to reconstruct
+typed graph paths without consulting geometry heuristics:
+
+- `base_node_count`;
+- a canonical `passage_revision` derived from normalized passage JSON and mask
+  dimensions;
+- deterministic passage ordinal order (sort by stable passage id, not database or
+  input iteration accident);
+- a passage-node range table or per-node passage ordinal;
+- an edge kind for `base`, `passage`, and `transition` edges;
+- the owning passage ordinal for passage edges/nodes;
+- enough offsets/counts for strict bounds validation by every reader.
+
+Keep UUID strings out of hot adjacency arrays. The client already receives the
+canonical passage document and can map the serialized ordinal to the same stable-id
+sort, but it must reject readiness if the document revision does not equal the
+artifact revision. Update the module docstring byte layout, `.npz` keys, Python
+writer, JS reader, Node reader, truncation/overflow checks, and rebuild error text in
+one package. A v2 artifact remains readable only for a file whose canonical passage
+list is empty; a passage-bearing file must rebuild to v3 and must never silently run
+with a base-only artifact.
+
+**Acceptance:** binary round-trip tests cover zero, one, and multiple passages;
+corrupt range/ordinal/kind data is rejected; passage revision is item-order
+independent and changes for point/width/id/mask-dimension changes; the frozen
+false-junction test fails against the old additive overlay and passes only after
+CR 8.2.
+
+### CR 8.2 - construct and isolate passage topology in Python
+
+**Agent effort:** Very high
+**Recommended owner:** strongest Python/navgraph agent, followed by an independent
+geometry review
+**Primary files:** `project/navgraph.py`, `scripts/navgraph_debug.py`, Python
+navgraph tests, and parity fixtures shared with passage geometry
+
+#### Builder input and normalization
+
+Change the builder interface to accept the canonical document explicitly, for
+example:
+
+```text
+build_navgraph(mask_path, region_polygon=None, level_passages=None, verbose=False)
+```
+
+The caller, not `navgraph.py`, owns the `File` database lookup. Normalize with the
+server validator before starting expensive work. Remove consecutive duplicate
+points exactly as runtime normalization does; reject fewer than two distinct points,
+non-finite/out-of-bounds geometry, self-overlap, and structural budget failures with
+developer-visible build diagnostics. Do not silently build only a subset of a
+canonical document.
+
+The Python builder needs only the passage centreline, body footprint, terminal
+frames, and endpoint transition points. Put that analytic geometry in a small
+testable helper rather than importing Django models into `navgraph.py`. Freeze parity
+fixtures against the authoritative JS rules: flat terminal caps, rounded interior
+joins, constant full width, and the current outward `PASSAGE_PORTAL_DEPTH = 3` rule.
+The Python helper must not become a second editor/runtime classifier.
+
+#### Base-topology isolation
+
+Build ordinary base nodes using the current skeleton/contour/lattice pipeline, then
+isolate every passage body before final base edges are serialized:
+
+1. Mark ordinary base nodes whose centres lie inside the drawn passage body between
+   its terminal cap planes. Do not include the outward entrance bands in this
+   interior set.
+2. Remove those shadowed base nodes from the ordinary base roadmap and remap all
+   node-indexed structures. Record `base_nodes_shadowed_by_passages` per passage.
+   This prevents the projected upper route from remaining traversable as an
+   ordinary base-node chain.
+3. Preserve the legitimate underpass by creating **base-only transverse bypass
+   candidates** between retained base nodes on opposite lateral sides of the
+   passage body. A candidate must be within a named bounded radius, remain inside
+   the coach polygon, have direct full-resolution LOS on the base mask, enter and
+   leave opposite lateral sides, and be sufficiently transverse to the local
+   passage tangent. Measure the tangent where the candidate crosses the footprint;
+   never use one global angle for a bent passage.
+4. Reject passage-intersecting base candidates that run longitudinally with the
+   local passage tangent. Generic k-NN, skeleton fallback, and connectivity repair
+   must use the same rejection predicate, so a later repair pass cannot recreate
+   the deleted bridge-aligned base route.
+5. Keep transverse bypass edges typed `base`. They are the underpass. They must
+   never become a transition merely because their projected line crosses a passage
+   node or passage edge.
+
+Start with named, conservative constants for bypass radius and transverse/longitudinal
+angle thresholds. Do not bury thresholds inline. If the real-map fixture cannot
+retain both the underpass and passage without an angle heuristic that generalizes,
+stop and report the failing geometry rather than falling back to the old four-way
+junction.
+
+#### Passage nodes and edges
+
+After base-node compaction and base-edge isolation:
+
+1. Append passage nodes after all base nodes, in canonical passage-id order and
+   centreline-point order. Preserve distinct nodes even if rounding puts two surface
+   nodes at the same integer coordinate. Store the original finite point coordinates
+   for geometric weighting/refinement metadata if integer graph coordinates would
+   otherwise collapse a short segment.
+2. Mark every passage node protected. Do not pass it through `_dedupe_nodes`,
+   `_candidate_edges`, `_prune_redundant_nodes`, or `_repair_connectivity`.
+3. For each consecutive point pair, add exactly one undirected typed passage edge.
+   An intermediate node has exactly two same-passage neighbours except at a repeated
+   point rejected during normalization. No chord, k-NN shortcut, cross-passage edge,
+   or base connector is permitted there.
+4. Weight a chain edge by passage-surface cost along that centreline segment using
+   the same v1 fast-terrain convention as the passage raster. This is an approximate
+   high-level cost; final runtime still comes from surface-aware refinement. Keep the
+   graph heuristic admissible with the cheapest base/passage per-pixel cost.
+5. At the first and last node only, query nearby **base nodes** within a named radius.
+   Add a bounded number of transition connectors (nearest visible candidate in each
+   useful angular sector, with an overall cap) when the segment has direct
+   full-resolution base-mask LOS and stays inside the inclusion polygon. Intermediate
+   nodes and passage-body crossings are never connector candidates.
+6. A transition connector changes surface only at the exact passage endpoint. Split
+   its eventual typed geometry so the adjacent base and passage legs share that
+   coordinate. If an endpoint has no legal base connector, fail the Infinity build
+   with the passage id and endpoint name; do not silently omit the passage.
+
+Endpoint placement was deliberately left to coaches in the editor, so build-time LOS
+failure is a release-readiness diagnostic, not authorization to mutate the saved
+passage. Do not snap or move persisted points behind the user's back.
+
+#### Components, regions, and debug output
+
+- Passage chains may connect two base-mask components. Union component labels through
+  a valid endpoint-to-endpoint chain and update the node/component prefilter used by
+  Infinity sampling; otherwise the current coarse-label rejection can discard a
+  pair that is connected only by a bridge. Sampling and endpoint snapping remain
+  level 0 and must never select a passage node as a control anchor.
+- Apply the coach polygon to base nodes, bypass edges, passage points, chain edges,
+  and endpoint connectors. No typed leg may bypass the region guarantee.
+- Extend stats with passage count, passage node/edge/connector counts, shadowed base
+  nodes, retained transverse bypasses, rejected longitudinal edges, unusable
+  endpoints, passage revision, and per-stage timings.
+- Render passage nodes/edges/connectors in distinct colors in
+  `.navgraph.debug.png`; show removed/shadowed base topology in a diagnostic color
+  only when an explicit debug flag requests it. The normal overlay must depict the
+  effective serialized topology, so the top-left bridge can be reviewed honestly.
+
+**Acceptance:** the synthetic fixture passes; on
+`mask_20250604_135955.png` the top-left bridge has one continuous typed passage
+chain, base connectivity beneath it, no base/passage turn at the projected crossing,
+and transitions only at its two saved endpoints. Every intermediate passage node has
+same-passage degree two. All passage endpoints have at least one legal base connector.
+No generic or repair edge touches an intermediate passage node. Region legality and
+base-only navgraph acceptance remain green.
+
+### CR 8.3 - consume typed serialized passages in the worker
+
+**Agent effort:** High
+**Recommended owner:** senior JS/pathfinding integration agent
+**Primary files:** `navgraph_router.js`, `navgraph_passage_overlay.js`, `worker.js`,
+`refine_theta.js`, Node harnesses, and mask scene source
+
+- Parse the v3 surface/edge metadata and build CSR adjacency directly from the
+  serialized graph. Remove the current dynamic portal adjacency as the source of
+  Infinity topology for v3 artifacts. Keep only reusable passage-raster and typed
+  refinement helpers; do not retain two competing ways to connect a passage.
+- Verify the fetched canonical passage document against the artifact revision before
+  building state or accepting prefetched pair requests. A mismatch is a stale-build
+  error, not an empty-passage fallback.
+- Restrict control endpoint snapping and sample targets to indices below
+  `base_node_count`. Graph A* may traverse typed passage nodes after entering through
+  a serialized transition edge.
+- Convert each graph node path to typed legs from edge metadata. Consecutive passage
+  edges with the same ordinal form one `passage:<id>` leg. A transition edge changes
+  identity only at the serialized endpoint coordinate. Base edges that cross the
+  passage projection remain base.
+- Reuse the existing complete-raster passage refinement, optimized anchor handling,
+  typed legality, passage-span creation, obstacle scoring, surface-aware barriers,
+  and layered distinctness. The serialized centreline must never become the final
+  served polyline without that refinement and legality pass.
+- Barrier blocking must test serialized base edges against base barriers and
+  serialized passage edges against the matching passage surface. A projected base
+  barrier must not block the passage chain, and a passage barrier must not block the
+  underpass.
+- Remove or update cache keys that assumed passages could change while retaining the
+  same base artifact. Prefetched scenes remain keyed by the artifact passage revision.
+
+**Acceptance:** v3 and matching JSON generate typed refined routes; revision mismatch
+is rejected deterministically; the graph-level false-junction fixture, wall-hugging
+suite, layered distinctness suite, barrier suite, and no-passage v2 compatibility
+suite pass. Generated final routes report zero base/passage legality violations.
+
+### CR 8.4 - make build orchestration passage-authoritative
+
+**Agent effort:** High
+**Recommended owner:** Django/repository integration agent
+**Primary files:** `project/views.py`, `build_navgraph.py`, `media_access.py`, map
+listing/serving tests, and passage-save tests
+
+The current background activation build passes only `infinite_region`; the management
+command also looks up only the region. Update every build entry point to pass the same
+locked, canonical `File.level_passages` revision used to authorize activation.
+
+1. In `_rebuild_navgraph_for_file`, read the file, mask name, region, and normalized
+   passage document from one coherent database snapshot. Compute region and passage
+   revisions before building. Immediately before publishing the artifact and flipping
+   `infinite_enabled=True`, lock the `File` again and confirm both revisions still
+   match. If either changed during the build, discard the temporary output and report
+   the build as stale; never publish an artifact for the previous passage document.
+2. Write `.npz` and `.bin` to temporary sibling files and atomically replace the
+   served artifacts only after the revision check. A failed/stale build must leave no
+   half-written binary and must not enable the file.
+3. A committed passage add/edit/remove makes the existing Infinity artifact stale.
+   Do not serve it with new JSON. Prefer the existing activation workflow: mark the
+   file not Infinity-enabled in the same successful passage-save transaction, retain
+   the old artifact only as an unservable diagnostic, and require reactivation to
+   build the new revision. If product UX instead chooses automatic rebuild, it must
+   use the same token/revision race protection and may not issue one build per wheel
+   tick.
+4. `serve_navgraph_file` and the Infinity map listing must verify that a served
+   artifact revision matches the current file's canonical mask/region/passages.
+   Direct URL access must not bypass this check.
+5. Extend `build_navgraph --file <File id>` to load that exact file's region and
+   passages. For path-based `--file` and `--all`, never choose an arbitrary "latest"
+   `File` when multiple rows reference the same `map_file` with different region or
+   passage revisions. First audit this repository condition. If conflicting rows
+   exist, make artifact storage file-scoped and update serving/listing paths; otherwise
+   enforce and test the uniqueness assumption. Skip ambiguity with a clear developer
+   diagnostic rather than building the wrong topology.
+6. Staleness checks include mask mtime/content identity, polygon revision, passage
+   revision, builder version, and artifact format version. Backfill output reports
+   all rebuild reasons and passage counts.
+
+No new user-facing text is inherently required. If disabling/rebuilding passage-aware
+Infinity adds visible status or validation copy, wrap it in gettext, add DE/FR/IT rows
+to `locale/source_messages.py`, run translation `--check` and `--build`, and restart
+the development server as required by `AGENTS.md`.
+
+**Acceptance:** activation always builds the saved passage revision; an edit during a
+build cannot enable stale output; a passage edit makes the previous artifact
+unservable; forced backfill is deterministic; ambiguous shared-map ownership is
+either eliminated by file-scoped artifacts or rejected explicitly; empty passages
+still build and serve through the documented compatibility path.
+
+### CR 8.5 - independent verification and rollout gate
+
+**Agent effort:** High
+**Recommended owner:** fresh independent review agent plus human map review
+
+Run, at minimum:
+
+```text
+.venv\\Scripts\\python.exe manage.py check
+.venv\\Scripts\\python.exe manage.py test project results
+.venv\\Scripts\\python.exe scripts/manage_translations.py --check
+.venv\\Scripts\\python.exe scripts/manage_translations.py --build
+node project/static/project/js/pathing/dev/passage_geometry.test.mjs
+node project/static/project/js/pathing/dev/layered_passage.test.mjs
+node project/static/project/js/pathing/dev/navgraph_passage_overlay.test.mjs
+node project/static/project/js/pathing/dev/wall_hugging.test.mjs
+```
+
+Add the CR-8 binary/topology test command to this list and document it in the test
+header. Re-run the representative navgraph batch on no-passage and passage-bearing
+maps. Compare N/E, artifact bytes, build time, worker state-build time, pair latency,
+refinement fallback, and rejection taxonomy against the previous dynamic-overlay
+baseline.
+
+Manual acceptance must include at least five real maps: the reported top-left bridge,
+a narrow straight bridge, a wide diagonal bridge, a bent tunnel, and overlapping
+independent passages. For each, inspect both the typed debug graph and final refined
+routes in both directions. Confirm underpass continuity, passage continuity, endpoint-
+only transitions, no mid-corridor switch, no same-cap shortcut, no cross-passage
+edge, polygon containment, and correct barrier surface.
+
+Do not delete the old dynamic-overlay code or backfill production artifacts until the
+new fixture demonstrates the old false junction and the v3 path passes all acceptance
+checks. Rollout is complete only after stale v2 passage-bearing artifacts cannot be
+listed or served.
 
 ## Post-implementation change request - flat portals and three-level tools
 

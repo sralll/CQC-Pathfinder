@@ -8,9 +8,10 @@
 import { Random } from './Random.js';
 import { Point } from './Point.js';
 import { Graph } from './Graph.js';
+import { dhypot } from './dmath.js';
 
 function norm(x, y) {
-	const l = Math.hypot(x, y) || 1;
+	const l = dhypot(x, y) || 1;
 	return { x: x / l, y: y / l };
 }
 
@@ -275,7 +276,7 @@ function buildDelta(course, shore, mouthIdx, width) {
 
 	// perpendicular at the MOUTH (not midpoint) — the delta's narrow base must connect
 	// to the river stroke's endpoint for a seamless join (no visible step).
-	const len = Math.hypot(dx, dy) || 1;
+	const len = dhypot(dx, dy) || 1;
 	const hw = width / 2;
 	const nx = (-dy / len) * hw;
 	const ny = (dx / len) * hw;

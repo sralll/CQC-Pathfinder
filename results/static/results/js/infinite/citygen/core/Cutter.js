@@ -5,6 +5,7 @@ import { Point } from './Point.js';
 import { Polygon } from './Polygon.js';
 import { GeomUtils } from './GeomUtils.js';
 import { amin } from './arrays.js';
+import { dcos, dsin } from './dmath.js';
 
 export class Cutter {
 	// Cut a polygon across the edge starting at `vertex`, at `ratio` along it, rotated by `angle`.
@@ -14,8 +15,8 @@ export class Cutter {
 		const p1 = GeomUtils.interpolate(vertex, next, ratio);
 		const d = next.subtract(vertex);
 
-		const cosB = Math.cos(angle);
-		const sinB = Math.sin(angle);
+		const cosB = dcos(angle);
+		const sinB = dsin(angle);
 		const vx = d.x * cosB - d.y * sinB;
 		const vy = d.y * cosB + d.x * sinB;
 		const p2 = new Point(p1.x - vy, p1.y + vx);

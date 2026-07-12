@@ -1,10 +1,16 @@
 import numpy as np
+import scipy.ndimage as ndi
 from django.test import SimpleTestCase
 
 from project.navgraph import (
+    CONTOUR_AREA_SPACING_PX,
     _adaptive_lattice_nodes,
     _candidate_edges,
     _dedupe_appended_nodes,
+    _filter_regular_contours_near_centerline,
+    _obstacle_offset_nodes,
+    _prune_redundant_nodes,
+    _very_slow_offset_nodes,
 )
 
 
@@ -16,10 +22,9 @@ class ObstacleBiasedSamplingTests(SimpleTestCase):
         # A five-cell wall opening in the middle of an otherwise open route.
         clearance[15, 28:33] = 2.0
 
-        nodes, stats = _adaptive_lattice_nodes(
+        protected, open_nodes, stats = _adaptive_lattice_nodes(
             clearance,
             skeleton,
-            obstacle_spacing=6,
             bottleneck_spacing=8,
             near_spacing=16,
             far_spacing=24,
@@ -27,16 +32,176 @@ class ObstacleBiasedSamplingTests(SimpleTestCase):
             near_clearance_max=20,
         )
 
-        obstacle_nodes = nodes[:stats["obstacle_candidate_count"]]
-        self.assertTrue(any(y == 15 and 28 <= x <= 32 for y, x in obstacle_nodes))
+        self.assertTrue(any(y == 15 and 28 <= x <= 32 for y, x in protected))
         self.assertGreater(stats["bottleneck_candidates"], 0)
+        self.assertGreater(len(open_nodes), 0)
+
+    def test_contour_sampling_offsets_both_sides_close_to_obstacle(self):
+        mask = np.full((60, 80), 241, dtype=np.uint8)
+        mask[20:40, 25:55] = 0
+        clearance = ndi.distance_transform_edt(mask != 0).astype(np.float32)
+
+        corners, samples, pairs, stats = _obstacle_offset_nodes(
+            mask, clearance,
+            simplify_px=2,
+            min_length_px=12,
+            min_turn_degrees=35,
+            offset_px=2,
+            sample_spacing_px=8,
+        )
+
+        self.assertGreaterEqual(len(corners), 4)
+        self.assertGreater(len(corners) + len(samples), 0)
+        self.assertGreater(len(pairs), 0)
+        self.assertGreater(stats["area_suppressed_candidates"], 0)
+        all_nodes = corners + samples
+        # For a side shorter than the 32 px thinning radius, its two offset
+        # corner anchors may cover the complete legal straight run.
+        self.assertTrue(any(y < 20 and 23 <= x <= 56 for x, y in all_nodes))
+        self.assertTrue(any(y >= 40 and 23 <= x <= 56 for x, y in all_nodes))
+        self.assertTrue(all(1 <= clearance[y, x] <= 4 for x, y in all_nodes))
+
+    def test_dense_sampling_is_spaced_but_opposite_wall_sides_survive(self):
+        mask = np.full((70, 100), 241, dtype=np.uint8)
+        mask[34:37, 15:85] = 0  # thin wall; opposite offsets are <10 px apart
+        clearance = ndi.distance_transform_edt(mask != 0).astype(np.float32)
+
+        protected, regular, _, stats = _obstacle_offset_nodes(
+            mask, clearance,
+            simplify_px=4,
+            min_length_px=8,
+            offset_px=2,
+            sample_spacing_px=2,  # intentionally over-generate
+        )
+
+        nodes = protected + regular
+        self.assertTrue(any(y < 34 for x, y in nodes))
+        self.assertTrue(any(y >= 37 for x, y in nodes))
+        self.assertGreater(stats["area_suppressed_candidates"], 0)
+        # Same-run retained nodes respect the thinning target. Opposite-side
+        # pairs may be closer because the black wall correctly prevents LOS.
+        for i, (x, y) in enumerate(nodes):
+            for xx, yy in nodes[i + 1:]:
+                if ((x - xx) ** 2 + (y - yy) ** 2 >
+                        CONTOUR_AREA_SPACING_PX ** 2):
+                    continue
+                steps = max(abs(x - xx), abs(y - yy))
+                crosses_black = any(
+                    mask[
+                        int(round(y + (yy - y) * k / max(1, steps))),
+                        int(round(x + (xx - x) * k / max(1, steps))),
+                    ] == 0
+                    for k in range(steps + 1)
+                )
+                self.assertTrue(crosses_black)
+
+        # The 32 px LOS-aware pass is substantially more aggressive than raw
+        # 2 px generation on each straight side.
+        self.assertLess(len(nodes), 20)
+
+    def test_wall_gap_gets_close_offset_nodes(self):
+        mask = np.full((70, 80), 241, dtype=np.uint8)
+        mask[:32, 40:44] = 0
+        mask[38:, 40:44] = 0
+        clearance = ndi.distance_transform_edt(mask != 0).astype(np.float32)
+
+        corners, samples, _, _ = _obstacle_offset_nodes(
+            mask, clearance,
+            simplify_px=2,
+            min_length_px=8,
+            min_turn_degrees=30,
+            offset_px=2,
+            sample_spacing_px=12,
+        )
+
+        nodes = corners + samples
+        self.assertTrue(any(31 <= y <= 39 and 37 <= x <= 46 for x, y in nodes))
+
+    def test_tiny_compact_obstacle_skips_contour_but_thin_wall_does_not(self):
+        compact = np.full((60, 80), 241, dtype=np.uint8)
+        compact[25:35, 35:45] = 0
+        compact_dist = ndi.distance_transform_edt(compact != 0).astype(np.float32)
+        corners, regular, _, stats = _obstacle_offset_nodes(
+            compact, compact_dist, min_length_px=8)
+        self.assertEqual(corners + regular, [])
+        self.assertEqual(stats["tiny_contours_skipped"], 1)
+
+        wall = np.full((60, 80), 241, dtype=np.uint8)
+        wall[29:32, 10:70] = 0
+        wall_dist = ndi.distance_transform_edt(wall != 0).astype(np.float32)
+        corners, regular, _, stats = _obstacle_offset_nodes(
+            wall, wall_dist, min_length_px=8)
+        self.assertGreater(len(corners) + len(regular), 0)
+        self.assertEqual(stats["tiny_contours_skipped"], 0)
+
+    def test_visible_centerline_removes_only_regular_corridor_samples(self):
+        mask = np.full((30, 60), 241, dtype=np.uint8)
+        mask[:, :20] = 0
+        mask[:, 40:] = 0
+        corners = [(21, 5), (21, 25)]
+        regular = [(22, 10), (22, 20)]
+        centerline = [(30, 10), (30, 20)]
+
+        kept_corners, kept_regular, _, removed = (
+            _filter_regular_contours_near_centerline(
+                mask, corners, regular, [], centerline, radius=12))
+
+        self.assertEqual(kept_corners, corners)
+        self.assertEqual(kept_regular, [])
+        self.assertEqual(removed, 2)
+
+    def test_noisy_u_shape_keeps_inner_arms_bottom_and_adjacency(self):
+        mask = np.full((70, 90), 241, dtype=np.uint8)
+        mask[15:55, 20:70] = 0
+        mask[12:42, 35:55] = 241  # north-facing cut-out: wide U
+        # Pixel-scale perturbations must not erase the simplified inner sides.
+        mask[24, 34] = 241
+        mask[29, 35] = 0
+        mask[31, 54] = 0
+        mask[36, 55] = 241
+        clearance = ndi.distance_transform_edt(mask != 0).astype(np.float32)
+
+        protected, regular, pairs, stats = _obstacle_offset_nodes(
+            mask, clearance,
+            simplify_px=8,
+            min_length_px=8,
+            min_turn_degrees=40,
+            offset_px=2,
+            sample_spacing_px=24,
+        )
+
+        nodes = protected + regular
+        self.assertTrue(any(35 <= x <= 38 and 17 <= y <= 40 for x, y in protected))
+        self.assertTrue(any(52 <= x <= 55 and 17 <= y <= 40 for x, y in protected))
+        self.assertTrue(any(37 <= x <= 53 and 39 <= y <= 43 for x, y in protected))
+        self.assertGreater(stats["segment_anchors"], 0)
+        self.assertTrue(any(
+            34 <= nodes[a][0] <= 56 and 34 <= nodes[b][0] <= 56 and
+            12 <= nodes[a][1] <= 44 and 12 <= nodes[b][1] <= 44
+            for a, b in pairs
+        ))
+
+    def test_very_slow_contours_place_outside_without_entering_black(self):
+        mask = np.full((70, 90), 241, dtype=np.uint8)
+        mask[20:50, 25:60] = 135
+        mask[15:20, 25:60] = 0  # black directly against the north side
+
+        protected, regular, pairs, stats = _very_slow_offset_nodes(mask)
+
+        nodes = protected + regular
+        self.assertGreater(len(nodes), 0)
+        self.assertTrue(all(mask[y, x] not in (0, 135) for x, y in nodes))
+        self.assertTrue(any(x < 25 for x, y in nodes))
+        self.assertTrue(any(x >= 60 for x, y in nodes))
+        self.assertGreater(len(pairs), 0)
+        self.assertEqual(stats["boundary_value"], 135)
 
     def test_deduplication_does_not_cross_a_thin_wall(self):
         mask = np.full((20, 20), 241, dtype=np.uint8)
         mask[:, 10] = 0
         nodes = [(9, 10), (11, 10)]
 
-        deduped, _ = _dedupe_appended_nodes(mask, nodes, 0, min_distance=6)
+        deduped, _, _ = _dedupe_appended_nodes(mask, nodes, 0, min_distance=6)
 
         self.assertEqual(deduped, nodes)
 
@@ -44,20 +209,36 @@ class ObstacleBiasedSamplingTests(SimpleTestCase):
         mask = np.full((20, 20), 241, dtype=np.uint8)
         nodes = [(5, 10), (8, 10)]
 
-        deduped, source_indices = _dedupe_appended_nodes(
+        deduped, source_indices, source_to_output = _dedupe_appended_nodes(
             mask, nodes, 0, min_distance=6)
 
         self.assertEqual(deduped, [nodes[0]])
         self.assertEqual(source_indices, [0])
+        self.assertEqual(source_to_output, [0, 0])
 
     def test_deduplication_preserves_nearby_different_terrain(self):
         mask = np.full((20, 20), 135, dtype=np.uint8)
         mask[:, :7] = 243
         nodes = [(5, 10), (8, 10)]
 
-        deduped, _ = _dedupe_appended_nodes(mask, nodes, 0, min_distance=6)
+        deduped, _, _ = _dedupe_appended_nodes(mask, nodes, 0, min_distance=6)
 
         self.assertEqual(deduped, nodes)
+
+    def test_deduplication_preserves_thinned_boundary_coverage_anchor(self):
+        mask = np.full((20, 20), 241, dtype=np.uint8)
+        # The first node represents the fixed skeleton.  The second is already
+        # contour-thinned and must not be replaced just because it is visible
+        # and within the ordinary global dedupe radius.
+        nodes = [(10, 10), (12, 10)]
+
+        deduped, source_indices, source_to_output = _dedupe_appended_nodes(
+            mask, nodes, fixed_count=1, min_distance=10,
+            protected_source_end=2)
+
+        self.assertEqual(deduped, nodes)
+        self.assertEqual(source_indices, [0, 1])
+        self.assertEqual(source_to_output, [0, 1])
 
     def test_obstacle_nodes_consider_more_edge_candidates(self):
         nodes = [(50, 50)]
@@ -68,7 +249,27 @@ class ObstacleBiasedSamplingTests(SimpleTestCase):
                 int(round(50 + 30 * np.sin(angle))),
             ))
 
-        edges = _candidate_edges(nodes, [], obstacle_nodes={0})
+        mask = np.full((101, 101), 241, dtype=np.uint8)
+        edges = _candidate_edges(nodes, [], feature_nodes={0}, mask=mask)
         incident = {b if a == 0 else a for a, b in edges if a == 0 or b == 0}
 
-        self.assertEqual(len(incident), 12)
+        self.assertGreaterEqual(len(incident), 7)
+        self.assertLessEqual(len(incident), 12)
+
+    def test_witness_pruning_removes_only_redundant_open_node(self):
+        nodes = [(10, 10), (10, 5), (15, 10), (10, 15), (5, 10)]
+        edges = [(0, 1), (0, 2), (0, 3), (0, 4)]
+        edges.extend((i, j) for i in range(1, 5) for j in range(i + 1, 5))
+        weights = [1.0] * 4 + [1.5] * 6
+        components = np.ones(5, dtype=np.int32)
+
+        pruned_nodes, _, _, _, removed = _prune_redundant_nodes(
+            nodes, edges, weights, components, protected_nodes={1, 2, 3, 4})
+
+        self.assertEqual(removed, 1)
+        self.assertNotIn((10, 10), pruned_nodes)
+
+        kept_nodes, _, _, _, protected_removed = _prune_redundant_nodes(
+            nodes, edges, weights, components, protected_nodes=set(range(5)))
+        self.assertEqual(protected_removed, 0)
+        self.assertEqual(kept_nodes, nodes)

@@ -16,6 +16,8 @@
 // river, ~10–15 raw points → ~100 after smoothing) and the visibility-graph
 // builder can decimate further if needed.
 
+import { dcos, dhypot, dsin } from './dmath.js';
+
 const IMPASSABLE_BUILDING_CLASSES = new Set([
 	'building',
 	'cathedral',
@@ -51,7 +53,7 @@ export const RIVER_OBSTACLE_SIMPLIFY_TOLERANCE = 0.1;
 const CIRCLE_OBSTACLE_SEGMENTS = 8;
 // An octagon with circumradius r has flat sides at r*cos(pi/8). Inflate the
 // routing polygon so its flat sides still cover the rendered circular tower.
-export const WALL_TOWER_RADIUS = WALL_TOWER_RENDER_RADIUS / Math.cos(Math.PI / CIRCLE_OBSTACLE_SEGMENTS);
+export const WALL_TOWER_RADIUS = WALL_TOWER_RENDER_RADIUS / dcos(Math.PI / CIRCLE_OBSTACLE_SEGMENTS);
 // Bridge / pier deck constants — kept in sync with the renderer (generator.html
 // drawBridges / drawDocks) so the green overlay polygon matches the brown deck.
 const BRIDGE_FILL_WIDTH = 1.6;
@@ -191,7 +193,7 @@ function wallObstaclePolylines(wall, river) {
 		let b = shape[(i + 1) % n];
 		if (halfRiver > 0) {
 			const dx = b.x - a.x, dy = b.y - a.y;
-			const len = Math.hypot(dx, dy) || 1;
+			const len = dhypot(dx, dy) || 1;
 			const ux = dx / len, uy = dy / len;
 			let ax = a.x, ay = a.y, bx = b.x, by = b.y;
 			if (!active[(i + n - 1) % n] || riverNodes.has(coordKey(a))) {
@@ -252,7 +254,7 @@ function cleanupPolyline(polyline) {
 	const out = [];
 	for (const p of polyline) {
 		const prev = out[out.length - 1];
-		if (!prev || Math.hypot(prev.x - p.x, prev.y - p.y) > 1e-9) out.push(p);
+		if (!prev || dhypot(prev.x - p.x, prev.y - p.y) > 1e-9) out.push(p);
 	}
 	return out;
 }
@@ -269,15 +271,15 @@ export function thickenPolyline(polyline, thickness) {
 		let sumNx = 0, sumNy = 0;
 		if (prev) {
 			const dx = cur.x - prev.x, dy = cur.y - prev.y;
-			const l = Math.hypot(dx, dy) || 1;
+			const l = dhypot(dx, dy) || 1;
 			sumNx += -dy / l; sumNy += dx / l;
 		}
 		if (next) {
 			const dx = next.x - cur.x, dy = next.y - cur.y;
-			const l = Math.hypot(dx, dy) || 1;
+			const l = dhypot(dx, dy) || 1;
 			sumNx += -dy / l; sumNy += dx / l;
 		}
-		const nl = Math.hypot(sumNx, sumNy) || 1;
+		const nl = dhypot(sumNx, sumNy) || 1;
 		const nx = sumNx / nl;
 		const ny = sumNy / nl;
 		left.push({ x: cur.x + nx * half, y: cur.y + ny * half });
@@ -290,7 +292,7 @@ function circlePolygon(center, radius, segments = CIRCLE_OBSTACLE_SEGMENTS) {
 	const out = [];
 	for (let i = 0; i < segments; i++) {
 		const a = (i / segments) * Math.PI * 2;
-		out.push({ x: center.x + Math.cos(a) * radius, y: center.y + Math.sin(a) * radius });
+		out.push({ x: center.x + dcos(a) * radius, y: center.y + dsin(a) * radius });
 	}
 	return out;
 }
@@ -412,7 +414,7 @@ function buildBridgeDeck(bridge, course, smoothed, riverWidth) {
 	let axis = null;
 	if (bridge.from && bridge.to) {
 		const dx = bridge.to.x - bridge.from.x, dy = bridge.to.y - bridge.from.y;
-		const len = Math.hypot(dx, dy) || 1;
+		const len = dhypot(dx, dy) || 1;
 		axis = { x: dx / len, y: dy / len };
 	} else {
 		const crossing = closestPointOnPath({ x: bridge.x, y: bridge.y }, smoothed);
@@ -450,7 +452,7 @@ function buildBridgeDeck(bridge, course, smoothed, riverWidth) {
 function buildPierDeck(pier, large) {
 	if (!pier || !pier.from || !pier.to) return null;
 	const dx = pier.to.x - pier.from.x, dy = pier.to.y - pier.from.y;
-	const len = Math.hypot(dx, dy);
+	const len = dhypot(dx, dy);
 	if (!(len > 1e-6)) return null;
 	const ux = dx / len, uy = dy / len;
 	const half = (large ? PIER_FILL_WIDTH * 2 : PIER_FILL_WIDTH) / 2;
@@ -469,7 +471,7 @@ function closestPointOnSegment(p, a, b) {
 	let t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / l2;
 	t = Math.max(0, Math.min(1, t));
 	const px = a.x + dx * t, py = a.y + dy * t;
-	return { x: px, y: py, distance: Math.hypot(p.x - px, p.y - py) };
+	return { x: px, y: py, distance: dhypot(p.x - px, p.y - py) };
 }
 
 function closestPointOnPath(p, path) {
@@ -506,7 +508,7 @@ function riverTangentAt(path, segment) {
 	const a = path[Math.max(0, Math.min(segment, path.length - 2))];
 	const b = path[Math.max(1, Math.min(segment + 1, path.length - 1))];
 	const dx = b.x - a.x, dy = b.y - a.y;
-	const len = Math.hypot(dx, dy) || 1;
+	const len = dhypot(dx, dy) || 1;
 	return { x: dx / len, y: dy / len };
 }
 
@@ -557,7 +559,7 @@ function bridgeSideShorePoints(origin, axis, path, shoreHalfWidth) {
 
 function bleedPoint(center, point, bleed) {
 	const dx = point.x - center.x, dy = point.y - center.y;
-	const len = Math.hypot(dx, dy);
+	const len = dhypot(dx, dy);
 	if (len < 1e-6) return point;
 	return { x: point.x + (dx / len) * bleed, y: point.y + (dy / len) * bleed };
 }
@@ -572,17 +574,17 @@ function buildDeltaPolygon(delta, smoothedCourse, riverWidth) {
 	const p0 = smoothedCourse[0];
 	const p1 = smoothedCourse[1];
 	const dx = p1.x - p0.x, dy = p1.y - p0.y;
-	const len = Math.hypot(dx, dy) || 1;
+	const len = dhypot(dx, dy) || 1;
 	const tx = dx / len, ty = dy / len;
 	const hw = (riverWidth || 5) / 2;
 	const a = { x: p0.x - ty * hw, y: p0.y + tx * hw };
 	const b = { x: p0.x + ty * hw, y: p0.y - tx * hw };
-	const aRight = Math.hypot(a.x - delta.right.x, a.y - delta.right.y);
-	const bRight = Math.hypot(b.x - delta.right.x, b.y - delta.right.y);
+	const aRight = dhypot(a.x - delta.right.x, a.y - delta.right.y);
+	const bRight = dhypot(b.x - delta.right.x, b.y - delta.right.y);
 	const right = aRight <= bRight ? a : b;
 	const left = right === a ? b : a;
 	const ctrlLen = Math.max(
-		Math.hypot(delta.right.x - delta.rightCtrl1.x, delta.right.y - delta.rightCtrl1.y),
+		dhypot(delta.right.x - delta.rightCtrl1.x, delta.right.y - delta.rightCtrl1.y),
 		len * 0.5,
 	);
 	const rightCtrl1 = { x: right.x - tx * ctrlLen, y: right.y - ty * ctrlLen };

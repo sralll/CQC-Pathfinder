@@ -26,10 +26,10 @@ Polygonizing black pixels gives a visibility graph with a uniform-cost
 assumption — fine for the (uniform) generated cities, wrong for real masks whose
 terrain weights drive route choice. Instead we skeletonize the *free* space
 (medial axis) so nodes sit in corridor centres, sample along corridors, and add
-a sparse lattice across large open plazas. Dense obstacle-boundary and
-low-clearance skeleton samples preserve narrow gates while open ground stays
-sparse. Terrain is respected both when nearby nodes are deduplicated and in
-every measured edge weight.
+a sparse lattice across large open plazas. Simplified contour features and
+clearance-minimum skeleton anchors preserve obstacle choices and narrow gates
+without a global boundary grid. Terrain is respected both when nearby nodes are
+deduplicated and in every measured edge weight.
 
 
 Adaptive resolution
@@ -132,6 +132,10 @@ import scipy.ndimage as ndi
 
 try:
     from skimage.morphology import skeletonize as _sk_skeletonize
+    from skimage.measure import (
+        approximate_polygon as _sk_approximate_polygon,
+        find_contours as _sk_find_contours,
+    )
     _HAVE_SKIMAGE = True
 except Exception:  # pragma: no cover - dependency guard
     _HAVE_SKIMAGE = False
@@ -142,6 +146,7 @@ NAVGRAPH_MAGIC = b"NVG1"
 
 # --- Terrain -----------------------------------------------------------------
 IMPASSABLE = 0  # mask value that means "cannot enter" (both class schemes)
+VERY_SLOW = 135  # strongly avoided terrain; appears as rgb(47) in the dim debug overlay
 
 # --- Off-map hit zone --------------------------------------------------------
 # The mask is a full rectangle, but the actual map occupies only part of it; the
@@ -182,8 +187,19 @@ RESAMPLE_SPACING_PX = 48     # add a node every ~this many full-res px along a s
 # narrow gates.  Open space stays deliberately sparse; otherwise most of the
 # artifact budget is spent where a straight crossing already works well.
 OBSTACLE_CLEARANCE_PX = 16   # dense sampling at/below this distance from a wall
-OBSTACLE_SPACING_PX = 12     # boundary-band lattice spacing
 BOTTLENECK_SPACING_PX = 16   # extra low-clearance skeleton anchors
+CONTOUR_SIMPLIFY_PX = 8      # ignore smaller boundary wiggles/noise
+CONTOUR_MIN_LENGTH_PX = 32   # ignore tiny isolated obstacle specks
+CONTOUR_CORNER_ANGLE_DEG = 45  # minimum direction change worth a feature node
+CONTOUR_NODE_OFFSET_PX = 2   # stay close to the same obstacle side
+CONTOUR_SAMPLE_SPACING_PX = 24  # arc-length samples, never a global XY grid
+CONTOUR_SEGMENT_ANCHOR_MIN_PX = 16  # shorter simplified runs are noise/covered by ends
+CONTOUR_AREA_SPACING_PX = 32  # LOS-aware thinning radius along one contour run
+CONTOUR_TINY_AREA_PX = 256  # compact isolated obstacles need no local roadmap
+CONTOUR_TINY_SPAN_PX = 20   # long/thin walls are never classified as tiny
+CONTOUR_TARGET_PX = 20_000_000  # ds=1 normally; at most a light ds=2 on huge maps
+CONTOUR_MAX_DS = 2
+NARROW_CENTERLINE_MERGE_PX = 16  # discard regular wall samples near visible spine
 NODE_DEDUPE_PX = 6           # merge only nearly coincident, mutually visible nodes
 NODE_DEDUPE_TERRAIN_DELTA = 16  # never merge a path node into nearby slow terrain
 NEAR_OBSTACLE_CLEARANCE_PX = 80  # denser lattice up to this clearance from obstacles
@@ -191,8 +207,8 @@ LATTICE_SPACING_NEAR_PX = 32  # transition band between boundary and open space
 LATTICE_SPACING_FAR_PX = 64   # plaza/interior open-space lattice spacing
 
 # --- Edges -------------------------------------------------------------------
-EDGE_KNN = 6                 # k-nearest-neighbour candidate edges per node
-EDGE_OBSTACLE_KNN = 12       # more choices for boundary/gate nodes (many are wall-blocked)
+EDGE_KNN = 10                # local alternatives for barrier/distinct-route search
+EDGE_FEATURE_SECTORS = 8     # nearest visible neighbour in each angular sector
 EDGE_MAX_DIST = 120          # px; candidate edge endpoints must be within this (full-res)
 EDGE_MARGIN = 12             # px; subgrid margin around a k-NN edge bbox for A*
 EDGE_DETOUR_RATIO = 3.0      # drop a k-NN edge whose A* path is > this * straight
@@ -203,6 +219,14 @@ EDGE_DETOUR_RATIO = 3.0      # drop a k-NN edge whose A* path is > this * straig
 EDGE_SKELETON_MARGIN = 40    # px; subgrid margin for skeleton backbone A*
 EDGE_SKELETON_DETOUR = 6.0   # detour tolerance for skeleton backbone A*
 ASTAR_MAX_EXPANSIONS = 200_000  # per-edge safety cap on A* node expansions
+
+# --- Redundancy pruning ------------------------------------------------------
+# Only non-topological open-lattice nodes are considered. A node is removable
+# when every route through it already has a short local witness path that avoids
+# it. No shortcut edge is invented, so client geometry remains honest.
+PRUNE_WITNESS_STRETCH = 1.03
+PRUNE_WITNESS_RADIUS_PX = 180
+PRUNE_MAX_DEGREE = 8
 
 # --- Connectivity repair -----------------------------------------------------
 # After weighting, graph fragments that belong to the same free-space component
@@ -582,73 +606,475 @@ def _bottleneck_candidates(skel, coarse_clearance, max_clearance, spacing):
     the skeleton.  A small Poisson-like suppression keeps flat, narrow streets
     from receiving a node at every skeleton pixel.
     """
-    ys, xs = np.where(
+    low = (
         skel & (coarse_clearance > 0) &
         (coarse_clearance <= max_clearance)
     )
-    if not len(ys):
+    if not low.any():
         return []
 
-    # Narrowest first means a gate wins over a nearby, wider corridor when the
-    # suppression discs overlap.  y/x make the result deterministic.
-    order = np.lexsort((xs, ys, coarse_clearance[ys, xs]))
-    cell = max(1, spacing)
-    buckets = {}
+    # Find minima *along the skeleton*. Using the raw clearance image would let
+    # adjacent obstacle zeros suppress every passable throat candidate.
+    work = np.where(skel, coarse_clearance, np.inf)
+    window = max(3, 2 * int(spacing) + 1)
+    local_min = ndi.minimum_filter(work, size=window, mode="constant", cval=np.inf)
+    minima = low & (coarse_clearance <= local_min + 0.5)
+    labels, _ = ndi.label(minima, structure=np.ones((3, 3), dtype=np.uint8))
     out = []
-    radius2 = spacing * spacing
-    for oi in order.tolist():
-        y, x = int(ys[oi]), int(xs[oi])
-        by, bx = y // cell, x // cell
-        too_close = False
-        for gy in (by - 1, by, by + 1):
-            for gx in (bx - 1, bx, bx + 1):
-                for yy, xx in buckets.get((gy, gx), ()):
-                    if (y - yy) ** 2 + (x - xx) ** 2 <= radius2:
-                        too_close = True
-                        break
-                if too_close:
-                    break
-            if too_close:
-                break
-        if too_close:
+    for label_id, slices in enumerate(ndi.find_objects(labels), start=1):
+        if slices is None:
             continue
-        out.append((y, x))
+        local_y, local_x = np.where(labels[slices] == label_id)
+        ys = local_y + slices[0].start
+        xs = local_x + slices[1].start
+        if not len(ys):
+            continue
+        values = coarse_clearance[ys, xs]
+        minimum = values.min()
+        best = np.where(values == minimum)[0]
+        # Pick the minimum pixel nearest the plateau centroid so long, flat
+        # narrow corridors contribute one stable anchor rather than an endpoint.
+        cy, cx = float(ys.mean()), float(xs.mean())
+        choice = min(
+            best.tolist(),
+            key=lambda i: ((ys[i] - cy) ** 2 + (xs[i] - cx) ** 2,
+                           int(ys[i]), int(xs[i])),
+        )
+        out.append((int(ys[choice]), int(xs[choice])))
+    if len(out) <= 1:
+        return out
+
+    # Separate minima labels can sit only a few pixels apart where the coarse
+    # skeleton is fragmented around a junction. Keep the narrowest anchor in a
+    # wider neighbourhood; this suppression is independent of any global grid.
+    min_spacing = max(1, 2 * int(spacing))
+    cell = min_spacing
+    radius2 = min_spacing * min_spacing
+    ordered = sorted(
+        out,
+        key=lambda p: (float(coarse_clearance[p[0], p[1]]), p[0], p[1]),
+    )
+    kept = []
+    buckets = {}
+    for y, x in ordered:
+        by, bx = y // cell, x // cell
+        if any(
+            (y - yy) ** 2 + (x - xx) ** 2 <= radius2
+            for gy in (by - 1, by, by + 1)
+            for gx in (bx - 1, bx, bx + 1)
+            for yy, xx in buckets.get((gy, gx), ())
+        ):
+            continue
+        kept.append((y, x))
         buckets.setdefault((by, bx), []).append((y, x))
-    return out
+    return kept
 
 
-def _adaptive_lattice_nodes(coarse_clearance, skel, obstacle_spacing,
+def _contour_downsample_factor(h, w):
+    ds = 1
+    while ds < CONTOUR_MAX_DS and (h * w) / (ds * ds) > CONTOUR_TARGET_PX:
+        ds += 1
+    return ds
+
+
+def _obstacle_offset_nodes(mask, dist_full, simplify_px=CONTOUR_SIMPLIFY_PX,
+                           min_length_px=CONTOUR_MIN_LENGTH_PX,
+                           min_turn_degrees=CONTOUR_CORNER_ANGLE_DEG,
+                           offset_px=CONTOUR_NODE_OFFSET_PX,
+                           sample_spacing_px=CONTOUR_SAMPLE_SPACING_PX,
+                           boundary_value=IMPASSABLE,
+                           placement_allowed=None):
+    """Return ``(protected_xy, regular_xy, contour_pairs, stats)``.
+
+    Contour points are mapped back to full-resolution coordinates. Their local
+    normal is tested in both directions; the direction whose first pixels are
+    passable is the free-space side. The chosen node has true-mask clearance
+    closest to ``offset_px`` and is never selected by a maximum-clearance rule.
+
+    The raw pixel contour is noisy, so regular normals use a wider tangent
+    window while corners/segments come from an 8 px simplified guide. Every
+    simplified segment receives a protected midpoint anchor. Sharp corners try
+    the raw tangent and both incident-edge tangents, which covers concave U
+    corners where a single averaged normal is ambiguous. ``contour_pairs`` are
+    indices into ``protected_xy + regular_xy`` and preserve along-contour
+    adjacency for explicit graph edges.
+    """
+    H, W = mask.shape
+    ds = _contour_downsample_factor(H, W)
+    inside_full = mask == boundary_value
+    if placement_allowed is None:
+        placement_allowed = mask != IMPASSABLE
+    allowed_full = np.asarray(placement_allowed, dtype=bool)
+    contour_outside = ~inside_full
+    contour_passable = (
+        _block_reduce(contour_outside, ds, "min") if ds > 1 else contour_outside)
+    contours = _sk_find_contours(
+        contour_passable.astype(np.uint8), 0.5, fully_connected="high")
+    records = []  # {xy, protected, contour, raw_index}
+    record_pairs = set()
+    min_turn_radians = np.deg2rad(min_turn_degrees)
+    simplify = max(1.0, simplify_px / ds)
+    min_length = max(4, round(min_length_px / ds))
+    stride = max(1, round(sample_spacing_px / ds))
+
+    def offset_candidate(contour, index, tangent=None):
+        n = len(contour)
+        if tangent is None:
+            # Smooth pixel-scale stair steps without blurring real simplified
+            # corners (those pass their incident segment tangent explicitly).
+            step = min(max(2, round(6 / ds)), max(1, n // 4))
+            before = contour[(index - step) % n]
+            after = contour[(index + step) % n]
+            ty, tx = after - before
+        else:
+            ty, tx = tangent
+        norm = float(np.hypot(tx, ty))
+        if norm == 0:
+            return None
+        # (ny, nx), both possible normal directions.
+        normals = [(-tx / norm, ty / norm), (tx / norm, -ty / norm)]
+        qy, qx = float(contour[index][0] * ds), float(contour[index][1] * ds)
+        best = None
+        for ny, nx in normals:
+            probes = (max(0.75, ds * 0.75), max(1.25, ds * 1.25), max(2.0, ds * 2.0))
+            ahead_free = 0
+            behind_black = 0
+            for probe in probes:
+                fy, fx = int(round(qy + ny * probe)), int(round(qx + nx * probe))
+                by, bx = int(round(qy - ny * probe)), int(round(qx - nx * probe))
+                if 0 <= fy < H and 0 <= fx < W and allowed_full[fy, fx]:
+                    ahead_free += 1
+                if 0 <= by < H and 0 <= bx < W and inside_full[by, bx]:
+                    behind_black += 1
+            if ahead_free == 0 or behind_black == 0:
+                continue
+            for distance in (float(offset_px), 1.0, 1.5, 2.5, 3.0):
+                y = int(round(qy + ny * distance))
+                x = int(round(qx + nx * distance))
+                if not (0 <= y < H and 0 <= x < W and allowed_full[y, x]):
+                    continue
+                clearance = float(dist_full[y, x])
+                if clearance > max(4.0, offset_px + 2.0):
+                    continue
+                score = (
+                    -ahead_free, -behind_black,
+                    abs(clearance - offset_px), abs(distance - offset_px), y, x)
+                if best is None or score < best[0]:
+                    best = (score, (x, y))
+        return None if best is None else best[1]
+
+    def add_record(contour_id, raw_index, xy, protected, importance):
+        if xy is None:
+            return None
+        # Avoid duplicate emissions at one raw vertex/tangent while keeping
+        # genuinely distinct incident-side offsets at concave corners.
+        for record_id in range(len(records) - 1, -1, -1):
+            rec = records[record_id]
+            if rec["contour"] != contour_id:
+                break
+            if rec["raw_index"] == raw_index and rec["xy"] == xy:
+                rec["protected"] = rec["protected"] or protected
+                rec["importance"] = max(rec["importance"], int(importance))
+                return record_id
+        records.append({
+            "xy": xy, "protected": bool(protected),
+            "importance": int(importance),
+            "contour": contour_id, "raw_index": int(raw_index),
+        })
+        return len(records) - 1
+
+    def has_narrow_free_wedge(contour, index):
+        """True for concave/ambiguous corners using the authoritative pixels."""
+        qy = float(contour[index][0] * ds)
+        qx = float(contour[index][1] * ds)
+        radius = max(3.0, 2.0 * ds)
+        free = 0
+        samples = 16
+        for k in range(samples):
+            angle = 2.0 * np.pi * k / samples
+            y = int(round(qy + np.sin(angle) * radius))
+            x = int(round(qx + np.cos(angle) * radius))
+            if 0 <= y < H and 0 <= x < W and allowed_full[y, x]:
+                free += 1
+        return free <= samples // 2
+
+    segment_anchor_count = 0
+    corner_offset_count = 0
+    tiny_contours_skipped = 0
+    for contour_id, contour in enumerate(contours):
+        if len(contour) < min_length:
+            continue
+        full_y = contour[:, 0] * ds
+        full_x = contour[:, 1] * ds
+        span_x = float(full_x.max() - full_x.min())
+        span_y = float(full_y.max() - full_y.min())
+        area = 0.5 * abs(float(
+            np.dot(full_x, np.roll(full_y, 1)) -
+            np.dot(full_y, np.roll(full_x, 1))))
+        # A tiny compact tree/rock is already handled by full-resolution
+        # any-angle refinement and by ordinary graph visibility.  Building a
+        # miniature contour roadmap around every such speck dominates plazas.
+        # Requiring both small area and small span keeps long thin walls/gates.
+        if (area <= CONTOUR_TINY_AREA_PX and
+                max(span_x, span_y) <= CONTOUR_TINY_SPAN_PX):
+            tiny_contours_skipped += 1
+            continue
+        poly = _sk_approximate_polygon(contour, tolerance=simplify)
+        closed = len(poly) >= 3 and np.linalg.norm(poly[0] - poly[-1]) <= 1.5
+        stop = len(poly) - 1 if closed else len(poly)
+        if stop < 2:
+            continue
+        vertex_indices = []
+        for i in range(stop):
+            delta = contour - poly[i]
+            vertex_indices.append(int(np.argmin((delta * delta).sum(axis=1))))
+
+        contour_record_ids = []
+        for i in range(stop):
+            keep = not closed and (i == 0 or i == stop - 1)
+            if not keep and stop >= 3:
+                prev, cur, nxt = poly[(i - 1) % stop], poly[i], poly[(i + 1) % stop]
+                va, vb = prev - cur, nxt - cur
+                na, nb = np.linalg.norm(va), np.linalg.norm(vb)
+                if na and nb:
+                    interior = np.arccos(np.clip(np.dot(va, vb) / (na * nb), -1.0, 1.0))
+                    keep = (np.pi - interior) >= min_turn_radians
+            if keep:
+                index = vertex_indices[i]
+                tangents = [None]
+                # Only a narrow true-mask free wedge needs separate incident
+                # normals. Convex corners are covered by the raw/bisector normal
+                # plus their segment anchors, avoiding three protected clones.
+                narrow_wedge = has_narrow_free_wedge(contour, index)
+                if narrow_wedge:
+                    if closed or i > 0:
+                        tangents.append(poly[i] - poly[(i - 1) % stop])
+                    if closed or i + 1 < stop:
+                        tangents.append(poly[(i + 1) % stop] - poly[i])
+                for tangent in tangents:
+                    rid = add_record(
+                        contour_id, index,
+                        offset_candidate(contour, index, tangent=tangent), True,
+                        40 if narrow_wedge else 30)
+                    if rid is not None:
+                        contour_record_ids.append(rid)
+                        corner_offset_count += 1
+
+        # Guarantee at least one protected anchor on every simplified segment.
+        segment_count = stop if closed else stop - 1
+        n = len(contour)
+        for i in range(segment_count):
+            j = (i + 1) % stop
+            segment_length = float(np.linalg.norm(poly[j] - poly[i]) * ds)
+            if segment_length < CONTOUR_SEGMENT_ANCHOR_MIN_PX:
+                continue
+            start, end = vertex_indices[i], vertex_indices[j]
+            if closed and end <= start:
+                end += n
+            elif not closed and end < start:
+                start, end = end, start
+            mid = ((start + end) // 2) % n
+            tangent = poly[j] - poly[i]
+            rid = add_record(
+                contour_id, mid,
+                offset_candidate(contour, mid, tangent=tangent), True, 20)
+            if rid is not None:
+                contour_record_ids.append(rid)
+                segment_anchor_count += 1
+
+        for index in range(stride // 2, len(contour), stride):
+            rid = add_record(
+                contour_id, index, offset_candidate(contour, index), False, 10)
+            if rid is not None:
+                contour_record_ids.append(rid)
+
+        # Preserve contour order as explicit candidate edges. Multiple offsets
+        # at one corner are linked locally; adjacent raw positions link their
+        # closest compatible nodes. Full-mask weighting validates every pair.
+        by_index = {}
+        for rid in set(contour_record_ids):
+            by_index.setdefault(records[rid]["raw_index"], []).append(rid)
+        ordered_groups = sorted(by_index.items())
+        for _, group in ordered_groups:
+            for a in range(len(group)):
+                for b in range(a + 1, len(group)):
+                    record_pairs.add((min(group[a], group[b]), max(group[a], group[b])))
+        group_pairs = list(zip(ordered_groups, ordered_groups[1:]))
+        if closed and len(ordered_groups) > 1:
+            group_pairs.append((ordered_groups[-1], ordered_groups[0]))
+        for (_, left), (_, right) in group_pairs:
+            a, b = min(
+                ((u, v) for u in left for v in right),
+                key=lambda pair: (
+                    (records[pair[0]]["xy"][0] - records[pair[1]]["xy"][0]) ** 2 +
+                    (records[pair[0]]["xy"][1] - records[pair[1]]["xy"][1]) ** 2,
+                    pair,
+                ),
+            )
+            record_pairs.add((min(a, b), max(a, b)))
+
+    raw_candidate_count = len(records)
+
+    def line_is_allowed(a, b):
+        x0, y0 = records[a]["xy"]
+        x1, y1 = records[b]["xy"]
+        steps = max(abs(x1 - x0), abs(y1 - y0))
+        for k in range(steps + 1):
+            t = k / max(1, steps)
+            x = int(round(x0 + (x1 - x0) * t))
+            y = int(round(y0 + (y1 - y0) * t))
+            if not allowed_full[y, x]:
+                return False
+        return True
+
+    # Early, importance-aware spatial suppression. This is deliberately before
+    # k-NN/edge weighting: it removes overlapping candidates cheaply while
+    # corners/bottlenecks beat segment anchors, which beat ordinary samples.
+    #
+    # Spatial proximity and LOS are not sufficient by themselves: the two sides
+    # of a narrow U-shaped cavity can see each other.  Only merge samples that
+    # are also near each other in contour arc length.  Different obstacle blobs
+    # and distant/facing runs of the same contour therefore retain both sides.
+    spacing = CONTOUR_AREA_SPACING_PX
+    spacing2 = spacing * spacing
+    buckets = {}
+    representative = {}
+    kept_ids = []
+    priority_order = sorted(
+        range(len(records)),
+        key=lambda rid: (
+            -records[rid]["importance"],
+            records[rid]["contour"], records[rid]["raw_index"],
+            records[rid]["xy"][1], records[rid]["xy"][0], rid,
+        ),
+    )
+    for rid in priority_order:
+        x, y = records[rid]["xy"]
+        bx, by = x // spacing, y // spacing
+        winner = None
+        winner_d2 = None
+        for gx in (bx - 1, bx, bx + 1):
+            for gy in (by - 1, by, by + 1):
+                for kept in buckets.get((gx, gy), ()):
+                    xx, yy = records[kept]["xy"]
+                    d2 = (x - xx) ** 2 + (y - yy) ** 2
+                    if d2 > spacing2:
+                        continue
+                    # Distinct simplified corners encode shape decisions.  In
+                    # particular, facing U-cavity corners can be both close and
+                    # mutually visible, so never merge two corner-class records.
+                    # Segment midpoints and regular coverage samples can still
+                    # collapse into a nearby, more important corner/run anchor.
+                    if (records[rid]["importance"] >= 30 and
+                            records[kept]["importance"] >= 30):
+                        continue
+                    if records[rid]["contour"] != records[kept]["contour"]:
+                        continue
+                    contour_size = len(contours[records[rid]["contour"]])
+                    arc_delta = abs(
+                        records[rid]["raw_index"] - records[kept]["raw_index"])
+                    # find_contours normally closes obstacle blobs.  Use the
+                    # cyclic distance so candidates around index 0 still merge.
+                    if contour_size > 1:
+                        arc_delta = min(arc_delta, contour_size - arc_delta)
+                    if arc_delta > max(spacing, sample_spacing_px):
+                        continue
+                    if abs(int(mask[y, x]) - int(mask[yy, xx])) > NODE_DEDUPE_TERRAIN_DELTA:
+                        continue
+                    if not line_is_allowed(rid, kept):
+                        continue
+                    if winner is None or (d2, kept) < (winner_d2, winner):
+                        winner, winner_d2 = kept, d2
+        if winner is not None:
+            representative[rid] = winner
+            continue
+        representative[rid] = rid
+        kept_ids.append(rid)
+        buckets.setdefault((bx, by), []).append(rid)
+
+    record_pairs = {
+        (min(representative[a], representative[b]),
+         max(representative[a], representative[b]))
+        for a, b in record_pairs
+        if representative[a] != representative[b]
+    }
+    protected_ids = [i for i in kept_ids if records[i]["protected"]]
+    regular_ids = [i for i in kept_ids if not records[i]["protected"]]
+    order = protected_ids + regular_ids
+    remap = {old: new for new, old in enumerate(order)}
+    contour_pairs = sorted({
+        (min(remap[a], remap[b]), max(remap[a], remap[b]))
+        for a, b in record_pairs if a in remap and b in remap and remap[a] != remap[b]
+    })
+    protected = [records[i]["xy"] for i in protected_ids]
+    regular = [records[i]["xy"] for i in regular_ids]
+    return protected, regular, contour_pairs, {
+        "contour_downsample": ds,
+        "boundary_value": int(boundary_value),
+        "contours": len(contours),
+        "tiny_contours_skipped": tiny_contours_skipped,
+        "corner_candidates": len(protected),
+        "regular_candidates": len(regular),
+        "corner_offsets": corner_offset_count,
+        "segment_anchors": segment_anchor_count,
+        "contour_adjacency_pairs": len(contour_pairs),
+        "raw_candidates": raw_candidate_count,
+        "area_spacing_px": CONTOUR_AREA_SPACING_PX,
+        "area_suppressed_candidates": raw_candidate_count - len(kept_ids),
+    }
+
+
+def _very_slow_offset_nodes(mask):
+    """Contour nodes just outside ``VERY_SLOW`` while treating black as blocked."""
+    inside = mask == VERY_SLOW
+    if not inside.any():
+        return [], [], [], {
+            "contour_downsample": _contour_downsample_factor(*mask.shape),
+            "boundary_value": VERY_SLOW,
+            "contours": 0,
+            "corner_candidates": 0,
+            "regular_candidates": 0,
+            "corner_offsets": 0,
+            "segment_anchors": 0,
+            "contour_adjacency_pairs": 0,
+            "raw_candidates": 0,
+            "area_spacing_px": CONTOUR_AREA_SPACING_PX,
+            "area_suppressed_candidates": 0,
+        }
+    boundary_clearance = ndi.distance_transform_edt(~inside).astype(np.float32)
+    allowed = (mask != IMPASSABLE) & ~inside
+    return _obstacle_offset_nodes(
+        mask, boundary_clearance,
+        boundary_value=VERY_SLOW,
+        placement_allowed=allowed,
+    )
+
+
+def _adaptive_lattice_nodes(coarse_clearance, skel,
                             bottleneck_spacing, near_spacing, far_spacing,
                             obstacle_clearance, near_clearance_max):
     """Return obstacle-biased candidates, then progressively sparser lattices.
 
-    The returned order is significant: bottleneck anchors and the obstacle
-    boundary band come first, followed by transition/open-area candidates.
+    The returned order is significant: bottleneck anchors and simplified
+    contour features come first, followed by transition/open-area candidates.
     Full-resolution, visibility-safe deduplication happens after node snapping,
     where thin walls cannot disappear because of skeleton downsampling.
     """
     bottlenecks = _bottleneck_candidates(
         skel, coarse_clearance, obstacle_clearance, bottleneck_spacing)
-    boundary_open = (
-        (coarse_clearance > 0) &
-        (coarse_clearance <= obstacle_clearance)
-    )
     near_open = (
         (coarse_clearance > obstacle_clearance) &
         (coarse_clearance <= near_clearance_max)
     )
     far_open = coarse_clearance > near_clearance_max
 
-    boundary = _lattice_candidates(boundary_open, obstacle_spacing)
     near = _lattice_candidates(near_open, near_spacing)
     far = _lattice_candidates(far_open, far_spacing)
-    candidates = bottlenecks + boundary + near + far
-    return candidates, {
+    return bottlenecks, near + far, {
         "bottleneck_candidates": len(bottlenecks),
-        "boundary_candidates": len(boundary),
         "near_candidates": len(near),
         "far_candidates": len(far),
-        "obstacle_candidate_count": len(bottlenecks) + len(boundary),
+        "protected_candidate_count": len(bottlenecks),
     }
 
 
@@ -768,34 +1194,96 @@ def _line_cost(mask, x0, y0, x1, y1):
     return cost
 
 
+def _filter_regular_contours_near_centerline(
+        mask, corners, regular, pairs, centerline_xy,
+        radius=NARROW_CENTERLINE_MERGE_PX):
+    """Drop ordinary boundary samples already represented by a visible spine.
+
+    Corners and simplified-segment anchors are retained.  A regular contour
+    sample is removed only when a snapped skeleton/bottleneck node is close,
+    terrain-compatible, and directly visible on the authoritative mask.  This
+    cheaply collapses the two redundant wall-side chains in narrow alleys to
+    their centerline without doing another A* or affecting wider open borders.
+    """
+    if radius <= 0 or not regular or not centerline_xy:
+        return list(corners), list(regular), list(pairs), 0
+
+    cell = max(1, int(radius))
+    radius2 = radius * radius
+    buckets = {}
+    for x, y in centerline_xy:
+        buckets.setdefault((int(x) // cell, int(y) // cell), []).append(
+            (int(x), int(y)))
+
+    keep_regular = []
+    removed = 0
+    old_to_new = {i: i for i in range(len(corners))}
+    for offset, (x, y) in enumerate(regular):
+        bx, by = int(x) // cell, int(y) // cell
+        value = int(mask[int(y), int(x)])
+        represented = False
+        for gx in (bx - 1, bx, bx + 1):
+            for gy in (by - 1, by, by + 1):
+                for xx, yy in buckets.get((gx, gy), ()):
+                    if (x - xx) ** 2 + (y - yy) ** 2 > radius2:
+                        continue
+                    if abs(value - int(mask[yy, xx])) > NODE_DEDUPE_TERRAIN_DELTA:
+                        continue
+                    if _line_cost(mask, int(x), int(y), xx, yy) is not None:
+                        represented = True
+                        break
+                if represented:
+                    break
+            if represented:
+                break
+        old = len(corners) + offset
+        if represented:
+            removed += 1
+            continue
+        old_to_new[old] = len(corners) + len(keep_regular)
+        keep_regular.append((x, y))
+
+    kept_pairs = [
+        (old_to_new[a], old_to_new[b]) for a, b in pairs
+        if a in old_to_new and b in old_to_new and old_to_new[a] != old_to_new[b]
+    ]
+    return list(corners), keep_regular, kept_pairs, removed
+
+
 def _dedupe_appended_nodes(mask, nodes_xy, fixed_count, min_distance,
-                           terrain_delta=NODE_DEDUPE_TERRAIN_DELTA):
+                           terrain_delta=NODE_DEDUPE_TERRAIN_DELTA,
+                           protected_source_end=None):
     """Deduplicate newly appended nodes without crossing walls or terrain bands.
 
     Skeleton nodes ``[:fixed_count]`` are topology-bearing and are never
-    removed.  Later obstacle/lattice nodes are discarded only when a retained
+    removed. Protected appended nodes are merged only at the exact same pixel;
+    later ordinary contour/lattice nodes are discarded only when a retained
     node is almost coincident, the straight segment between them is passable,
     and their terrain values are similar.  The visibility requirement is what
     preserves two close nodes on opposite sides of a thin wall; the terrain
     requirement preserves a fast-path anchor beside slow vegetation.
 
-    Returns ``(deduped_nodes, source_indices)`` where ``source_indices[new_i]``
-    is the corresponding index in the original ``nodes_xy`` list.
+    Returns ``(deduped_nodes, source_indices, source_to_output)`` where
+    ``source_indices[new_i]`` is the corresponding retained source and
+    ``source_to_output[old_i]`` also maps discarded duplicates to their witness.
     """
     if min_distance <= 0 or len(nodes_xy) <= fixed_count:
-        return list(nodes_xy), list(range(len(nodes_xy)))
+        identity = list(range(len(nodes_xy)))
+        return list(nodes_xy), identity, identity
 
     cell = max(1, int(min_distance))
     radius2 = float(min_distance * min_distance)
     buckets = {}
     out = []
     source_indices = []
+    source_to_output = [-1] * len(nodes_xy)
 
     def retain(source_idx):
         x, y = nodes_xy[source_idx]
         out_idx = len(out)
         out.append((int(x), int(y)))
         source_indices.append(source_idx)
+        source_to_output[source_idx] = out_idx
         buckets.setdefault((int(x) // cell, int(y) // cell), []).append(out_idx)
 
     for idx in range(min(fixed_count, len(nodes_xy))):
@@ -803,19 +1291,25 @@ def _dedupe_appended_nodes(mask, nodes_xy, fixed_count, min_distance,
 
     for source_idx in range(fixed_count, len(nodes_xy)):
         x, y = nodes_xy[source_idx]
+        protected = (
+            protected_source_end is not None and
+            source_idx < protected_source_end)
+        source_radius2 = 0.0 if protected else radius2
         bx, by = int(x) // cell, int(y) // cell
         duplicate = False
+        duplicate_output = -1
         value = int(mask[int(y), int(x)])
         for gx in (bx - 1, bx, bx + 1):
             for gy in (by - 1, by, by + 1):
                 for kept_idx in buckets.get((gx, gy), ()):
                     xx, yy = out[kept_idx]
-                    if (x - xx) ** 2 + (y - yy) ** 2 > radius2:
+                    if (x - xx) ** 2 + (y - yy) ** 2 > source_radius2:
                         continue
                     if abs(value - int(mask[yy, xx])) > terrain_delta:
                         continue
                     if _line_cost(mask, int(x), int(y), xx, yy) is not None:
                         duplicate = True
+                        duplicate_output = kept_idx
                         break
                 if duplicate:
                     break
@@ -823,8 +1317,10 @@ def _dedupe_appended_nodes(mask, nodes_xy, fixed_count, min_distance,
                 break
         if not duplicate:
             retain(source_idx)
+        else:
+            source_to_output[source_idx] = duplicate_output
 
-    return out, source_indices
+    return out, source_indices, source_to_output
 
 
 def _astar_edge(mask, xi, yi, xj, yj, straight, margin=EDGE_MARGIN,
@@ -881,20 +1377,18 @@ def _weight_edges(mask, nodes_xy, candidate_edges, astar_pairs):
     return edges_out, weights_out
 
 
-def _candidate_edges(nodes_xy, skeleton_edges, obstacle_nodes=None):
+def _candidate_edges(nodes_xy, skeleton_edges, feature_nodes=None, mask=None):
     """Union of skeleton edges and local neighbour candidates.
 
-    Obstacle/gate nodes consider more neighbours because their geometrically
-    closest candidates often sit across an intervening wall and are discarded
-    during legality weighting.  The larger pool makes it much more likely that
-    both sides of a real opening receive usable connections without making the
-    whole open-area graph dense.
+    Feature/gate nodes select the nearest *visible* neighbour in angular sectors.
+    This covers both sides of an opening without spending twelve candidates on
+    a same-side cluster or on nodes hidden behind the wall.
     """
     cand = set()
     for a, b, _ in skeleton_edges:
         if a != b:
             cand.add((min(a, b), max(a, b)))
-    obstacle_nodes = set(obstacle_nodes or ())
+    feature_nodes = set(feature_nodes or ())
     pts = np.asarray(nodes_xy, dtype=np.float64)
     n = len(pts)
     if n == 0:
@@ -916,13 +1410,26 @@ def _candidate_edges(nodes_xy, skeleton_edges, obstacle_nodes=None):
         d2 = (pts[near_arr, 0] - x) ** 2 + (pts[near_arr, 1] - y) ** 2
         order = np.argsort(d2)
         taken = 0
-        wanted = EDGE_OBSTACLE_KNN if idx in obstacle_nodes else EDGE_KNN
+        sectors = set()
+        is_feature = idx in feature_nodes
+        wanted = EDGE_FEATURE_SECTORS if is_feature else EDGE_KNN
         for oi in order:
             if taken >= wanted:
                 break
             j = int(near_arr[oi])
             if d2[oi] > EDGE_MAX_DIST * EDGE_MAX_DIST:
                 break
+            if is_feature:
+                angle = np.arctan2(pts[j, 1] - y, pts[j, 0] - x)
+                sector = int(((angle + np.pi) / (2 * np.pi)) * EDGE_FEATURE_SECTORS)
+                sector = min(EDGE_FEATURE_SECTORS - 1, max(0, sector))
+                if sector in sectors:
+                    continue
+                if mask is not None and _line_cost(
+                        mask, int(x), int(y),
+                        int(pts[j, 0]), int(pts[j, 1])) is None:
+                    continue
+                sectors.add(sector)
             cand.add((min(idx, j), max(idx, j)))
             taken += 1
     return cand
@@ -1025,6 +1532,115 @@ def _repair_connectivity(mask, nodes_xy, edges, weights, components, main_comp):
             bridged += 1
             break
     return edges, weights
+
+
+def _witness_path_exists(adjacency, active, nodes_xy, source, target, avoid,
+                         max_cost, center, radius):
+    """Bounded local Dijkstra used by redundancy pruning."""
+    cx, cy = center
+    radius2 = radius * radius
+    dist = {source: 0.0}
+    heap = [(0.0, source)]
+    while heap:
+        cost, node = heapq.heappop(heap)
+        if cost != dist.get(node) or cost > max_cost:
+            continue
+        if node == target:
+            return True
+        for nxt, weight in adjacency[node].items():
+            if nxt == avoid or not active[nxt]:
+                continue
+            if nxt not in (source, target):
+                x, y = nodes_xy[nxt]
+                if (x - cx) ** 2 + (y - cy) ** 2 > radius2:
+                    continue
+            tentative = cost + weight
+            if tentative <= max_cost and tentative < dist.get(nxt, float("inf")):
+                dist[nxt] = tentative
+                heapq.heappush(heap, (tentative, nxt))
+    return False
+
+
+def _prune_redundant_nodes(nodes_xy, edges, weights, components,
+                           protected_nodes, stretch=PRUNE_WITNESS_STRETCH,
+                           radius=PRUNE_WITNESS_RADIUS_PX,
+                           max_degree=PRUNE_MAX_DEGREE):
+    """Remove open-lattice nodes whose incident routes have local witnesses.
+
+    A node is removed only when every neighbour pair can already reach each
+    other without it for at most ``stretch`` times the through-node cost. The
+    check is sequential: later removals see earlier changes, so a witness cannot
+    silently depend on a node that has already gone. No shortcut edges are
+    created, which keeps the serialized endpoint-only edge geometry truthful.
+    """
+    n = len(nodes_xy)
+    if not n or not edges:
+        return list(nodes_xy), list(edges), list(weights), components, 0
+
+    adjacency = [dict() for _ in range(n)]
+    for (u, v), weight in zip(edges, weights):
+        u, v, weight = int(u), int(v), float(weight)
+        previous = adjacency[u].get(v)
+        if previous is None or weight < previous:
+            adjacency[u][v] = weight
+            adjacency[v][u] = weight
+
+    protected = set(int(v) for v in protected_nodes)
+    active = [True] * n
+    removed = 0
+    # Open nodes with the fewest choices are cheapest to prove redundant; hubs
+    # and all topology/feature nodes are deliberately left intact.
+    candidates = sorted(
+        (v for v in range(n) if v not in protected),
+        key=lambda v: (len(adjacency[v]), v),
+    )
+    for v in candidates:
+        neighbours = [(u, w) for u, w in adjacency[v].items() if active[u]]
+        degree = len(neighbours)
+        if degree == 0:
+            active[v] = False
+            removed += 1
+            continue
+        if degree < 2 or degree > max_degree:
+            continue
+        center = nodes_xy[v]
+        redundant = True
+        for i in range(degree):
+            source, source_w = neighbours[i]
+            for j in range(i + 1, degree):
+                target, target_w = neighbours[j]
+                limit = stretch * (source_w + target_w)
+                if not _witness_path_exists(
+                        adjacency, active, nodes_xy, source, target, v,
+                        limit, center, radius):
+                    redundant = False
+                    break
+            if not redundant:
+                break
+        if not redundant:
+            continue
+        active[v] = False
+        for neighbour, _ in neighbours:
+            adjacency[neighbour].pop(v, None)
+        adjacency[v].clear()
+        removed += 1
+
+    if not removed:
+        return list(nodes_xy), list(edges), list(weights), components, 0
+
+    kept = [idx for idx, is_active in enumerate(active) if is_active]
+    remap = np.full(n, -1, dtype=np.int32)
+    remap[kept] = np.arange(len(kept), dtype=np.int32)
+    new_nodes = [nodes_xy[idx] for idx in kept]
+    new_components = np.asarray(components, dtype=np.int32)[kept]
+    new_edges = []
+    new_weights = []
+    for u in kept:
+        for v, weight in adjacency[u].items():
+            if active[v] and u < v:
+                new_edges.append((int(remap[u]), int(remap[v])))
+                new_weights.append(float(weight))
+    return new_nodes, new_edges, new_weights, new_components, removed
 
 
 # =============================================================================
@@ -1143,7 +1759,6 @@ def build_navgraph(mask_path, region_polygon=None, verbose=False):
     #    specified in full-res px and converted to coarse px for this stage.
     t = time.time()
     resample_coarse = max(3, round(RESAMPLE_SPACING_PX / ds))
-    obstacle_spacing_coarse = max(2, round(OBSTACLE_SPACING_PX / ds))
     bottleneck_spacing_coarse = max(2, round(BOTTLENECK_SPACING_PX / ds))
     lattice_near_coarse = max(3, round(LATTICE_SPACING_NEAR_PX / ds))
     lattice_far_coarse = max(4, round(LATTICE_SPACING_FAR_PX / ds))
@@ -1151,30 +1766,61 @@ def build_navgraph(mask_path, region_polygon=None, verbose=False):
     node_yx, skeleton_edges = _resample_segments(node_yx, segments, resample_coarse)
 
     n_skeleton_nodes = len(node_yx)
-    # Obstacle-biased candidates plus a sparse open-region lattice. Added nodes
-    # are confined to the map footprint; the skeleton remains global so map
-    # regions whose only connection crosses the inferred margin stay connected.
+    # Bottleneck anchors and sparse open candidates remain in skeleton-grid
+    # coordinates. Obstacle contour nodes are generated separately in full-res
+    # coordinates so their 2 px side-preserving offset is not destroyed by snap.
     coarse_dist = _block_reduce(dist_full, ds, "max") if ds > 1 else dist_full
-    raw_lattice_yx, obstacle_sampling = _adaptive_lattice_nodes(
+    raw_bottleneck_yx, raw_open_yx, obstacle_sampling = _adaptive_lattice_nodes(
         coarse_dist, skel,
-        obstacle_spacing_coarse, bottleneck_spacing_coarse,
+        bottleneck_spacing_coarse,
         lattice_near_coarse, lattice_far_coarse,
         OBSTACLE_CLEARANCE_PX, NEAR_OBSTACLE_CLEARANCE_PX,
     )
-    raw_obstacle_count = obstacle_sampling["obstacle_candidate_count"]
-    lattice_yx = []
-    footprint_obstacle_count = 0
-    for raw_idx, (y, x) in enumerate(raw_lattice_yx):
-        inside = hz_footprint[
-            min((y * ds) // hz_ds, hz_footprint.shape[0] - 1),
-            min((x * ds) // hz_ds, hz_footprint.shape[1] - 1),
+
+    def inside_footprint_xy(x, y):
+        return bool(hz_footprint[
+            min(y // hz_ds, hz_footprint.shape[0] - 1),
+            min(x // hz_ds, hz_footprint.shape[1] - 1),
+        ])
+
+    bottleneck_yx = [
+        (y, x) for y, x in raw_bottleneck_yx
+        if inside_footprint_xy(x * ds, y * ds)
+    ]
+    open_yx = [
+        (y, x) for y, x in raw_open_yx
+        if inside_footprint_xy(x * ds, y * ds)
+    ]
+    (black_corners_xy, black_regular_xy,
+     black_pairs, black_contour_stats) = _obstacle_offset_nodes(mask, dist_full)
+    (slow_corners_xy, slow_regular_xy,
+     slow_pairs, slow_contour_stats) = _very_slow_offset_nodes(mask)
+
+    def filter_contour_to_footprint(corners, regular, pairs):
+        """Filter contour nodes without invalidating pair indices."""
+        old_to_new = {}
+        kept_corners = []
+        kept_regular = []
+        for old, (x, y) in enumerate(corners):
+            if inside_footprint_xy(x, y):
+                old_to_new[old] = len(kept_corners)
+                kept_corners.append((x, y))
+        regular_base_old = len(corners)
+        for offset, (x, y) in enumerate(regular):
+            old = regular_base_old + offset
+            if inside_footprint_xy(x, y):
+                old_to_new[old] = len(kept_corners) + len(kept_regular)
+                kept_regular.append((x, y))
+        kept_pairs = [
+            (old_to_new[a], old_to_new[b]) for a, b in pairs
+            if a in old_to_new and b in old_to_new and old_to_new[a] != old_to_new[b]
         ]
-        if not inside:
-            continue
-        lattice_yx.append((y, x))
-        if raw_idx < raw_obstacle_count:
-            footprint_obstacle_count += 1
-    node_yx.extend(lattice_yx)
+        return kept_corners, kept_regular, kept_pairs
+
+    black_corners_xy, black_regular_xy, black_pairs = filter_contour_to_footprint(
+        black_corners_xy, black_regular_xy, black_pairs)
+    slow_corners_xy, slow_regular_xy, slow_pairs = filter_contour_to_footprint(
+        slow_corners_xy, slow_regular_xy, slow_pairs)
 
     # 7. Snap coarse node coords to a genuinely passable full-res pixel (x, y).
     #    Nodes are NOT pruned to the hit zone: the off-map open area often links
@@ -1182,26 +1828,92 @@ def build_navgraph(mask_path, region_polygon=None, verbose=False):
     #    graph below the connectivity bar. The hit zone gates route *endpoints*
     #    (stored below), not graph topology; the skeleton backbone is kept
     #    everywhere so the graph stays connected and open fields stay crossable.
-    snapped_xy = _snap_nodes(mask, node_yx, ds)
-    nodes_xy, node_source_indices = _dedupe_appended_nodes(
-        mask, snapped_xy, n_skeleton_nodes, NODE_DEDUPE_PX)
-    obstacle_source_end = n_skeleton_nodes + footprint_obstacle_count
-    obstacle_nodes = {
-        new_idx for new_idx, source_idx in enumerate(node_source_indices)
-        if n_skeleton_nodes <= source_idx < obstacle_source_end
+    skeleton_xy = _snap_nodes(mask, node_yx, ds)
+    bottleneck_xy = _snap_bottleneck_nodes(mask, dist_full, bottleneck_yx, ds)
+    open_xy = _snap_nodes(mask, open_yx, ds)
+    centerline_xy = skeleton_xy + bottleneck_xy
+    (black_corners_xy, black_regular_xy, black_pairs,
+     black_centerline_removed) = _filter_regular_contours_near_centerline(
+        mask, black_corners_xy, black_regular_xy, black_pairs, centerline_xy)
+    (slow_corners_xy, slow_regular_xy, slow_pairs,
+     slow_centerline_removed) = _filter_regular_contours_near_centerline(
+        mask, slow_corners_xy, slow_regular_xy, slow_pairs, centerline_xy)
+    snapped_xy = (
+        skeleton_xy + bottleneck_xy +
+        black_corners_xy + slow_corners_xy +
+        black_regular_xy + slow_regular_xy + open_xy)
+    black_corner_start = n_skeleton_nodes + len(bottleneck_xy)
+    slow_corner_start = black_corner_start + len(black_corners_xy)
+    black_regular_start = slow_corner_start + len(slow_corners_xy)
+    slow_regular_start = black_regular_start + len(black_regular_xy)
+    boundary_source_end = slow_regular_start + len(slow_regular_xy)
+    # Every contour candidate that survived the contour-local 10 px thinning is
+    # a geometric coverage anchor, not an ordinary open-area sample.  Letting
+    # the global deduper replace one with a nearby skeleton node (or letting
+    # witness pruning remove it later) can leave a 24-48 px hole along one side
+    # of a wall.  The graph can remain topologically connected while losing the
+    # close-to-border route that these nodes exist to represent, so protect the
+    # complete thinned boundary set through both later reduction stages.
+    protected_source_end = boundary_source_end
+    nodes_xy, node_source_indices, source_to_output = _dedupe_appended_nodes(
+        mask, snapped_xy, n_skeleton_nodes, NODE_DEDUPE_PX,
+        protected_source_end=protected_source_end)
+
+    def map_contour_pairs(pairs, corner_count, corner_start, regular_start):
+        mapped = set()
+        for a, b in pairs:
+            source_a = corner_start + a if a < corner_count else regular_start + a - corner_count
+            source_b = corner_start + b if b < corner_count else regular_start + b - corner_count
+            u, v = source_to_output[source_a], source_to_output[source_b]
+            if u >= 0 and v >= 0 and u != v:
+                mapped.add((min(u, v), max(u, v)))
+        return mapped
+
+    contour_pairs = set()
+    contour_pairs.update(map_contour_pairs(
+        black_pairs, len(black_corners_xy), black_corner_start, black_regular_start))
+    contour_pairs.update(map_contour_pairs(
+        slow_pairs, len(slow_corners_xy), slow_corner_start, slow_regular_start))
+    # Explicit contour adjacency is a geometry guarantee, not permission for a
+    # costly/ambiguous detour around the obstacle. Keep only true-mask straight
+    # same-side links; blocked pairs remain represented through their protected
+    # nodes and ordinary graph candidates.
+    contour_pairs = {
+        (u, v) for u, v in contour_pairs
+        if _line_cost(
+            mask, nodes_xy[u][0], nodes_xy[u][1],
+            nodes_xy[v][0], nodes_xy[v][1]) is not None
     }
+    feature_nodes = {
+        new_idx for new_idx, source_idx in enumerate(node_source_indices)
+        if n_skeleton_nodes <= source_idx < protected_source_end
+    }
+    obstacle_edge_nodes = {
+        new_idx for new_idx, source_idx in enumerate(node_source_indices)
+        if n_skeleton_nodes <= source_idx < boundary_source_end
+    }
+    protected_nodes = set(range(n_skeleton_nodes)) | feature_nodes
     n_lattice_nodes = len(nodes_xy) - n_skeleton_nodes
     obstacle_sampling.update({
-        "footprint_candidates": len(lattice_yx),
-        "footprint_obstacle_candidates": footprint_obstacle_count,
+        "black_contours": black_contour_stats,
+        "very_slow_contours": slow_contour_stats,
+        "footprint_bottlenecks": len(bottleneck_yx),
+        "footprint_black_corners": len(black_corners_xy),
+        "footprint_black_regular": len(black_regular_xy),
+        "footprint_very_slow_corners": len(slow_corners_xy),
+        "footprint_very_slow_regular": len(slow_regular_xy),
+        "black_centerline_merged": black_centerline_removed,
+        "very_slow_centerline_merged": slow_centerline_removed,
+        "footprint_open_candidates": len(open_yx),
         "deduplicated_count": len(snapped_xy) - len(nodes_xy),
-        "n_obstacle_nodes": len(obstacle_nodes),
-        "n_open_nodes": n_lattice_nodes - len(obstacle_nodes),
+        "n_feature_nodes": len(feature_nodes),
+        "n_open_nodes": n_lattice_nodes - len(feature_nodes),
+        "deduped_contour_pairs": len(contour_pairs),
     })
     timings["nodes"] = time.time() - t
     _log(f"nodes: {len(nodes_xy)} ({n_skeleton_nodes} skeleton, "
-         f"{len(obstacle_nodes)} obstacle/gate, "
-         f"{n_lattice_nodes - len(obstacle_nodes)} open lattice, "
+         f"{len(feature_nodes)} protected contour/gate, "
+         f"{n_lattice_nodes - len(feature_nodes)} open lattice, "
          f"{obstacle_sampling['deduplicated_count']} deduplicated)")
 
     # 8. Component id per node (from unfiltered labels) — needed for repair.
@@ -1213,15 +1925,27 @@ def build_navgraph(mask_path, region_polygon=None, verbose=False):
 
     # 9. Candidate edges -> weighting (A* fallback for skeleton backbone only).
     t = time.time()
-    skeleton_pairs = {(min(a, b), max(a, b)) for a, b, _ in skeleton_edges if a != b}
-    cand = _candidate_edges(nodes_xy, skeleton_edges, obstacle_nodes)
+    backbone_edges = list(skeleton_edges) + [
+        (u, v, 0.0) for u, v in contour_pairs]
+    skeleton_pairs = {
+        (min(a, b), max(a, b)) for a, b, _ in backbone_edges if a != b}
+    cand = _candidate_edges(
+        nodes_xy, backbone_edges, obstacle_edge_nodes, mask=mask)
     edges, weights = _weight_edges(mask, nodes_xy, cand, skeleton_pairs)
     n_before = len(edges)
     edges, weights = _repair_connectivity(
         mask, nodes_xy, edges, weights, components, main_comp)
+    nodes_xy, edges, weights, components, pruned_nodes = _prune_redundant_nodes(
+        nodes_xy, edges, weights, components, protected_nodes)
+    if pruned_nodes:
+        n_lattice_nodes -= pruned_nodes
+        obstacle_sampling["n_open_nodes"] -= pruned_nodes
+    obstacle_sampling["witness_pruned_nodes"] = pruned_nodes
+    nodes_arr = np.asarray(nodes_xy, dtype=np.int32).reshape(-1, 2)
     timings["edges"] = time.time() - t
     _log(f"edges: {len(edges)} kept of {len(cand)} candidates "
-         f"(+{len(edges) - n_before} bridges) ({timings['edges']:.1f}s)")
+         f"(+{len(edges) - n_before} net after bridges/pruning, "
+         f"{pruned_nodes} nodes pruned) ({timings['edges']:.1f}s)")
 
     # 10. Sampling metadata.
     t = time.time()
@@ -1242,7 +1966,7 @@ def build_navgraph(mask_path, region_polygon=None, verbose=False):
         "n_nodes": int(len(nodes_arr)),
         "n_skeleton_nodes": int(n_skeleton_nodes),
         "n_lattice_nodes": int(n_lattice_nodes),
-        "n_obstacle_nodes": int(len(obstacle_nodes)),
+        "n_feature_nodes": int(len(feature_nodes)),
         "n_edges": int(len(edges_arr)),
         "n_components": int(ncomp),
         "main_component_fraction": round(
@@ -1258,8 +1982,13 @@ def build_navgraph(mask_path, region_polygon=None, verbose=False):
         "min_cost_per_px": min_cost_per_px,
         "lattice": {
             "obstacle_clearance_px": int(OBSTACLE_CLEARANCE_PX),
-            "obstacle_spacing_px": int(OBSTACLE_SPACING_PX),
             "bottleneck_spacing_px": int(BOTTLENECK_SPACING_PX),
+            "contour_simplify_px": int(CONTOUR_SIMPLIFY_PX),
+            "contour_min_length_px": int(CONTOUR_MIN_LENGTH_PX),
+            "contour_corner_angle_deg": int(CONTOUR_CORNER_ANGLE_DEG),
+            "contour_node_offset_px": int(CONTOUR_NODE_OFFSET_PX),
+            "contour_sample_spacing_px": int(CONTOUR_SAMPLE_SPACING_PX),
+            "contour_segment_anchor_min_px": int(CONTOUR_SEGMENT_ANCHOR_MIN_PX),
             "dedupe_px": int(NODE_DEDUPE_PX),
             "near_obstacle_clearance_px": int(NEAR_OBSTACLE_CLEARANCE_PX),
             "near_spacing_px": int(LATTICE_SPACING_NEAR_PX),
@@ -1354,6 +2083,42 @@ def _snap_nodes(mask, node_yx, ds):
         ccx = min((x0 + x1) // 2, W - 1)
         found = _nearest_passable(mask, ccy, ccx, max_r=max(4 * ds, 32))
         out.append(found if found is not None else (int(x0), int(y0)))
+    return out
+
+
+def _snap_bottleneck_nodes(mask, dist_full, node_yx, ds):
+    """Map coarse bottlenecks to the centre of their full-resolution throat.
+
+    Unlike generic node snapping, clearance is the primary criterion. Terrain
+    value and distance break ties, keeping a centreline anchor on a mapped path
+    when several equally central pixels exist.
+    """
+    H, W = mask.shape
+    out = []
+    radius = max(2, ds)
+    for cy, cx in node_yx:
+        center_y = min(int(round((cy + 0.5) * ds)), H - 1)
+        center_x = min(int(round((cx + 0.5) * ds)), W - 1)
+        y0, y1 = max(0, center_y - radius), min(H, center_y + radius + 1)
+        x0, x1 = max(0, center_x - radius), min(W, center_x + radius + 1)
+        py, px = np.where(mask[y0:y1, x0:x1] != IMPASSABLE)
+        if not len(py):
+            found = _nearest_passable(mask, center_y, center_x, max_r=max(4 * ds, 32))
+            out.append(found if found is not None else (center_x, center_y))
+            continue
+        py = py + y0
+        px = px + x0
+        choices = sorted(
+            range(len(py)),
+            key=lambda i: (
+                -float(dist_full[py[i], px[i]]),
+                -int(mask[py[i], px[i]]),
+                (py[i] - center_y) ** 2 + (px[i] - center_x) ** 2,
+                int(py[i]), int(px[i]),
+            ),
+        )
+        best = choices[0]
+        out.append((int(px[best]), int(py[best])))
     return out
 
 

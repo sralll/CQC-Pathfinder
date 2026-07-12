@@ -12,6 +12,7 @@ import { Cutter } from './Cutter.js';
 import { amin } from './arrays.js';
 import { sliceWardEdgeElbows, sliceWard, minNeckWidth, nonLocalMinNeckWidth, lotMinWidth, slicePolygonAlongElbow } from './AlleySlicer.js';
 import { recordFeature, recordRemovedTriangle } from './features.js';
+import { dacos, dcos, dhypot, dpow, dsin } from './dmath.js';
 
 // Open patch types are kept as open space (no shrunken block). 'water' included so water
 // cells are never shrunk into blocks. 'park' is NOT open: it is filled with green patches
@@ -125,7 +126,7 @@ function obstacleClearances(model, widths) {
 function lineSignedDistance(a, b, p) {
 	const dx = b.x - a.x;
 	const dy = b.y - a.y;
-	const len = Math.hypot(dx, dy);
+	const len = dhypot(dx, dy);
 	if (!(len > 1e-6)) return 0;
 	return ((dx * (p.y - a.y)) - (dy * (p.x - a.x))) / len;
 }
@@ -190,7 +191,7 @@ function cutAwayFromPoint(poly, sourceShape, point, clearance) {
 }
 
 function norm(x, y) {
-	const l = Math.hypot(x, y) || 1;
+	const l = dhypot(x, y) || 1;
 	return { x: x / l, y: y / l };
 }
 
@@ -213,7 +214,7 @@ function smoothPathSegments(pts, samplesPerSegment = 16) {
 		const ay = b.y - a.y;
 		const bx = c.x - b.x;
 		const by = c.y - b.y;
-		const d = Math.hypot(ax, ay) * Math.hypot(bx, by) || 1;
+		const d = dhypot(ax, ay) * dhypot(bx, by) || 1;
 		const sin = (ax * by - ay * bx) / d;
 		const cos = (ax * bx + ay * by) / d;
 		return new Point(c.x + (bx * cos - by * sin), c.y + (by * cos + bx * sin));
@@ -295,7 +296,7 @@ function pointSegmentDistance(p, a, b) {
 	const l2 = dx * dx + dy * dy || 1;
 	let t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / l2;
 	t = Math.max(0, Math.min(1, t));
-	return Math.hypot(p.x - (a.x + dx * t), p.y - (a.y + dy * t));
+	return dhypot(p.x - (a.x + dx * t), p.y - (a.y + dy * t));
 }
 
 function minDistanceToPolyline(poly, path) {
@@ -362,8 +363,8 @@ function cornerCos(a, b, c) {
 	const uy = a.y - b.y;
 	const vx = c.x - b.x;
 	const vy = c.y - b.y;
-	const ul = Math.hypot(ux, uy);
-	const vl = Math.hypot(vx, vy);
+	const ul = dhypot(ux, uy);
+	const vl = dhypot(vx, vy);
 	if (ul < 1e-6 || vl < 1e-6) return -1;
 	return (ux * vx + uy * vy) / (ul * vl);
 }
@@ -373,7 +374,7 @@ function cleanupBuildablePolygon(poly, widths) {
 	let cleaned = new Polygon(poly);
 	const minEdge = Math.max((widths.alley || 0) * 0.6, 0.35);
 	const maxTipHeight = Math.max((widths.regular || 0) * 0.45, 0.35);
-	const acuteCos = Math.cos(Math.PI / 9); // 20 degrees
+	const acuteCos = dcos(Math.PI / 9); // 20 degrees
 
 	for (let pass = 0; pass < 8 && cleaned.length > 3; pass++) {
 		let removed = false;
@@ -472,7 +473,7 @@ export function createAlleys(p, minSq, gridChaos, sizeChaos, emptyProb = 0.04, s
 
 	let buildings = [];
 	for (const half of halves) {
-		if (half.square < minSq * Math.pow(2, 4 * sizeChaos * (Random.float() - 0.5))) {
+		if (half.square < minSq * dpow(2, 4 * sizeChaos * (Random.float() - 0.5))) {
 			if (!Random.bool(emptyProb)) buildings.push(half);
 		} else {
 			buildings = buildings.concat(
@@ -504,7 +505,7 @@ export function createOrthoBuilding(poly, minBlockSq, fill) {
 
 		let buildings = [];
 		for (const half of halves) {
-			if (half.square < minBlockSq * Math.pow(2, Random.normal() * 2 - 1)) {
+			if (half.square < minBlockSq * dpow(2, Random.normal() * 2 - 1)) {
 				if (Random.bool(fill)) buildings.push(half);
 			} else {
 				buildings = buildings.concat(slice(half, c1, c2, depth + 1));
@@ -1041,7 +1042,7 @@ export function createCommonWardGeometry(model, patch, widths) {
 		const u = a.subtract(b);
 		const v = c.subtract(b);
 		if (u.length < 1e-6 || v.length < 1e-6) return 0;
-		return Math.acos(Math.max(-1, Math.min(1, u.dot(v) / (u.length * v.length))));
+		return dacos(Math.max(-1, Math.min(1, u.dot(v) / (u.length * v.length))));
 	};
 	const minPolyAngle = (poly) => {
 		let min = Infinity;
@@ -1173,7 +1174,7 @@ function recordParkPathTrees(alleys, block, gap) {
 			const b = path[i + 1];
 			const dx = b.x - a.x;
 			const dy = b.y - a.y;
-			const len = Math.hypot(dx, dy);
+			const len = dhypot(dx, dy);
 			if (!(len > spacing * 0.8)) continue;
 			const nx = -dy / len;
 			const ny = dx / len;
@@ -1244,7 +1245,7 @@ function conceptualParkEdges(lot) {
 			continue;
 		}
 		const cos = Math.max(-1, Math.min(1, incoming.dot(outgoing) / (incoming.length * outgoing.length)));
-		if (Math.acos(cos) > maxSmoothTurn) breaks.push(i);
+		if (dacos(cos) > maxSmoothTurn) breaks.push(i);
 	}
 	if (breaks.length === 0) return [Array.from(lot).concat([lot[0]])];
 
@@ -1431,8 +1432,8 @@ function placeSmallHouse(parcel, axis) {
 }
 
 function rotateUnit(dir, angle) {
-	const c = Math.cos(angle);
-	const s = Math.sin(angle);
+	const c = dcos(angle);
+	const s = dsin(angle);
 	return new Point(dir.x * c - dir.y * s, dir.x * s + dir.y * c);
 }
 
@@ -2560,7 +2561,7 @@ export function principalAxis(points) {
 		ax = 0;
 		ay = 1;
 	}
-	const len = Math.hypot(ax, ay) || 1;
+	const len = dhypot(ax, ay) || 1;
 	return new Point(ax / len, ay / len);
 }
 
@@ -2582,7 +2583,7 @@ export function districtAlleyParams() {
 export function subdivideAligned(poly, axis, minArea, sizeChaos, gridChaos, alley, depth = 0, useAxis = true) {
 	if (!poly || poly.length < 3) return [];
 	const area = Math.abs(poly.square);
-	const stop = minArea * Math.pow(2, sizeChaos * (2 * Random.float() - 1));
+	const stop = minArea * dpow(2, sizeChaos * (2 * Random.float() - 1));
 	if (area < stop || depth > 20) return Random.bool(0.04) ? [] : [poly];
 
 	const dir = useAxis ? axis : new Point(-axis.y, axis.x);
