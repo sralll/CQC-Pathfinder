@@ -239,17 +239,40 @@ no longer selected uniformly. `navgraph_router.js` counts exact black (`0`)
 mask pixels in an approximately 100×100 px square around every eligible coarse
 cell using a coarse-grid summed-area table, ignoring black pixels outside the
 saved region so the unmapped exterior does not attract edge points. It then
-uses the squared counts as sampling weights. Selection is an 85%
-density-weighted / 15% uniform mixture, so
-alleys and obstacle-rich wards are strongly preferred while plazas remain
-occasionally possible. Starts additionally receive an exponential bias toward
+raises the counts to exponent 1.35 as sampling weights. Selection is a 70%
+density-weighted / 30% uniform mixture, so alleys and obstacle-rich wards keep
+a useful preference while open terrain and quieter map regions appear much
+more often. Starts additionally receive a mild exponential bias (strength
+0.25, reduced from 0.8) toward
 the area-centroid of the saved `coarse_hitzone` (the rasterized coach polygon);
 goals stay center-neutral to preserve route coverage. The window, density
 exponent, uniform mixture, and center strength are tunable through
 `endpointObstacleWindowPx`, `endpointDensityExponent`, `endpointUniformMix`,
 and `startCenterBiasStrength` in `DEFAULT_CONFIG`. The deterministic test covers
-the stronger obstacle preference, residual open-space probability, start-center
-bias, and center-neutral goal distribution.
+the moderated obstacle preference, broader open-space probability, mild
+start-center bias, and center-neutral goal distribution.
+
+**Camera-direction follow-up (2026-07-13):** when an uploaded-map pair is taken
+from the prefetch buffer, `infinite_play.js` compares the camera rotation for
+its generated start-to-goal direction with the equivalent goal-to-start
+direction. It swaps start/goal only when that direction is closer to the
+current camera heading, reverses every complete route point array (and any
+passage-span indices), flips route-side metadata, and invalidates a previously
+prerendered cache. Route geometry, runtimes, barriers, and choice identity stay
+unchanged, while consecutive problems never make an avoidable 180-degree turn.
+
+**File 34 centroid diagnostic (2026-07-13):** Bern Altstadt's mask is
+2739x1674 (image center 1369.5,837). Its saved four-point region has the exact
+polygon-area centroid 486.51,493.80; the runtime's rasterized hit-zone centroid
+is 487.38,494.42. The endpoint bias therefore already targets the geometrical
+center of the saved region, within one pixel, not the map image. A new
+off-center-region regression pins this invariant. A production-equivalent
+seeded audit showed the visible two-alley concentration happens after sampling:
+8 accepted pairs from 365 attempts, with 197 rejected by the required
+opposite-side route gate. Lowering the minimum side-gap did not admit other
+areas, so changing the centroid cannot alter that map's accepted-pair hotspots;
+doing so would require relaxing the left/right route-choice contract or drawing
+a region containing more topology that supports opposite-side alternatives.
 
 ### WP 3.3 — infinite_play wiring + prefetch buffer — **Opus** — ✅ DONE (2026-07-05)
 Implemented: scene-source switch in [infinite_play.js](results/static/results/js/infinite_play.js)
@@ -526,7 +549,8 @@ Implemented: new `project/static/project/js/pathing/refine_theta.js` with
 theta|legal-fallback|unusable`); legal spine → subgrid → barrier stamping → corridor
 → `guidedThetaStar` (optional `deadlineMs`, editor path untouched) → simplify;
 runtime = Σ `lineCost` on the true mask; `corridorRadius:24` / `refineBudgetMs:600`
-/ `refineTimeoutPolicy:'fallback'` in DEFAULT_CONFIG; `[theta-client]` logs gain
+/ the original `refineTimeoutPolicy:'fallback'` default (superseded by the
+report-8 follow-up below); `[theta-client]` logs gain
 `theta` + refine mode. Acceptance (seed 1, 220 pairs, small/median/75 Mpx): **zero
 legality violations, zero drawn-bar crossings** (stamped + geometric checks),
 refined ≤ legal-spine runtime **432/432**; p90 refine/pair 772 ms small, 885 ms
@@ -577,7 +601,7 @@ Per selected route:
    real). Both the relative-gap re-check and the balance reject then operate on
    these θ*-refined runtimes, exactly where the `refineRouteLegal` costs are used
    today.
-6. **Timeout/failure policy (recommended: consistent fallback).** If θ* fails or
+6. **Original timeout/failure policy (superseded by the report-8 follow-up).** If θ* fails or
    exceeds its budget (`refineBudgetMs`, default 600/route) for *either* route,
    serve **both** routes as plain `refineRouteLegal` output (`mode:
    'legal-fallback'`) — the pair already passed selection, the legal polylines are
@@ -1049,3 +1073,289 @@ green. The conservative revision leaves 42 nodes / 99 internal edges in the
 reported building alley, accepting extra work in exchange for passage safety.
 The seeded real-route harness produced 5 valid pairs in 15 attempts with zero
 unreachable rejections; suitability is 30.1% and no longer warning-level.
+
+---
+
+## Navgraph build pipeline — speed/size optimization candidates (2026-07-13, analysis only — nothing implemented)
+
+Goal (Lars): the per-map build is at the upper limit on medium masks. Speed it
+up under two hard criteria: **(a) no loss of pathfinding accuracy — in fact more
+node connectivity is desirable** (served routes sometimes take huge detours, and
+very narrow passages are occasionally missed), and **(b) the served
+`.navgraph.bin` stays small** (~2 MB average, 3–4 MB max, ≈10 MB on the largest
+maps).
+
+### Measured profile (stats embedded in the 95 built `.npz` artifacts in `media/masks/`)
+
+| stage | median ~8.5 Mpx map | large 17–61 Mpx maps | notes |
+|---|---|---|---|
+| **edges** | **8–30 s (typ. 50–70 % of build)** | 40–140 s | `_weight_edges` + `_candidate_edges` + `_repair_connectivity` + `_prune_redundant_nodes` |
+| **nodes** | 3–17 s | 10–48 s | contour offsets, dedupe, centerline filters |
+| **suitability** | **~8.1–8.5 s, every build** | ~8.5–10 s | `SUITABILITY_TIME_BUDGET_S = 8.0` is a hard budget that is always exhausted |
+| edt | 1–2 s | 3–12 s | full-image `distance_transform_edt` |
+| skeleton | 1–3 s | 1–4 s | already downsampled — cheap |
+| hitzone / label / sampling | ≤ 2 s each | ≤ 6 s each | minor |
+| **total** | **~25–75 s (median ≈ 35–45 s)** | **65–210 s** | |
+
+Where the two big stages actually spend their time:
+
+- `_line_cost` is a **pure-Python per-pixel loop** (≤ ~120 iterations/call) and
+  is called for *every* candidate edge (~50–150 k per map), every contour-pair
+  legality check, every dedupe/centerline-filter LOS test, and inside
+  `_candidate_edges`' sector visibility. Order of 10⁷ Python-level iterations
+  per build — this is the single dominant cost.
+- `_astar_subgrid` is a pure-Python heap A* used for skeleton-backbone
+  fallbacks, bridges, and (via its twin in `navgraph_suitability.py`) the
+  suitability sim.
+- `_prune_redundant_nodes` runs a pure-Python witness Dijkstra per neighbour
+  pair per open-lattice candidate.
+- `_obstacle_offset_nodes` / `_very_slow_offset_nodes` do per-sample Python
+  probing plus a bucketed LOS suppression (`line_is_allowed` = another Python
+  pixel loop) over the *whole* mask, then filter to the footprint afterwards.
+- The suitability sim's 8 s is a fixed design tax, not proportional work.
+
+### Group 1 — pure speedups, bit-identical artifacts (do these first)
+
+1. **Batch/vectorize the straight-line cost integral (biggest win).** Keep the
+   exact sampling rule of `_line_cost` (`steps = max(|dx|,|dy|)`, k = 1..steps,
+   `round()` to pixel, `sum(seg*(255-val))`, blocked iff any sample is 0) but
+   evaluate it for thousands of segments at once with numpy: build the sample
+   coordinates as one (chunked) 2-D array, single fancy-index gather from the
+   mask, `any(==0)` for legality, weighted row-sum for cost. Same math, same
+   rounding → byte-identical weights. Applies to `_weight_edges` (the ~E-sized
+   hot path), the contour-pair legality check in `build_navgraph`, and bridge
+   candidates. Expected: the line-integral share of the `edges` stage drops
+   from tens of seconds to ~1–2 s.
+2. **Batch the LOS tests in node filtering.** `_dedupe_appended_nodes`,
+   `_filter_contours_near_centerline`, `_filter_points_near_visible_nodes` and
+   the contour suppression's `line_is_allowed` are order-dependent loops, but
+   the LOS result itself does not depend on retention order: pre-filter
+   (distance + terrain) candidate/witness pairs, compute all LOS verdicts in
+   one vectorized batch, then run the identical sequential loop consuming
+   precomputed booleans. Bit-identical output, removes most of the remaining
+   Python pixel loops from the `nodes` stage.
+3. **Compiled subgrid shortest-path with the exact cost model.** Replace the
+   pure-Python `_astar_subgrid` with `scipy.sparse.csgraph.dijkstra` on a CSR
+   graph built vectorized from the subgrid (8-neighbour, **directed** edge
+   weight `step * (255 - value[dest])` — exactly today's model; csgraph handles
+   directed graphs, so no cost-model deviation). Subgrids are small; CSR
+   construction is pure array slicing. Benefits skeleton fallbacks, bridges,
+   `_repair_connectivity`, and can be shared with `navgraph_suitability.py`.
+   (Deliberately *not* `skimage.graph.MCP_Geometric`: its cost is the average
+   of the two endpoint pixels, which silently changes every weight.) The tiny
+   float-summation-order differences vs. the sequential loop should be checked
+   with the byte-diff harness; if they matter, keep the heap but on numpy
+   scalars-free arrays — still several-fold faster.
+4. **Crop global rasters to the polygon bbox (+ safety margin).** Already
+   anticipated in WP 6.1 item 4. When a coach polygon exists (which every
+   Infinity-servable build has), crop mask/EDT/contours/sampling to the polygon
+   bounding box plus a fixed margin ≥ 256 px (clearance is capped at 255, so
+   every in-region EDT value is exact). `_obstacle_offset_nodes` currently
+   contours the whole raster and throws away out-of-footprint samples
+   afterwards — cropping avoids generating them at all. On decorated masks
+   (map body 50–70 % of the raster) this cuts `edt`, `label`, `hitzone`,
+   `nodes` and `sampling` roughly proportionally.
+5. **Label once, not twice.** With a polygon, `ndi.label` runs on the full mask
+   and again on the polygon-masked mask. The full-mask labels are only consumed
+   by `_sampling_grids`' coarse labels (which v4 then collapses to a 1-byte
+   dominant-component flag). Deriving both from one (cropped) labeling pass
+   saves ~1–5 s on large maps.
+6. **Witness pruning on compiled primitives or bounded harder.**
+   `_prune_redundant_nodes` is smaller than the above but still pure Python;
+   port the bounded local Dijkstra to the same csgraph helper, or skip the pass
+   entirely below a node-count threshold where it removes almost nothing.
+7. **Parallelism — second order only.** After vectorization the remaining hot
+   loops are C-level, so multiprocessing is probably unnecessary per map (and
+   on Railway the build already runs in a background thread of a serving
+   worker — a process pool must respect the memory ceiling; page cache counts).
+   The clean parallel win is `build_navgraph --all` backfills: one process per
+   map, N=2.
+
+### Group 2 — spend the freed budget on connectivity (addresses the detours / missed narrow passages directly)
+
+These change the graph (more edges/nodes), so they are *desired* accuracy
+changes per Lars, gated on the WP 6.3 A/B harness rather than byte-diffs:
+
+1. **More and longer local edges.** With the batched line integral, candidate
+   evaluation is nearly free: raise `EDGE_KNN` (10 → ~14) and `EDGE_MAX_DIST`
+   (120 → ~180–240 px), and consider giving *all* nodes the sector-based
+   selection currently reserved for feature nodes (nearest visible neighbour
+   per 8 sectors) so open areas gain long straight crossings. Long straight
+   edges are what removes graph-shaped zigzag/detours in plazas.
+2. **Stop silently dropping blocked near-obstacle shortcuts.** Today a k-NN
+   candidate whose straight line is blocked is discarded without A*
+   (`_weight_edges` fast path). Between obstacle/contour nodes this is exactly
+   where narrow-passage links live. With the compiled A*, allow a *bounded*
+   per-node number of A* fallbacks for blocked k-NN pairs whose endpoints are
+   both low-clearance/contour nodes (keep `EDGE_DETOUR_RATIO` so only genuine
+   passages survive). Directly targets "very narrow passages sometimes not
+   recognized".
+3. **Finer skeleton on medium maps.** The skeleton stage costs only 1–3 s;
+   `SKELETON_TARGET_PX = 3 Mpx` forces ds = 2 on the median map and up to 8 on
+   the giants. Raising the target (e.g. 6–8 Mpx ⇒ ds = 1 on the median map)
+   yields a truer centerline topology — fewer missed alleys at the source —
+   and the extra nodes/edges are affordable once Group 1 lands. Tune per-size,
+   not globally, and re-check node counts against the size budget.
+
+### Group 3 — policy changes (need explicit sign-off)
+
+1. **Suitability: stop paying 8 s on every build.** The report UI was removed
+   in the Phase-4 revision; the numbers ride along in stats only. Options, in
+   preference order: (a) port the sim to the shared compiled/batched
+   primitives so ~50 pairs finish in ~1–2 s; (b) cut
+   `SUITABILITY_TIME_BUDGET_S` to 2–3 s; (c) run it only on `--force`/opt-in
+   activation instead of every build. Any of these recovers ~20–25 % of a
+   median build.
+2. **Numba/Cython JIT** for the remaining hot kernels would also work but adds
+   a build/runtime dependency (Railway image size, cold-start JIT); the
+   numpy/scipy route above reaches most of the same ceiling without it. Only
+   revisit if Group 1 measurements disappoint.
+
+### Artifact size (2 MB average / 3–4 MB max; ≈10 MB largest)
+
+Current raw `.bin` medians in `media/masks/` are ~3.5–4 MB and the giants reach
+10–25 MB — but most of those are pre-v4/auto-hitzone builds; polygon builds get
+the v4 bbox-cropped coarse grids (File 34: 1.65 MB → 810 KB) and only
+polygon+opt-in files are servable. Levers, in order of value:
+
+1. **Serve the binary compressed (biggest lever, no format change).**
+   `serve_navgraph_file()` streams the raw file; there is no gzip middleware.
+   The artifact compresses ~4–6× (WP 6.3 smoke: 135 KB → 24.6 KB gzip).
+   Write a `.navgraph.bin.gz` next to the `.bin` at build time and serve it
+   with `Content-Encoding: gzip` when the client accepts it (zero per-request
+   CPU on Railway). A ~3.5 MB raw artifact transfers at well under 1 MB —
+   the 2 MB average target is met on transfer size alone, and the giants land
+   near the 10 MB raw ≈ 2–3 MB transferred mark.
+2. **The coarse grids dominate the raw bytes** (3 × uint8 at ÷4 ≈ Mpx·3/16 MB
+   before cropping). The v4 polygon crop already attacks this; verify every
+   servable artifact is actually rebuilt to v4. Beyond that, `coarse_clear`
+   and `coarse_labels` could move to ÷8 while keeping `coarse_minval` at ÷4
+   (clearance/eligibility feed only endpoint-sampling prefilters, never
+   legality) — but this changes sampling behaviour slightly and needs a v5
+   header, so only pursue it if precompression still leaves a map over budget.
+3. **Graph growth from Group 2 is cheap in bytes.** Edges cost 17 B raw
+   (~4–5 B gzipped) each; even +50 % edges on the median map is ~250 KB raw.
+   Size pressure comes from the grids, not from the connectivity work.
+4. **Housekeeping:** the `.npz` (often ≥ the `.bin`) and `.debug.png` also sit
+   in `media/masks/` but are never served to players; if disk footprint
+   matters, gzip or prune them for non-debug maps.
+
+### Expected effect and verification
+
+Rough estimate once Groups 1 + 3.1 land: median build ~35–45 s → **~8–15 s**,
+large maps 100–210 s → **~30–60 s**, with Group 2's extra connectivity riding
+inside that budget. Verify in two tiers: (a) Group 1 changes must produce
+byte-identical `.bin` output on a pinned set of ~8 representative masks (build
+before/after, hash-compare) — any diff is a bug; (b) Group 2/3 changes go
+through the existing WP 6.3 A/B harness (`scripts/navgraph_wp63_benchmark.py`)
+plus a WP 2.2-style batch run: zero legality violations, connectivity ≥
+current, detour/valid-rate stats, artifact bytes raw+gzip, per-stage timings.
+
+---
+
+## Bounded local-connectivity spanner (implemented 2026-07-13)
+
+The feature-sector / feature-only-LOS experiment was replaced with one uniform
+candidate policy in `project/navgraph.py`:
+
+- inspect the nearest 32 geometric neighbours within 192 full-resolution px,
+  independent of feature family and angular sector;
+- admit every direct-LOS pair in that bounded pool;
+- admit at most two blocked candidates per ordinary node (one for narrow
+  backbone nodes) only when the straight sample crosses at most 8 black pixels,
+  then require bounded A* within a 24 px margin and a ≤1.35 / +24 px detour;
+- narrow backbone nodes retain a reversible 3-direct/1-detour budget rather
+  than the previous all-or-nothing generic-edge suppression;
+- after passage topology is final, remove a base edge only when active base
+  edges provide a two-hop terrain-cost witness within 1%. Typed passage and
+  transition edges neither get removed nor act as base-edge witnesses.
+
+File 133 validation (`mask_20260220_143506.png`): 9,767 nodes, 43,712 edges,
+2,503,457-byte BIN, main connectivity 1.000. In the reported central crop,
+all omitted direct-LOS pairs within 192 px had a final graph-cost stretch ≤
+1.0274 (none >1.05). The seeded runtime harness produced 5/10 valid attempts
+with zero unreachable failures; a separate two-route rendered run had zero
+legality hits. Focused Python suites passed 62 tests; all navgraph JS
+contract/consumer/passage/layered tests passed.
+
+---
+
+## Passage / Infinity interaction fixes (implemented 2026-07-13)
+
+- Passage-surface blockers now span the complete passage width plus a 2 px
+  overhang on each side. The widened segment is shared by rendering, sparse
+  edge blocking, full-resolution stamping, and violation checks.
+- Infinity passage legs now call the editor's full-raster weighted any-angle
+  implementation directly, followed by the same entrance-band portal-anchor
+  optimizer. Surface identity and the third-dimension topology stay intact.
+- Fractional sampled endpoints are rounded only for integer Bresenham corridor
+  rasterization, then restored exactly. This fixes the silent
+  `RangeError: Invalid array length` fallback seen on coordinates ending in
+  floating-point noise such as `.0000000000002`.
+- Mask route pairs are limited to adjacent cumulative alternatives. A later
+  route can therefore depend on only the single barrier that created that
+  alternative, rather than several intermediate blockers which cannot be
+  rendered without crossing the lower selected route.
+- The accepted pair is refined again with a 104 px corridor against exactly the
+  blockers that are rendered, then runtime, side separation, barrier legality,
+  layered distinctness, and relative gap are revalidated on the served paths.
+  This removes detours caused by invisible candidate-only blockers.
+
+Pinned regression `scripts/infinity_bug_report_regression.mjs` reproduces
+`/debug/infinity` reports 4, 5, and 7 on File 1. Report 4 now selects routes
+3/4 and uses the second passage; reports 5 and 7 select routes 2/3 instead of
+the later cumulative detours. Its seeded production-pipeline smoke generated a
+legal Theta* pair in about 0.92 s (2 attempts). All 15 pathing JavaScript suites
+and the translation/system checks pass.
+
+---
+
+## Navgraph build lean-up and served corridor budget (implemented 2026-07-13)
+
+- The fixed suitability simulation remains removed from production builds.
+- The graph-wide connectivity BFS is now opt-in diagnostics. Normal background
+  and command builds skip it; `build_navgraph --debug` and the debug renderer
+  retain it. This removes a topology-neutral ~0.25 s pass on a 41.6k-node /
+  155.7k-edge artifact.
+- Blocked candidate-edge validation no longer constructs a new scipy CSR graph
+  and solves the entire local raster for every edge. It uses scikit-image's
+  compiled, single-target `MCP_Geometric` over the existing cost raster.
+- Candidate discovery passes its already computed LOS/cost results into edge
+  weighting, avoiding a second full-resolution rasterization of accepted
+  candidates.
+- Quality-bearing work stays enabled: contour/skeleton generation, region and
+  passage legality, connectivity repair, node witness pruning, and the final
+  two-hop edge spanner. The latter cost only 0.08 s on the 1.26 Mpx benchmark
+  while removing 6,036 edges, so removing it would hurt load/search time for no
+  useful build saving.
+
+Build measurements on `mask_20260612_091525.png` (0.26 Mpx) changed from 2.54 s
+to 1.27-1.41 s; its edge stage changed from 1.83 s to 0.68-0.71 s. A second
+full-map sample, `mask_20250714_184638.png` (1.26 Mpx), builds in 4.55 s with
+1,520 nodes and 7,098 final edges. These are local warm-cache measurements and
+should be compared using the same mask/region inputs when server benchmarks are
+collected.
+
+The final served Theta* corridor is 104 px. Five identical-seed pipeline runs
+measured 1,050 ms mean at 96 px, 1,114 ms at 104 px (+6.0%), and 1,182 ms at
+112 px (+12.5%) in the unbounded Node regression harness. Applying the measured
+104/96 ratio to the observed 400 ms laptop average gives ~424 ms; at a
+conservative 2.2-2.3x midrange-phone factor this estimates ~0.93-0.98 s average.
+112 px would leave insufficient headroom, so 104 px is the selected balance.
+
+---
+
+## Reject incomplete final refinement (implemented 2026-07-13)
+
+`/debug/infinity` report 8 exposed a route made of long runs of one-mask-pixel
+steps. This is the recognizable `legal-fallback` output of `refineRouteLegal`:
+the navgraph and legal-spine stages succeeded, but the final corridor-guided
+Theta* stage did not return a presentable any-angle route. The fallback had
+previously been accepted intentionally by `refineTimeoutPolicy: 'fallback'`.
+
+Uploaded-map Infinity now defaults to `refineTimeoutPolicy: 'reject'`. The final
+pair gate accepts only `theta`/`theta`; `legal-fallback` on either route and
+`unusable` on either route increment the existing `timeout` rejection counter
+and restart pair sampling. The fallback mode remains available only as an
+explicit diagnostic/benchmark override. The pure policy contract is pinned by
+`navgraph_refinement_policy.test.mjs`.

@@ -1278,7 +1278,7 @@ function saveLevelPassages() {
             // authoritative and must never be overwritten by a stale response.
             if (result.data?.infinite_enabled === false) {
                 project.infinite_enabled = false;
-                window.updateNavInfinityBtn?.();
+                window.NavInfinity?.onBuildInvalidated?.();
             }
             _clearSaveFailedWarning();
             return result.data;
@@ -2656,7 +2656,7 @@ const MaskLayer = (() => {
                           const data = await response.json();
                           if (data.infinite_enabled === false) {
                               project.infinite_enabled = false;
-                              window.updateNavInfinityBtn?.();
+                              window.NavInfinity?.onBuildInvalidated?.();
                           }
                       })
                       .catch(err => console.warn("Mask save failed:", err))
@@ -2802,6 +2802,15 @@ const PassageEditor = (() => {
     let wheelEdit = null;
     let wheelEditTimer = null;
     let addUndoState = null;
+    let selectedPassageId = null;
+    let cursorWorldPoint = null;
+
+    // Passage previews used to clear and rebuild their SVG layer on every
+    // pointermove. Keep both committed and transient nodes alive instead: in
+    // addition to avoiding needless allocations, this prevents page-wide
+    // MutationObservers from password-manager extensions re-walking the DOM.
+    const committedViews = new Map();
+    const previewView = { group: null, passage: null, handles: [], cursor: null };
 
     const maskToWorld = point => ({
         x: Number(point[0]) * PATHING_MASK_TRAIN_SCALE,
@@ -2816,93 +2825,252 @@ const PassageEditor = (() => {
         return Array.isArray(project.level_passages?.items) ? project.level_passages.items : [];
     }
 
-    function svgPassage(parent, passage, { preview = false } = {}) {
-        if (!parent || !Array.isArray(passage?.points) || passage.points.length < 2) return;
+    function centerOnPassage(passage) {
+        if (!editorSettings.auto_jump || !Array.isArray(passage?.points) || !passage.points.length) return;
         const points = passage.points.map(maskToWorld);
-        const pointString = points.map(p => `${p.x},${p.y}`).join(" ");
-        const width = Number(passage.width) * PATHING_MASK_TRAIN_SCALE;
+        const corridorHalfWidth = Math.max(0, Number(passage.width) * PATHING_MASK_TRAIN_SCALE / 2 || 0);
+        const padding = 80 + corridorHalfWidth;
+        const minX = Math.min(...points.map(point => point.x));
+        const maxX = Math.max(...points.map(point => point.x));
+        const minY = Math.min(...points.map(point => point.y));
+        const maxY = Math.max(...points.map(point => point.y));
+        const midX = (minX + maxX) / 2;
+        const midY = (minY + maxY) / 2;
+        const rect = mapContainer.getBoundingClientRect();
+        const width = Math.max(maxX - minX, 1);
+        const height = Math.max(maxY - minY, 1);
+        const newZoom = Math.min(Math.max(Math.min(
+            rect.width / (width + padding * 2),
+            rect.height / (height + padding * 2)
+        ), zoomMin), zoomMax);
+        animateCamera({
+            x: rect.width / 2 - midX * newZoom,
+            y: rect.height / 2 - midY * newZoom,
+            zoom: newZoom,
+        });
+    }
+
+    function selectPassage(id, { center = true } = {}) {
+        const passage = items().find(item => item.id === id);
+        if (!passage) return false;
+        selectedPassageId = passage.id;
+        renderCommitted();
+        updatePassageList();
+        if (center) centerOnPassage(passage);
+        return true;
+    }
+
+    function updatePassageList() {
+        const list = document.getElementById("passage-list");
+        if (!list) return;
+        list.innerHTML = "";
+        const passages = items();
+        if (selectedPassageId && !passages.some(passage => passage.id === selectedPassageId)) {
+            selectedPassageId = null;
+        }
+        passages.forEach((passage, index) => {
+            const row = document.createElement("div");
+            row.className = `cp-row passage-row${passage.id === selectedPassageId ? " selected" : ""}`;
+            row.dataset.passageId = passage.id;
+
+            const label = document.createElement("span");
+            label.className = "cp-row-label";
+            label.textContent = `${gettext("Passage")} ${index + 1}`;
+            row.appendChild(label);
+
+            if (!readOnly) {
+                const deleteButton = document.createElement("button");
+                deleteButton.type = "button";
+                deleteButton.className = "cp-delete-btn";
+                deleteButton.title = gettext("Delete");
+                deleteButton.innerHTML = icon("trash", "11px");
+                deleteButton.addEventListener("click", event => {
+                    event.stopPropagation();
+                    removeById(passage.id);
+                });
+                row.appendChild(deleteButton);
+            }
+
+            row.addEventListener("click", () => selectPassage(passage.id));
+            list.appendChild(row);
+        });
+    }
+
+    function createPassageView(parent, { preview = false } = {}) {
         const body = svgNode("polyline", {
-            points: pointString,
             fill: "none",
             stroke: "currentColor",
-            "stroke-width": width,
             "stroke-linecap": "butt",
             "stroke-linejoin": "round",
             class: `passage-corridor${preview ? " passage-corridor-preview" : ""}`,
         });
+        const start = svgNode("line", {
+            "stroke-linecap": "butt",
+            class: "passage-entrance passage-entrance-start",
+        });
+        const end = svgNode("line", {
+            "stroke-linecap": "butt",
+            class: "passage-entrance passage-entrance-end",
+        });
         parent.appendChild(body);
+        parent.appendChild(start);
+        parent.appendChild(end);
+        return { body, start, end };
+    }
+
+    function hidePassageView(view) {
+        if (!view) return;
+        hideNode(view.body);
+        hideNode(view.start);
+        hideNode(view.end);
+    }
+
+    function updatePassageView(view, passage) {
+        if (!view || !Array.isArray(passage?.points) || passage.points.length < 2) {
+            hidePassageView(view);
+            return;
+        }
+        const points = passage.points.map(maskToWorld);
+        const pointString = points.map(p => `${p.x},${p.y}`).join(" ");
+        const width = Number(passage.width) * PATHING_MASK_TRAIN_SCALE;
+        view.body.setAttribute("points", pointString);
+        view.body.setAttribute("stroke-width", width);
+        showNode(view.body);
+
         const geometry = PassageRuntime.geometry();
         const frames = geometry?.passageTerminalFrames?.(passage);
         const portalDepth = geometry?.PASSAGE_PORTAL_DEPTH;
-        if (frames && Number.isFinite(portalDepth)) [
-            { point: frames.start, inward: frames.startInward, name: "start" },
-            { point: frames.end, inward: frames.endInward, name: "end" },
-        ].forEach(({ point, inward, name }) => {
+        if (!frames || !Number.isFinite(portalDepth)) {
+            hideNode(view.start);
+            hideNode(view.end);
+            return;
+        }
+        [
+            { node: view.start, point: frames.start, inward: frames.startInward },
+            { node: view.end, point: frames.end, inward: frames.endInward },
+        ].forEach(({ node, point, inward }) => {
             // The entrance band sits outside the drawn corridor end.
             const centreX = (point[0] - inward.x * portalDepth / 2) * PATHING_MASK_TRAIN_SCALE;
             const centreY = (point[1] - inward.y * portalDepth / 2) * PATHING_MASK_TRAIN_SCALE;
             const halfWidth = width / 2;
             const normalX = -inward.y;
             const normalY = inward.x;
-            parent.appendChild(svgNode("line", {
-                x1: centreX - normalX * halfWidth,
-                y1: centreY - normalY * halfWidth,
-                x2: centreX + normalX * halfWidth,
-                y2: centreY + normalY * halfWidth,
-                "stroke-width": portalDepth * PATHING_MASK_TRAIN_SCALE,
-                "stroke-linecap": "butt",
-                class: `passage-entrance passage-entrance-${name}`,
-            }));
+            node.setAttribute("x1", centreX - normalX * halfWidth);
+            node.setAttribute("y1", centreY - normalY * halfWidth);
+            node.setAttribute("x2", centreX + normalX * halfWidth);
+            node.setAttribute("y2", centreY + normalY * halfWidth);
+            node.setAttribute("stroke-width", portalDepth * PATHING_MASK_TRAIN_SCALE);
+            showNode(node);
         });
     }
 
     function renderCommitted() {
         const layer = document.getElementById("passage-layer");
         if (!layer) return;
-        layer.innerHTML = "";
+        const liveIds = new Set();
         for (const passage of items()) {
-            const group = svgNode("g", {
-                class: `passage-object${hoverTarget?.passageId === passage.id ? " hovered" : ""}`,
-                "data-passage-id": passage.id,
-            });
-            svgPassage(group, passage);
+            liveIds.add(passage.id);
+            let view = committedViews.get(passage.id);
+            if (!view || !view.group.isConnected || view.group.parentNode !== layer) {
+                const group = svgNode("g", { "data-passage-id": passage.id });
+                view = {
+                    group,
+                    passage: createPassageView(group),
+                    handle: svgNode("circle", {
+                        r: 4,
+                        class: "passage-node",
+                        "vector-effect": "non-scaling-stroke",
+                    }),
+                };
+                group.appendChild(view.handle);
+                committedViews.set(passage.id, view);
+                layer.appendChild(group);
+            }
+            view.group.setAttribute("class", `passage-object${selectedPassageId === passage.id ? " selected" : ""}${hoverTarget?.passageId === passage.id ? " hovered" : ""}`);
+            updatePassageView(view.passage, passage);
             if (hoverTarget?.passageId === passage.id && Number.isInteger(hoverTarget.pointIndex)) {
                 const point = maskToWorld(passage.points[hoverTarget.pointIndex]);
-                group.appendChild(svgNode("circle", {
-                    cx: point.x,
-                    cy: point.y,
-                    r: 4,
-                    class: "passage-node",
-                    "vector-effect": "non-scaling-stroke",
-                }));
+                view.handle.setAttribute("cx", point.x);
+                view.handle.setAttribute("cy", point.y);
+                showNode(view.handle);
+            } else {
+                hideNode(view.handle);
             }
-            layer.appendChild(group);
+        }
+        for (const [id, view] of committedViews) {
+            if (liveIds.has(id)) continue;
+            view.group.remove();
+            committedViews.delete(id);
         }
     }
 
-    function renderPreview() {
+    function ensurePreviewView() {
         const layer = document.getElementById("passage-preview-layer");
-        if (!layer) return;
-        layer.innerHTML = "";
+        if (!layer) return null;
+        if (!previewView.group) {
+            previewView.group = svgNode("g", { class: "passage-preview" });
+            previewView.passage = createPassageView(previewView.group, { preview: true });
+            previewView.cursor = svgNode("circle", {
+                class: "passage-mode-cursor",
+                "vector-effect": "non-scaling-stroke",
+            });
+            previewView.group.appendChild(previewView.cursor);
+        }
+        if (!previewView.group.isConnected || previewView.group.parentNode !== layer) {
+            layer.appendChild(previewView.group);
+        }
+        return previewView;
+    }
+
+    function renderPreview() {
+        const view = ensurePreviewView();
+        if (!view) return;
         let points = draftPoints.slice();
         if (previewPoint && points.length) points.push([previewPoint.x, previewPoint.y]);
-        if (points.length >= 2) svgPassage(layer, { points, width: draftWidth }, { preview: true });
-        for (const point of draftPoints) {
+        if (points.length >= 2) updatePassageView(view.passage, { points, width: draftWidth });
+        else hidePassageView(view.passage);
+
+        draftPoints.forEach((point, index) => {
+            let handle = view.handles[index];
+            if (!handle) {
+                handle = svgNode("circle", {
+                    r: 4,
+                    class: "passage-node",
+                    "vector-effect": "non-scaling-stroke",
+                });
+                view.handles.push(handle);
+                view.group.insertBefore(handle, view.cursor);
+            }
             const world = maskToWorld(point);
-            layer.appendChild(svgNode("circle", {
-                cx: world.x,
-                cy: world.y,
-                r: 4,
-                class: "passage-node",
-                "vector-effect": "non-scaling-stroke",
-            }));
+            handle.setAttribute("cx", world.x);
+            handle.setAttribute("cy", world.y);
+            showNode(handle);
+        });
+        for (let index = draftPoints.length; index < view.handles.length; index++) {
+            hideNode(view.handles[index]);
         }
-        syncControls();
+
+        const passageEditActive = currentToolMode === ToolMode.MASK
+            && currentAction() === "edit"
+            && typeof getMaskToolState === "function"
+            && getMaskToolState().family === "third-dimension";
+        if (passageEditActive && cursorWorldPoint) {
+            view.cursor.setAttribute("cx", cursorWorldPoint.x);
+            view.cursor.setAttribute("cy", cursorWorldPoint.y);
+            view.cursor.setAttribute("r", 7 / Math.max(camera.zoom, 0.01));
+            showNode(view.cursor);
+        } else {
+            hideNode(view.cursor);
+        }
     }
+
+    const schedulePreviewRender = makeRafScheduler(renderPreview);
 
     function render() {
         renderCommitted();
         renderPreview();
+        updatePassageList();
+        syncControls();
     }
 
     function showMessage(message) {
@@ -3052,25 +3220,31 @@ const PassageEditor = (() => {
     }
 
     function cancel() {
+        schedulePreviewRender.cancel();
         discardUndoState(addUndoState);
         addUndoState = null;
         draftPoints = [];
         previewPoint = null;
+        cursorWorldPoint = null;
         gesture = null;
         hoverTarget = null;
         render();
     }
 
-    async function removeAt(worldPoint) {
+    async function removeById(id) {
         if (readOnly) return false;
-        const hit = hitAt(worldPoint);
-        if (!hit) return false;
         const document = normalizeLevelPassagesDocument(project.level_passages) || emptyLevelPassages();
-        const nextItems = document.items.filter(item => item.id !== hit.id);
+        const nextItems = document.items.filter(item => item.id !== id);
         if (nextItems.length === document.items.length) return false;
         pushUndoState(gettext("Passage removed"));
         project.level_passages = { version: LEVEL_PASSAGES_VERSION, items: nextItems };
+        if (selectedPassageId === id) selectedPassageId = null;
         return persistPassageChange();
+    }
+
+    async function removeAt(worldPoint) {
+        const hit = hitAt(worldPoint);
+        return hit ? removeById(hit.id) : false;
     }
 
     // D with no open draft deletes the most recently added passage.
@@ -3080,6 +3254,7 @@ const PassageEditor = (() => {
         if (!document.items.length) return false;
         pushUndoState(gettext("Passage removed"));
         project.level_passages = { version: LEVEL_PASSAGES_VERSION, items: document.items.slice(0, -1) };
+        if (selectedPassageId === document.items[document.items.length - 1].id) selectedPassageId = null;
         hoverTarget = null;
         persistPassageChange();
         return true;
@@ -3155,6 +3330,7 @@ const PassageEditor = (() => {
     function pointerDown(e, worldPoint) {
         if (currentAction() === "edit" && !draftPoints.length) {
             const target = editTargetAt(worldPoint);
+            if (target) selectPassage(target.passageId, { center: false });
             if (target && Number.isInteger(target.pointIndex)) {
                 const document = normalizeLevelPassagesDocument(project.level_passages) || emptyLevelPassages();
                 gesture = {
@@ -3183,6 +3359,13 @@ const PassageEditor = (() => {
     }
 
     function pointerMove(e, worldPoint) {
+        if (currentAction() === "edit" && mapContainer.contains(e.target)) {
+            cursorWorldPoint = { x: worldPoint.x, y: worldPoint.y };
+            schedulePreviewRender();
+        } else if (cursorWorldPoint) {
+            cursorWorldPoint = null;
+            schedulePreviewRender();
+        }
         if (gesture?.type === "node") {
             const source = items().find(item => item.id === gesture.passageId);
             if (!source) return true;
@@ -3203,7 +3386,7 @@ const PassageEditor = (() => {
             }
             project.level_passages = { version: LEVEL_PASSAGES_VERSION, items: nextItems };
             hoverTarget = { passageId: candidate.id, pointIndex: gesture.pointIndex };
-            render();
+            renderCommitted();
             return true;
         }
         if (gesture) {
@@ -3218,7 +3401,7 @@ const PassageEditor = (() => {
         if (!pan.isActive() && currentAction() === "edit") {
             if (draftPoints.length) {
                 previewPoint = worldToMask(worldPoint);
-                renderPreview();
+                schedulePreviewRender();
             } else {
                 updateHover(worldPoint);
             }
@@ -3286,13 +3469,14 @@ const PassageEditor = (() => {
         };
         project.level_passages = { version: LEVEL_PASSAGES_VERSION, items: nextItems };
         hoverTarget = { passageId: source.id, pointIndex: null };
-        render();
+        renderCommitted();
         if (wheelEditTimer) clearTimeout(wheelEditTimer);
         wheelEditTimer = setTimeout(commitWheelEdit, WIDTH_EDIT_DEBOUNCE_MS);
         return true;
     }
 
     function resetTransient() {
+        schedulePreviewRender.cancel();
         if (wheelEditTimer) clearTimeout(wheelEditTimer);
         wheelEditTimer = null;
         wheelEdit = null;
@@ -3301,11 +3485,14 @@ const PassageEditor = (() => {
         previewPoint = null;
         gesture = null;
         hoverTarget = null;
+        selectedPassageId = null;
+        cursorWorldPoint = null;
     }
 
     function setWidth(value) {
         draftWidth = Math.max(LEVEL_PASSAGES_MIN_WIDTH, Math.min(LEVEL_PASSAGES_MAX_WIDTH, Number(value) || DEFAULT_WIDTH));
         renderPreview();
+        syncControls();
     }
 
     function adjustWidth(delta) {
@@ -3337,6 +3524,8 @@ const PassageEditor = (() => {
         render,
         renderCommitted,
         renderPreview,
+        updatePassageList,
+        selectPassage,
         finish,
         cancel,
         removeAt,
@@ -3352,6 +3541,7 @@ const PassageEditor = (() => {
         removeLastPassage,
         wheel,
         resetTransient,
+        onCameraChanged() { schedulePreviewRender(); },
         setWidth,
         adjustWidth,
         getWidth: () => draftWidth,
@@ -4924,6 +5114,15 @@ const RegionEditor = (() => {
     function w2m(v) {
         return [Math.round(v.x / PATHING_MASK_TRAIN_SCALE), Math.round(v.y / PATHING_MASK_TRAIN_SCALE)];
     }
+    function clampToMask(v) {
+        const dimensions = MaskLayer.dimensions?.();
+        if (!dimensions || dimensions.width < 1 || dimensions.height < 1) return v;
+        const x = Math.max(0, Math.min(dimensions.width - 1,
+            v.x / PATHING_MASK_TRAIN_SCALE));
+        const y = Math.max(0, Math.min(dimensions.height - 1,
+            v.y / PATHING_MASK_TRAIN_SCALE));
+        return m2w([x, y]);
+    }
 
     function ensureNodes() {
         if (gRoot && gRoot.isConnected) return;
@@ -5070,7 +5269,7 @@ const RegionEditor = (() => {
             const res = await fetch(`/editor/region-suggest/${project.id}/`);
             const data = await res.json();
             if (data.error) { setStatus(data.error, true); verts = []; return; }
-            verts = (data.polygon || []).map(m2w);
+            verts = (data.polygon || []).map(p => clampToMask(m2w(p)));
             drawing = data.source !== "saved";
             previewPt = null;
             if (drawing) {
@@ -5116,9 +5315,15 @@ const RegionEditor = (() => {
             // newer queued edit. The queued snapshot is applied immediately
             // after this request finishes.
             if (!_queuedSave) {
-                project.infinite_region_set = polygon.length >= 3;
-                if (data.infinite_enabled === false) project.infinite_enabled = false;
-                window.updateNavInfinityBtn?.();
+                const savedPolygon = Array.isArray(data.polygon) ? data.polygon : polygon;
+                verts = savedPolygon.map(p => clampToMask(m2w(p)));
+                project.infinite_region_set = savedPolygon.length >= 3;
+                if (data.infinite_enabled === false) {
+                    project.infinite_enabled = false;
+                    window.NavInfinity?.onBuildInvalidated?.();
+                } else {
+                    window.updateNavInfinityBtn?.();
+                }
                 setStatus(successMessage);
                 updateDeleteButton();
             }
@@ -5152,9 +5357,9 @@ const RegionEditor = (() => {
         drawGesture.cancel();
         project.infinite_region_set = false;
         project.infinite_enabled = false;
+        window.NavInfinity?.onBuildInvalidated?.();
         activeSubtool[ToolMode.INFINITY] = "edit";
         updateSubtoolPanel(ToolMode.INFINITY);
-        window.updateNavInfinityBtn?.();
         render();
         updateDeleteButton();
         persistPolygon([], gettext("Region deleted."));
@@ -5199,6 +5404,7 @@ const RegionEditor = (() => {
     }
 
     function addDraftPoint(e, pt) {
+        pt = clampToMask(pt);
         const hi = hitHandle(e, pt);
         // Close on distance to the first vertex, not on the event target: the
         // visible close-ring is larger than the 6 px handle, and a stacked
@@ -5287,7 +5493,7 @@ const RegionEditor = (() => {
             return true;
         }
         if (!editing || dragIdx < 0) return false;
-        verts[dragIdx] = { x: pt.x, y: pt.y };
+        verts[dragIdx] = clampToMask(pt);
         moved = true;
         render();
         return true;
@@ -5396,6 +5602,8 @@ function showInfinityConfirmDialog() {
 const NavInfinity = (() => {
     let pending = false;      // a build is in flight
     let pollTimer = null;
+    let pollEpoch = 0;        // retires already-running async poll callbacks
+    let activeBuildToken = null;
     const ICON = `<x-icon name="infinity" size="12px"></x-icon>`;
     // A slightly larger spinner than the icon it replaces — the build is the one
     // slow step here, so make it clearly visible in the button.
@@ -5403,9 +5611,28 @@ const NavInfinity = (() => {
 
     function btn() { return document.getElementById("nav-infinity-btn"); }
 
-    // Floating "map is being prepared" info box (mirrors the mask-generation bar).
-    function showGenBar() {
+    // Floating build progress box (mirrors the mask-generation bar).
+    function updateGenBar(progress = {}) {
+        const text = document.getElementById("infinity-gen-text");
+        const meter = document.getElementById("infinity-gen-progress");
+        const rawPercent = Number(progress.percent);
+        const percent = Number.isFinite(rawPercent)
+            ? Math.max(0, Math.min(99, Math.round(rawPercent)))
+            : 0;
+        if (meter) meter.value = percent;
+        if (!text) return;
+        const current = Number(progress.current);
+        const total = Number(progress.total);
+        if (progress.phase === "connect_nodes" && Number.isFinite(current) && total > 0) {
+            text.textContent = `${gettext("Connecting nodes…")} ${current} / ${total}`;
+        } else {
+            text.textContent = `${gettext("Building navigation graph…")} ${percent}%`;
+        }
+    }
+
+    function showGenBar(progress = {}) {
         const bar = document.getElementById("infinity-gen-bar");
+        updateGenBar(progress);
         if (bar) bar.style.display = "flex";
     }
     function hideGenBar() {
@@ -5433,20 +5660,37 @@ const NavInfinity = (() => {
                     : gettext("Turn on infinite play for this map")));
     }
 
-    function stopPoll() { if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; } }
+    function stopPoll() {
+        pollEpoch++;
+        if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
+    }
 
     // Poll the navgraph build kicked off by enabling. Guarded by the file id so
     // navigating to another file mid-build simply drops the stale callback.
-    function pollBuild(fileId) {
+    function pollBuild(fileId, buildToken) {
         stopPoll();
+        const epoch = pollEpoch;
+        const schedule = (callback, delay) => {
+            if (epoch === pollEpoch) pollTimer = setTimeout(callback, delay);
+        };
         const tick = async () => {
+            if (epoch !== pollEpoch || project.id !== fileId) return;
             try {
                 const res = await fetch(`/editor/region-build-status/${fileId}/`);
                 const data = await res.json();
+                if (epoch !== pollEpoch || project.id !== fileId) return;
                 const p = data.progress;
-                if (!p || p.status === "building") { pollTimer = setTimeout(tick, 1500); return; }
+                if (!p) { schedule(tick, 1500); return; }
+                if (buildToken && p.build_token !== buildToken) return;
+                if (p.status === "building") {
+                    updateGenBar(p);
+                    schedule(tick, 1500);
+                    return;
+                }
                 // Build finished (done | failed | idle) — settle, if still on this file.
                 pending = false;
+                activeBuildToken = null;
+                pollTimer = null;
                 hideGenBar();
                 if (project.id === fileId) {
                     if (p.status === "done") project.infinite_enabled = true;
@@ -5459,13 +5703,14 @@ const NavInfinity = (() => {
                         window.showModal?.({ message: p.error || gettext("Building the map failed.") });
                     }
                 }
-            } catch (e) { pollTimer = setTimeout(tick, 2500); }
+            } catch (e) { schedule(tick, 2500); }
         };
-        pollTimer = setTimeout(tick, 1200);
+        schedule(tick, 1200);
     }
 
     async function toggle() {
         if (pending || !project.id) return;
+        const fileId = project.id;
         const desired = !project.infinite_enabled;
         if (desired && !project.has_mask) {
             await window.showModal?.({ message: gettext("Add a mask to this map first.") });
@@ -5481,12 +5726,13 @@ const NavInfinity = (() => {
         }
         const csrf = document.cookie.match(/csrftoken=([^;]+)/)?.[1] ?? "";
         try {
-            const res = await fetch(`/editor/toggle-infinite/${project.id}/`, {
+            const res = await fetch(`/editor/toggle-infinite/${fileId}/`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json", "X-CSRFToken": csrf },
                 body: JSON.stringify({ enabled: desired }),
             });
             const data = await res.json();
+            if (project.id !== fileId) return;
             if (!res.ok || data.error) {
                 // Publish-style warning (e.g. region still covers the whole map).
                 await window.showModal?.({ message: data.error || gettext("Could not enable infinite play.") });
@@ -5494,30 +5740,42 @@ const NavInfinity = (() => {
             }
             if (!desired) {                         // disabled immediately
                 project.infinite_enabled = false;
-                hideGenBar();
-                updateBtn();
+                onBuildInvalidated();
                 return;
             }
             if (data.status === "building") {       // enabling → build in background
                 pending = true;
+                activeBuildToken = data.build_token || null;
                 updateBtn();
                 showGenBar();
-                pollBuild(project.id);
+                pollBuild(fileId, activeBuildToken);
             }
         } catch (e) {
             await window.showModal?.({ message: gettext("Could not enable infinite play.") });
         }
     }
 
-    // Called on every project load/replace (file_table.js _applyProject).
-    function onProjectChanged() {
+    // A mask/region/passage mutation invalidates both scheduled and already-
+    // running poll callbacks before a replacement build may be initiated.
+    function onBuildInvalidated(buildToken = null) {
+        if (buildToken && activeBuildToken && buildToken !== activeBuildToken) return;
         stopPoll();
         pending = false;
+        activeBuildToken = null;
         hideGenBar();
         updateBtn();
     }
 
-    return { onProjectChanged, toggle, updateBtn };
+    // Called on every project load/replace (file_table.js _applyProject).
+    function onProjectChanged() {
+        stopPoll();
+        pending = false;
+        activeBuildToken = null;
+        hideGenBar();
+        updateBtn();
+    }
+
+    return { onProjectChanged, onBuildInvalidated, toggle, updateBtn };
 })();
 window.NavInfinity = NavInfinity;
 window.updateNavInfinityBtn = NavInfinity.updateBtn;
@@ -8079,6 +8337,7 @@ function updateCameraTransform({ x = camera.x, y = camera.y, zoom = camera.zoom 
     document.getElementById("camera").style.transform =
         `translate(${x}px, ${y}px) scale(${zoom})`;
     updateRouteStrokeWidths();
+    PassageEditor?.onCameraChanged?.();
     window.RegionEditor?.onCameraChanged?.();
 
     const bg       = document.getElementById("map-background");

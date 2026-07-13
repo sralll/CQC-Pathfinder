@@ -1,7 +1,8 @@
 // =============================================================================
 // navgraph_batch.mjs — WP 2.2 batch driver.
 //
-// Runs generatePairs() from navgraph_harness.mjs over every v2 .navgraph.bin
+// Runs generatePairs() from navgraph_harness.mjs over every current-version
+// .navgraph.bin
 // artifact under media/masks/, computes per-map + aggregate stats, asserts
 // zero legality violations across every accepted pair (not just a rendered
 // sample), and writes a markdown summary to scratch/wp2_2_summary.md.
@@ -10,6 +11,7 @@
 //   node --max-old-space-size=4096 scripts/navgraph_batch.mjs \
 //        [--count 100] [--seed 1] [--out scratch/wp2_2_summary.md] \
 //        [--json scratch/wp2_2_results.json] [--side-gap 40]
+//        [--passages-dir scratch/passage-documents]
 //
 // Does not modify navgraph_harness.mjs / project/navgraph.py; only imports.
 // =============================================================================
@@ -18,7 +20,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import {
-	loadArtifact, loadMask, buildState, generatePairs, makeRng,
+	loadArtifact, loadMask, buildBenchmarkState, generatePairs, makeRng,
 	countLegalityViolations, DEFAULT_CONFIG, SUPPORTED_VERSION,
 } from './navgraph_harness.mjs';
 
@@ -36,7 +38,7 @@ function parseArgs(argv) {
 	return args;
 }
 
-function isV2Artifact(binPath) {
+function isCurrentArtifact(binPath) {
 	try {
 		const fd = fs.openSync(binPath, 'r');
 		const buf = Buffer.alloc(8);
@@ -47,14 +49,14 @@ function isV2Artifact(binPath) {
 	} catch { return false; }
 }
 
-function listV2Masks(masksDir) {
+function listCurrentMasks(masksDir) {
 	const names = fs.readdirSync(masksDir)
 		.filter((f) => f.startsWith('mask_') && f.toLowerCase().endsWith('.png') && !f.includes('.navgraph.'));
 	const out = [];
 	for (const n of names) {
 		const maskPath = path.join(masksDir, n);
 		const binPath = maskPath.replace(/\.png$/i, '.navgraph.bin');
-		if (fs.existsSync(binPath) && isV2Artifact(binPath)) out.push(maskPath);
+		if (fs.existsSync(binPath) && isCurrentArtifact(binPath)) out.push(maskPath);
 	}
 	return out;
 }
@@ -71,14 +73,21 @@ function median(sortedArr) {
 	return n % 2 ? sortedArr[(n - 1) / 2] : (sortedArr[n / 2 - 1] + sortedArr[n / 2]) / 2;
 }
 
-async function runMap(maskPath, { count, maxAttempts, seed, sideGapMinPx }) {
+async function runMap(maskPath, {
+	count, maxAttempts, seed, sideGapMinPx, passagesDir,
+}) {
 	const binPath = maskPath.replace(/\.png$/i, '.navgraph.bin');
 	const name = path.basename(maskPath).replace(/\.png$/i, '');
 	const artifact = loadArtifact(binPath);
 	const { mask } = await loadMask(maskPath);
 	const mpx = +(artifact.H * artifact.W / 1e6).toFixed(2);
 	const cfg = sideGapMinPx != null ? { ...DEFAULT_CONFIG, sideGapMinPx } : DEFAULT_CONFIG;
-	const state = buildState(artifact, mask, cfg);
+	let passagesPath = null;
+	if (passagesDir) {
+		const candidate = path.join(passagesDir, `${name}.passages.json`);
+		if (fs.existsSync(candidate)) passagesPath = candidate;
+	}
+	const state = buildBenchmarkState(artifact, mask, cfg, passagesPath);
 
 	// Reduce pair count for extreme outlier masks so the whole batch stays
 	// tractable; noted explicitly in the summary when triggered.
@@ -142,17 +151,20 @@ async function main() {
 	const outPath = args.out ? String(args.out) : 'scratch/wp2_2_summary.md';
 	const jsonPath = args.json ? String(args.json) : null;
 	const masksDir = args['masks-dir'] ? String(args['masks-dir']) : 'media/masks';
+	const passagesDir = args['passages-dir'] ? String(args['passages-dir']) : null;
 	const label = args.label ? String(args.label) : 'primary';
 
-	const masks = listV2Masks(masksDir);
-	console.log(`Found ${masks.length} v2 masks under ${masksDir}`);
-	if (masks.length < 20) console.warn(`WARNING: fewer than 20 v2 masks (${masks.length}) — build more with build_navgraph.`);
+	const masks = listCurrentMasks(masksDir);
+	console.log(`Found ${masks.length} current-version masks under ${masksDir}`);
+	if (masks.length < 20) console.warn(`WARNING: fewer than 20 current masks (${masks.length}) — build more with build_navgraph.`);
 
 	const results = [];
 	for (const m of masks) {
 		process.stdout.write(`- ${path.basename(m)} ... `);
 		try {
-			const r = await runMap(m, { count, maxAttempts, seed, sideGapMinPx });
+			const r = await runMap(m, {
+				count, maxAttempts, seed, sideGapMinPx, passagesDir,
+			});
 			results.push(r);
 			console.log(`${r.valid}/${r.attempts} valid, meanRetries=${r.meanRetries}, meanMs=${r.meanMsPerValid}, legalityHits=${r.legalityViolations}${r.note ? ` [${r.note}]` : ''}`);
 		} catch (e) {
@@ -274,9 +286,9 @@ async function main() {
 		lines.push('');
 		lines.push('Suggested tuning directions for a later WP (NOT applied here — this run uses DEFAULT_CONFIG unless a --side-gap override is noted above):');
 		lines.push(`- Lower \`sideGapMinPx\` (currently ${DEFAULT_CONFIG.sideGapMinPx}px) to accept more near-parallel route pairs — trades visual distinctness for retry rate.`);
-		lines.push('- Widen `distMinPx`/`distMaxPx` (currently 500/1500px) so more sampled pairs naturally have route options that diverge around different obstacles.');
-		lines.push('- Increase `obstacleMinRunPx` (currently 8px) so only pairs with a meaningfully large obstacle between them are accepted at prefilter time, which correlates with wider route divergence downstream.');
-		lines.push('- Increase `routeAttempts` (currently 4) so more barrier-forced alternates are tried before giving up on a pair.');
+		lines.push(`- Widen \`distMinPx\`/\`distMaxPx\` (currently ${DEFAULT_CONFIG.distMinPx}/${DEFAULT_CONFIG.distMaxPx}px) so more sampled pairs naturally have route options that diverge around different obstacles.`);
+		lines.push(`- Increase \`obstacleMinRunPx\` (currently ${DEFAULT_CONFIG.obstacleMinRunPx}px) so only pairs with a meaningfully large obstacle between them are accepted at prefilter time, which correlates with wider route divergence downstream.`);
+		lines.push(`- Increase \`routeAttempts\` (currently ${DEFAULT_CONFIG.routeAttempts}) so more barrier-forced alternates are tried before giving up on a pair.`);
 	} else {
 		lines.push(`\`side\` rejections were not dominant this run (${sideCount} of ${totalAttempts} attempts, ${(sideShare * 100).toFixed(1)}%).`);
 	}

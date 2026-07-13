@@ -13,8 +13,10 @@ See ``plan.md`` (repo root) "Infinity mode on real masks" for the design.
 Terrain / cost model
 --------------------
 Masks are 8-bit terrain-class grids. ``0`` is impassable; every other value is
-passable with an A* step cost of ``dist * (255 - value)`` — identical to
-``project/static/project/js/pathing/astar.js``. Both the current class scheme
+passable with a per-distance cost of ``255 - value``. Edge fallback paths use
+the symmetric pixel-centre integral supplied by ``MCP_Geometric``; the browser
+uses the same terrain costs and the final full-resolution Theta* remains the
+legality/geometry authority. Both the current class scheme
 (135 very_slow / 200 outline / 231 slow / 241 cross / 242 stairs / 243 fast) and
 the legacy scheme (100 / 150 / 200 / 230) work directly under this formula; the
 only thing we special-case is ``value == 0`` == impassable.
@@ -168,6 +170,7 @@ import numpy as np
 import scipy.ndimage as ndi
 
 try:
+    from skimage.graph import MCP_Geometric as _sk_mcp_geometric
     from skimage.morphology import skeletonize as _sk_skeletonize
     from skimage.measure import (
         approximate_polygon as _sk_approximate_polygon,
@@ -187,6 +190,10 @@ NAVGRAPH_MAGIC = b"NVG1"
 NAVGRAPH_VERSION_LEGACY_BASE_ONLY = 2
 # Cap on the serialized passage-revision string (bounds check for every reader).
 NAVGRAPH_REVISION_MAX_LEN = 256
+
+
+class NavgraphBuildCancelled(RuntimeError):
+    """Raised when the owner reports that this build token was superseded."""
 
 # Typed edge kinds (mirror navgraph_router.js EDGE_KIND_*).
 EDGE_KIND_BASE = 0
@@ -281,9 +288,29 @@ LATTICE_SPACING_NEAR_PX = 32  # transition band between boundary and open space
 LATTICE_SPACING_FAR_PX = 64   # plaza/interior open-space lattice spacing
 
 # --- Edges -------------------------------------------------------------------
-EDGE_KNN = 10                # local alternatives for barrier/distinct-route search
-EDGE_FEATURE_SECTORS = 8     # nearest visible neighbour in each angular sector
-EDGE_MAX_DIST = 120          # px; candidate edge endpoints must be within this (full-res)
+EDGE_NEIGHBOR_SCAN_K = 32    # all of these bounded geometric neighbours are evaluated
+EDGE_MAX_DIST = 192          # full-res px; covers sparse openings without global all-pairs
+# A blocked straight segment can still represent a useful local graph edge: the
+# browser legalises every blocked graph segment with full-res A* before Theta*.
+# Admit only tiny interruptions and only a couple per node, then require the
+# builder's bounded A* to prove a short detour. This recovers links around a
+# one-pixel wall/building tip without creating abstract edges around whole blocks.
+EDGE_LOCAL_DETOUR_KNN = 2
+EDGE_LOCAL_BLOCKED_SAMPLES_MAX = 8
+EDGE_LOCAL_DETOUR_MARGIN = 24
+EDGE_LOCAL_DETOUR_RATIO = 1.35
+EDGE_LOCAL_DETOUR_MAX_EXTRA_PX = 24
+# NARROW_ALLEY_REDUCTION: narrow skeleton nodes used to receive no generic
+# candidates at all. A small reversible budget preserves the clean centerline
+# while preventing a missed skeleton link from forcing a large detour.
+EDGE_NARROW_KNN = 3
+EDGE_NARROW_DETOUR_KNN = 1
+EDGE_NARROW_MAX_DIST = 96
+# Final typed-graph sparsifier. An edge is removed only when an active two-edge
+# witness is already within 1% of its terrain-weighted cost. Processing longer
+# edges first and mutating the active graph prevents two removed edges from
+# serving as each other's witness.
+EDGE_SPANNER_STRETCH = 1.01
 EDGE_MARGIN = 12             # px; subgrid margin around a k-NN edge bbox for A*
 EDGE_DETOUR_RATIO = 3.0      # drop a k-NN edge whose A* path is > this * straight
 # Skeleton backbone edges are known corridor connections: give their A* fallback
@@ -292,7 +319,6 @@ EDGE_DETOUR_RATIO = 3.0      # drop a k-NN edge whose A* path is > this * straig
 # dropping them would fragment the graph.
 EDGE_SKELETON_MARGIN = 40    # px; subgrid margin for skeleton backbone A*
 EDGE_SKELETON_DETOUR = 6.0   # detour tolerance for skeleton backbone A*
-ASTAR_MAX_EXPANSIONS = 200_000  # per-edge safety cap on A* node expansions
 
 # --- Redundancy pruning ------------------------------------------------------
 # Only non-topological open-lattice nodes are considered. A node is removable
@@ -439,20 +465,48 @@ def region_revision(region_polygon, map_width, map_height):
     """
     if not isinstance(region_polygon, (list, tuple)) or len(region_polygon) < 3:
         return None
-    points = []
-    for point in region_polygon:
-        if not isinstance(point, (list, tuple)) or len(point) != 2:
-            return None
-        try:
-            points.append([int(round(float(point[0]))), int(round(float(point[1])))])
-        except (TypeError, ValueError, OverflowError):
-            return None
+    try:
+        points = clip_region_polygon(region_polygon, map_width, map_height)
+    except (TypeError, ValueError, OverflowError):
+        return None
     canonical = json.dumps(
         {"version": 1, "width": int(map_width), "height": int(map_height),
          "points": points},
         separators=(",", ":"), ensure_ascii=False,
     ).encode("utf-8")
     return "r1-" + hashlib.sha256(canonical).hexdigest()[:32]
+
+
+def clip_region_polygon(polygon, map_width, map_height):
+    """Clamp coach-region vertices to the inclusive mask-pixel bounds.
+
+    The editor works in scaled display coordinates and can produce a small
+    overshoot when a vertex is dragged onto the image edge.  A polygon whose
+    vertices are just outside the raster is still an otherwise valid region,
+    so keep it usable by clamping each coordinate instead of rejecting the
+    whole build.  Structural checks (distinct points and non-zero area) remain
+    in ``_rasterize_region_full``.
+    """
+    if not isinstance(polygon, (list, tuple)) or len(polygon) < 3:
+        raise ValueError("A coach region polygon needs at least 3 points")
+
+    max_x = max(0, int(map_width) - 1)
+    max_y = max(0, int(map_height) - 1)
+    clipped = []
+    for point in polygon:
+        if not isinstance(point, (list, tuple)) or len(point) != 2:
+            raise ValueError("Invalid coach region point")
+        try:
+            x, y = float(point[0]), float(point[1])
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Invalid coach region point") from exc
+        if not (math.isfinite(x) and math.isfinite(y)):
+            raise ValueError("Coach region coordinates must be finite")
+        clipped.append([
+            int(round(min(max(0.0, x), float(max_x)))),
+            int(round(min(max(0.0, y), float(max_y)))),
+        ])
+    return clipped
 
 
 def mask_dimensions(mask_path):
@@ -941,6 +995,7 @@ def filter_level_passages_for_region(level_passages, region_polygon,
     document = normalize_level_passages(level_passages)
     if not isinstance(region_polygon, (list, tuple)) or len(region_polygon) < 3:
         return document, []
+    region_polygon = clip_region_polygon(region_polygon, map_width, map_height)
 
     included = []
     ignored_ids = []
@@ -1071,20 +1126,7 @@ def _rasterize_region_full(polygon, H, W):
     if polygon is None or len(polygon) < 3:
         raise ValueError("A coach region polygon needs at least 3 points")
 
-    points = []
-    for point in polygon:
-        if not isinstance(point, (list, tuple)) or len(point) != 2:
-            raise ValueError("Invalid coach region point")
-        try:
-            x, y = float(point[0]), float(point[1])
-        except (TypeError, ValueError) as exc:
-            raise ValueError("Invalid coach region point") from exc
-        if not (math.isfinite(x) and math.isfinite(y)):
-            raise ValueError("Coach region coordinates must be finite")
-        if x < 0 or y < 0 or x > W - 1 or y > H - 1:
-            raise ValueError(
-                f"Coach region point ({x:g}, {y:g}) is outside the {W}x{H} mask")
-        points.append((x, y))
+    points = [tuple(point) for point in clip_region_polygon(polygon, W, H)]
 
     if len(set(points)) < 3:
         raise ValueError("Coach region polygon needs 3 distinct points")
@@ -1110,8 +1152,8 @@ def _rasterize_region(polygon, H, W, ds=HITZONE_DS, full_raster=None):
     space as ``nodes``). Returns an ``(hh, hw)`` bool grid, True inside the
     polygon, matching the hit-zone grid resolution. This is the *authoritative*
     map region when a coach has drawn one; the automatic ``_hitzone`` is only a
-    fallback / initial suggestion (see the module note). Invalid non-empty coach
-    polygons are rejected by ``_rasterize_region_full`` before this helper runs.
+    fallback / initial suggestion (see the module note). Vertices are bounded
+    to the mask before structural validation by ``_rasterize_region_full``.
     """
     full = (full_raster if full_raster is not None
             else _rasterize_region_full(polygon, H, W))
@@ -1854,91 +1896,31 @@ def _adaptive_lattice_nodes(coarse_clearance, skel,
 
 
 # =============================================================================
-# Full-resolution weighted A* (subgrid) — parity with astar.js
+# Full-resolution weighted path search on bounded subgrids
 # =============================================================================
 
-def _astar_subgrid(sub, start, goal, max_expansions=ASTAR_MAX_EXPANSIONS):
-    """Weighted 8-connected A* on a small ``uint8`` subgrid.
+def _weighted_subgrid_path(sub, start, goal):
+    """Return exact weighted cost and geometric length on a bounded subgrid.
 
-    Cost model identical to astar.js: ``move = hypot(dx,dy) * (255 - value)``,
-    ``value == 0`` blocked, heuristic = euclidean distance. Returns
-    ``(cost, geom_length)`` or ``None``, where ``geom_length`` is the unweighted
-    pixel length of the min-cost path (tracked inline, so no reconstruction).
-    ``start``/``goal`` are (y, x) in subgrid coordinates.
-
-    Pure-Python hot loop over ``bytes`` indexing + ``math.hypot`` — roughly an
-    order of magnitude faster than numpy-scalar indexing for these small grids.
+    ``MCP_Geometric`` is the compiled implementation already supplied by the
+    required scikit-image dependency. It stops when ``goal`` is settled and
+    works directly on the cost raster. The previous implementation rebuilt an
+    eight-neighbour sparse graph for every candidate edge and then ran
+    Dijkstra over the whole subgrid, although only one target was needed.
     """
-    import math
-    h, w = sub.shape
-    sy, sx = start
-    gy, gx = goal
-    data = sub.tobytes()  # row-major uint8; data[i] is a fast C int
-    n = h * w
-    start_i = sy * w + sx
-    goal_i = gy * w + gx
-    if data[start_i] == IMPASSABLE or data[goal_i] == IMPASSABLE:
+    costs = (255 - sub).astype(np.float64)
+    costs[sub == IMPASSABLE] = np.inf
+    solver = _sk_mcp_geometric(costs, fully_connected=True)
+    cumulative, _ = solver.find_costs([start], [goal])
+    cost = float(cumulative[goal])
+    if not math.isfinite(cost):
         return None
-
-    INF = float("inf")
-    g = [INF] * n
-    geom = [0.0] * n
-    closed = bytearray(n)
-    g[start_i] = 0.0
-    hypot = math.hypot
-    push = heapq.heappush
-    pop = heapq.heappop
-    heap = [(hypot(gx - sx, gy - sy), start_i)]
-    SQRT2 = 1.4142135623730951
-    w1 = w - 1
-    h1 = h - 1
-    expansions = 0
-    while heap:
-        _, cur = pop(heap)
-        if closed[cur]:
-            continue
-        closed[cur] = 1
-        if cur == goal_i:
-            return g[cur], geom[cur]
-        expansions += 1
-        if expansions > max_expansions:
-            return None
-        cx = cur % w
-        cy = cur // w
-        gc = g[cur]
-        gm = geom[cur]
-        left = cx > 0
-        right = cx < w1
-        up = cy > 0
-        down = cy < h1
-        # 8 neighbours, unrolled with border guards.
-        for dy, dx, diag in (
-            (-1, 0, False), (1, 0, False), (0, -1, False), (0, 1, False),
-            (-1, -1, True), (-1, 1, True), (1, -1, True), (1, 1, True),
-        ):
-            if dx < 0 and not left:
-                continue
-            if dx > 0 and not right:
-                continue
-            if dy < 0 and not up:
-                continue
-            if dy > 0 and not down:
-                continue
-            ni = cur + dy * w + dx
-            if closed[ni]:
-                continue
-            val = data[ni]
-            if val == IMPASSABLE:
-                continue
-            step = SQRT2 if diag else 1.0
-            tentative = gc + step * (255 - val)
-            if tentative < g[ni]:
-                g[ni] = tentative
-                geom[ni] = gm + step
-                nx = ni % w
-                ny = ni // w
-                push(heap, (tentative + hypot(gx - nx, gy - ny), ni))
-    return None
+    path = solver.traceback(goal)
+    geom = sum(
+        math.hypot(y1 - y0, x1 - x0)
+        for (y0, x0), (y1, x1) in zip(path, path[1:])
+    )
+    return cost, geom
 
 
 def _line_cost(mask, x0, y0, x1, y1):
@@ -1946,8 +1928,9 @@ def _line_cost(mask, x0, y0, x1, y1):
     an impassable pixel.
 
     Samples ~1 px steps and accumulates ``substep_len * (255 - value)`` matching
-    the A* cost model. Because candidate edges are short and mostly clear, this
-    is the fast path; blocked segments fall back to full A*.
+    the graph's terrain cost model. Because candidate edges are short and
+    mostly clear, this is the fast path; selected blocked segments fall back to
+    the bounded weighted raster solver.
     """
     import math
     dx = x1 - x0
@@ -1967,6 +1950,72 @@ def _line_cost(mask, x0, y0, x1, y1):
             return None
         cost += seg * (255 - int(val))
     return cost
+
+
+def _line_cost_batch(mask, x0_arr, y0_arr, x1_arr, y1_arr, chunk=4096,
+                     return_blocked_counts=False):
+    """Vectorized batch version of _line_cost for many segments at once.
+
+    Identical math: steps = max(|dx|, |dy|), sample at round(k * substep)
+    for k = 1..steps, accumulate seg_len * (255 - val), blocked if any
+    sample == IMPASSABLE. Processes ``chunk`` segments per numpy pass to
+    bound peak memory. Returns ``(costs, blocked)`` arrays of shape (N,);
+    ``costs[i]`` is 0.0 when ``blocked[i]`` is True. With
+    ``return_blocked_counts=True`` a third array reports how many sampled
+    impassable pixels each segment crossed, allowing cheap rejection of edges
+    through a whole obstacle before bounded A* is attempted.
+    """
+    N = len(x0_arr)
+    if N == 0:
+        empty = (np.empty(0, dtype=np.float64), np.empty(0, dtype=bool))
+        if return_blocked_counts:
+            return empty + (np.empty(0, dtype=np.int32),)
+        return empty
+    H, W = mask.shape
+    x0 = np.asarray(x0_arr, dtype=np.float64)
+    y0 = np.asarray(y0_arr, dtype=np.float64)
+    x1 = np.asarray(x1_arr, dtype=np.float64)
+    y1 = np.asarray(y1_arr, dtype=np.float64)
+    costs = np.empty(N, dtype=np.float64)
+    blocked = np.empty(N, dtype=bool)
+    blocked_counts = np.empty(N, dtype=np.int32) if return_blocked_counts else None
+
+    for start in range(0, N, chunk):
+        end = min(start + chunk, N)
+        bx0 = x0[start:end]
+        by0 = y0[start:end]
+        dx = x1[start:end] - bx0
+        dy = y1[start:end] - by0
+        steps = np.maximum(np.abs(dx), np.abs(dy)).astype(np.int32)
+        max_s = int(steps.max()) if steps.size else 0
+        if max_s == 0:
+            costs[start:end] = 0.0
+            blocked[start:end] = False
+            if blocked_counts is not None:
+                blocked_counts[start:end] = 0
+            continue
+        safe_s = np.where(steps > 0, steps, 1).astype(np.float64)
+        seg_len = np.hypot(dx, dy) / safe_s   # geometric length per substep
+        sx = dx / safe_s
+        sy = dy / safe_s
+        k = np.arange(1, max_s + 1, dtype=np.float64)[None, :]     # (1, max_s)
+        valid = k <= steps[:, None].astype(np.float64)               # (n, max_s)
+        xi = np.round(bx0[:, None] + sx[:, None] * k).astype(np.int32)
+        yi = np.round(by0[:, None] + sy[:, None] * k).astype(np.int32)
+        xi = np.clip(xi, 0, W - 1)
+        yi = np.clip(yi, 0, H - 1)
+        vals = mask[yi, xi].astype(np.int32)
+        is_impass = valid & (vals == 0)
+        chunk_blocked = is_impass.any(axis=1)
+        contrib = np.where(valid & ~is_impass, seg_len[:, None] * (255 - vals), 0.0)
+        costs[start:end] = np.where(chunk_blocked, 0.0, contrib.sum(axis=1))
+        blocked[start:end] = chunk_blocked
+        if blocked_counts is not None:
+            blocked_counts[start:end] = is_impass.sum(axis=1, dtype=np.int32)
+
+    if blocked_counts is not None:
+        return costs, blocked, blocked_counts
+    return costs, blocked
 
 
 def _filter_contours_near_centerline(
@@ -1996,7 +2045,11 @@ def _filter_contours_near_centerline(
         buckets.setdefault((int(x) // cell, int(y) // cell), []).append(
             (int(x), int(y)))
 
-    def is_represented(x, y):
+    # Collect every (point, anchor) pair that passes the distance + terrain
+    # guard, then evaluate all LOS checks in one vectorized batch.
+    all_points = list(corners) + list(regular)
+    candidate_pairs = []   # [(point_idx, px, py, ax, ay)]
+    for pi, (x, y) in enumerate(all_points):
         bx, by = int(x) // cell, int(y) // cell
         value = int(mask[int(y), int(x)])
         for gx in (bx - 1, bx, bx + 1):
@@ -2006,12 +2059,22 @@ def _filter_contours_near_centerline(
                         continue
                     if int(mask[yy, xx]) < value:
                         continue
-                    if _line_cost(mask, int(x), int(y), xx, yy) is not None:
-                        return True
-        return False
+                    candidate_pairs.append((pi, int(x), int(y), xx, yy))
 
-    keep_corner_flags = [not is_represented(x, y) for x, y in corners]
-    keep_regular_flags = [not is_represented(x, y) for x, y in regular]
+    represented: set = set()
+    if candidate_pairs:
+        x0b = np.array([p[1] for p in candidate_pairs], dtype=np.int32)
+        y0b = np.array([p[2] for p in candidate_pairs], dtype=np.int32)
+        x1b = np.array([p[3] for p in candidate_pairs], dtype=np.int32)
+        y1b = np.array([p[4] for p in candidate_pairs], dtype=np.int32)
+        _, los_blocked = _line_cost_batch(mask, x0b, y0b, x1b, y1b)
+        for k, (pi, _, _, _, _) in enumerate(candidate_pairs):
+            if not los_blocked[k]:
+                represented.add(pi)
+
+    nc = len(corners)
+    keep_corner_flags = [i not in represented for i in range(nc)]
+    keep_regular_flags = [(nc + i) not in represented for i in range(len(regular))]
     kept_corners = [
         xy for xy, keep in zip(corners, keep_corner_flags) if keep]
     kept_regular = [
@@ -2050,20 +2113,34 @@ def _filter_points_near_visible_nodes(mask, points, anchors,
     for x, y in anchors:
         buckets.setdefault((int(x) // cell, int(y) // cell), []).append(
             (int(x), int(y)))
-    kept = []
-    for x, y in points:
+
+    # Collect all (point, anchor) candidate pairs that pass distance + terrain,
+    # then batch-check LOS in one vectorized call.
+    candidate_pairs = []   # [(point_idx, px, py, ax, ay)]
+    for pi, (x, y) in enumerate(points):
         bx, by = int(x) // cell, int(y) // cell
         value = int(mask[int(y), int(x)])
-        duplicate = any(
-            (x - xx) ** 2 + (y - yy) ** 2 <= radius2 and
-            int(mask[yy, xx]) >= value and
-            _line_cost(mask, int(x), int(y), xx, yy) is not None
-            for gx in (bx - 1, bx, bx + 1)
-            for gy in (by - 1, by, by + 1)
-            for xx, yy in buckets.get((gx, gy), ())
-        )
-        if not duplicate:
-            kept.append((x, y))
+        for gx in (bx - 1, bx, bx + 1):
+            for gy in (by - 1, by, by + 1):
+                for xx, yy in buckets.get((gx, gy), ()):
+                    if (x - xx) ** 2 + (y - yy) ** 2 > radius2:
+                        continue
+                    if int(mask[yy, xx]) < value:
+                        continue
+                    candidate_pairs.append((pi, int(x), int(y), xx, yy))
+
+    if candidate_pairs:
+        x0b = np.array([p[1] for p in candidate_pairs], dtype=np.int32)
+        y0b = np.array([p[2] for p in candidate_pairs], dtype=np.int32)
+        x1b = np.array([p[3] for p in candidate_pairs], dtype=np.int32)
+        y1b = np.array([p[4] for p in candidate_pairs], dtype=np.int32)
+        _, los_blocked = _line_cost_batch(mask, x0b, y0b, x1b, y1b)
+        duplicate_pis = {pi for k, (pi, _, _, _, _) in enumerate(candidate_pairs)
+                         if not los_blocked[k]}
+    else:
+        duplicate_pis: set = set()
+
+    kept = [p for pi, p in enumerate(points) if pi not in duplicate_pis]
     return kept, len(points) - len(kept)
 
 
@@ -2170,17 +2247,17 @@ def _dedupe_appended_nodes(mask, nodes_xy, fixed_count, min_distance,
     return out, source_indices, source_to_output
 
 
-def _astar_edge(mask, xi, yi, xj, yj, straight, margin=EDGE_MARGIN,
-                detour_ratio=EDGE_DETOUR_RATIO):
-    """A* an edge on the bounding subgrid; return cost or ``None`` if no path /
-    detour exceeds ``detour_ratio``. Helper shared by weighting and repair."""
+def _weighted_edge_path(mask, xi, yi, xj, yj, straight, margin=EDGE_MARGIN,
+                        detour_ratio=EDGE_DETOUR_RATIO):
+    """Solve an edge on its bounded raster; reject absent/excessive detours."""
     H, W = mask.shape
     y0 = max(0, min(yi, yj) - margin)
     y1 = min(H, max(yi, yj) + margin + 1)
     x0 = max(0, min(xi, xj) - margin)
     x1 = min(W, max(xi, xj) + margin + 1)
     sub = mask[y0:y1, x0:x1]
-    res = _astar_subgrid(sub, (yi - y0, xi - x0), (yj - y0, xj - x0))
+    res = _weighted_subgrid_path(
+        sub, (yi - y0, xi - x0), (yj - y0, xj - x0))
     if res is None:
         return None
     cost, geom = res
@@ -2189,104 +2266,242 @@ def _astar_edge(mask, xi, yi, xj, yj, straight, margin=EDGE_MARGIN,
     return cost
 
 
-def _weight_edges(mask, nodes_xy, candidate_edges, astar_pairs):
+def _weight_edges(mask, nodes_xy, candidate_edges, astar_pairs,
+                  local_detour_pairs=None, precomputed_line_results=None,
+                  progress_callback=None):
     """Measure each candidate edge's terrain-weighted cost + legality.
 
     ``candidate_edges`` is an iterable of (i, j) node-index pairs (i < j).
-    Fast path: integrate the cost along the straight segment (legal iff no
-    impassable pixel on it). If the straight line is blocked, only skeleton
-    backbone edges (those in ``astar_pairs``) fall back to full-res weighted A*
-    to route around a thin obstacle; blocked k-NN shortcuts are simply dropped
-    (they are optional and the backbone keeps the graph connected). This keeps
-    the number of (slow) A* calls bounded on dense masks. Returns parallel lists
-    ``(edges, weights)``.
+    Fast path: reuse straight-line integrals from candidate discovery and batch
+    only the remaining backbone segments. Backbone edges (``astar_pairs``)
+    retain their broad weighted-raster fallback. A small, pre-screened set of
+    ordinary neighbour pairs may use a much tighter fallback
+    (``local_detour_pairs``); all other blocked shortcuts are dropped. Returns
+    parallel lists ``(edges, weights)``.
     """
     import math
+    cand_list = list(candidate_edges)
+    if not cand_list:
+        if progress_callback:
+            progress_callback(0, 0)
+        return [], []
+    local_detour_pairs = set(local_detour_pairs or ())
+
+    pts = np.asarray(nodes_xy, dtype=np.float64)
+    i_arr = np.array([i for i, _ in cand_list], dtype=np.int32)
+    j_arr = np.array([j for _, j in cand_list], dtype=np.int32)
+    x0_arr = pts[i_arr, 0].astype(np.int32)
+    y0_arr = pts[i_arr, 1].astype(np.int32)
+    x1_arr = pts[j_arr, 0].astype(np.int32)
+    y1_arr = pts[j_arr, 1].astype(np.int32)
+
+    # Candidate discovery already had to test LOS to enforce per-node budgets.
+    # Reuse those exact results instead of rasterizing every accepted segment a
+    # second time. Backbone pairs outside the bounded neighbour pool are the
+    # only normal misses and are still checked here.
+    precomputed_line_results = precomputed_line_results or {}
+    batch_costs = np.zeros(len(cand_list), dtype=np.float64)
+    batch_blocked = np.ones(len(cand_list), dtype=bool)
+    missing = []
+    for k, pair in enumerate(cand_list):
+        if pair not in precomputed_line_results:
+            missing.append(k)
+            continue
+        result = precomputed_line_results[pair]
+        if result is not None:
+            batch_costs[k] = float(result)
+            batch_blocked[k] = False
+    if missing:
+        missing = np.asarray(missing, dtype=np.int32)
+        missing_costs, missing_blocked = _line_cost_batch(
+            mask,
+            x0_arr[missing], y0_arr[missing],
+            x1_arr[missing], y1_arr[missing])
+        batch_costs[missing] = missing_costs
+        batch_blocked[missing] = missing_blocked
+
     edges_out = []
     weights_out = []
-    for i, j in candidate_edges:
-        xi, yi = nodes_xy[i]
-        xj, yj = nodes_xy[j]
+    progress_step = max(1, len(cand_list) // 100)
+    for k, (i, j) in enumerate(cand_list):
+        xi, yi = int(x0_arr[k]), int(y0_arr[k])
+        xj, yj = int(x1_arr[k]), int(y1_arr[k])
         straight = math.hypot(xj - xi, yj - yi)
         if straight == 0:
             continue
-        cost = _line_cost(mask, xi, yi, xj, yj)
-        if cost is None:
-            if (i, j) not in astar_pairs:
-                continue  # blocked shortcut -> drop, no A*
-            cost = _astar_edge(mask, xi, yi, xj, yj, straight,
-                               margin=EDGE_SKELETON_MARGIN,
-                               detour_ratio=EDGE_SKELETON_DETOUR)
-            if cost is None:
+        if not batch_blocked[k]:
+            edges_out.append((i, j))
+            weights_out.append(float(batch_costs[k]))
+        else:
+            pair = (i, j)
+            if pair in astar_pairs:
+                margin = EDGE_SKELETON_MARGIN
+                detour_ratio = EDGE_SKELETON_DETOUR
+            elif pair in local_detour_pairs:
+                margin = EDGE_LOCAL_DETOUR_MARGIN
+                detour_ratio = min(
+                    EDGE_LOCAL_DETOUR_RATIO,
+                    1.0 + EDGE_LOCAL_DETOUR_MAX_EXTRA_PX / straight)
+            else:
                 continue
-        edges_out.append((i, j))
-        weights_out.append(cost)
+            cost = _weighted_edge_path(
+                mask, xi, yi, xj, yj, straight,
+                margin=margin, detour_ratio=detour_ratio)
+            if cost is not None:
+                edges_out.append((i, j))
+                weights_out.append(cost)
+        processed = k + 1
+        if (progress_callback and
+                (processed == len(cand_list) or processed % progress_step == 0)):
+            progress_callback(processed, len(cand_list))
     return edges_out, weights_out
 
 
 def _candidate_edges(nodes_xy, skeleton_edges, feature_nodes=None, mask=None,
-                     backbone_only_nodes=None):
-    """Union of skeleton edges and local neighbour candidates.
+                     backbone_only_nodes=None, return_local_detours=False,
+                     return_line_results=False, progress_callback=None):
+    """Union backbone edges with bounded, type-independent local candidates.
 
-    Feature/gate nodes select the nearest *visible* neighbour in angular sectors.
-    This covers both sides of an opening without spending twelve candidates on
-    a same-side cluster or on nodes hidden behind the wall.
+    The previous feature-sector rule and the later feature-only LOS-kNN rule
+    both created blind spots: the former discarded a useful node when another
+    node occupied its angular bin, while the latter grew the graph but still
+    discarded every locally repairable blocked segment. The current policy is
+    deliberately uniform:
+
+    * inspect at most ``EDGE_NEIGHBOR_SCAN_K`` geometric neighbours within
+      ``EDGE_MAX_DIST`` for every node, independent of feature type or sector;
+    * retain every direct-LOS pair in that bounded pool, then sparsify the
+      completed typed graph with a strict cost witness;
+    * nominate at most ``EDGE_LOCAL_DETOUR_KNN`` additional pairs that cross
+      only a few black samples for tightly bounded A* validation;
+    * give narrow-backbone nodes a smaller budget instead of suppressing all
+      generic candidates.
+
+    With ``return_local_detours=True`` return ``(candidates, detour_pairs)``.
+    When ``return_line_results`` is also true, append a mapping from every
+    evaluated retained pair to its straight cost (or ``None`` when blocked), so
+    edge weighting does not repeat the same full-resolution raster checks. The
+    default remains the historical candidate-set API used by unit tests.
     """
     cand = set()
     for a, b, _ in skeleton_edges:
         if a != b:
             cand.add((min(a, b), max(a, b)))
-    feature_nodes = set(feature_nodes or ())
+    # Kept in the signature for callers/tests and for future diagnostics. The
+    # selection policy intentionally no longer changes by node source family.
+    _ = feature_nodes
     backbone_only_nodes = set(backbone_only_nodes or ())
     pts = np.asarray(nodes_xy, dtype=np.float64)
     n = len(pts)
+    if progress_callback:
+        progress_callback(0, n)
     if n == 0:
-        return cand
-    # Bucketed k-NN: cell grid of EDGE_MAX_DIST so we only test near pairs.
-    cell = EDGE_MAX_DIST
-    buckets = {}
-    for idx, (x, y) in enumerate(nodes_xy):
-        buckets.setdefault((int(x // cell), int(y // cell)), []).append(idx)
-    for idx, (x, y) in enumerate(nodes_xy):
-        # NARROW_ALLEY_REDUCTION: these low-clearance skeleton nodes already
-        # have authoritative predecessor/successor backbone edges. Skipping
-        # generic k-NN here prevents six nearly identical corridor shortcuts.
-        # Set NARROW_ALLEY_REDUCTION_ENABLED=False to restore the old behaviour.
-        if NARROW_ALLEY_REDUCTION_ENABLED and idx in backbone_only_nodes:
-            continue
-        cx, cy = int(x // cell), int(y // cell)
-        near = []
-        for gx in (cx - 1, cx, cx + 1):
-            for gy in (cy - 1, cy, cy + 1):
-                near.extend(buckets.get((gx, gy), ()))
-        if len(near) <= 1:
-            continue
-        near_arr = np.array([n2 for n2 in near if n2 != idx], dtype=np.int64)
-        d2 = (pts[near_arr, 0] - x) ** 2 + (pts[near_arr, 1] - y) ** 2
-        order = np.argsort(d2)
-        taken = 0
-        sectors = set()
-        is_feature = idx in feature_nodes
-        wanted = EDGE_FEATURE_SECTORS if is_feature else EDGE_KNN
-        for oi in order:
-            if taken >= wanted:
-                break
-            j = int(near_arr[oi])
-            if d2[oi] > EDGE_MAX_DIST * EDGE_MAX_DIST:
-                break
-            if is_feature:
-                angle = np.arctan2(pts[j, 1] - y, pts[j, 0] - x)
-                sector = int(((angle + np.pi) / (2 * np.pi)) * EDGE_FEATURE_SECTORS)
-                sector = min(EDGE_FEATURE_SECTORS - 1, max(0, sector))
-                if sector in sectors:
-                    continue
-                if mask is not None and _line_cost(
-                        mask, int(x), int(y),
-                        int(pts[j, 0]), int(pts[j, 1])) is None:
-                    continue
-                sectors.add(sector)
-            cand.add((min(idx, j), max(idx, j)))
-            taken += 1
+        if return_line_results:
+            return (cand, set(), {}) if return_local_detours else (cand, {})
+        return (cand, set()) if return_local_detours else cand
+
+    from scipy.spatial import cKDTree
+    scan_k = min(n, EDGE_NEIGHBOR_SCAN_K + 1)
+    distances, neighbours = cKDTree(pts).query(
+        pts, k=scan_k, distance_upper_bound=EDGE_MAX_DIST)
+    if scan_k == 1:
+        distances = distances[:, None]
+        neighbours = neighbours[:, None]
+
+    sources = np.repeat(np.arange(n, dtype=np.int32), scan_k)
+    targets = np.asarray(neighbours, dtype=np.int64).reshape(-1)
+    flat_distances = np.asarray(distances, dtype=np.float64).reshape(-1)
+    valid = (
+        np.isfinite(flat_distances) &
+        (targets >= 0) & (targets < n) &
+        (targets != sources)
+    )
+    sources = sources[valid].astype(np.int32, copy=False)
+    targets = targets[valid].astype(np.int32, copy=False)
+    if not len(sources):
+        if progress_callback:
+            progress_callback(n, n)
+        if return_line_results:
+            return (cand, set(), {}) if return_local_detours else (cand, {})
+        return (cand, set()) if return_local_detours else cand
+
+    pairs = np.column_stack((np.minimum(sources, targets),
+                             np.maximum(sources, targets))).astype(np.int32)
+    pairs = np.unique(pairs, axis=0)
+    delta = pts[pairs[:, 0]] - pts[pairs[:, 1]]
+    pair_d2 = np.einsum("ij,ij->i", delta, delta)
+
+    if mask is None:
+        line_costs = np.zeros(len(pairs), dtype=np.float64)
+        blocked = np.zeros(len(pairs), dtype=bool)
+        blocked_counts = np.zeros(len(pairs), dtype=np.int32)
+    else:
+        line_costs, blocked, blocked_counts = _line_cost_batch(
+            mask,
+            pts[pairs[:, 0], 0].astype(np.int32),
+            pts[pairs[:, 0], 1].astype(np.int32),
+            pts[pairs[:, 1], 0].astype(np.int32),
+            pts[pairs[:, 1], 1].astype(np.int32),
+            return_blocked_counts=True)
+
+    incident = [[] for _ in range(n)]
+    for pair_index, (u, v) in enumerate(pairs):
+        incident[int(u)].append(pair_index)
+        incident[int(v)].append(pair_index)
+
+    local_detours = set()
+    progress_step = max(1, n // 100)
+    for node_index, pair_indices in enumerate(incident):
+        if pair_indices:
+            is_narrow = (
+                NARROW_ALLEY_REDUCTION_ENABLED and
+                node_index in backbone_only_nodes)
+            direct_budget = (
+                EDGE_NARROW_KNN if is_narrow
+                else EDGE_NEIGHBOR_SCAN_K)
+            detour_budget = (
+                EDGE_NARROW_DETOUR_KNN if is_narrow
+                else EDGE_LOCAL_DETOUR_KNN)
+            max_d2 = float((EDGE_NARROW_MAX_DIST if is_narrow
+                            else EDGE_MAX_DIST) ** 2)
+            direct_taken = detour_taken = 0
+            pair_indices.sort(key=lambda p: (pair_d2[p], int(pairs[p, 0]),
+                                             int(pairs[p, 1])))
+            for pair_index in pair_indices:
+                if pair_d2[pair_index] > max_d2:
+                    break
+                u, v = map(int, pairs[pair_index])
+                pair = (u, v)
+                if blocked[pair_index]:
+                    if (detour_taken >= detour_budget or
+                            blocked_counts[pair_index] > EDGE_LOCAL_BLOCKED_SAMPLES_MAX):
+                        continue
+                    cand.add(pair)
+                    local_detours.add(pair)
+                    detour_taken += 1
+                elif direct_taken < direct_budget:
+                    cand.add(pair)
+                    direct_taken += 1
+                if direct_taken >= direct_budget and detour_taken >= detour_budget:
+                    break
+        processed = node_index + 1
+        if (progress_callback and
+                (processed == n or processed % progress_step == 0)):
+            progress_callback(processed, n)
+
+    if return_line_results:
+        line_results = {
+            (int(u), int(v)): (
+                None if blocked[pair_index]
+                else float(line_costs[pair_index]))
+            for pair_index, (u, v) in enumerate(pairs)
+            if (int(u), int(v)) in cand
+        }
+        if return_local_detours:
+            return cand, local_detours, line_results
+        return cand, line_results
+    if return_local_detours:
+        return cand, local_detours
     return cand
 
 
@@ -2376,8 +2591,9 @@ def _repair_connectivity(mask, nodes_xy, edges, weights, components, main_comp):
             cost = _line_cost(mask, ux, uy, vx, vy)
             if cost is None:
                 margin = min(BRIDGE_MAX_MARGIN, max(BRIDGE_MARGIN, int(0.75 * d)))
-                cost = _astar_edge(mask, ux, uy, vx, vy, d, margin=margin,
-                                   detour_ratio=EDGE_SKELETON_DETOUR)
+                cost = _weighted_edge_path(
+                    mask, ux, uy, vx, vy, d, margin=margin,
+                    detour_ratio=EDGE_SKELETON_DETOUR)
             if cost is None:
                 continue
             a, b = (u, v) if u < v else (v, u)
@@ -2496,6 +2712,81 @@ def _prune_redundant_nodes(nodes_xy, edges, weights, components,
                 new_edges.append((int(remap[u]), int(remap[v])))
                 new_weights.append(float(weight))
     return new_nodes, new_edges, new_weights, new_components, removed
+
+
+def _sparsify_redundant_edges(edges, weights, protected_mask=None,
+                              stretch=EDGE_SPANNER_STRETCH):
+    """Remove only edges with an active near-equal two-edge cost witness.
+
+    This runs on the final typed graph, after passage-body shadowing, so a
+    witness can never disappear in a later topology stage. Passage and
+    transition edges are protected by the caller. Longer/more expensive edges
+    are considered first; every removal immediately mutates the adjacency, so
+    subsequent decisions can rely only on edges that still exist.
+
+    Returns ``(edges, weights, kept_indices, removed_count)`` as numpy arrays.
+    ``kept_indices`` lets the caller filter parallel edge metadata without
+    weakening the binary-format invariants.
+    """
+    edges_arr = np.asarray(edges, dtype=np.int32).reshape(-1, 2)
+    weights_arr = np.asarray(weights, dtype=np.float32).reshape(-1)
+    count = len(edges_arr)
+    if count == 0:
+        return (edges_arr, weights_arr, np.zeros(0, dtype=np.int64), 0)
+
+    if protected_mask is None:
+        protected = np.zeros(count, dtype=bool)
+    else:
+        protected = np.asarray(protected_mask, dtype=bool).reshape(-1)
+        if len(protected) != count:
+            raise ValueError("protected edge mask length mismatch")
+
+    node_count = int(edges_arr.max()) + 1
+    adjacency = [dict() for _ in range(node_count)]
+    for edge_index, ((u, v), weight) in enumerate(zip(edges_arr, weights_arr)):
+        # Protected typed edges must not remove a base edge by acting as its
+        # witness: that would silently force a formerly base-only route through
+        # a passage surface. They remain serialized, but outside this base
+        # sparsifier's adjacency.
+        if protected[edge_index]:
+            continue
+        u, v, weight = int(u), int(v), float(weight)
+        previous = adjacency[u].get(v)
+        if previous is None or weight < previous:
+            adjacency[u][v] = weight
+            adjacency[v][u] = weight
+
+    active = np.ones(count, dtype=bool)
+    order = sorted(
+        range(count),
+        key=lambda idx: (-float(weights_arr[idx]),
+                         int(edges_arr[idx, 0]), int(edges_arr[idx, 1])))
+    removed = 0
+    for edge_index in order:
+        if protected[edge_index]:
+            continue
+        u, v = map(int, edges_arr[edge_index])
+        weight = float(weights_arr[edge_index])
+        if v not in adjacency[u]:
+            active[edge_index] = False
+            removed += 1
+            continue
+        left, right = ((adjacency[u], adjacency[v])
+                       if len(adjacency[u]) <= len(adjacency[v])
+                       else (adjacency[v], adjacency[u]))
+        limit = stretch * weight
+        has_witness = any(
+            middle in right and first_weight + right[middle] <= limit
+            for middle, first_weight in left.items())
+        if not has_witness:
+            continue
+        del adjacency[u][v]
+        del adjacency[v][u]
+        active[edge_index] = False
+        removed += 1
+
+    kept = np.flatnonzero(active)
+    return edges_arr[kept], weights_arr[kept], kept, removed
 
 
 # =============================================================================
@@ -2863,7 +3154,8 @@ def _apply_passage_topology(artifact, mask, passages, level_passages,
 # =============================================================================
 
 def build_navgraph(mask_path, region_polygon=None, level_passages=None,
-                   verbose=False, prune_region=True):
+                   verbose=False, prune_region=True,
+                   collect_diagnostics=False, progress_callback=None):
     """Build the navgraph artifact dict for one mask PNG.
 
     ``region_polygon`` (optional) is a coach-drawn map-region polygon: a sequence
@@ -2875,6 +3167,17 @@ def build_navgraph(mask_path, region_polygon=None, level_passages=None,
     ``prune_region=False`` is a benchmark-only switch: it keeps the polygon as
     the endpoint/hitzone authority while retaining the pre-WP-6.1 topology.
     Production builds must leave it enabled.
+
+    ``collect_diagnostics=True`` enables graph-wide measurements used by debug
+    overlays. They never alter the artifact topology and are skipped in normal
+    production builds.
+
+    ``progress_callback`` (optional) receives JSON-friendly dictionaries with
+    a monotonic estimated ``percent`` and an internal ``phase``. During
+    candidate connection it also receives the exact processed ``current`` and
+    ``total`` node counts. The overall percentage is phase-weighted because
+    loading, raster analysis, edge weighting and serialization are not
+    node-based work.
 
     Returns a dict with all arrays + stats (see module docstring). Pure
     computation; use ``save_navgraph()`` to persist.
@@ -2891,12 +3194,42 @@ def build_navgraph(mask_path, region_polygon=None, level_passages=None,
         if verbose:
             print(f"[navgraph] {msg}", flush=True)
 
+    def _progress(percent, phase, current=None, total=None):
+        if progress_callback is None:
+            return
+        payload = {
+            "percent": max(0, min(99, int(round(percent)))),
+            "phase": phase,
+        }
+        if current is not None:
+            payload["current"] = int(current)
+        if total is not None:
+            payload["total"] = int(total)
+        try:
+            keep_building = progress_callback(payload)
+            if keep_building is False:
+                raise NavgraphBuildCancelled()
+        except NavgraphBuildCancelled:
+            raise
+        except Exception as exc:  # progress reporting must never break a build
+            _log(f"progress callback failed: {exc!r}")
+
+    _progress(0, "starting")
+
     # 1. Load mask.
     t = time.time()
     mask = _load_mask(mask_path)
     H, W = mask.shape
     timings["load"] = time.time() - t
     _log(f"loaded {W}x{H} ({H*W/1e6:.1f} Mpx)")
+    _progress(4, "loading")
+
+    # Editor coordinates can overshoot the raster edge by a few pixels due to
+    # display scaling/rounding. Normalize before passages, revisions, hit-zone
+    # rasterization, and topology all consume the polygon so every stage uses
+    # the same bounded region.
+    if isinstance(region_polygon, (list, tuple)) and len(region_polygon) >= 3:
+        region_polygon = clip_region_polygon(region_polygon, W, H)
 
     # Normalize the complete canonical document before skeletonization or any
     # other expensive build stage. Structurally invalid geometry aborts the
@@ -2910,6 +3243,7 @@ def build_navgraph(mask_path, region_polygon=None, level_passages=None,
     timings["passage_normalization"] = time.time() - t
     _log(f"passages: {len(build_passages)} included, "
          f"{len(ignored_passage_ids)} outside region")
+    _progress(7, "preparing")
 
     min_cost_per_px = _min_cost_per_px(mask)
 
@@ -2921,6 +3255,7 @@ def build_navgraph(mask_path, region_polygon=None, level_passages=None,
     main_comp = int(comp_sizes[1:].argmax()) + 1 if ncomp > 0 else 0
     timings["label"] = time.time() - t
     _log(f"labelled {ncomp} free components; main={main_comp}")
+    _progress(13, "analysing")
 
     # 3. Hit zone: the coach-drawn region polygon is authoritative if supplied;
     #    otherwise fall back to automatic class-structure detection. Footprint
@@ -2941,6 +3276,7 @@ def build_navgraph(mask_path, region_polygon=None, level_passages=None,
     timings["hitzone"] = time.time() - t
     _log(f"hitzone[{hz_source}]: footprint {hz_footprint.mean()*100:.0f}% "
          f"sample {hz_sample.mean()*100:.0f}% (ds={hz_ds})")
+    _progress(19, "analysing")
 
     # Full-image EDT and skeletonization intentionally remain global.  From the
     # topology stage onward, polygon-exterior pixels are terrain-impassable, so
@@ -2971,6 +3307,7 @@ def build_navgraph(mask_path, region_polygon=None, level_passages=None,
     topo_passable = mask != IMPASSABLE
     dist_full = ndi.distance_transform_edt(topo_passable).astype(np.float32)
     timings["edt"] = time.time() - t
+    _progress(31, "clearance")
 
     # 5. Adaptive downsample + skeletonize.
     ds = _downsample_factor(H, W)
@@ -2980,6 +3317,7 @@ def build_navgraph(mask_path, region_polygon=None, level_passages=None,
     skel = _prune_spurs(skel, SPUR_MIN_LEN)
     timings["skeleton"] = time.time() - t
     _log(f"ds={ds} skeleton px={int(skel.sum())} ({timings['skeleton']:.1f}s)")
+    _progress(43, "skeleton")
 
     # 6. Nodes from skeleton (coarse coords) + resample + lattice. Spacings are
     #    specified in full-res px and converted to coarse px for this stage.
@@ -3116,12 +3454,14 @@ def build_navgraph(mask_path, region_polygon=None, level_passages=None,
     # costly/ambiguous detour around the obstacle. Keep only true-mask straight
     # same-side links; blocked pairs remain represented through their protected
     # nodes and ordinary graph candidates.
-    contour_pairs = {
-        (u, v) for u, v in contour_pairs
-        if _line_cost(
-            topology_mask, nodes_xy[u][0], nodes_xy[u][1],
-            nodes_xy[v][0], nodes_xy[v][1]) is not None
-    }
+    if contour_pairs:
+        _cp_list = list(contour_pairs)
+        _cp_x0 = np.array([nodes_xy[u][0] for u, _ in _cp_list], dtype=np.int32)
+        _cp_y0 = np.array([nodes_xy[u][1] for u, _ in _cp_list], dtype=np.int32)
+        _cp_x1 = np.array([nodes_xy[v][0] for _, v in _cp_list], dtype=np.int32)
+        _cp_y1 = np.array([nodes_xy[v][1] for _, v in _cp_list], dtype=np.int32)
+        _, _cp_blocked = _line_cost_batch(topology_mask, _cp_x0, _cp_y0, _cp_x1, _cp_y1)
+        contour_pairs = {pair for pair, blk in zip(_cp_list, _cp_blocked) if not blk}
     feature_nodes = {
         new_idx for new_idx, source_idx in enumerate(node_source_indices)
         if n_skeleton_nodes <= source_idx < protected_source_end
@@ -3203,6 +3543,7 @@ def build_navgraph(mask_path, region_polygon=None, level_passages=None,
          f"{len(feature_nodes)} protected contour/gate, "
          f"{n_lattice_nodes - len(feature_nodes)} open lattice, "
          f"{obstacle_sampling['deduplicated_count']} deduplicated)")
+    _progress(60, "nodes", len(nodes_xy), len(nodes_xy))
 
     # 8. Component id per node (from unfiltered labels) — needed for repair.
     nodes_arr = np.asarray(nodes_xy, dtype=np.int32).reshape(-1, 2)
@@ -3212,12 +3553,14 @@ def build_navgraph(mask_path, region_polygon=None, level_passages=None,
     else:
         components = np.zeros(0, dtype=np.int32)
 
-    # 9. Candidate edges -> weighting (A* fallback for skeleton backbone only).
+    # 9. Candidate edges -> weighting. Skeleton edges retain the broad A*
+    # fallback; a bounded set of local neighbour pairs may use the strict
+    # small-interruption fallback described by EDGE_LOCAL_DETOUR_*.
     t = time.time()
-    # NARROW_ALLEY_REDUCTION: low-clearance skeleton nodes already form a
-    # topologically authoritative chain. Do not let generic k-NN turn that chain
-    # back into a dense mesh of collinear shortcuts. Disable the feature flag
-    # near the constants to restore all former candidate edges.
+    # NARROW_ALLEY_REDUCTION: low-clearance skeleton nodes receive the smaller
+    # EDGE_NARROW_* candidate budget. This remains easy to reverse, but unlike
+    # the former all-or-nothing suppression it cannot erase every useful local
+    # connection when the downsampled backbone misses one.
     narrow_backbone_nodes = {
         idx for idx, (x, y) in enumerate(nodes_xy[:n_skeleton_nodes])
         if dist_full[y, x] <= NARROW_BACKBONE_CLEARANCE_PX
@@ -3227,11 +3570,22 @@ def build_navgraph(mask_path, region_polygon=None, level_passages=None,
         (u, v, 0.0) for u, v in contour_pairs]
     skeleton_pairs = {
         (min(a, b), max(a, b)) for a, b, _ in backbone_edges if a != b}
-    cand = _candidate_edges(
+    cand, local_detour_pairs, candidate_line_results = _candidate_edges(
         nodes_xy, backbone_edges, obstacle_edge_nodes, mask=topology_mask,
-        backbone_only_nodes=narrow_backbone_nodes)
+        backbone_only_nodes=narrow_backbone_nodes,
+        return_local_detours=True, return_line_results=True,
+        progress_callback=lambda current, total: _progress(
+            60 + (14 * current / total if total else 14),
+            "connect_nodes", current, total))
     edges, weights = _weight_edges(
-        topology_mask, nodes_xy, cand, skeleton_pairs)
+        topology_mask, nodes_xy, cand, skeleton_pairs, local_detour_pairs,
+        candidate_line_results,
+        progress_callback=lambda current, total: _progress(
+            74 + (8 * current / total if total else 8),
+            "weight_edges", current, total))
+    obstacle_sampling["local_detour_candidates"] = len(local_detour_pairs)
+    obstacle_sampling["local_detour_edges_kept"] = len(
+        set(edges) & local_detour_pairs)
     n_before = len(edges)
     edges, weights = _repair_connectivity(
         topology_mask, nodes_xy, edges, weights, components, main_comp)
@@ -3246,6 +3600,7 @@ def build_navgraph(mask_path, region_polygon=None, level_passages=None,
     _log(f"edges: {len(edges)} kept of {len(cand)} candidates "
          f"(+{len(edges) - n_before} net after bridges/pruning, "
          f"{pruned_nodes} nodes pruned) ({timings['edges']:.1f}s)")
+    _progress(84, "repairing")
 
     # 10. Sampling metadata.
     t = time.time()
@@ -3263,12 +3618,18 @@ def build_navgraph(mask_path, region_polygon=None, level_passages=None,
         coarse_origin = np.asarray(
             [gx0 * SAMPLE_DS, gy0 * SAMPLE_DS], dtype=np.int32)
     timings["sampling"] = time.time() - t
+    _progress(88, "sampling")
 
     edges_arr = np.asarray(edges, dtype=np.int32).reshape(-1, 2)
     weights_arr = np.asarray(weights, dtype=np.float32).reshape(-1)
 
-    # Graph connectivity of nodes on the main free-space component.
-    main_conn = _main_component_connectivity(nodes_arr, edges_arr, components, main_comp)
+    # This graph-wide BFS is diagnostic only. On large graphs it can consume a
+    # few hundred milliseconds and its result never changes the artifact.
+    main_conn = (
+        _main_component_connectivity(
+            nodes_arr, edges_arr, components, main_comp)
+        if collect_diagnostics else None
+    )
 
     free_total = int((mask != IMPASSABLE).sum())
     graph_free_total = int((topology_mask != IMPASSABLE).sum())
@@ -3291,8 +3652,10 @@ def build_navgraph(mask_path, region_polygon=None, level_passages=None,
             float(graph_comp_sizes[main_comp]) / graph_free_total, 4)
             if graph_free_total and main_comp else 0.0,
         "free_fraction": round(free_total / (H * W), 4),
-        "main_component_connectivity": round(main_conn, 4),
-        "region_component_connectivity": round(main_conn, 4),
+        "main_component_connectivity": (
+            round(main_conn, 4) if main_conn is not None else None),
+        "region_component_connectivity": (
+            round(main_conn, 4) if main_conn is not None else None),
         "hitzone_source": hz_source,
         "hitzone_footprint_fraction": round(float(hz_footprint.mean()), 4),
         "hitzone_sample_fraction": round(float(hz_sample.mean()), 4),
@@ -3360,6 +3723,29 @@ def build_navgraph(mask_path, region_polygon=None, level_passages=None,
         stats["retained_transverse_bypasses"] = 0
         stats["rejected_longitudinal_edges"] = 0
         stats["unusable_endpoints"] = []
+    _progress(94, "passages")
+
+    # Final edge spanner: passage shadowing/compaction is complete, so every
+    # accepted witness is guaranteed to remain in the serialized topology.
+    # Typed passage/transition edges encode surface semantics and are never
+    # candidates for geometric redundancy pruning.
+    t = time.time()
+    edge_kinds = np.asarray(
+        artifact.get("edge_kinds", np.zeros(len(artifact["edges"]), np.uint8)),
+        dtype=np.uint8).reshape(-1)
+    (artifact["edges"], artifact["weights"], kept_edge_indices,
+     spanner_removed) = _sparsify_redundant_edges(
+        artifact["edges"], artifact["weights"],
+        protected_mask=edge_kinds != EDGE_KIND_BASE)
+    for metadata_key in ("edge_kinds", "edge_passage"):
+        if metadata_key in artifact:
+            artifact[metadata_key] = np.asarray(
+                artifact[metadata_key]).reshape(-1)[kept_edge_indices]
+    timings["edge_sparsify"] = time.time() - t
+    stats["edge_spanner_stretch"] = EDGE_SPANNER_STRETCH
+    stats["edge_spanner_removed"] = int(spanner_removed)
+    stats["n_edges"] = int(len(artifact["edges"]))
+    _progress(97, "sparsifying")
 
     stats["ignored_passages_outside_region"] = len(ignored_passage_ids)
     stats["ignored_passage_ids_outside_region"] = ignored_passage_ids
@@ -3376,25 +3762,20 @@ def build_navgraph(mask_path, region_polygon=None, level_passages=None,
         artifact["coarse_labels"] = np.zeros(labels.shape, dtype=np.uint8)
     stats["coarse_labels_compacted"] = True
 
-    # 11. Suitability estimate (WP 4.3) — lightweight pair-generation
-    #     simulation mirroring the client pipeline (scripts/navgraph_harness.mjs
-    #     / project/navgraph_suitability.py). Never allowed to break a build.
-    t = time.time()
-    try:
-        from .navgraph_suitability import simulate_suitability
-        suitability = simulate_suitability(artifact, mask)
-    except Exception as exc:  # pragma: no cover - defensive; must never break a build
-        _log(f"suitability simulation failed: {exc!r}")
-        suitability = None
-    timings["suitability"] = time.time() - t
-    stats["suitability"] = suitability
+    # 11. Suitability estimate removed (Group 3 optimization).
+    #     The UI no longer surfaces suitability stats and the fixed 8 s budget
+    #     was ~20-25 % of median build time. The backend
+    #     (project/navgraph_suitability.py) is intentionally preserved so it
+    #     can be run on-demand via the management command. Stats key is kept as
+    #     None for backward-compat with any reader that inspects the .npz.
+    stats["suitability"] = None
     stats["timings"] = {k: round(v, 2) for k, v in timings.items()}
     stats["build_seconds"] = round(time.time() - t_start, 2)
-    if suitability:
-        _log(f"suitability: valid_rate={suitability['valid_rate']} "
-             f"mean_retries={suitability['mean_retries']} mean_ms={suitability['mean_ms']} "
-             f"warn={suitability['warn']}")
-    _log(f"done in {stats['build_seconds']}s; main-comp connectivity {main_conn:.3f}")
+    diagnostic_suffix = (
+        f"; main-comp connectivity {main_conn:.3f}"
+        if main_conn is not None else "")
+    _log(f"done in {stats['build_seconds']}s{diagnostic_suffix}")
+    _progress(99, "finalizing")
 
     return artifact
 

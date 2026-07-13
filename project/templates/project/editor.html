@@ -160,6 +160,7 @@
 
             <div id="cp-list"></div>
             <div id="block-list"></div>
+            <div id="passage-list"></div>
             <div id="mask-controls">
                 <div id="mask-opacity-row" class="mask-slider-row">
                     <label class="mask-slider-label">{% trans "Fill" %}</label>
@@ -297,7 +298,11 @@
         </div>
         <div id="infinity-gen-bar" style="display:none">
             <x-icon name="spinner" class="spin" size="14px"></x-icon>
-            <span class="infinity-gen-text">{% trans "This map will be ready for infinity mode soon…" %}</span>
+            <div id="infinity-gen-content">
+                <span id="infinity-gen-text">{% trans "This map will be ready for infinity mode soon…" %}</span>
+                <progress id="infinity-gen-progress" value="0" max="100"
+                          aria-label="{% trans 'Navigation graph build progress' %}"></progress>
+            </div>
         </div>
         <div id="map-background"></div>
         <div id="camera">

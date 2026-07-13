@@ -99,6 +99,9 @@ msgstr "Linea di blocco aggiunta"
 msgid "Bridges, underground passages added?"
 msgstr "Ponti, passaggi sotterranei aggiunti?"
 
+msgid "Building navigation graph…"
+msgstr "Costruzione del navgraph…"
+
 msgid "Building the map failed."
 msgstr "Costruzione della mappa non riuscita."
 
@@ -140,6 +143,9 @@ msgstr "Gara"
 
 msgid "Competition short"
 msgstr "G"
+
+msgid "Connecting nodes…"
+msgstr "Collegamento dei nodi…"
 
 msgid "Connection lost — changes are not being saved"
 msgstr "Connessione interrotta — le modifiche non vengono salvate"
@@ -521,6 +527,9 @@ msgstr "Statistiche personali"
 
 msgid "Pan"
 msgstr "Sposta la mappa"
+
+msgid "Passage"
+msgstr "Passaggio"
 
 msgid "Passage added"
 msgstr "Passaggio aggiunto"

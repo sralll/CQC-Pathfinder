@@ -27,7 +27,7 @@
 // CLI:
 //   node scripts/navgraph_harness.mjs --mask media/masks/<name>.png \
 //        [--count 100] [--max-attempts 4000] [--seed 1] [--render 6] \
-//        [--out scratch/harness]
+//        [--passages scratch/<name>.passages.json] [--out scratch/harness]
 //   node scripts/navgraph_harness.mjs --all-demo   # runs 3 bundled sample masks
 // =============================================================================
 
@@ -40,7 +40,8 @@ import sharp from 'sharp';
 import {
 	IMPASSABLE, SUPPORTED_VERSION, DEFAULT_CONFIG,
 	loadArtifact as parseArtifact, buildState, makeRng,
-	generateOnePair, refineRouteLegal, countLegalityViolations, routePathLength,
+	attachSerializedPassages, generateOnePair, refineRouteLegal,
+	countLegalityViolations, routePathLength,
 } from '../project/static/project/js/pathing/navgraph_router.js';
 import * as routePairSelection from '../results/static/results/js/infinite/route_pair_selection.js';
 
@@ -71,6 +72,28 @@ export async function loadMask(maskPath) {
 	const { data, info } = await sharp(maskPath, { limitInputPixels: false })
 		.greyscale().raw().toBuffer({ resolveWithObject: true });
 	return { mask: new Uint8Array(data.buffer, data.byteOffset, data.length), H: info.height, W: info.width };
+}
+
+/** Build production router state and attach the separately stored passages. */
+export function buildBenchmarkState(artifact, mask, config, passagesPath = null) {
+	const state = buildState(artifact, mask, config);
+	const hasSerializedPassages = artifact.baseNodeCount < artifact.N;
+	if (passagesPath) {
+		const document = JSON.parse(
+			fs.readFileSync(passagesPath, 'utf8').replace(/^\uFEFF/, ''),
+		);
+		const items = Array.isArray(document) ? document : document?.items;
+		if (!Array.isArray(items)) {
+			throw new Error(`passage file must be an array or {version, items}: ${passagesPath}`);
+		}
+		attachSerializedPassages(state, items);
+	} else if (hasSerializedPassages) {
+		throw new Error(
+			`artifact contains ${artifact.N - artifact.baseNodeCount} passage nodes; ` +
+			'pass --passages <level-passages.json> for a production-equivalent run',
+		);
+	}
+	return state;
 }
 
 // =============================================================================
@@ -245,7 +268,9 @@ function parseArgs(argv) {
 
 function csvRow(vals) { return vals.map((v) => (v === null || v === undefined ? '' : v)).join(','); }
 
-async function runOne(maskPath, outDir, { count, maxAttempts, seed, render }) {
+async function runOne(maskPath, outDir, {
+	count, maxAttempts, seed, render, passagesPath,
+}) {
 	const binPath = maskPath.replace(/\.png$/i, '.navgraph.bin');
 	if (!fs.existsSync(binPath)) { console.error(`  skip: no artifact ${path.basename(binPath)}`); return null; }
 	const name = path.basename(maskPath).replace(/\.png$/i, '');
@@ -254,7 +279,7 @@ async function runOne(maskPath, outDir, { count, maxAttempts, seed, render }) {
 	try { artifact = loadArtifact(binPath); }
 	catch (e) { console.error(`  skip: ${e.message}`); return null; }
 	const { mask } = await loadMask(maskPath);
-	const state = buildState(artifact, mask);
+	const state = buildBenchmarkState(artifact, mask, undefined, passagesPath);
 	const buildMs = performance.now() - t0;
 
 	const { pairs, attempts, stats } = generatePairs(state, { count, maxAttempts, rng: makeRng(seed) });
@@ -307,6 +332,7 @@ async function main() {
 	const seed = args.seed ? parseInt(args.seed, 10) : 1;
 	const render = args.render !== undefined ? parseInt(args.render, 10) : 6;
 	const outDir = args.out ? String(args.out) : 'scratch/harness';
+	const passagesPath = args.passages ? String(args.passages) : null;
 
 	let masks;
 	if (args['all-demo'] || (!args.mask)) masks = DEMO_MASKS;
@@ -315,7 +341,9 @@ async function main() {
 	console.log(`navgraph harness: ${masks.length} mask(s), count=${count}, maxAttempts=${maxAttempts}, seed=${seed}, out=${outDir}`);
 	for (const m of masks) {
 		console.log(`- ${m}`);
-		await runOne(m, outDir, { count, maxAttempts, seed, render });
+		await runOne(m, outDir, {
+			count, maxAttempts, seed, render, passagesPath,
+		});
 	}
 }
 

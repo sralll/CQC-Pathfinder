@@ -52,6 +52,27 @@ function wallState() {
 
 const bridge = [{ id: 'bridge', points: [[24, 15], [36, 15]], width: 8 }];
 
+// Infinity shares the editor's complete entrance-band optimizer rather than
+// pinning serialized/dynamic centreline portals. With off-axis endpoints the
+// globally shorter traversal enters/exits at different y coordinates.
+{
+	const state = wallState();
+	attachLevelPassages(state, bridge);
+	const typedLegs = [
+		{ surface: 'base', passageId: null, direction: null, points: [{ x: 5, y: 8 }, { x: 24, y: 15 }] },
+		{ surface: 'passage:bridge', passageId: 'bridge', direction: 'from-start', points: [{ x: 24, y: 15 }, { x: 36, y: 15 }] },
+		{ surface: 'base', passageId: null, direction: null, points: [{ x: 36, y: 15 }, { x: 55, y: 25 }] },
+	];
+	const refined = refineTypedNavgraphRoute(state, {
+		path: typedLegs.flatMap((leg) => leg.points), typedLegs, cost: 0,
+	}, [], { routeIndex: 1 });
+	assert.equal(refined.mode, 'theta');
+	assert.ok(refined.portalOptimization?.accepted > 0, refined.portalOptimization);
+	const passageLeg = refined.typedLegs[1];
+	assert.ok(passageLeg.points[0].y !== 15 || passageLeg.points.at(-1).y !== 15,
+		'Infinity passage portals remained pinned to the centreline');
+}
+
 // Empty passage data leaves the established base graph path byte-for-byte shaped.
 {
     const state = wallState();
@@ -159,6 +180,10 @@ const bridge = [{ id: 'bridge', points: [[24, 15], [36, 15]], width: 8 }];
     assert.ok(options.paths.length >= 2, options.reason);
     assert.ok(options.paths[0].typedLegs.some((leg) => leg.surface === 'passage:choice'));
     assert.equal(options.barriers[0].surface, 'passage:choice');
+	assert.ok(Math.hypot(
+		options.barriers[0].bx - options.barriers[0].ax,
+		options.barriers[0].by - options.barriers[0].ay,
+	) >= 12, 'passage blocker did not cover width plus overhang');
     assert.notDeepEqual(options.paths[1].nodePath, options.paths[0].nodePath);
 }
 

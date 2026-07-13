@@ -19,6 +19,7 @@ from django.utils import timezone
 from django.utils.translation import gettext as _
 import os
 import tempfile
+import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 
@@ -575,7 +576,10 @@ def _region_is_full_frame(region, W, H, eps=2):
     a couple of pixels — is no longer the frame and passes."""
     if not isinstance(region, list) or len(region) != 4:
         return False
-    corners = {(0, 0), (W, 0), (W, H), (0, H)}
+    # Region coordinates are mask-pixel coordinates, whose last valid pixel
+    # is W-1/H-1. This also recognizes a frame that was clipped after the
+    # editor rounded its right/bottom edge to W/H.
+    corners = {(0, 0), (W - 1, 0), (W - 1, H - 1), (0, H - 1)}
     matched = set()
     for pt in region:
         if not isinstance(pt, (list, tuple)) or len(pt) != 2:
@@ -601,9 +605,11 @@ def _validate_region_polygon(polygon):
         try:
             x = float(pt[0])
             y = float(pt[1])
-        except (TypeError, ValueError):
+            if not (isfinite(x) and isfinite(y)):
+                raise ValueError
+            cleaned.append([int(round(x)), int(round(y))])
+        except (TypeError, ValueError, OverflowError):
             return None, _('Invalid region point.')
-        cleaned.append([int(round(x)), int(round(y))])
     return cleaned, None
 
 
@@ -620,7 +626,16 @@ def region_suggest(request, file_id):
         return HttpResponseNotFound("Not found.")
 
     if isinstance(file.infinite_region, list) and len(file.infinite_region) >= 3:
-        return JsonResponse({'polygon': file.infinite_region, 'source': 'saved'})
+        polygon = file.infinite_region
+        mask_path = _mask_path_for_file(file)
+        if mask_path and os.path.isfile(mask_path):
+            try:
+                from .navgraph import clip_region_polygon, mask_dimensions
+                width, height = mask_dimensions(mask_path)
+                polygon = clip_region_polygon(polygon, width, height)
+            except (OSError, ValueError, TypeError, OverflowError):
+                pass
+        return JsonResponse({'polygon': polygon, 'source': 'saved'})
 
     mask_path = _mask_path_for_file(file)
     if not mask_path or not os.path.isfile(mask_path):
@@ -661,17 +676,35 @@ def _rebuild_navgraph_for_file(file_id, enable_on_success=False, build_token=Non
                 return
         mask_path = _mask_path_for_file(file)
         if not mask_path or not os.path.isfile(mask_path):
-            File.objects.filter(id=file_id).update(batch_progress={
+            failure = {
                 'type': 'navgraph_build', 'status': 'failed',
+                'build_token': build_token,
                 'error': str(_('This map has no mask yet.')),
                 'updated_at': timezone.now().isoformat(),
-            })
+            }
+            query = File.objects.filter(id=file_id)
+            if build_token:
+                query = query.filter(
+                    batch_progress__build_token=build_token,
+                    batch_progress__status='building',
+                )
+            query.update(batch_progress=failure)
             return
-        File.objects.filter(id=file_id).update(batch_progress={
+        query = File.objects.filter(id=file_id)
+        if build_token:
+            query = query.filter(
+                batch_progress__build_token=build_token,
+                batch_progress__status='building',
+            )
+        updated = query.update(batch_progress={
             'type': 'navgraph_build', 'status': 'building',
             'build_token': build_token,
+            'percent': 0,
+            'phase': 'starting',
             'updated_at': timezone.now().isoformat(),
         })
+        if build_token and not updated:
+            return
         from .navgraph import (
             build_navgraph, filter_level_passages_for_region, save_navgraph,
             passage_revision, region_revision,
@@ -679,8 +712,52 @@ def _rebuild_navgraph_for_file(file_id, enable_on_success=False, build_token=Non
         # One coherent snapshot of everything the build depends on.
         region = file.infinite_region if isinstance(file.infinite_region, list) else None
         passages = file.level_passages
+
+        last_progress_write = 0.0
+        last_progress_phase = None
+
+        def report_progress(update):
+            """Persist throttled progress without reviving an invalidated build."""
+            nonlocal last_progress_write, last_progress_phase
+            if not build_token:
+                return True
+            now = time.monotonic()
+            phase = update.get('phase')
+            percent = max(0, min(99, int(update.get('percent', 0))))
+            # Phase changes are useful even on small/fast maps. Within a long
+            # phase, the editor polls at 1.5 s, so writes more often than this
+            # add database traffic without making the bar smoother.
+            if phase == last_progress_phase and now - last_progress_write < 0.5:
+                return True
+            progress = {
+                'type': 'navgraph_build',
+                'status': 'building',
+                'build_token': build_token,
+                'percent': percent,
+                'phase': phase,
+                'updated_at': timezone.now().isoformat(),
+            }
+            if update.get('current') is not None:
+                progress['current'] = max(0, int(update['current']))
+            if update.get('total') is not None:
+                progress['total'] = max(0, int(update['total']))
+            updated = File.objects.filter(
+                id=file_id,
+                batch_progress__build_token=build_token,
+                batch_progress__status='building',
+            ).update(batch_progress=progress)
+            if updated:
+                last_progress_write = now
+                last_progress_phase = phase
+                return True
+            # The row no longer owns this token: a mask/region/passage edit or
+            # a newer activation superseded it. Returning False asks the pure
+            # builder to abort at its next cooperative progress checkpoint.
+            return False
+
         artifact = build_navgraph(
-            mask_path, region_polygon=region, level_passages=passages)
+            mask_path, region_polygon=region, level_passages=passages,
+            progress_callback=report_progress)
         H, W = int(artifact['mask_shape'][0]), int(artifact['mask_shape'][1])
         built_passage_revision = artifact['passage_revision']
         built_region_revision = artifact['stats'].get(
@@ -711,7 +788,12 @@ def _rebuild_navgraph_for_file(file_id, enable_on_success=False, build_token=Non
                 current_region_revision == built_region_revision
                 and current_passage_revision == built_passage_revision
             )
-            if not build_is_current or not revisions_match:
+            if not build_is_current:
+                # A newer build (or an invalidation marker) owns the row now.
+                # This old worker must be completely silent: in particular it
+                # must not replace the newer build's progress with ``stale``.
+                return
+            if not revisions_match:
                 # A mask/region/passage edit superseded this build while it was
                 # running. Discard the freshly built (but unwritten) artifact and
                 # never let it make the file playable.
@@ -722,14 +804,8 @@ def _rebuild_navgraph_for_file(file_id, enable_on_success=False, build_token=Non
                     'infinite_enabled': False,
                     'updated_at': timezone.now().isoformat(),
                 }
-                # Preserve an existing 'invalidated' marker set by a concurrent
-                # mask/region edit rather than masking why the build was dropped.
-                if (isinstance(progress, dict)
-                        and progress.get('status') == 'invalidated'):
-                    file.save(update_fields=['infinite_enabled'])
-                else:
-                    file.batch_progress = stale_progress
-                    file.save(update_fields=['infinite_enabled', 'batch_progress'])
+                file.batch_progress = stale_progress
+                file.save(update_fields=['infinite_enabled', 'batch_progress'])
                 return
             # Current: publish the artifact atomically, then flip the flag.
             save_navgraph(artifact, mask_path)
@@ -748,6 +824,13 @@ def _rebuild_navgraph_for_file(file_id, enable_on_success=False, build_token=Non
             }
             file.save(update_fields=['infinite_enabled', 'batch_progress'])
     except Exception as exc:
+        from .navgraph import NavgraphBuildCancelled
+        if isinstance(exc, NavgraphBuildCancelled):
+            logger.info(
+                "navgraph rebuild cancelled after token was superseded for file %s",
+                file_id,
+            )
+            return
         logger.exception("navgraph rebuild failed for file %s", file_id)
         failure = {
             'type': 'navgraph_build', 'status': 'failed',
@@ -789,6 +872,16 @@ def save_region(request, file_id):
         file = get_object_or_404(File, id=file_id, deleted=False)
         if not request.user.is_superuser and file.team != request.user.profile.active_team:
             return JsonResponse({'error': 'Permission denied'}, status=403)
+
+        # The SVG editor can round a drag just beyond the final mask pixel.
+        # Store the bounded form as well as using it during builds, so a later
+        # reload cannot reintroduce the same out-of-image coordinates.
+        if polygon:
+            mask_path = _mask_path_for_file(file)
+            if mask_path and os.path.isfile(mask_path):
+                from .navgraph import clip_region_polygon, mask_dimensions
+                width, height = mask_dimensions(mask_path)
+                polygon = clip_region_polygon(polygon, width, height)
 
         file.infinite_region = polygon or None
         file.infinite_enabled = False
@@ -921,6 +1014,8 @@ def toggle_infinite(request, file_id):
         File.objects.filter(id=file.id).update(batch_progress={
             'type': 'navgraph_build', 'status': 'building',
             'build_token': build_token,
+            'percent': 0,
+            'phase': 'starting',
             'updated_at': tz.now().isoformat(),
         }, infinite_enabled=False)
         threading.Thread(
@@ -928,7 +1023,11 @@ def toggle_infinite(request, file_id):
             kwargs={'enable_on_success': True, 'build_token': build_token}, daemon=True,
         ).start()
 
-        return JsonResponse({'status': 'building', 'infinite_enabled': False})
+        return JsonResponse({
+            'status': 'building',
+            'build_token': build_token,
+            'infinite_enabled': False,
+        })
     except Exception as e:
         traceback.print_exc()
         return JsonResponse({'error': str(e)}, status=500)

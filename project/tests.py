@@ -304,6 +304,34 @@ class NavgraphInvalidationTests(TestCase):
         self.file.refresh_from_db()
         self.assertFalse(self.file.infinite_enabled)
 
+    def test_region_save_clips_vertices_to_mask_bounds(self):
+        from PIL import Image
+
+        with tempfile.TemporaryDirectory() as media_root, override_settings(MEDIA_ROOT=media_root):
+            masks_dir = os.path.join(media_root, 'masks')
+            os.makedirs(masks_dir)
+            Image.new('L', (8, 6), 255).save(
+                os.path.join(masks_dir, 'mask_enabled-map.png'))
+
+            response = self.client.post(
+                reverse('save_region', args=[self.file.id]),
+                data=json.dumps({
+                    'polygon': [[-2, -3], [9, 1], [7, 8], [0, 5]],
+                }),
+                content_type='application/json',
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json()['polygon'],
+            [[0, 0], [7, 1], [7, 5], [0, 5]],
+        )
+        self.file.refresh_from_db()
+        self.assertEqual(
+            self.file.infinite_region,
+            [[0, 0], [7, 1], [7, 5], [0, 5]],
+        )
+
     def test_region_delete_clears_polygon_and_disables_infinite_play(self):
         self.file.infinite_region = [[10, 10], [100, 10], [100, 100], [10, 100]]
         self.file.save(update_fields=['infinite_region'])
@@ -1093,6 +1121,31 @@ class NavgraphRebuildAuthorityTests(TestCase):
             self.assertTrue(self.file.infinite_enabled)
             self.assertEqual(self.file.batch_progress['status'], 'done')
 
+    def test_build_callback_persists_pollable_node_progress(self):
+        document = level_passages_document(points=[[2, 2], [6, 6]])
+        observed = {}
+
+        def build_with_progress(*_args, progress_callback=None, **_kwargs):
+            self.assertIsNotNone(progress_callback)
+            progress_callback({
+                'percent': 68,
+                'phase': 'connect_nodes',
+                'current': 34,
+                'total': 50,
+            })
+            self.file.refresh_from_db()
+            observed.update(self.file.batch_progress)
+            return self._artifact_for(document)
+
+        with tempfile.TemporaryDirectory() as media_root, override_settings(MEDIA_ROOT=media_root):
+            self._run_build(media_root, build_with_progress)
+
+        self.assertEqual(observed['status'], 'building')
+        self.assertEqual(observed['percent'], 68)
+        self.assertEqual(observed['phase'], 'connect_nodes')
+        self.assertEqual(observed['current'], 34)
+        self.assertEqual(observed['total'], 50)
+
     def test_passage_edit_during_build_is_reported_stale(self):
         document = level_passages_document(points=[[2, 2], [6, 6]])
         with tempfile.TemporaryDirectory() as media_root, override_settings(MEDIA_ROOT=media_root):
@@ -1112,6 +1165,52 @@ class NavgraphRebuildAuthorityTests(TestCase):
             self.file.refresh_from_db()
             self.assertFalse(self.file.infinite_enabled)
             self.assertEqual(self.file.batch_progress['status'], 'stale')
+
+    def test_superseded_build_cannot_overwrite_newer_build_progress(self):
+        document = level_passages_document(points=[[2, 2], [6, 6]])
+        with tempfile.TemporaryDirectory() as media_root, override_settings(MEDIA_ROOT=media_root):
+            artifact = self._artifact_for(document)
+
+            def finish_after_replacement_started(*_args, **_kwargs):
+                File.objects.filter(id=self.file.id).update(batch_progress={
+                    'type': 'navgraph_build',
+                    'status': 'building',
+                    'build_token': 'tok-2',
+                    'percent': 23,
+                    'phase': 'analysing',
+                })
+                return artifact
+
+            save_mock = self._run_build(media_root, finish_after_replacement_started)
+
+            save_mock.assert_not_called()
+            self.file.refresh_from_db()
+            self.assertEqual(self.file.batch_progress['status'], 'building')
+            self.assertEqual(self.file.batch_progress['build_token'], 'tok-2')
+            self.assertEqual(self.file.batch_progress['percent'], 23)
+
+    def test_progress_checkpoint_cancels_superseded_worker_silently(self):
+        from project.navgraph import NavgraphBuildCancelled
+
+        def supersede_then_report(*_args, progress_callback=None, **_kwargs):
+            File.objects.filter(id=self.file.id).update(batch_progress={
+                'type': 'navgraph_build',
+                'status': 'building',
+                'build_token': 'tok-2',
+                'percent': 7,
+                'phase': 'preparing',
+            })
+            if progress_callback({'percent': 10, 'phase': 'analysing'}) is False:
+                raise NavgraphBuildCancelled()
+            self.fail('The superseded worker was not cancelled')
+
+        with tempfile.TemporaryDirectory() as media_root, override_settings(MEDIA_ROOT=media_root):
+            save_mock = self._run_build(media_root, supersede_then_report)
+
+            save_mock.assert_not_called()
+            self.file.refresh_from_db()
+            self.assertEqual(self.file.batch_progress['build_token'], 'tok-2')
+            self.assertEqual(self.file.batch_progress['status'], 'building')
 
 
 class BuildNavgraphCommandAmbiguityTests(TestCase):

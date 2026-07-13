@@ -7,6 +7,10 @@ export const DEFAULT_ROUTE_PAIR_SELECTION = Object.freeze({
     relativeGapStdDev: 0.06,
     uniformPairWeight: 0.10,
     highRouteIndexBias: 1.25,
+    // Infinity masks may set this to 1. Later cumulative alternates otherwise
+    // contain several blockers that cannot all be rendered with the lower
+    // selected route, producing unexplained detours around invisible walls.
+    maxRouteIndexGap: Infinity,
 });
 
 export function routeSlotsFor(paths, field, minSlots = 5) {
@@ -100,6 +104,10 @@ export function selectWeightedRoutePair(paths, { start, goal, config = {}, rng =
             const a = paths[i], b = paths[j];
             if (!Number.isFinite(a.run_time) || !Number.isFinite(b.run_time) || a.run_time <= 0 || b.run_time <= 0) continue;
             counts.totalPairs++;
+            if (Math.abs((a.routeIndex || 1) - (b.routeIndex || 1)) > cfg.maxRouteIndexGap) {
+                counts.side++;
+                continue;
+            }
             const faster = Math.min(a.run_time, b.run_time);
             const slower = Math.max(a.run_time, b.run_time);
             const relativeGap = faster > 0 ? (slower - faster) / faster : Infinity;

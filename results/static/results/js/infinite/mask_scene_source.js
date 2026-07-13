@@ -13,9 +13,11 @@
 
 import { TRAIN_SCALE_VALUE } from '/static/project/js/pathing/pipeline.js';
 
-// Keep at least this many validated pairs ready. WP 3.3 requires ≥ 2 so the
-// user never waits when advancing at the ~2 s play cadence.
-const PREFETCH_TARGET = 3;   // one served + ≥2 buffered
+// Keep five future validated pairs ready. Generation runs entirely in the
+// pathing Web Worker: takeScene() can return an already-buffered scene
+// immediately while the worker continues replenishing later pairs. Counting
+// in-flight jobs toward the target avoids an unbounded queue on slower phones.
+const PREFETCH_TARGET = 5;
 const PAIR_TIMEOUT_MS = 20000;
 const PAIR_WARN_MS = 5000;
 const REFERENCE_MAP_SCALE = 4000;

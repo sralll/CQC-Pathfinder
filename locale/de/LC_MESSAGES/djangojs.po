@@ -99,6 +99,9 @@ msgstr "Sperrlinie hinzugefügt"
 msgid "Bridges, underground passages added?"
 msgstr "Brücken, Unterführungen ergänzt?"
 
+msgid "Building navigation graph…"
+msgstr "Navgraph wird aufgebaut…"
+
 msgid "Building the map failed."
 msgstr "Aufbau der Karte fehlgeschlagen."
 
@@ -140,6 +143,9 @@ msgstr "Wettkampf"
 
 msgid "Competition short"
 msgstr "W"
+
+msgid "Connecting nodes…"
+msgstr "Knoten werden verbunden…"
 
 msgid "Connection lost — changes are not being saved"
 msgstr "Verbindung unterbrochen — Änderungen werden nicht gespeichert"
@@ -521,6 +527,9 @@ msgstr "Eigene Stats"
 
 msgid "Pan"
 msgstr "Karte verschieben"
+
+msgid "Passage"
+msgstr "Passage"
 
 msgid "Passage added"
 msgstr "Passage hinzugefügt"

@@ -56,10 +56,32 @@ function losAndSameTerrain(grid, w, h, x0, y0, x1, y1) {
     }
 }
 
+// Integrate the same sampled weighted cost used when the final route runtime is
+// measured. This is optional because full-map legacy Theta* intentionally keeps
+// its established behaviour; passage rasters opt in from layered_pipeline.js.
+function sampledLineCost(grid, w, h, x0, y0, x1, y1) {
+    const distance = Math.hypot(x1 - x0, y1 - y0);
+    const steps = Math.max(1, Math.ceil(distance));
+    const stepDistance = distance / steps;
+    let cost = 0;
+    for (let step = 1; step <= steps; step++) {
+        const fraction = step / steps;
+        const x = Math.round(x0 + (x1 - x0) * fraction);
+        const y = Math.round(y0 + (y1 - y0) * fraction);
+        if (x < 0 || x >= w || y < 0 || y >= h) return Infinity;
+        const grey = grid[y * w + x];
+        if (grey === 0) return Infinity;
+        cost += stepDistance * (255 - grey);
+    }
+    return cost;
+}
+
 // `deadlineMs` (absolute `nowMs()` timestamp, optional) aborts the search
 // (returns null) once exceeded — checked every ~1024 pops. The editor path
 // (pipeline.js) passes none and is unaffected.
-export function guidedThetaStar(grid, w, h, start, goal, waypoints, switchRadius = 10, deadlineMs = null) {
+export function guidedThetaStar(grid, w, h, start, goal, waypoints, switchRadius = 10,
+    deadlineMs = null, options = {}) {
+    const integrateLineCost = options.integrateLineCost === true;
     const sx = start.x | 0, sy = start.y | 0;
     const gx = goal.x | 0, gy = goal.y | 0;
     const n = w * h;
@@ -79,6 +101,9 @@ export function guidedThetaStar(grid, w, h, start, goal, waypoints, switchRadius
         const p1x = p1 % w, p1y = (p1 - p1x) / w;
         const p2x = p2 % w, p2y = (p2 - p2x) / w;
         const r = losAndSameTerrain(grid, w, h, p1x, p1y, p2x, p2y);
+        if (integrateLineCost && r.los) {
+            r.lineCost = sampledLineCost(grid, w, h, p1x, p1y, p2x, p2y);
+        }
         losCache.set(key, r);
         return r;
     }
@@ -151,7 +176,14 @@ export function guidedThetaStar(grid, w, h, start, goal, waypoints, switchRadius
             // works fine; LOS from cur to neighbour also fine.
             const r = losAndTerrain(par, nIdx);
             if (r.los) {
-                if (r.sameTerrain) {
+                if (integrateLineCost) {
+                    // PASSAGE SMOOTHING FIX 3/3 (easy undo): passage callers opt
+                    // into a true weighted any-angle relaxation. Set
+                    // `weightedAnyAngle` to false in layered_pipeline.js to
+                    // restore the old same-grey-only shortcut rule.
+                    candG = gScore[par] + r.lineCost;
+                    candParent = par;
+                } else if (r.sameTerrain) {
                     const px = par % w, py = (par - px) / w;
                     const d = Math.hypot(nx - px, ny - py);
                     candG = gScore[par] + d * cost;

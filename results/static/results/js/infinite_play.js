@@ -2,6 +2,10 @@ import {
     MaskSceneSource,
     maskBarrierStrokeWidthMapUnits,
 } from './infinite/mask_scene_source.js';
+import {
+    cameraRotationForEndpoints,
+    orientMaskSceneForCamera,
+} from './infinite/scene_orientation.js';
 
 /* =========================================================
    INFINITE PLAY — procedurally-generated sprint route-choice
@@ -802,6 +806,10 @@ async function next() {
     showMapSpinner();
     try {
         scene = await takeNextScene();
+        // Reversing an uploaded-map problem preserves its geometry and route
+        // choice, but can avoid an unnecessary half-turn from the previous
+        // camera heading. Do this only when the reverse direction is closer.
+        orientMaskSceneForCamera(scene, cam.rot);
     } catch (err) {
         console.error('failed to load infinite map:', err);
         window.setTimeout(next, 500);
@@ -829,9 +837,9 @@ function beginChoice() {
 
 async function takeNextScene() {
     if (sceneSource === 'mask' && maskSource) {
-        // Mask mode: the MaskSceneSource keeps a prefetch buffer (≥ 2) of
-        // validated pairs and returns a ready scene, awaiting only if the
-        // buffer is momentarily starved (typically just the first take).
+        // Mask mode: the MaskSceneSource keeps five future validated pairs
+        // prefetched in its Web Worker and returns a buffered scene immediately,
+        // awaiting only if the buffer is momentarily starved (normally first load).
         if (maskSourceReady) { await maskSourceReady; maskSourceReady = null; }
         if (sceneSource === 'mask' && maskSource) {
             return maskSource.takeScene();
@@ -2804,9 +2812,11 @@ function orientCameraToScene(duration = 0, onComplete = null) {
     const start = mapPointToSurface(scene.start);
     const ziel = mapPointToSurface(scene.ziel);
 
-    const dx = ziel.x - start.x;
-    const dy = ziel.y - start.y;
-    const rotDeg = -90 - Math.atan2(dy, dx) * (180 / Math.PI);
+    const rotDeg = cameraRotationForEndpoints(start, ziel);
+    if (rotDeg === null) {
+        onComplete?.();
+        return;
+    }
     const R = rotDeg * Math.PI / 180;
     const cosR = Math.cos(R);
     const sinR = Math.sin(R);

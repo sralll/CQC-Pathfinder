@@ -167,6 +167,9 @@ async function main() {
 	const totalBarCrossGeom = results.reduce((s, r) => s + r.barCrossGeom, 0);
 	const totalTheta = results.reduce((s, r) => s + r.thetaRoutes, 0);
 	const totalImproved = results.reduce((s, r) => s + r.improvedRoutes, 0);
+	const internalErrors = results.flatMap((r) => Object.keys(r.failReasons || {})
+		.filter((reason) => reason.startsWith('error:'))
+		.map((reason) => `${r.label}:${reason}`));
 	const aggImprovedPct = totalTheta ? +(100 * totalImproved / totalTheta).toFixed(1) : 0;
 	const worstP90 = Math.max(...results.map((r) => r.p90RefineMs || 0));
 	console.log('\n=== WP 5.2 acceptance ===');
@@ -176,6 +179,9 @@ async function main() {
 	console.log(`refined ≤ legal:      ${totalImproved}/${totalTheta} = ${aggImprovedPct}% (need ≥ 95%)`);
 	console.log(`worst p90 refine/pair: ${worstP90}ms (need ≤ ~800ms)`);
 
+	if (internalErrors.length) {
+		throw new Error(`Theta refinement raised internal errors: ${internalErrors.join(', ')}`);
+	}
 	fs.writeFileSync(path.join(outDir, 'wp5_2_results.json'), JSON.stringify({ seed, results }, null, 2));
 }
 

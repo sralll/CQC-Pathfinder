@@ -58,6 +58,24 @@ assert.doesNotMatch(template, /passage-(?:finish|cancel)-btn/,
     'the sidebar must not retain Finish or Cancel passage buttons');
 assert.match(template, /Right click \/ Enter:[^<]*D:[^<]*Escape:/,
     'the Add sidebar must describe the direct mouse and keyboard interactions');
+assert.match(template, /id="passage-list"/,
+    'mask mode must expose a sidebar list for passages');
+assert.match(source, /row\.addEventListener\("click", \(\) => selectPassage\(passage\.id\)\)/,
+    'passage sidebar rows must select and focus their passage');
+assert.match(source, /function centerOnPassage\(passage\)[\s\S]*rect\.width \/ \(width \+ padding \* 2\)[\s\S]*zoomMin\), zoomMax\)[\s\S]*animateCamera/,
+    'passage selection must fit its padded bounds within the global camera zoom limits');
+assert.match(source, /passage-object\$\{selectedPassageId === passage\.id \? " selected" : ""\}/,
+    'the selected sidebar passage must also be highlighted on the map');
+assert.match(source, /const committedViews = new Map\(\);[\s\S]*function updatePassageView\([\s\S]*setAttribute\("points"/,
+    'live passage edits must update persistent committed SVG nodes in place');
+const passagePreviewRenderer = source.match(
+    /function renderPreview\(\)\s*\{[\s\S]*?const schedulePreviewRender/
+)?.[0] || '';
+assert.ok(passagePreviewRenderer, 'the passage preview renderer must be present');
+assert.doesNotMatch(passagePreviewRenderer, /innerHTML\s*=/,
+    'the live passage preview must not rebuild its SVG layer on pointer movement');
+assert.match(source, /class: "passage-mode-cursor"[\s\S]*7 \/ Math\.max\(camera\.zoom, 0\.01\)/,
+    'passage add/edit mode must show a fixed-screen-size SVG cursor marker');
 assert.match(source, /handlePool\.length = 0;[\s\S]*gRoot = svgNode\("g", \{ class: "region-overlay" \}\)/,
     'a rebuilt region overlay must discard handles detached with the old UI layer');
 assert.match(source, /function hitHandle\(e, pt\)[\s\S]*Math\.hypot\(pt\.x - verts\[i\]\.x, pt\.y - verts\[i\]\.y\)/,
@@ -74,5 +92,10 @@ assert.match(infinitePlay, /maskBarrierStrokeWidthMapUnits\(sc\.mapScaleDenomina
     'player blocker rendering must share the per-map width conversion');
 assert.match(debugInfinity, /maskBarrierStrokeWidthMapUnits\([\s\S]*infinity_file\.map_scale[\s\S]*infinity_file\.editor_scale/,
     'the report debugger must reproduce the player blocker width');
+assert.match(maskSource, /const PREFETCH_TARGET\s*=\s*5/,
+    'uploaded-map Infinity must keep five validated future pairs prefetched');
+assert.match(maskSource,
+    /if \(this\.buffer\.length\) \{[\s\S]*const scene = this\.buffer\.shift\(\);[\s\S]*this\._scheduleRefill\(\);[\s\S]*return scene;/,
+    'a prefetched mask scene must be returned before waiting for refill work');
 
 console.log('passage editor contract: batched save and direct add/edit/remove/undo interactions passed');

@@ -41,6 +41,8 @@ export class FileTable {
         this.tbody = tbody;
         this.files = [];
         this.rows = [];
+        this._infinitePollSerial = 0;
+        this._infinitePollByFile = new Map();
     }
 
     setFiles(files) {
@@ -105,41 +107,56 @@ export class FileTable {
             return;
         }
         if (!desired) {
+            this._infinitePollByFile.set(row.file.id, ++this._infinitePollSerial);
             row.updateInfiniteState(false);
             this._mirrorInfiniteToEditor(row.file.id, false);
             return;
         }
         if (data.status === 'building') {
             row.setInfinityBuilding(true);
-            this._pollInfiniteBuild(row);
+            this._pollInfiniteBuild(row, data.build_token || null);
         }
     }
 
-    _pollInfiniteBuild(row) {
+    _pollInfiniteBuild(row, buildToken) {
         const fileId = row.file.id;
+        const epoch = ++this._infinitePollSerial;
+        this._infinitePollByFile.set(fileId, epoch);
+        const isCurrent = () => this._infinitePollByFile.get(fileId) === epoch;
+        const schedule = (callback, delay) => {
+            if (isCurrent()) setTimeout(callback, delay);
+        };
         const tick = async () => {
+            if (!isCurrent()) return;
             try {
                 const res  = await fetch(`/editor/region-build-status/${fileId}/`);
                 const data = await res.json();
+                if (!isCurrent()) return;
                 const p    = data.progress;
-                if (!p || p.status === 'building') { setTimeout(tick, 1500); return; }
+                if (!p) { schedule(tick, 1500); return; }
+                if (buildToken && p?.build_token !== buildToken) return;
+                if (p.status === 'building') { schedule(tick, 1500); return; }
                 if (p.status === 'done') {
                     row.updateInfiniteState(true);
                     this._mirrorInfiniteToEditor(fileId, true);
                 } else {
-                    row.setInfinityBuilding(false);
-                    await showModal({ message: p.error || gettext('Building the map failed.') });
+                    row.updateInfiniteState(false);
+                    this._mirrorInfiniteToEditor(fileId, false, p.build_token);
+                    if (p.status === 'failed') {
+                        await showModal({ message: p.error || gettext('Building the map failed.') });
+                    }
                 }
-            } catch (e) { setTimeout(tick, 2500); }
+            } catch (e) { schedule(tick, 2500); }
         };
-        setTimeout(tick, 1200);
+        schedule(tick, 1200);
     }
 
     // Keep an open editor session in sync when the state is changed from the table.
-    _mirrorInfiniteToEditor(fileId, enabled) {
+    _mirrorInfiniteToEditor(fileId, enabled, buildToken = null) {
         if (typeof project !== 'undefined' && fileId === project?.id) {
             project.infinite_enabled = enabled;
-            window.updateNavInfinityBtn?.();
+            if (enabled) window.updateNavInfinityBtn?.();
+            else window.NavInfinity?.onBuildInvalidated?.(buildToken);
         }
     }
 

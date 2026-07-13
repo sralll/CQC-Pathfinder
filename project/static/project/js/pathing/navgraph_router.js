@@ -22,11 +22,13 @@
 // (refine_theta imports refineRouteLegal/countLegalityViolations/lineCost from
 // here) but only used inside function bodies, so ES-module live bindings resolve
 // it lazily at call time — safe in both Node and the browser.
-import { refineRouteTheta, countBarrierViolations } from './refine_theta.js';
-import { guidedThetaStar } from './theta_star.js';
-import { simplifyThetaPath } from './simplify.js';
+import { refineRouteTheta, countBarrierViolations, stampBarrierLine } from './refine_theta.js';
 import { normalizePassagesForRuntime } from './passage_geometry.js';
 import { layeredRouteDistinct } from './layered_distinct.js';
+import {
+	refineDenseLeg as refineEditorDenseLeg,
+	optimizeRefinedPortalAnchors,
+} from './layered_pipeline.js';
 import {
 	buildPassageOverlay, blockedDynamicEdges, nodePathToTypedRoute,
 	overlayNodeCoord, passageRevision,
@@ -63,15 +65,16 @@ export const DEFAULT_CONFIG = Object.freeze({
 	// Prefer endpoints in obstacle-rich streets/alleys instead of sampling large
 	// open plazas in direct proportion to their area. The weighted branch uses
 	// the exact count of black pixels in this square neighbourhood; the uniform
-	// branch deliberately keeps occasional open-space endpoints possible. Squared
-	// density makes genuinely intricate areas beat merely non-empty open areas.
+	// branch deliberately keeps open-space endpoints possible. A moderate
+	// exponent still favours intricate areas without concentrating nearly every
+	// endpoint beside the darkest obstacle clusters.
 	endpointObstacleWindowPx: 100,
-	endpointDensityExponent: 2,
-	endpointUniformMix: 0.15,
+	endpointDensityExponent: 1.35,
+	endpointUniformMix: 0.30,
 	// Start points additionally favour the area-centroid of the saved region.
 	// At the most distant region edge exp(-strength) remains as its relative
 	// center weight; goals stay center-neutral to preserve route coverage.
-	startCenterBiasStrength: 0.8,
+	startCenterBiasStrength: 0.25,
 	// --- pair prefilters -----------------------------------------------------
 	distMinPx: 500,
 	distMaxPx: 1500,
@@ -105,10 +108,19 @@ export const DEFAULT_CONFIG = Object.freeze({
 	// Uploaded-map callers override this together with barrierWidthPx so
 	// placement uses the same per-map stroke dimension.
 	barrierClearNodeDistPx: BARRIER_DRAW_WIDTH_MASK_PX,
+	// A blocker assigned to a passage is extended across the full passage
+	// raster, with this much visible/enforced overhang on both sides. Otherwise
+	// the centreline edge that happened to be crossed can produce a tiny bar in
+	// a wide passage and look passable even though the graph edge is blocked.
+	passageBarrierOverhangPx: 2,
 	// --- selection (shared route_pair_selection.js, injected) ----------------
 	sideGapMinPx: 40,          // minSideGap in px (side is normalized to px on masks)
 	maxRelativeGap: 0.40,      // ROUTE_PAIR_MAX_RELATIVE_GAP (shared weighted picker)
 	routeAttempts: 5,          // == city selectionConfig.maxRoutes (deeper exploration for highRouteIndexBias)
+	// Only adjacent cumulative alternates may form a pair. A wider index gap
+	// means the later route avoided multiple barriers that cannot be rendered
+	// because they would cross the earlier selected route ("ghost blockers").
+	maxSelectedRouteIndexGap: 1,
 	// --- per-route A* time budgets + timeout kicks (RoutePlanner parity) ------
 	// Routes 1–2 get primaryBudgetMs, routes 3+ extraBudgetMs. The budget covers
 	// the whole per-route step (graph A* + route 1's snap stubs). A route whose
@@ -134,12 +146,19 @@ export const DEFAULT_CONFIG = Object.freeze({
 	// policy decides what to serve.
 	corridorRadius: 24,          // mask px; tube radius around the legal spine (editor uses 24 @ scale 0.5)
 	refineBudgetMs: 600,         // per-route θ* budget; exceeded → legal-spine fallback
-	// 'fallback': θ* fail/timeout on EITHER route → serve BOTH as refineRouteLegal
-	//   output (keeps the two runtimes on the same cost basis; only rejects the
-	//   pair as `timeout` if a legal spine itself is unusable).
-	// 'reject':   the strict city-style behaviour — any θ* miss rejects the pair
-	//   as `timeout`. One flag away for Phase 6.
-	refineTimeoutPolicy: 'fallback',
+	// After selection, re-optimize against only the blockers actually rendered.
+	// The wider tube can remove detours caused by cumulative candidate-only
+	// blockers while final side/distinctness checks preserve the route choice.
+	// 104 px is a measured +6% full-pipeline cost over 96 px on the seeded
+	// Infinity regression map. Applied to the observed 400 ms laptop average,
+	// that leaves about 0.93-0.98 s at a conservative 2.2-2.3x phone slowdown.
+	finalCorridorRadius: 104,
+	finalRefineBudgetMs: 1200,
+	// 'reject': θ* fail/timeout on EITHER route rejects the pair as `timeout`.
+	//   A legal spine is an internal corridor input, not a presentable route.
+	// 'fallback': retain the diagnostic/benchmark option to serve BOTH legal
+	//   spines on the same cost basis, but never use it in uploaded-map Infinity.
+	refineTimeoutPolicy: 'reject',
 	// Dynamic passage overlay: entrance pixels are sampled deterministically
 	// across the cap. The count scales with width and is bounded in the overlay.
 	passageCorridorRadius: 24,
@@ -1424,6 +1443,43 @@ function barrierSurfaceForTypedRoute(wall, typedLegs) {
 	return 'base';
 }
 
+/**
+ * A passage route is represented in the sparse graph by a thin centreline.
+ * `findBarrier()` therefore measures the obstacle gap around whichever single
+ * centreline edge it crosses, which can be much shorter than the actual
+ * passage width. Extend a passage-surface blocker symmetrically so the same
+ * geometry used for rendering, graph blocking, and full-resolution refinement
+ * closes the complete corridor plus a small overhang.
+ */
+export function widenPassageBarrier(state, barrier) {
+	if (!barrier?.surface?.startsWith('passage:')) return barrier;
+	const passageId = barrier.surface.slice('passage:'.length);
+	const passage = passageForId(state, passageId);
+	const passageWidth = Number(passage?.width);
+	if (!(passageWidth > 0)) return barrier;
+	const overhang = Number.isFinite(state.cfg?.passageBarrierOverhangPx)
+		? Math.max(0, state.cfg.passageBarrierOverhangPx)
+		: 2;
+	const requiredLength = passageWidth + 2 * overhang;
+	const dx = barrier.bx - barrier.ax, dy = barrier.by - barrier.ay;
+	const length = Math.hypot(dx, dy);
+	if (!(length > 1e-9) || length >= requiredLength) {
+		barrier.passageWidthPx = passageWidth;
+		return barrier;
+	}
+	const mx = (barrier.ax + barrier.bx) / 2;
+	const my = (barrier.ay + barrier.by) / 2;
+	const half = requiredLength / 2;
+	const ux = dx / length, uy = dy / length;
+	barrier.ax = mx - ux * half;
+	barrier.ay = my - uy * half;
+	barrier.bx = mx + ux * half;
+	barrier.by = my + uy * half;
+	barrier.passageWidthPx = passageWidth;
+	barrier.passageBarrierOverhangPx = overhang;
+	return barrier;
+}
+
 // =============================================================================
 // computeRouteOptions — up to cfg.routeAttempts routes with barrier-forced
 // alternates + per-route time budgets (RoutePlanner parity)
@@ -1481,6 +1537,7 @@ export function computeRouteOptions(state, start, goal, startSnap, goalSnap, opt
 		const barrier = findBarrier(state, coords);
 		if (!barrier) break;
 		if (typed.legs) barrier.surface = barrierSurfaceForTypedRoute(barrier, typed.legs);
+		widenPassageBarrier(state, barrier);
 		// attemptIndex = the routeIndex of the route this barrier was placed
 		// *after* (RoutePlanner convention). A later route with routeIndex R was
 		// computed with every barrier of attemptIndex < R blocking, so WP 5.2
@@ -1666,32 +1723,33 @@ function refinePassageLeg(state, leg) {
 	const legalCost = passagePolylineCost(passage, legalPath);
 	if (legalCost === null) return { mode: 'unusable', legalPath, legalCost: Infinity, tTheta: 0 };
 
-	const dense = [];
-	for (const point of legalPath) dense.push(point.x - passage.originX, point.y - passage.originY);
-	const start = { x: dense[0], y: dense[1] };
-	const goal = { x: dense[dense.length - 2], y: dense[dense.length - 1] };
+	const denseGlobal = [];
+	for (const point of legalPath) denseGlobal.push(point.x, point.y);
 	const t0 = nowMs();
-	let theta = null;
+	let refinedFlat = null;
 	try {
-		// The passage grid is already a tightly cropped legal surface. A fixed
-		// tube around the dense dynamic edge can preserve a wall-hugging spine on
-		// wide passages, so refine over the complete raster and guide directly to
-		// the goal. Base navgraph refinement retains its legacy corridor.
-		theta = guidedThetaStar(passage.grid, passage.localWidth, passage.localHeight,
-			start, goal, [goal.x, goal.y], 10);
-		if (theta) theta = simplifyThetaPath(theta, 10, 5);
+		// This is deliberately the editor's implementation, not a parallel
+		// approximation. It searches the complete passage raster, integrates the
+		// greyscale line cost, and applies the cost-aware simplifier before pinning
+		// the (subsequently optimizable) portal anchors.
+		refinedFlat = refineEditorDenseLeg(denseGlobal, {
+			grid: passage.grid,
+			w: passage.localWidth,
+			h: passage.localHeight,
+			originX: passage.originX,
+			originY: passage.originY,
+			refineFullRaster: true,
+		}, state.cfg?.corridorRadius || 24);
 	} catch (_) {
-		theta = null;
+		refinedFlat = null;
 	}
 	const tTheta = nowMs() - t0;
-	if (!theta || theta.length < 4) {
+	if (!refinedFlat || refinedFlat.length < 4) {
 		return { mode: 'legal-fallback', legalPath, legalCost, path: legalPath, cost: legalCost, tTheta };
 	}
-	theta[0] = start.x; theta[1] = start.y;
-	theta[theta.length - 2] = goal.x; theta[theta.length - 1] = goal.y;
 	const path = [];
-	for (let i = 0; i < theta.length; i += 2) {
-		path.push({ x: theta[i] + passage.originX, y: theta[i + 1] + passage.originY });
+	for (let i = 0; i < refinedFlat.length; i += 2) {
+		path.push({ x: refinedFlat[i], y: refinedFlat[i + 1] });
 	}
 	const cost = passagePolylineCost(passage, path);
 	if (cost === null) {
@@ -1723,12 +1781,116 @@ function activeSurfaceBarriers(barriers, routeIndex, surface) {
 	});
 }
 
+function basePolylineCost(state, points) {
+	let cost = 0;
+	for (let i = 1; i < points.length; i++) {
+		const value = lineCost(
+			state.mask, state.artifact.W,
+			points[i - 1].x, points[i - 1].y, points[i].x, points[i].y,
+			state.regionAllowed,
+		);
+		if (value === null) return null;
+		cost += value;
+	}
+	return cost;
+}
+
+/**
+ * Run the editor's post-refinement portal coordinate descent on an Infinity
+ * typed route. The base surface is cropped around this route (rather than the
+ * full map) and receives the route's active base barriers before optimization,
+ * so sliding an anchor cannot reopen a blocked alternative or leave the saved
+ * Infinity region.
+ */
+function optimizeInfinityPortalAnchors(state, legs, barriers, routeIndex) {
+	if (!legs.some((leg) => leg.surface !== 'base')) return null;
+	let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+	let maxPassageWidth = 0;
+	for (const leg of legs) {
+		for (const point of leg.points || []) {
+			minX = Math.min(minX, point.x); minY = Math.min(minY, point.y);
+			maxX = Math.max(maxX, point.x); maxY = Math.max(maxY, point.y);
+		}
+		if (leg.surface !== 'base') {
+			maxPassageWidth = Math.max(maxPassageWidth, Number(passageForId(state, leg.passageId)?.width) || 0);
+		}
+	}
+	if (![minX, minY, maxX, maxY].every(Number.isFinite)) return null;
+	const margin = Math.max(
+		(Number.isFinite(state.cfg?.corridorRadius) ? state.cfg.corridorRadius : 24) + 8,
+		Math.ceil(maxPassageWidth / 2) + 4,
+	);
+	const { W, H } = state.artifact;
+	const x0 = Math.max(0, Math.floor(minX) - margin);
+	const y0 = Math.max(0, Math.floor(minY) - margin);
+	const x1 = Math.min(W - 1, Math.ceil(maxX) + margin);
+	const y1 = Math.min(H - 1, Math.ceil(maxY) + margin);
+	const w = x1 - x0 + 1, h = y1 - y0 + 1;
+	if (w < 3 || h < 3) return null;
+	const grid = new Uint8Array(w * h);
+	for (let y = 0; y < h; y++) {
+		const gy = y0 + y;
+		for (let x = 0; x < w; x++) {
+			const gx = x0 + x;
+			grid[y * w + x] = state.regionAllowed && !state.regionAllowed(gx, gy)
+				? IMPASSABLE
+				: state.mask[gy * W + gx];
+		}
+	}
+	const width = Number.isFinite(state.cfg?.barrierWidthPx)
+		? state.cfg.barrierWidthPx
+		: BARRIER_DRAW_WIDTH_MASK_PX;
+	for (const barrier of activeSurfaceBarriers(barriers, routeIndex, 'base')) {
+		stampBarrierLine(grid, w, h,
+			barrier.ax - x0, barrier.ay - y0,
+			barrier.bx - x0, barrier.by - y0, width);
+	}
+
+	const flatLegs = legs.map((leg) => ({
+		...leg,
+		points: (leg.points || []).flatMap((point) => [point.x, point.y]),
+	}));
+	const t0 = nowMs();
+	let optimized;
+	try {
+		optimized = optimizeRefinedPortalAnchors(
+			{ legs: flatLegs },
+			{ grid, w, h, originX: x0, originY: y0 },
+			activePassages(state),
+			Number.isFinite(state.cfg?.corridorRadius) ? state.cfg.corridorRadius : 24,
+		);
+	} catch (_) {
+		return null;
+	}
+	if (!optimized?.legs || !(optimized.portalOptimization?.accepted > 0)) return null;
+	const optimizedLegs = optimized.legs.map((leg) => {
+		const points = [];
+		for (let i = 0; i < leg.points.length; i += 2) points.push({ x: leg.points[i], y: leg.points[i + 1] });
+		return { ...leg, points };
+	});
+	let cost = 0;
+	for (const leg of optimizedLegs) {
+		const legCost = leg.surface === 'base'
+			? basePolylineCost(state, leg.points)
+			: passagePolylineCost(passageForId(state, leg.passageId), leg.points);
+		if (legCost === null) return null;
+		cost += legCost;
+	}
+	return {
+		legs: optimizedLegs,
+		cost,
+		tTheta: nowMs() - t0,
+		portalOptimization: optimized.portalOptimization,
+	};
+}
+
 /** Surface-aware legal/Theta refinement for a navgraph route with passage legs. */
 export function refineTypedNavgraphRoute(state, route, barriers, opts = {}) {
 	if (!route?.typedLegs) return refineRouteTheta(state, route.path, barriers, opts);
 	const routeIndex = Number.isFinite(opts.routeIndex) ? opts.routeIndex : Infinity;
 	const selectedLegs = [];
 	const legalLegs = [];
+	const legOutcomes = [];
 	let selectedCost = 0;
 	let legalCost = 0;
 	let tRefine = 0;
@@ -1744,15 +1906,33 @@ export function refineTypedNavgraphRoute(state, route, barriers, opts = {}) {
 			refined = refinePassageLeg(state, leg);
 		}
 		tTheta += refined.tTheta || 0;
+		legOutcomes.push({
+			surface: leg.surface,
+			mode: refined.mode,
+			thetaFail: refined.thetaFail || null,
+		});
 		if (refined.mode === 'unusable') {
 			return { path: route.path, cost: route.cost, mode: 'unusable', legalPath: route.path,
-				legalCost: route.cost, tRefine, tTheta, activeBarriers: [], routeIndex };
+				legalCost: route.cost, tRefine, tTheta, activeBarriers: [], routeIndex,
+				thetaFail: refined.thetaFail || 'unusable-leg', legOutcomes };
 		}
 		if (refined.mode !== 'theta') fallback = true;
 		selectedCost += refined.cost;
 		legalCost += refined.legalCost;
 		selectedLegs.push({ ...leg, points: refined.path });
 		legalLegs.push({ ...leg, points: refined.legalPath });
+	}
+	let portalOptimization = null;
+	if (!fallback) {
+		const optimized = optimizeInfinityPortalAnchors(
+			state, selectedLegs, barriers, routeIndex,
+		);
+		if (optimized) {
+			selectedLegs.splice(0, selectedLegs.length, ...optimized.legs);
+			selectedCost = optimized.cost;
+			tTheta += optimized.tTheta;
+			portalOptimization = optimized.portalOptimization;
+		}
 	}
 	const selected = flattenTypedLegs(selectedLegs);
 	const legal = flattenTypedLegs(legalLegs);
@@ -1767,7 +1947,11 @@ export function refineTypedNavgraphRoute(state, route, barriers, opts = {}) {
 		legalPath: legal.path,
 		legalCost,
 		thetaCost: fallback ? null : selectedCost,
-		thetaFail: fallback ? 'surface-leg' : null,
+		thetaFail: fallback
+			? legOutcomes.filter((outcome) => outcome.mode !== 'theta')
+				.map((outcome) => outcome.thetaFail || `${outcome.surface}-fallback`).join(',')
+			: null,
+		legOutcomes,
 		tRefine,
 		tTheta,
 		activeBarriers,
@@ -1776,6 +1960,7 @@ export function refineTypedNavgraphRoute(state, route, barriers, opts = {}) {
 		legalTypedLegs: legalLegs,
 		passageSpans: selected.passageSpans,
 		legalPassageSpans: legal.passageSpans,
+		portalOptimization,
 	};
 }
 
@@ -1806,6 +1991,17 @@ function countTypedBarrierViolations(state, refined) {
 		);
 	}
 	return hits;
+}
+
+/**
+ * Decide whether two final refinement outcomes may be exposed as a route pair.
+ * `unusable` is never valid. Under the production `reject` policy both routes
+ * must have completed the any-angle Theta* stage; the dense legal spine is
+ * only an internal corridor input and a diagnostic fallback.
+ */
+export function refinementPairCanBeServed(policy, modeA, modeB) {
+	if (modeA === 'unusable' || modeB === 'unusable') return false;
+	return policy !== 'reject' || (modeA === 'theta' && modeB === 'theta');
 }
 
 // =============================================================================
@@ -1882,7 +2078,12 @@ export function generateOnePair(state, { rng, maxAttempts = 4000, now, selection
 		const sel = selection.selectWeightedRoutePair(routeResult.paths, {
 			start: sp.start,
 			goal: sp.goal,
-			config: { ...selectionDefaults, minSideGap: cfg.sideGapMinPx, maxRelativeGap: cfg.maxRelativeGap },
+			config: {
+				...selectionDefaults,
+				minSideGap: cfg.sideGapMinPx,
+				maxRelativeGap: cfg.maxRelativeGap,
+				maxRouteIndexGap: cfg.maxSelectedRouteIndexGap,
+			},
 			rng,
 		});
 		if (!sel.ok) { bump(sel.reason); lastReason = sel.reason; retries++; continue; }
@@ -1896,22 +2097,30 @@ export function generateOnePair(state, { rng, maxAttempts = 4000, now, selection
 		// WP 5.2: corridor + guided θ* refinement of the accepted pair. Each
 		// route gets its legal spine + a θ* pass around it, with active
 		// barriers (attemptIndex < routeIndex) stamped into its subgrid.
+		// Candidate R was discovered with every cumulative barrier before R, but
+		// only `skippedBarriers` exists in the final scene. Refine the accepted
+		// geometry against exactly that set so invisible later barriers cannot
+		// leave unexplained bends. A wider final corridor removes their local
+		// detours without changing passage surface identity.
+		const finalRefineOpts = {
+			routeIndex: Infinity,
+			now: clock,
+			corridorRadius: cfg.finalCorridorRadius,
+			budgetMs: cfg.finalRefineBudgetMs,
+		};
 		const refA = ordered[0].typedLegs
-			? refineTypedNavgraphRoute(state, ordered[0], routeResult.barriers,
-				{ routeIndex: ordered[0].routeIndex, now: clock })
-			: refineRouteTheta(state, ordered[0].path, routeResult.barriers,
-				{ routeIndex: ordered[0].routeIndex, now: clock });
+			? refineTypedNavgraphRoute(state, ordered[0], skippedBarriers, finalRefineOpts)
+			: refineRouteTheta(state, ordered[0].path, skippedBarriers, finalRefineOpts);
 		const refB = ordered[1].typedLegs
-			? refineTypedNavgraphRoute(state, ordered[1], routeResult.barriers,
-				{ routeIndex: ordered[1].routeIndex, now: clock })
-			: refineRouteTheta(state, ordered[1].path, routeResult.barriers,
-				{ routeIndex: ordered[1].routeIndex, now: clock });
-		timings.refine += refA.tRefine + refB.tRefine;
-		timings.theta += refA.tTheta + refB.tTheta;
+			? refineTypedNavgraphRoute(state, ordered[1], skippedBarriers, finalRefineOpts)
+			: refineRouteTheta(state, ordered[1].path, skippedBarriers, finalRefineOpts);
+		timings.refine += (refA.tRefine || 0) + (refB.tRefine || 0);
+		timings.theta += (refA.tTheta || 0) + (refB.tTheta || 0);
 
-		// Timeout/failure policy (cfg.refineTimeoutPolicy).
-		if (refA.mode === 'unusable' || refB.mode === 'unusable') {
-			// Even the legal spine is unusable → the pair rejects.
+		// A final route is valid only when the configured refinement policy allows
+		// both outcomes. Production uses `reject`, so any Theta* abort retries the
+		// pair instead of exposing the dense legal spine.
+		if (!refinementPairCanBeServed(cfg.refineTimeoutPolicy, refA.mode, refB.mode)) {
 			bump('timeout'); lastReason = 'timeout'; retries++; continue;
 		}
 		let pathA = refA.path, costA = refA.cost, modeA = refA.mode;
@@ -1919,11 +2128,8 @@ export function generateOnePair(state, { rng, maxAttempts = 4000, now, selection
 		let typedA = refA.typedLegs || null, typedB = refB.typedLegs || null;
 		let passageSpansA = refA.passageSpans || [], passageSpansB = refB.passageSpans || [];
 		let refineFallback = 0;
-		if (cfg.refineTimeoutPolicy === 'reject') {
-			if (modeA !== 'theta' || modeB !== 'theta') {
-				bump('timeout'); lastReason = 'timeout'; retries++; continue;
-			}
-		} else if (modeA === 'legal-fallback' || modeB === 'legal-fallback') {
+		let finalSideGap = sel.sideGap;
+		if (modeA === 'legal-fallback' || modeB === 'legal-fallback') {
 			// Serve BOTH as the legal spine so the two runtimes share a cost
 			// basis (θ* paths are systematically slightly cheaper; mixing bases
 			// would bias the gap).
@@ -1935,6 +2141,28 @@ export function generateOnePair(state, { rng, maxAttempts = 4000, now, selection
 			passageSpansB = refB.legalPassageSpans || passageSpansB;
 			refineFallback = 1;
 		}
+
+		// The wider rendered-barrier-only pass is allowed to shorten a homotopy,
+		// but not to collapse the two alternatives onto one side. Re-run the same
+		// side/centre/lateral gate on the geometry that will actually be served.
+		const finalPairGate = selection.selectWeightedRoutePair([
+			{ path: pathA, run_time: costA, routeIndex: ordered[0].routeIndex },
+			{ path: pathB, run_time: costB, routeIndex: ordered[1].routeIndex },
+		], {
+			start: sp.start,
+			goal: sp.goal,
+			config: {
+				...selectionDefaults,
+				minSideGap: cfg.sideGapMinPx,
+				maxRelativeGap: cfg.maxRelativeGap,
+				maxRouteIndexGap: Infinity,
+			},
+			rng: () => 0,
+		});
+		if (!finalPairGate.ok) {
+			bump(finalPairGate.reason); lastReason = finalPairGate.reason; retries++; continue;
+		}
+		finalSideGap = finalPairGate.sideGap;
 
 		// Barrier legality: a served route must not cross any of its active
 		// barriers. θ* routes are barrier-clean by construction (validated on the
@@ -2018,7 +2246,7 @@ export function generateOnePair(state, { rng, maxAttempts = 4000, now, selection
 			meta: {
 				retries,
 				attempts: attempts + 1,
-				sideGap: sel.sideGap,
+				sideGap: finalSideGap,
 				relGap,
 				legality,
 				passageRevision: state.passageRevision || null,

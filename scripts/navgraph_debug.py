@@ -104,7 +104,8 @@ def _load_artifact(mask_path):
     npz_path = base + ".navgraph.npz"
     if not os.path.isfile(npz_path):
         print(f"[navgraph_debug] no artifact at {npz_path}; building...")
-        artifact = build_navgraph(mask_path, verbose=True)
+        artifact = build_navgraph(
+            mask_path, verbose=True, collect_diagnostics=True)
         save_navgraph(artifact, mask_path)
         return artifact, npz_path
     data = np.load(npz_path, allow_pickle=True)

@@ -2,7 +2,11 @@
 // Usage: node project/static/project/js/pathing/dev/navgraph_endpoint_density.test.mjs
 
 import assert from 'node:assert/strict';
-import { buildState, makeRng, samplePair } from '../navgraph_router.js';
+import { DEFAULT_CONFIG, buildState, makeRng, samplePair } from '../navgraph_router.js';
+
+assert.equal(DEFAULT_CONFIG.endpointDensityExponent, 1.35);
+assert.equal(DEFAULT_CONFIG.endpointUniformMix, 0.30);
+assert.equal(DEFAULT_CONFIG.startCenterBiasStrength, 0.25);
 
 const W = 240, H = 80, coarseScale = 8;
 const cw = W / coarseScale, ch = H / coarseScale;
@@ -44,13 +48,13 @@ for (let i = 0; i < trials; i++) {
 	if (pair.start.x >= 90) obstacleRichStarts++;
 }
 
-// Uniform sampling puts 62.5% of this strip at x>=90. The density preference
-// should push that materially higher while the 15% uniform branch still keeps
-// the open left side reachable.
-assert.ok(obstacleRichStarts / trials > 0.82,
+// Uniform sampling puts 62.5% of this strip at x>=90. The moderated density
+// preference should still favour that district, without concentrating almost
+// every endpoint there; the 30% uniform branch keeps open terrain in rotation.
+assert.ok(obstacleRichStarts / trials > 0.70,
 	`expected obstacle-rich preference, got ${obstacleRichStarts}/${trials}`);
-assert.ok(obstacleRichStarts < trials,
-	'uniform mixture should preserve occasional open-space endpoints');
+assert.ok(obstacleRichStarts / trials < 0.90,
+	`expected broader open-space coverage, got ${obstacleRichStarts}/${trials}`);
 
 // On an obstacle-free elongated region, only starts should receive the center
 // bias. Goals remain uniform, which keeps routes reaching across the region.
@@ -65,6 +69,25 @@ const centerState = buildState({
 });
 assert.deepEqual(centerState.endpointRegionCenter, { x: W / 2, y: H / 2 });
 
+// The center belongs to the saved region, not the full mask image. Pin an
+// off-center hit zone to catch a regression back to W/2,H/2.
+const leftHitzone = new Uint8Array(ch * cw);
+for (let hy = 0; hy < ch; hy++) {
+	for (let hx = 0; hx < 10; hx++) leftHitzone[hy * cw + hx] = 1;
+}
+const leftState = buildState({
+	...artifact,
+	coarseClear: new Float32Array(ch * cw).fill(20),
+	coarseHitzone: leftHitzone,
+}, whiteMask, {
+	distMinPx: 1,
+	distMaxPx: 1000,
+	obstacleMinRunPx: 0,
+});
+assert.deepEqual(leftState.endpointRegionCenter, { x: 40, y: H / 2 });
+assert.notEqual(leftState.endpointRegionCenter.x, W / 2,
+	'an off-center saved region must never inherit the image center');
+
 const centerRng = makeRng(23);
 let centralStarts = 0, centralGoals = 0, centerTrials = 2000;
 for (let i = 0; i < centerTrials; i++) {
@@ -73,8 +96,8 @@ for (let i = 0; i < centerTrials; i++) {
 	if (pair.start.x >= 80 && pair.start.x < 160) centralStarts++;
 	if (pair.goal.x >= 80 && pair.goal.x < 160) centralGoals++;
 }
-assert.ok(centralStarts / centerTrials > 0.38,
-	`expected center-biased starts, got ${centralStarts}/${centerTrials}`);
+assert.ok(centralStarts / centerTrials > 0.33 && centralStarts / centerTrials < 0.38,
+	`expected a mild rather than dominant center bias, got ${centralStarts}/${centerTrials}`);
 assert.ok(centralGoals / centerTrials > 0.28 && centralGoals / centerTrials < 0.39,
 	`goals should remain approximately uniform, got ${centralGoals}/${centerTrials}`);
 

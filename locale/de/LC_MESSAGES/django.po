@@ -336,6 +336,9 @@ msgstr "Name erforderlich"
 msgid "Navgraph is stale; rebuild required."
 msgstr "Der Navgraph ist veraltet; baue ihn neu auf."
 
+msgid "Navigation graph build progress"
+msgstr "Fortschritt beim Navgraph-Aufbau"
+
 msgid "New"
 msgstr "Neu"
 

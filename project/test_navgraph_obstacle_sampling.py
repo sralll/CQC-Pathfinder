@@ -1,9 +1,12 @@
+from unittest import mock
+
 import numpy as np
 import scipy.ndimage as ndi
 from django.test import SimpleTestCase
 
 from project.navgraph import (
     CONTOUR_AREA_SPACING_PX,
+    NavgraphBuildCancelled,
     _adaptive_lattice_nodes,
     _candidate_edges,
     _dedupe_appended_nodes,
@@ -12,11 +15,21 @@ from project.navgraph import (
     _visible_backbone_samples,
     _obstacle_offset_nodes,
     _prune_redundant_nodes,
+    _sparsify_redundant_edges,
     _very_slow_offset_nodes,
+    _weight_edges,
+    build_navgraph,
 )
 
 
 class ObstacleBiasedSamplingTests(SimpleTestCase):
+    def test_build_aborts_when_progress_owner_returns_false(self):
+        with self.assertRaises(NavgraphBuildCancelled):
+            build_navgraph(
+                'mask-is-never-opened.png',
+                progress_callback=lambda _progress: False,
+            )
+
     def test_low_clearance_skeleton_gets_a_gate_anchor(self):
         clearance = np.full((31, 61), 40.0, dtype=np.float32)
         skeleton = np.zeros_like(clearance, dtype=bool)
@@ -178,12 +191,109 @@ class ObstacleBiasedSamplingTests(SimpleTestCase):
         self.assertEqual(kept, [])
         self.assertEqual(removed, 1)
 
-    def test_backbone_only_node_gets_no_generic_knn_shortcuts(self):
+    def test_narrow_backbone_gets_small_reversible_local_budget(self):
         nodes = [(10, 10), (20, 10), (30, 10), (40, 10)]
         backbone = [(0, 1, 10.0), (1, 2, 10.0), (2, 3, 10.0)]
         edges = _candidate_edges(
             nodes, backbone, backbone_only_nodes=set(range(4)))
-        self.assertEqual(edges, {(0, 1), (1, 2), (2, 3)})
+        self.assertTrue({(0, 1), (1, 2), (2, 3)}.issubset(edges))
+        # The reduced budget may add a direct local alternative, but remains
+        # far below a dense unrestricted visibility graph.
+        self.assertLessEqual(len(edges), 6)
+
+    def test_sparse_visible_pair_beyond_old_120px_cap_is_connected(self):
+        mask = np.full((40, 220), 241, dtype=np.uint8)
+        nodes = [(10, 20), (190, 20)]
+
+        edges = _candidate_edges(nodes, [], mask=mask)
+
+        self.assertIn((0, 1), edges)
+
+    def test_candidate_progress_counts_every_processed_node(self):
+        mask = np.full((40, 80), 241, dtype=np.uint8)
+        nodes = [(10, 20), (30, 20), (50, 20), (70, 20)]
+        updates = []
+
+        _candidate_edges(
+            nodes, [], mask=mask,
+            progress_callback=lambda current, total: updates.append(
+                (current, total)))
+
+        self.assertEqual(updates[0], (0, len(nodes)))
+        self.assertEqual(updates[-1], (len(nodes), len(nodes)))
+        self.assertTrue(all(total == len(nodes) for _, total in updates))
+
+    def test_small_black_interruption_is_a_bounded_detour_candidate(self):
+        mask = np.full((40, 120), 241, dtype=np.uint8)
+        mask[20, 58:61] = 0
+        nodes = [(20, 20), (100, 20)]
+
+        edges, detours = _candidate_edges(
+            nodes, [], mask=mask, return_local_detours=True)
+
+        self.assertIn((0, 1), edges)
+        self.assertIn((0, 1), detours)
+        kept, _ = _weight_edges(mask, nodes, edges, set(), detours)
+        self.assertIn((0, 1), kept)
+
+    def test_weighting_reuses_candidate_line_measurement(self):
+        mask = np.full((40, 120), 241, dtype=np.uint8)
+        nodes = [(20, 20), (100, 20)]
+        edges, detours, line_results = _candidate_edges(
+            nodes, [], mask=mask, return_local_detours=True,
+            return_line_results=True)
+
+        with mock.patch(
+                'project.navgraph._line_cost_batch',
+                side_effect=AssertionError('LOS was measured twice')):
+            kept, _ = _weight_edges(
+                mask, nodes, edges, set(), detours, line_results)
+
+        self.assertEqual(kept, [(0, 1)])
+
+    def test_wide_black_obstacle_is_not_a_local_detour_candidate(self):
+        mask = np.full((50, 140), 241, dtype=np.uint8)
+        mask[:, 55:80] = 0
+        nodes = [(20, 25), (120, 25)]
+
+        edges, detours = _candidate_edges(
+            nodes, [], mask=mask, return_local_detours=True)
+
+        self.assertNotIn((0, 1), edges)
+        self.assertNotIn((0, 1), detours)
+
+    def test_edge_spanner_removes_only_near_equal_two_hop_edge(self):
+        edges = np.asarray([(0, 1), (0, 2), (2, 1)], dtype=np.int32)
+
+        kept_edges, _, _, removed = _sparsify_redundant_edges(
+            edges, np.asarray([10.0, 5.0, 5.0], dtype=np.float32))
+        self.assertEqual(removed, 1)
+        self.assertNotIn((0, 1), set(map(tuple, kept_edges)))
+
+        kept_edges, _, _, removed = _sparsify_redundant_edges(
+            edges, np.asarray([10.0, 5.1, 5.1], dtype=np.float32))
+        self.assertEqual(removed, 0)
+        self.assertIn((0, 1), set(map(tuple, kept_edges)))
+
+    def test_edge_spanner_never_removes_protected_typed_edge(self):
+        edges = np.asarray([(0, 1), (0, 2), (2, 1)], dtype=np.int32)
+        protected = np.asarray([True, False, False])
+
+        kept_edges, _, _, removed = _sparsify_redundant_edges(
+            edges, np.asarray([10.0, 5.0, 5.0], dtype=np.float32), protected)
+
+        self.assertEqual(removed, 0)
+        self.assertIn((0, 1), set(map(tuple, kept_edges)))
+
+    def test_typed_edges_cannot_witness_removal_of_base_edge(self):
+        edges = np.asarray([(0, 1), (0, 2), (2, 1)], dtype=np.int32)
+        typed = np.asarray([False, True, True])
+
+        kept_edges, _, _, removed = _sparsify_redundant_edges(
+            edges, np.asarray([10.0, 5.0, 5.0], dtype=np.float32), typed)
+
+        self.assertEqual(removed, 0)
+        self.assertIn((0, 1), set(map(tuple, kept_edges)))
 
     def test_dense_backbone_samples_cover_between_sparse_endpoints(self):
         mask = np.full((30, 80), 241, dtype=np.uint8)

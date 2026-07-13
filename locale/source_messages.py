@@ -141,6 +141,10 @@ DJANGO = {
         "Diese Karte ist bald bereit für den Infinity-Modus…",
         "Cette carte sera bientôt prête pour le mode infini…",
         "Questa mappa sarà presto pronta per la modalità infinita…"),
+    "Navigation graph build progress": (
+        "Fortschritt beim Navgraph-Aufbau",
+        "Progression de la construction du navgraph",
+        "Avanzamento della costruzione del navgraph"),
     "Before enabling infinite play, check the mask in detail — every corridor, entrance, and barrier. Route generation relies entirely on the mask, and mask errors will serve athletes many bad routes.": (
         "Prüfe die Maske im Detail, bevor du Infinity freigibst — jeden Durchgang, jeden Eingang, jede Barriere. Die Routengenerierung stützt sich vollständig auf die Maske; Maskenfehler führen zu vielen schlechten Routen für die Athleten.",
         "Vérifie le masque en détail avant d'activer le mode infini — chaque passage, chaque entrée, chaque barrière. La génération d'itinéraires repose entièrement sur le masque ; des erreurs dans le masque donneront aux athlètes beaucoup de mauvais itinéraires.",
@@ -552,6 +556,7 @@ DJANGOJS.update({
     "Mask edit": ("Maske bearbeiten", "Modifier le masque", "Modifica maschera"),
     "Obstacles": ("Hindernisse", "Obstacles", "Ostacoli"),
     "Pan": ("Karte verschieben", "Déplacer la carte", "Sposta la mappa"),
+    "Passage": ("Passage", "Passage", "Passaggio"),
     "Passage added": ("Passage hinzugefügt", "Passage ajouté", "Passaggio aggiunto"),
     "Passage node moved": ("Passagenpunkt verschoben", "Point du passage déplacé", "Punto del passaggio spostato"),
     "Passage points must stay inside the mask.": ("Passagenpunkte müssen innerhalb der Maske bleiben.", "Les points du passage doivent rester à l'intérieur du masque.", "I punti del passaggio devono rimanere all'interno della maschera."),
@@ -620,6 +625,14 @@ DJANGOJS.update({
         "Aufbau der Karte fehlgeschlagen.",
         "La construction de la carte a échoué.",
         "Costruzione della mappa non riuscita."),
+    "Building navigation graph…": (
+        "Navgraph wird aufgebaut…",
+        "Construction du navgraph…",
+        "Costruzione del navgraph…"),
+    "Connecting nodes…": (
+        "Knoten werden verbunden…",
+        "Connexion des nœuds…",
+        "Collegamento dei nodi…"),
     "Could not enable infinite play.": (
         "Infinity-Modus konnte nicht aktiviert werden.",
         "Impossible d'activer le mode infini.",

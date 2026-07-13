@@ -22,8 +22,17 @@ class RegionRasterTests(SimpleTestCase):
             ng._rasterize_region_full([(1, 1), (8, 8)], 20, 20)
         with self.assertRaisesRegex(ValueError, "non-zero area"):
             ng._rasterize_region_full([(1, 1), (5, 5), (9, 9)], 20, 20)
-        with self.assertRaisesRegex(ValueError, "outside"):
-            ng._rasterize_region_full([(1, 1), (19, 1), (20, 19)], 20, 20)
+
+    def test_region_points_just_outside_mask_are_clipped(self):
+        polygon = [(-3, -2), (22, 1), (19, 22), (1, 19)]
+        self.assertEqual(
+            ng.clip_region_polygon(polygon, 20, 20),
+            [[0, 0], [19, 1], [19, 19], [1, 19]],
+        )
+        raster = ng._rasterize_region_full(polygon, 20, 20)
+        self.assertTrue(raster.any())
+        self.assertTrue(raster[0, 0])
+        self.assertTrue(raster[19, 19])
 
     def test_coarse_hitzone_is_derived_from_full_raster(self):
         polygon = [(1, 1), (30, 1), (30, 12), (12, 12), (12, 30), (1, 30)]

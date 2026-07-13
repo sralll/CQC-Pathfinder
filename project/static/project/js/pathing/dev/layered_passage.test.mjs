@@ -8,6 +8,7 @@ import { classifyRoutePassages } from '../passage_classifier.js';
 import { layeredAstar } from '../layered_astar.js';
 import { runLayeredPipeline } from '../layered_pipeline.js';
 import { applySurfaceRouteMasks } from '../surface_route_mask.js';
+import { guidedThetaStar } from '../theta_star.js';
 import { createPassageFixtures } from './passage_fixtures.mjs';
 
 const FAST = 241;
@@ -179,6 +180,59 @@ function assertDirectionalLeg(leg, passage) {
     assert.ok(baseOnly);
     assert.deepEqual(baseOnly.legs.map(leg => leg.surface), ['base']);
     assert.equal(baseOnly.stats.selectedPassages, 0);
+}
+
+// Passage-only weighted LOS can cross the mandatory slow portal rows in one
+// any-angle edge. The legacy same-grey rule leaves one-point stubs at both
+// transitions even though the direct segment is legal and cheaper.
+{
+    const w = 24, h = 9;
+    const grid = openMask(w, h);
+    for (let y = 0; y < h; y++) {
+        grid[y * w + 1] = 231;
+        grid[y * w + 22] = 231;
+    }
+    const start = { x: 1, y: 4 };
+    const goal = { x: 22, y: 4 };
+    const legacy = guidedThetaStar(grid, w, h, start, goal, [22, 4], 10);
+    const weighted = guidedThetaStar(
+        grid, w, h, start, goal, [22, 4], 10, null, { integrateLineCost: true },
+    );
+    assert.ok(legacy.length > 4);
+    assert.deepEqual(weighted, [1, 4, 22, 4]);
+}
+
+// Chained passages exercise the post-refinement forward/reverse portal sweep.
+// Every passage leg is reduced to one legal any-angle segment, while the sweep
+// revisits the first passage after the second changes their shared base leg.
+{
+    const w = 80, h = 40;
+    const grid = openMask(w, h);
+    for (let y = 1; y < h - 1; y++) {
+        grid[y * w + 25] = 0;
+        grid[y * w + 55] = 0;
+    }
+    const passages = normalize({
+        version: 1,
+        items: [
+            { id: 'smooth-chain-a', points: [[19, 20], [31, 20]], width: 14 },
+            { id: 'smooth-chain-b', points: [[49, 20], [61, 20]], width: 14 },
+        ],
+    }, w, h);
+    const result = runLayeredPipeline(
+        grid, w, h, { x: 4, y: 5 }, { x: 75, y: 35 }, passages, 'smooth-chain-test',
+    );
+    assert.ok(result.path, result.error);
+    assert.deepEqual(
+        result.typedLegs.map(leg => leg.surface),
+        ['base', 'passage:smooth-chain-a', 'base', 'passage:smooth-chain-b', 'base'],
+    );
+    assert.ok(result.typedLegs.filter(leg => leg.surface !== 'base')
+        .every(leg => leg.points.length === 4));
+    assert.ok(result.portalOptimization?.attempts >= 2);
+    assert.ok(result.portalOptimization?.accepted >= 1);
+    assert.ok(result.portalOptimization?.sweeps >= 2);
+    assert.deepEqual(classifyRoutePassages(result.path, passages).passageSpans, result.passageSpans);
 }
 
 console.log('layered passage routing: directional topology, crossing isolation, any-angle refinement, and reclassification passed');

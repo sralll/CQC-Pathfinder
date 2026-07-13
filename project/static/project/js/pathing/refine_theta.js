@@ -33,6 +33,7 @@
 // =============================================================================
 
 import { refineRouteLegal, countLegalityViolations, lineCost, BARRIER_DRAW_WIDTH_MASK_PX } from './navgraph_router.js';
+import { bresenhamPoints } from './bresenham.js';
 import { corridorMask, applyCorridor, snapToFree } from './preprocess.js';
 import { guidedThetaStar } from './theta_star.js';
 import { simplifyThetaPath } from './simplify.js';
@@ -64,7 +65,7 @@ const nowMs = (typeof performance !== 'undefined' && performance.now)
  * Mirrors preprocess.js drawThickLine (PIL ImageDraw.line(fill=0)) but writes
  * into the caller's local subgrid coordinate frame.
  */
-function stampBarrierLine(sub, sw, sh, x0, y0, x1, y1, width) {
+export function stampBarrierLine(sub, sw, sh, x0, y0, x1, y1, width) {
 	const dx = x1 - x0, dy = y1 - y0, len2 = dx * dx + dy * dy;
 	if (len2 < 1e-9) return;
 	const len = Math.sqrt(len2);
@@ -289,8 +290,13 @@ function tryTheta(state, spine, activeBarriers, corridorRadius, deadline, diag =
 	// Spine in local flat form for the corridor + θ* guidance.
 	const spineFlat = new Array(spine.length * 2);
 	for (let i = 0; i < spine.length; i++) {
-		spineFlat[2 * i] = spine[i].x - x0;
-		spineFlat[2 * i + 1] = spine[i].y - y0;
+		// corridorMask is an integer Bresenham rasterizer. Sampled Infinity
+		// endpoints are fractional map coordinates; passing a value such as
+		// 77.0000000000002 into Bresenham can never reach equality after integer
+		// steps and grows the output until RangeError. Rasterize the pixel spine,
+		// then pin the exact fractional endpoints below as before.
+		spineFlat[2 * i] = Math.round(spine[i].x - x0);
+		spineFlat[2 * i + 1] = Math.round(spine[i].y - y0);
 	}
 
 	// 4. Corridor + θ*. Confine the terrain (incl. stamped bars) to the tube,
@@ -417,7 +423,8 @@ export function refineRouteTheta(state, path, barriers, opts = {}) {
 	try {
 		theta = tryTheta(state, legalPath, activeBarriers, corridorRadius, deadline, diag);
 	} catch (e) {
-		diag.reason = 'error';
+		const detail = String(e?.message || e || 'unknown');
+		diag.reason = `error:${detail}`;
 		theta = null;
 	}
 	const tTheta = clock() - tT0;

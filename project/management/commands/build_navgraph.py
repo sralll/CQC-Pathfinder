@@ -369,7 +369,9 @@ class Command(BaseCommand):
                     prior_counts = _artifact_counts(_npz_path(mask_path))
                     t0 = time.time()
                     artifact = build_navgraph(
-                        mask_path, region_polygon=region, level_passages=passages)
+                        mask_path, region_polygon=region,
+                        level_passages=passages,
+                        collect_diagnostics=debug)
                     save_navgraph(artifact, mask_path)
                     elapsed = time.time() - t0
                     stats = artifact["stats"]
@@ -382,13 +384,17 @@ class Command(BaseCommand):
                     after_nodes = stats.get("nodes_after_region_prune", stats["n_nodes"])
                     after_edges = stats["n_edges"]
                     why = "forced" if (force and not reasons) else ", ".join(reasons)
+                    connectivity = stats.get("region_component_connectivity")
+                    connectivity_text = (
+                        f", main_conn={connectivity:.3f}"
+                        if connectivity is not None else "")
                     self.stdout.write(self.style.SUCCESS(
                         f"BUILT {name}: {stats['mpx']} Mpx, ds={stats['downsample']}, "
                         f"nodes={before_nodes}->{after_nodes}, edges={before_edges}->{after_edges}, "
                         f"bin={bin_bytes}B, build={elapsed:.1f}s, "
                         f"passages={stats.get('n_passages', 0)}, "
-                        f"hitzone={stats['hitzone_source']}, "
-                        f"main_conn={stats['region_component_connectivity']:.3f}, "
+                        f"hitzone={stats['hitzone_source']}"
+                        f"{connectivity_text}, "
                         f"region={stats.get('region_revision') or 'auto'} [{why}]"
                     ))
                     built += 1
