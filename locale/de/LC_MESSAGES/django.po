@@ -24,6 +24,9 @@ msgstr "Eine Region braucht mindestens 3 Punkte."
 msgid "Activity"
 msgstr "Aktivität"
 
+msgid "Activity Team"
+msgstr "Kaderaktivität"
+
 msgid "Added:"
 msgstr "Hinzugefügt:"
 

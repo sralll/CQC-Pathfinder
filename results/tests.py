@@ -1,7 +1,9 @@
 import json
 from datetime import timedelta
+from importlib import import_module
 from unittest.mock import patch
 
+from django.apps import apps
 from django.contrib.auth.models import Group, User
 from django.core.cache import cache
 from django.test import TestCase
@@ -17,11 +19,13 @@ from .stats_views import (
     _choice_error_potential_points,
     _choice_time_sensitivity_fit,
     _choice_time_sensitivity_points,
+    _clear_stats_cache_for_team,
     _cp_runtimes_by_cp,
     _linear_fit,
     _min_time_per_cp,
     _random_error_potential_fit,
     _route_runtime_stats_for_cp,
+    _team_activity_cache_key,
 )
 
 
@@ -355,6 +359,20 @@ class InfinityUserStatsTests(TestCase):
             longer_time=12,
         )
 
+    def test_historical_infinite_choice_times_are_capped_at_30_seconds(self):
+        outlier = self.create_choice(self.user)
+        normal = self.create_choice(self.other_user)
+        InfiniteChoice.objects.filter(id=outlier.id).update(choice_time=18540.968)
+        InfiniteChoice.objects.filter(id=normal.id).update(choice_time=12.5)
+
+        migration = import_module('results.migrations.0006_cap_infinite_choice_time')
+        migration.cap_historical_infinite_choice_times(apps, None)
+
+        outlier.refresh_from_db()
+        normal.refresh_from_db()
+        self.assertEqual(outlier.choice_time, 30.0)
+        self.assertEqual(normal.choice_time, 12.5)
+
     def test_infinite_user_stats_counts_only_requesting_users_choices(self):
         self.create_choice(self.user)
         self.create_choice(self.user)
@@ -383,6 +401,23 @@ class InfinityUserStatsTests(TestCase):
         self.assertEqual(response.json(), {'status': 'saved', 'choice_count': 1})
         self.assertIsNone(InfiniteChoice.objects.get(user=self.user).file_id)
 
+    def test_submit_generated_infinite_choice_caps_choice_time_at_30_seconds(self):
+        response = self.client.post(
+            reverse('submit_infinity_choice'),
+            data=json.dumps({
+                'correct': True,
+                'choice_time': 18540.968,
+                'shorter_time': 10,
+                'longer_time': 12,
+            }),
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 200)
+        choice = InfiniteChoice.objects.get(user=self.user)
+        self.assertEqual(choice.choice_time, 30.0)
+        self.assertIsNone(choice.file_id)
+
     def test_submit_infinite_choice_saves_accessible_infinity_file(self):
         file = File.objects.create(
             name='Infinity course',
@@ -405,6 +440,31 @@ class InfinityUserStatsTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(InfiniteChoice.objects.get(user=self.user).file, file)
+
+    def test_submit_file_infinite_choice_caps_choice_time_at_30_seconds(self):
+        file = File.objects.create(
+            name='Infinity course',
+            team=self.team,
+            published=True,
+            infinite_enabled=True,
+        )
+
+        response = self.client.post(
+            reverse('submit_infinity_choice'),
+            data=json.dumps({
+                'correct': True,
+                'choice_time': 18540.968,
+                'shorter_time': 10,
+                'longer_time': 12,
+                'file_id': file.id,
+            }),
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 200)
+        choice = InfiniteChoice.objects.get(user=self.user)
+        self.assertEqual(choice.choice_time, 30.0)
+        self.assertEqual(choice.file, file)
 
     def test_play_file_list_groups_infinity_counts_by_file_and_generated_maps(self):
         first = File.objects.create(
@@ -655,6 +715,58 @@ class StatsSecurityTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 403)
+
+    def test_trainer_stats_include_cached_last_week_activity_for_all_team_athletes(self):
+        athlete = self.make_athlete('current-athlete', self.team)
+        former_athlete = self.make_athlete('former-athlete', self.other_team)
+        other_athlete = self.make_athlete('other-athlete', self.other_team)
+
+        included = [
+            InfiniteChoice.objects.create(
+                user=athlete, team=self.team, correct=True,
+                choice_time=1, shorter_time=10, longer_time=12,
+            ),
+            InfiniteChoice.objects.create(
+                user=former_athlete, team=self.team, correct=False,
+                choice_time=2, shorter_time=10, longer_time=15,
+            ),
+        ]
+        InfiniteChoice.objects.create(
+            user=other_athlete, team=self.other_team, correct=True,
+            choice_time=1, shorter_time=10, longer_time=12,
+        )
+        InfiniteChoice.objects.create(
+            user=self.trainer, team=self.team, correct=True,
+            choice_time=1, shorter_time=10, longer_time=12,
+        )
+        old = InfiniteChoice.objects.create(
+            user=athlete, team=self.team, correct=True,
+            choice_time=1, shorter_time=10, longer_time=12,
+        )
+        InfiniteChoice.objects.filter(id=old.id).update(
+            timestamp=timezone.now() - timedelta(days=8)
+        )
+
+        response = self.client.get(reverse('stats_get_stats'), {'mode': 'random'})
+
+        self.assertEqual(response.status_code, 200)
+        team_activity = response.json()['team_activity']
+        self.assertEqual(
+            set(team_activity['activity']),
+            {row.timestamp.isoformat() for row in included},
+        )
+        self.assertEqual(len(team_activity['activity_quality']), 2)
+        cache_key = _team_activity_cache_key(self.team.id, 'random')
+        self.assertEqual(cache.get(cache_key), team_activity)
+
+        _clear_stats_cache_for_team(self.team)
+        self.assertIsNone(cache.get(cache_key))
+
+    def test_trainer_stats_page_replaces_facts_with_team_activity_card(self):
+        response = self.client.get(reverse('results_stats'))
+
+        self.assertContains(response, 'id="stats-team-activity-chart"')
+        self.assertNotContains(response, 'id="stats-facts"')
 
     def test_random_stats_table_uses_only_active_team_rows(self):
         athlete = self.make_athlete('shared-athlete', self.team, extra_team=self.other_team)

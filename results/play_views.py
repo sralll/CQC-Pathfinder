@@ -12,6 +12,10 @@ from project.services.media_access import serve_map_file, user_can_access_file, 
 
 from .stats_views import _clear_stats_cache_for_team
 
+
+MAX_CHOICE_TIME = 30.0
+
+
 @login_required
 def index(request):
     return render(request, 'results/results.html')
@@ -167,6 +171,10 @@ def submit_infinite_choice(request):
         shorter_time = float(data['shorter_time'])
         longer_time  = float(data['longer_time'])
         file_id      = data.get('file_id')
+
+        # Match normal play: an abandoned browser tab must not turn idle time
+        # into a multi-hour decision that distorts the athlete's statistics.
+        choice_time = min(choice_time, MAX_CHOICE_TIME)
 
         file = None
         if file_id not in (None, ''):
@@ -527,7 +535,6 @@ def submit_result(request):
         # Cap stored choice_time so one slow control — amplified 5× by the reveal
         # penalty — can't ruin an athlete's stats. The client caps too; this is
         # the authoritative ceiling on the DB write.
-        MAX_CHOICE_TIME = 30.0
         if choice_time > MAX_CHOICE_TIME:
             real        = max(0.0, choice_time - penalty)
             choice_time = MAX_CHOICE_TIME

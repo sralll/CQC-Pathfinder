@@ -427,7 +427,7 @@ async function loadGraphStats(token) {
         statsData = data;
         if (statsData.error) throw new Error(statsData.error);
         renderCharts();
-        renderFacts(statsData.facts);
+        if (document.getElementById('stats-facts')) renderFacts(statsData.facts);
     } finally {
         // Only the latest request controls the spinner, otherwise a stale
         // response clears it while a newer fetch is still in flight.
@@ -634,6 +634,7 @@ function renderCharts() {
     drawDonutLegend();
     drawAvgChart();
     drawActivityChart();
+    drawTeamActivityChart();
     drawErrorScatterChart();
     drawSequenceEffectChart();
 }
@@ -909,21 +910,38 @@ function drawAvgLegend(svg, W, text = chartTextSizes(svg)) {
 }
 
 /* =========================================================
-   ACTIVITY — completed control pairs per month
-   (spans the user's full history, up to ~2 years)
+   ACTIVITY — completed control pairs over time
 ========================================================= */
 
 function drawActivityChart() {
     const svg = document.getElementById('stats-activity-chart');
+    if (!svg) return;
+    drawActivityChartData(svg, statsData.activity || [], statsData.activity_quality || [], false);
+}
+
+function drawTeamActivityChart() {
+    const svg = document.getElementById('stats-team-activity-chart');
+    if (!svg) return;
+    const teamActivity = statsData.team_activity || {};
+    drawActivityChartData(
+        svg,
+        teamActivity.activity || [],
+        teamActivity.activity_quality || [],
+        true
+    );
+}
+
+function drawActivityChartData(svg, activity, activityQuality, lastWeekOnly) {
     svg.innerHTML = '';
     const W = svg.clientWidth  || 320;
     const H = svg.clientHeight || 220;
     const text = chartTextSizes(svg);
     svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
 
-    // statsData.activity is an array of ISO timestamp strings (one per result).
-    const timestamps = (statsData.activity || []).map(s => new Date(s));
-    if (!timestamps.length) {
+    let timestamps = activity
+        .map(s => new Date(s))
+        .filter(t => !Number.isNaN(t.getTime()));
+    if (!timestamps.length && !lastWeekOnly) {
         const t = svgEl('text');
         t.setAttribute('x', W / 2); t.setAttribute('y', H / 2);
         t.setAttribute('text-anchor', 'middle');
@@ -938,29 +956,40 @@ function drawActivityChart() {
     const chartW = W - ML - MR;
     const chartH = H - MT - MB;
 
-    const minDate = new Date(Math.min(...timestamps));
-    const maxDate = new Date(Math.max(...timestamps));
     const dayMs   = 24 * 60 * 60 * 1000;
-    let spanDays  = Math.max(1, Math.ceil((maxDate - minDate) / dayMs) + 1);
+    let start0, binDays, binCount;
 
-    // Pick the smallest "nice" bin size such that the resulting bin count
-    // is ≤ TARGET_BINS. Bins are an integer number of days.
-    const TARGET_BINS = 50;
-    const NICE_DAYS   = [1, 2, 3, 7, 14, 21, 30, 60, 90, 180, 365];
-    let binDays = NICE_DAYS[NICE_DAYS.length - 1];
-    for (const d of NICE_DAYS) {
-        if (Math.ceil(spanDays / d) <= TARGET_BINS) { binDays = d; break; }
+    if (lastWeekOnly) {
+        const firstDay = new Date();
+        firstDay.setHours(0, 0, 0, 0);
+        firstDay.setDate(firstDay.getDate() - 6);
+        start0 = firstDay.getTime();
+        binDays = 1;
+        binCount = 7;
+        const end = start0 + binCount * dayMs;
+        timestamps = timestamps.filter(t => t.getTime() >= start0 && t.getTime() < end);
+    } else {
+        const minDate = new Date(Math.min(...timestamps));
+        const maxDate = new Date(Math.max(...timestamps));
+        const spanDays = Math.max(1, Math.ceil((maxDate - minDate) / dayMs) + 1);
+
+        // Pick the smallest "nice" bin size that results in at most 50 bars.
+        const TARGET_BINS = 50;
+        const NICE_DAYS   = [1, 2, 3, 7, 14, 21, 30, 60, 90, 180, 365];
+        binDays = NICE_DAYS[NICE_DAYS.length - 1];
+        for (const d of NICE_DAYS) {
+            if (Math.ceil(spanDays / d) <= TARGET_BINS) { binDays = d; break; }
+        }
+
+        start0 = new Date(minDate.getFullYear(), minDate.getMonth(), minDate.getDate()).getTime();
+        binCount = Math.max(1, Math.ceil((maxDate.getTime() - start0) / (binDays * dayMs)) + 1);
     }
-
-    // Anchor the binning at minDate (midnight) so each bin starts cleanly.
-    const start0 = new Date(minDate.getFullYear(), minDate.getMonth(), minDate.getDate()).getTime();
-    const binCount = Math.max(1, Math.ceil((maxDate.getTime() - start0) / (binDays * dayMs)) + 1);
     const bins = new Array(binCount).fill(0);
     for (const t of timestamps) {
         const idx = Math.floor((t.getTime() - start0) / (binDays * dayMs));
         if (idx >= 0 && idx < binCount) bins[idx]++;
     }
-    const qualityBins = buildActivityQualityBins(start0, binDays, binCount);
+    const qualityBins = buildActivityQualityBins(activityQuality, start0, binDays, binCount);
 
     const maxCount = Math.max(1, ...bins);
     const step     = niceStep(maxCount, Math.max(1, Math.floor(chartH / 30))) || 1;
@@ -1035,9 +1064,19 @@ function drawActivityChart() {
             svg.appendChild(lbl);
         }
     });
+
+    if (!timestamps.length) {
+        const t = svgEl('text');
+        t.setAttribute('x', ML + chartW / 2); t.setAttribute('y', MT + chartH / 2);
+        t.setAttribute('text-anchor', 'middle');
+        t.setAttribute('fill', '#444');
+        t.setAttribute('font-size', text.empty);
+        t.textContent = gettext('No activity yet');
+        svg.appendChild(t);
+    }
 }
 
-function buildActivityQualityBins(start0, binDays, binCount) {
+function buildActivityQualityBins(activityQuality, start0, binDays, binCount) {
     const dayMs = 24 * 60 * 60 * 1000;
     const bins = Array.from({ length: binCount }, () => ({
         fastest: 0,
@@ -1046,7 +1085,7 @@ function buildActivityQualityBins(start0, binDays, binCount) {
         more_10: 0,
         total: 0,
     }));
-    (statsData.activity_quality || []).forEach(item => {
+    activityQuality.forEach(item => {
         const t = new Date(item.timestamp);
         if (Number.isNaN(t.getTime()) || !CATEGORY_KEYS.includes(item.bucket)) return;
         const idx = Math.floor((t.getTime() - start0) / (binDays * dayMs));

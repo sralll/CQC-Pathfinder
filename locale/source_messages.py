@@ -48,6 +48,7 @@ DJANGO = {
         "Une sensibilité positive signifie que tu prends intuitivement la bonne décision et que réfléchir plus longtemps ne t'aide pas par rapport aux autres athlètes.",
         "Una sensibilità positiva significa che prendi intuitivamente la decisione giusta e che riflettere più a lungo non ti aiuta rispetto agli altri atleti."),
     "Activity": ("Aktivität", "Activité", "Attività"),
+    "Activity Team": ("Kaderaktivität", "Activité du cadre", "Attività della squadra"),
     "Added:": ("Hinzugefügt:", "Ajouté :", "Aggiunto:"),
     "All controls": ("Alle Posten", "Tous les postes", "Tutti i punti"),
     "Analyzing file…": ("Datei wird analysiert…", "Analyse du fichier…", "Analisi del file…"),

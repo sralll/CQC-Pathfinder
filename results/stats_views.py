@@ -1,3 +1,5 @@
+from datetime import timedelta
+
 from django.conf import settings
 from django.contrib.auth.decorators import login_required
 from django.core.cache import cache
@@ -21,9 +23,11 @@ def _active_team_for(user):
         return None
 
 
-def _stats_target_user(request):
+def _stats_target_user(request, is_trainer=None):
     target_user = request.user
-    if not _is_trainer(request.user):
+    if is_trainer is None:
+        is_trainer = _is_trainer(request.user)
+    if not is_trainer:
         return target_user, None
 
     uid = request.GET.get('user_id')
@@ -74,6 +78,10 @@ def _team_random_cache_key(team_id):
     return f"stats:team-random:v1:{team_id}"
 
 
+def _team_activity_cache_key(team_id, mode):
+    return f"stats:team-activity:v1:{team_id}:{mode}"
+
+
 def _stats_table_cache_key(team_id, mode):
     return f"stats:table:v8:{team_id}:{mode}"
 
@@ -101,6 +109,7 @@ def _clear_stats_cache_for_team(team):
     cache.delete(_team_error_fit_cache_key(team.id, True))
     cache.delete(_team_error_fit_cache_key(team.id, False))
     for mode in ('competition', 'training', 'random'):
+        cache.delete(_team_activity_cache_key(team.id, mode))
         cache.delete(_stats_table_cache_key(team.id, mode))
 
 
@@ -612,6 +621,52 @@ def _cached_team_random_stats(active_team):
     return stats
 
 
+def _cached_team_activity(active_team, mode):
+    """Activity from all non-trainer athletes in the active team.
+
+    Only the rolling seven-day window needed by the trainer chart is cached.
+    Cache invalidation is shared with the other team statistics.
+    """
+    cache_key = _team_activity_cache_key(active_team.id, mode)
+    activity = cache.get(cache_key)
+    if activity is not None:
+        return activity
+
+    from django.utils import timezone
+    from .models import Choice, InfiniteChoice
+
+    since = timezone.now() - timedelta(days=7)
+
+    if mode == 'random':
+        rows = list(
+            InfiniteChoice.objects
+            .filter(_team_choice_filter(active_team), timestamp__gte=since)
+            .exclude(user__groups__name='Trainer')
+            .order_by('timestamp')
+        )
+        activity = {
+            'activity': [row.timestamp.isoformat() for row in rows if row.timestamp],
+            'activity_quality': _random_activity_quality_events(rows),
+        }
+    else:
+        rows = list(
+            _choice_row_queryset(
+                _choice_stats_queryset(Choice.objects, mode == 'competition')
+                .filter(_team_choice_filter(active_team), timestamp__gte=since)
+                .exclude(user__groups__name='Trainer')
+                .order_by('timestamp')
+            )
+        )
+        cp_ids = {row['control_pair_id'] for row in rows if row['control_pair_id']}
+        activity = {
+            'activity': [row['timestamp'].isoformat() for row in rows if row['timestamp']],
+            'activity_quality': _choice_activity_quality_events(rows, _min_time_per_cp(cp_ids)),
+        }
+
+    cache.set(cache_key, activity, STATS_TEAM_CACHE_TIMEOUT)
+    return activity
+
+
 def _cached_team_error_potential_fit(active_team, competition_flag):
     cache_key = _team_error_fit_cache_key(active_team.id, competition_flag)
     fit = cache.get(cache_key)
@@ -694,7 +749,8 @@ def get_user_stats(request):
     if not mode:
         mode = 'competition' if request.GET.get('competition', 'true').lower() != 'false' else 'training'
 
-    target_user, error_response = _stats_target_user(request)
+    is_trainer = _is_trainer(request.user)
+    target_user, error_response = _stats_target_user(request, is_trainer)
     if error_response:
         return error_response
     active_team = _active_team_for(request.user)
@@ -702,7 +758,7 @@ def get_user_stats(request):
     # ── Infinity mode: aggregate InfiniteChoice rows independent of team / file ──
     if mode == 'random':
         target_rcs_qs = InfiniteChoice.objects.filter(user=target_user)
-        if target_user != request.user and _is_trainer(request.user) and active_team:
+        if target_user != request.user and is_trainer and active_team:
             target_rcs_qs = target_rcs_qs.filter(_team_choice_filter(active_team))
         target_rcs = list(target_rcs_qs.order_by('timestamp'))
         team_rcs = target_rcs   # No team aggregation for random plays for now
@@ -731,6 +787,11 @@ def get_user_stats(request):
             'team':        team_stats,
             'activity':    activity,
             'activity_quality': activity_quality,
+            'team_activity': (
+                _cached_team_activity(active_team, mode)
+                if active_team and is_trainer
+                else None
+            ),
             'error_potential': {
                 'points': error_points,
                 'user_fit': _linear_fit(error_points),
@@ -814,6 +875,11 @@ def get_user_stats(request):
         'team':        team_stats,
         'activity':    activity,
         'activity_quality': activity_quality,
+        'team_activity': (
+            _cached_team_activity(active_team, mode)
+            if active_team and is_trainer
+            else None
+        ),
         'error_potential': {
             'points': error_points,
             'user_fit': _linear_fit(error_points),

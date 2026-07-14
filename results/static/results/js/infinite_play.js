@@ -33,6 +33,7 @@ const NOA_MIN_EFFECT_DEG         = 45;
 const NOA_COUNTER_MIN_DEG        = 45;
 const ROUTE_RUNTIME_MAX_RELATIVE_GAP = 0.40;
 const ROUTE_RUNTIME_MIN_SIDE_GAP = 12;
+const MAX_CHOICE_TIME = 30;  // s; cap stored choice_time for stats
 
 let generateWards = null;
 let buildRouteVisibilityGraph = null;
@@ -4198,7 +4199,12 @@ function pickSide(idx) {
     phase = 'reveal';
     updateReportButton();
 
-    const choiceTime = ((performance.now() - choiceStartTime) / 1000);
+    // Match normal play: cap idle time from an abandoned tab before it reaches
+    // either the HUD or the server. The server enforces the same ceiling.
+    const choiceTime = Math.min(
+        (performance.now() - choiceStartTime) / 1000,
+        MAX_CHOICE_TIME,
+    );
     const chosen     = scene.routes[idx];
     const other      = scene.routes[1 - idx];
     lastChoiceTimes = { total: choiceTime, real: choiceTime, penalty: 0 };

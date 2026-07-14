@@ -128,6 +128,17 @@
             </div>
         </div>
 
+        {% if is_trainer %}
+        <div class="stats-card" id="stats-card-team-activity">
+            <div class="stats-card-head">
+                <h2 class="stats-card-title">{% trans "Activity Team" %}</h2>
+                <button class="stats-card-expand" type="button" title="{% trans 'Enlarge' %}" aria-label="{% trans 'Enlarge' %}"></button>
+            </div>
+            <div class="stats-card-body loading">
+                <svg class="stats-svg" id="stats-team-activity-chart" preserveAspectRatio="xMidYMid meet"></svg>
+            </div>
+        </div>
+        {% else %}
         <div class="stats-card" id="stats-card-facts">
             <div class="stats-card-head">
                 <h2 class="stats-card-title">{% trans "At a glance" %}</h2>
@@ -135,6 +146,7 @@
             </div>
             <div class="stats-card-body loading" id="stats-facts"></div>
         </div>
+        {% endif %}
 
     </div>
 
