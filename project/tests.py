@@ -12,7 +12,7 @@ from django.urls import reverse
 from account.models import Profile, Team
 from project import views as project_views
 from project.models import ControlPair, File, FileSnapshot, Route
-from project.passage_validation import (
+from project.services.passage_validation import (
     MAX_LEVEL_PASSAGES_BYTES,
     MAX_PASSAGES,
     MAX_POINTS_PER_PASSAGE,

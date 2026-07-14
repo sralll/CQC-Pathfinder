@@ -87,6 +87,9 @@ body.guide-light {
     --guide-faint: var(--text-faint);
     --guide-callout-bg: rgba(224, 112, 32, 0.1);
     --guide-callout-border: rgba(224, 112, 32, 0.32);
+    --guide-new: #70c8ee;
+    --guide-new-border: rgba(112, 200, 238, 0.5);
+    --guide-new-bg: rgba(112, 200, 238, 0.06);
     min-height: calc(100vh - 28px);
     padding-top: 28px;
     display: grid;
@@ -108,6 +111,9 @@ body.guide-light {
     --guide-faint: #afa394;
     --guide-callout-bg: rgba(224, 112, 32, 0.1);
     --guide-callout-border: rgba(201, 94, 22, 0.28);
+    --guide-new: #08729f;
+    --guide-new-border: rgba(8, 114, 159, 0.38);
+    --guide-new-bg: rgba(8, 114, 159, 0.045);
 }
 
 .guide-sidebar {
@@ -396,6 +402,31 @@ body.guide-light {
     color: var(--guide-text);
     font-size: var(--font-md);
     line-height: 1.55;
+}
+
+/* Temporary release highlighting for newly documented functionality. */
+.guide-new {
+    margin: 22px 0;
+    padding: 1px 0 1px 16px;
+    border-left: 2px solid var(--guide-new-border);
+    background: linear-gradient(90deg, var(--guide-new-bg), transparent 70%);
+    color: var(--guide-new);
+}
+
+.guide-section .guide-new h3,
+.guide-section .guide-new h4,
+.guide-section .guide-new p,
+.guide-section .guide-new li,
+.guide-section .guide-new x-icon {
+    color: var(--guide-new);
+}
+
+.guide-section .guide-new h3:first-child {
+    margin-top: 18px;
+}
+
+.guide-section .guide-new > :last-child {
+    margin-bottom: 18px;
 }
 
 .guide-tool-grid {

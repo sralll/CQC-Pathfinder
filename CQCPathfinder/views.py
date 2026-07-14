@@ -74,7 +74,7 @@ class LocaleLoginView(LoginView):
 
 
 def dev_agent_login(request):
-    """One-request login for AI agents in local dev. See CLAUDE.md.
+    """One-request login for AI agents in local dev. See AGENTS.md.
 
     GET /dev/agent-login/[?next=/path/] provisions the agent test account
     (Trainer role) and starts a session — no form, no CSRF, immune to the

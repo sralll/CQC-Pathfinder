@@ -6,7 +6,7 @@ from django.views.decorators.http import require_GET, require_POST
 from django.db import transaction
 from django.db.models import Count, Q
 from .models import File, Label, ControlPair, Route
-from .passage_validation import (
+from .services.passage_validation import (
     LevelPassagesValidationError,
     normalize_level_passages,
 )
@@ -23,7 +23,7 @@ import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 
-from .media_access import (
+from .services.media_access import (
     delete_navgraph_artifacts,
     safe_media_filename,
     serve_map_file,
@@ -928,9 +928,8 @@ def region_suitability(request, file_id):
     """Return the build-time infinite-play suitability estimate (WP 4.3).
 
     Reads the ``suitability`` block navgraph builds stash in
-    ``stats`` inside the ``.navgraph.npz`` (see ``navgraph.build_navgraph`` /
-    ``navgraph_suitability.simulate_suitability``) — a lightweight pair-
-    generation simulation run at build time, not computed on request.
+    ``stats`` inside the ``.navgraph.npz``. The value is read from the artifact,
+    not computed on request.
 
     JSON: ``{suitability: {valid_rate, mean_retries, mean_ms, n_attempts,
     n_valid, reasons, warn} | null}``. ``null`` when the map has no mask, no

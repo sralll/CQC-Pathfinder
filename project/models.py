@@ -27,7 +27,7 @@ class File(models.Model):
     has_mask = models.BooleanField(default=False)
     blocked_terrain = models.JSONField(null=True, blank=True)
     level_passages = models.JSONField(null=True, blank=True)
-    # Infinity-on-masks (plan.md Phase 4). infinite_region = coach-drawn map-region
+    # Infinity-on-masks. infinite_region = coach-drawn map-region
     # polygon [[x,y],...] in full-res mask pixel coords (same space as navgraph
     # nodes); authoritative hit zone for endpoint sampling (WP 4.1). infinite_enabled
     # = coach opt-in gating the mask-mode map picker (WP 4.2).

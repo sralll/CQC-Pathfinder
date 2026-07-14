@@ -1,6 +1,6 @@
 // =============================================================================
 // infinity_endpoint_heatmap.mjs — headless (Node) distribution + timing probe
-// for the user-uploaded infinity-mode play style (plan.md Phase 3+).
+// for the user-uploaded infinity-mode play style.
 //
 // What it does, per the request:
 //   1. Repeatedly generates a start/goal + candidate routes exactly as the served
@@ -16,9 +16,9 @@
 //   4. Renders an endpoint-density HEATMAP composited over the dimmed mask so you
 //      can see the spatial distribution of served start & goal points.
 //
-// It reuses the harness helpers (which themselves import navgraph_router.js — the
-// single source of truth), so this stays in lock-step with what the browser
-// worker serves. No pipeline logic is duplicated here.
+// It calls navgraph_router.js directly, so route generation stays in lock-step
+// with what the browser worker serves. The helpers below only load local files
+// and collect results for the heatmap.
 //
 // CLI:
 //   node scripts/infinity_endpoint_heatmap.mjs --mask media/masks/<name>.png \
@@ -40,8 +40,100 @@ import { performance } from 'node:perf_hooks';
 import sharp from 'sharp';
 
 import {
-	IMPASSABLE, loadArtifact, loadMask, buildBenchmarkState, makeRng, generatePairs,
-} from './navgraph_harness.mjs';
+	IMPASSABLE,
+	attachSerializedPassages,
+	buildState,
+	generateOnePair,
+	loadArtifact as parseArtifact,
+	makeRng,
+	routePathLength,
+} from '../project/static/project/js/pathing/navgraph_router.js';
+import * as routePairSelection from '../results/static/results/js/infinite/route_pair_selection.js';
+
+function loadArtifact(binPath) {
+	return parseArtifact(fs.readFileSync(binPath));
+}
+
+async function loadMask(maskPath) {
+	const { data, info } = await sharp(maskPath, { limitInputPixels: false })
+		.greyscale().raw().toBuffer({ resolveWithObject: true });
+	return {
+		mask: new Uint8Array(data.buffer, data.byteOffset, data.length),
+		H: info.height,
+		W: info.width,
+	};
+}
+
+function buildHeatmapState(artifact, mask, passagesPath = null) {
+	const state = buildState(artifact, mask);
+	const hasSerializedPassages = artifact.baseNodeCount < artifact.N;
+	if (passagesPath) {
+		const document = JSON.parse(fs.readFileSync(passagesPath, 'utf8').replace(/^\uFEFF/, ''));
+		const items = Array.isArray(document) ? document : document?.items;
+		if (!Array.isArray(items)) {
+			throw new Error(`passage file must be an array or {version, items}: ${passagesPath}`);
+		}
+		attachSerializedPassages(state, items);
+	} else if (hasSerializedPassages) {
+		throw new Error(
+			`artifact contains ${artifact.N - artifact.baseNodeCount} passage nodes; ` +
+			'pass --passages <level-passages.json> for a production-equivalent run',
+		);
+	}
+	return state;
+}
+
+function generateServedPairs(state, { count, maxAttempts, rng }) {
+	const pairs = [];
+	const attempts = [];
+	let internalAttempts = 0;
+
+	while (pairs.length < count && internalAttempts < maxAttempts) {
+		const started = performance.now();
+		const result = generateOnePair(state, {
+			rng,
+			maxAttempts: maxAttempts - internalAttempts,
+			selection: routePairSelection,
+		});
+		const elapsedMs = performance.now() - started;
+		internalAttempts += result.meta?.attempts || 0;
+
+		if (!result.ok) {
+			attempts.push({
+				ok: false,
+				reason: result.reason,
+				retries: result.meta?.retries ?? 0,
+				msTotal: +elapsedMs.toFixed(2),
+			});
+			break;
+		}
+
+		const dist = Math.hypot(result.goal.x - result.start.x, result.goal.y - result.start.y);
+		pairs.push({
+			start: result.start,
+			goal: result.goal,
+			routes: result.routes,
+			runtimes: result.runtimes,
+			dist,
+			meta: result.meta,
+		});
+		attempts.push({
+			ok: true,
+			reason: 'ok',
+			retries: result.meta.retries,
+			dist,
+			relGap: result.meta.relGap ?? null,
+			sideGap: result.meta.sideGap ?? null,
+			rt1: +result.runtimes[0].toFixed(0),
+			rt2: +result.runtimes[1].toFixed(0),
+			len1: +routePathLength(result.routes[0]).toFixed(1),
+			len2: +routePathLength(result.routes[1]).toFixed(1),
+			msTotal: +elapsedMs.toFixed(2),
+		});
+	}
+
+	return { pairs, attempts };
+}
 
 // -----------------------------------------------------------------------------
 // arg parsing
@@ -222,11 +314,11 @@ async function main() {
 	console.log(`infinity endpoint heatmap: ${name}, count=${count}, seed=${seed}, maxAttempts=${maxAttempts}`);
 	const artifact = loadArtifact(binPath);
 	const { mask } = await loadMask(maskPath);
-	const state = buildBenchmarkState(artifact, mask, undefined, passagesPath);
+	const state = buildHeatmapState(artifact, mask, passagesPath);
 	console.log(`  nodes ${artifact.N} edges ${artifact.E}  ${artifact.W}x${artifact.H}px`);
 
 	const tWall = performance.now();
-	const { pairs, attempts } = generatePairs(state, { count, maxAttempts, rng: makeRng(seed) });
+	const { pairs, attempts } = generateServedPairs(state, { count, maxAttempts, rng: makeRng(seed) });
 	const wallMs = performance.now() - tWall;
 	const ok = attempts.filter((a) => a.ok);
 	const failed = attempts.find((a) => !a.ok);

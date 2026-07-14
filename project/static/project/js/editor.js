@@ -2856,6 +2856,7 @@ const PassageEditor = (() => {
         selectedPassageId = passage.id;
         renderCommitted();
         updatePassageList();
+        syncControls();
         if (center) centerOnPassage(passage);
         return true;
     }
@@ -3316,8 +3317,14 @@ const PassageEditor = (() => {
     }
 
     function updateHover(worldPoint) {
-        const next = currentAction() === "edit" && !draftPoints.length
-            ? editTargetAt(worldPoint) : null;
+        const action = currentAction();
+        let next = null;
+        if (action === "edit" && !draftPoints.length) {
+            next = editTargetAt(worldPoint);
+        } else if (action === "remove") {
+            const passage = hitAt(worldPoint);
+            if (passage) next = { passageId: passage.id, pointIndex: null };
+        }
         if (next?.passageId === hoverTarget?.passageId && next?.pointIndex === hoverTarget?.pointIndex) return;
         hoverTarget = next;
         renderCommitted();
@@ -3398,8 +3405,9 @@ const PassageEditor = (() => {
                 return true;
             }
         }
-        if (!pan.isActive() && currentAction() === "edit") {
-            if (draftPoints.length) {
+        const action = currentAction();
+        if (!pan.isActive() && (action === "edit" || action === "remove")) {
+            if (action === "edit" && draftPoints.length) {
                 previewPoint = worldToMask(worldPoint);
                 schedulePreviewRender();
             } else {
@@ -3489,14 +3497,51 @@ const PassageEditor = (() => {
         cursorWorldPoint = null;
     }
 
+    function selectedPassage() {
+        return items().find(item => item.id === selectedPassageId) || null;
+    }
+
+    function controlWidth() {
+        if (!draftPoints.length) {
+            const passage = selectedPassage();
+            if (passage) return Number(passage.width);
+        }
+        return draftWidth;
+    }
+
     function setWidth(value) {
-        draftWidth = Math.max(LEVEL_PASSAGES_MIN_WIDTH, Math.min(LEVEL_PASSAGES_MAX_WIDTH, Number(value) || DEFAULT_WIDTH));
-        renderPreview();
+        const width = Math.max(LEVEL_PASSAGES_MIN_WIDTH, Math.min(
+            LEVEL_PASSAGES_MAX_WIDTH, Number(value) || DEFAULT_WIDTH));
+        const source = !draftPoints.length ? selectedPassage() : null;
+        if (!source) {
+            draftWidth = width;
+            renderPreview();
+            syncControls();
+            return;
+        }
+        if (width === Number(source.width)) return;
+        const candidate = structuredClone(source);
+        candidate.width = width;
+        const nextItems = replaceCandidate(candidate);
+        if (!validateEditedCandidate(candidate, nextItems)) {
+            syncControls();
+            return;
+        }
+        if (wheelEdit && wheelEdit.passageId !== source.id) commitWheelEdit();
+        if (!wheelEdit) wheelEdit = {
+            passageId: source.id,
+            undoState: pushUndoState(gettext("Passage width changed")),
+        };
+        project.level_passages = { version: LEVEL_PASSAGES_VERSION, items: nextItems };
+        hoverTarget = { passageId: source.id, pointIndex: null };
+        renderCommitted();
+        if (wheelEditTimer) clearTimeout(wheelEditTimer);
+        wheelEditTimer = setTimeout(commitWheelEdit, WIDTH_EDIT_DEBOUNCE_MS);
         syncControls();
     }
 
     function adjustWidth(delta) {
-        setWidth(draftWidth + delta);
+        setWidth(controlWidth() + delta);
     }
 
     function syncControls() {
@@ -3513,7 +3558,7 @@ const PassageEditor = (() => {
             slider.min = LEVEL_PASSAGES_MIN_WIDTH;
             slider.max = LEVEL_PASSAGES_MAX_WIDTH;
             slider.step = 1;
-            slider.value = draftWidth;
+            slider.value = controlWidth();
         }
         if (help) help.hidden = !passageAdd;
         if (opacityRow) opacityRow.hidden = passageMode;
@@ -3544,7 +3589,7 @@ const PassageEditor = (() => {
         onCameraChanged() { schedulePreviewRender(); },
         setWidth,
         adjustWidth,
-        getWidth: () => draftWidth,
+        getWidth: controlWidth,
         syncControls,
         isDrafting: () => draftPoints.length > 0,
     };
@@ -4467,7 +4512,7 @@ const RCM = (() => {
     const IR2 = RCM_RADII.level1;
     const CLICK_MS = 200, MOVE_PX = 8;
 
-    const MENU_TOOLS = [ToolMode.CONTROL_PAIR, ToolMode.ROUTE, ToolMode.MASK, ToolMode.BLOCK, ToolMode.INFINITY];
+    const MENU_TOOLS = [ToolMode.CONTROL_PAIR, ToolMode.ROUTE, ToolMode.BLOCK, ToolMode.MASK, ToolMode.INFINITY];
     // Clockwise from North, evenly spaced (one slice per tool).
     const TOOL_ICON  = {
         [ToolMode.CONTROL_PAIR]: "control_pair",
@@ -4679,18 +4724,25 @@ const RCM = (() => {
             if (dist < RCM_RADII.level2) {
                 return { ring:"level2", mode, family:family.id, sub:null };
             }
-            if (dist < RCM_RADII.level3) {
-                const actions = MASK_ACTION_DEFS[family.id] || [];
-                if (actions.length) {
-                    const familyRel = rel - familyIndex * familySector;
-                    const actionIndex = Math.min(
-                        Math.floor(familyRel / (familySector / actions.length)), actions.length - 1,
-                    );
-                    return { ring:"level3", mode, family:family.id, sub:actions[actionIndex].id };
-                }
-                return { ring:"level3", mode, family:null, sub:null };
+            const actions = MASK_ACTION_DEFS[family.id] || [];
+            if (actions.length) {
+                const familyRel = rel - familyIndex * familySector;
+                const actionIndex = Math.min(
+                    Math.floor(familyRel / (familySector / actions.length)), actions.length - 1,
+                );
+                return {
+                    ring: dist < RCM_RADII.level3 ? "level3" : "extended",
+                    mode,
+                    family:family.id,
+                    sub:actions[actionIndex].id,
+                };
             }
-            return { ring:"extended", mode, family:family.id, sub:null };
+            return {
+                ring: dist < RCM_RADII.level3 ? "level3" : "extended",
+                mode,
+                family:family.id,
+                sub:null,
+            };
         }
 
         const defs = SUBTOOL_DEFS[mode];
@@ -9850,12 +9902,12 @@ function hideMapSpinner() {
 ========================================================= */
 
 const TOOL_ORDER = [
+    ToolMode.NONE,
     ToolMode.CONTROL_PAIR,
     ToolMode.ROUTE,
-    ToolMode.MASK,
     ToolMode.BLOCK,
+    ToolMode.MASK,
     ToolMode.INFINITY,
-    ToolMode.NONE,
 ];
 
 let currentToolMode = ToolMode.CONTROL_PAIR;

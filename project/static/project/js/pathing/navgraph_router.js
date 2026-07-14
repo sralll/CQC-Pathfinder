@@ -1,8 +1,7 @@
 // =============================================================================
-// navgraph_router.js — browser/worker port of the WP 2.1 Node harness
-// (scripts/navgraph_harness.mjs). Phase 3, WP 3.2.
+// navgraph_router.js — shared browser/worker router for uploaded-map infinity.
 //
-// This is a *faithful* port of the harness's importable, pure functions:
+// Its importable, pure functions cover:
 // artifact parsing, sampler/graph state, pair sampling + prefilters, endpoint
 // snapping, graph A*, barriers, route options, runtime selection, and
 // legality refinement. The Node-specific bits (sharp / fs / node:* imports,
@@ -62,19 +61,15 @@ export const DEFAULT_CONFIG = Object.freeze({
 	// --- endpoint cell prefilters (evaluated once when indexing sample cells) --
 	clearanceMinPx: 12,        // require coarse_clear >= this (≈3 coarse px)
 	terrainMinValue: 200,      // start/goal pixels must be on bright terrain (grayscale >= 200)
-	// Prefer endpoints in obstacle-rich streets/alleys instead of sampling large
-	// open plazas in direct proportion to their area. The weighted branch uses
-	// the exact count of black pixels in this square neighbourhood; the uniform
-	// branch deliberately keeps open-space endpoints possible. A moderate
-	// exponent still favours intricate areas without concentrating nearly every
-	// endpoint beside the darkest obstacle clusters.
+	// Sample endpoints in proportion to the local percentage of impassable
+	// pixels. This approximates feature sampling: a narrow alley has much less
+	// passable area than a plaza, but its larger obstacle-to-area ratio offsets
+	// that disadvantage without concentrating on only the darkest districts.
 	endpointObstacleWindowPx: 100,
-	endpointDensityExponent: 1.35,
+	// Preserve some map-wide coverage so a plaza centre with no black pixel in
+	// its local window is uncommon, not impossible. The other 70% follows the
+	// direct obstacle-percentage acceptance distribution below.
 	endpointUniformMix: 0.30,
-	// Start points additionally favour the area-centroid of the saved region.
-	// At the most distant region edge exp(-strength) remains as its relative
-	// center weight; goals stay center-neutral to preserve route coverage.
-	startCenterBiasStrength: 0.25,
 	// --- pair prefilters -----------------------------------------------------
 	distMinPx: 500,
 	distMaxPx: 1500,
@@ -115,6 +110,9 @@ export const DEFAULT_CONFIG = Object.freeze({
 	passageBarrierOverhangPx: 2,
 	// --- selection (shared route_pair_selection.js, injected) ----------------
 	sideGapMinPx: 40,          // minSideGap in px (side is normalized to px on masks)
+	// Scale the geometric separation requirement with the direct start→goal
+	// distance. The absolute value above remains a floor for shorter routes.
+	sideGapMinDirectFraction: 0.12,
 	maxRelativeGap: 0.40,      // ROUTE_PAIR_MAX_RELATIVE_GAP (shared weighted picker)
 	routeAttempts: 5,          // == city selectionConfig.maxRoutes (deeper exploration for highRouteIndexBias)
 	// Only adjacent cumulative alternates may form a pair. A wider index gap
@@ -147,12 +145,9 @@ export const DEFAULT_CONFIG = Object.freeze({
 	corridorRadius: 24,          // mask px; tube radius around the legal spine (editor uses 24 @ scale 0.5)
 	refineBudgetMs: 600,         // per-route θ* budget; exceeded → legal-spine fallback
 	// After selection, re-optimize against only the blockers actually rendered.
-	// The wider tube can remove detours caused by cumulative candidate-only
-	// blockers while final side/distinctness checks preserve the route choice.
-	// 104 px is a measured +6% full-pipeline cost over 96 px on the seeded
-	// Infinity regression map. Applied to the observed 400 ms laptop average,
-	// that leaves about 0.93-0.98 s at a conservative 2.2-2.3x phone slowdown.
-	finalCorridorRadius: 104,
+	// Keep the established 24 px tube so the final Theta* pass stays within its
+	// runtime budget while final side/distinctness checks preserve the route choice.
+	finalCorridorRadius: 24,
 	finalRefineBudgetMs: 1200,
 	// 'reject': θ* fail/timeout on EITHER route rejects the pair as `timeout`.
 	//   A legal spine is an internal corridor input, not a presentable route.
@@ -584,9 +579,6 @@ export function buildState(artifact, mask, config = DEFAULT_CONFIG) {
 		artifact, mask, cfg, mainComp, sampleCells, nodeInRegion,
 		endpointDensityCumulative: endpointDensity.cumulative,
 		endpointDensityTotal: endpointDensity.total,
-		startDensityCumulative: endpointDensity.startCumulative,
-		startDensityTotal: endpointDensity.startTotal,
-		endpointRegionCenter: endpointDensity.regionCenter,
 		buckets, bucketCell: cell, regionAllowed,
 		adjStart, adjTo, adjW, adjEdge,
 		// Per-pixel memo for inSignificantObstacle (WP 5.3). Sparse Map keyed by
@@ -597,101 +589,71 @@ export function buildState(artifact, mask, config = DEFAULT_CONFIG) {
 }
 
 /**
- * Build cumulative obstacle-density scores for eligible endpoint cells.
+ * Build cumulative obstacle-percentage scores for eligible endpoint cells.
  *
- * A summed-area table on the artifact's existing coarse grid keeps peak memory
- * bounded (roughly W*H/coarseScale² uint32s) while still counting every black
- * full-resolution pixel exactly. Window boundaries are coarse-cell aligned;
- * with the normal 4 px coarse scale this approximates the configured 100 px
- * square to within at most 4 px on each side.
+ * Picking from these scores is mathematically the accepted distribution of:
+ * choose a cell uniformly, then retain it with probability
+ * black-pixels / mapped-pixels in its neighbourhood. Using cumulative weights
+ * avoids an unbounded rejection loop on sparse maps. A summed-area table on
+ * the artifact's existing coarse grid keeps peak memory bounded. Window
+ * boundaries are coarse-cell aligned; with the normal 4 px coarse scale this
+ * approximates the configured 100 px square to within 4 px on each side.
  */
 function buildEndpointDensitySampler(artifact, mask, sampleCells, cfg) {
 	const { W, H, cw, ch, coarseScale, coarseHitzone, hw, hh, hitzoneScale } = artifact;
 	const coarseOriginX = artifact.coarseOriginX || 0;
 	const coarseOriginY = artifact.coarseOriginY || 0;
 	const cumulative = new Float64Array(sampleCells.length);
-	const startCumulative = new Float64Array(sampleCells.length);
-	if (!sampleCells.length || cfg.endpointUniformMix >= 1 || cfg.endpointObstacleWindowPx <= 0)
-		return { cumulative, total: 0, startCumulative, startTotal: 0, regionCenter: null };
+	if (!sampleCells.length || cfg.endpointObstacleWindowPx <= 0)
+		return { cumulative, total: 0 };
 
 	const stride = cw + 1;
-	const integral = new Uint32Array((ch + 1) * stride);
+	const blackIntegral = new Uint32Array((ch + 1) * stride);
+	const mappedIntegral = new Uint32Array((ch + 1) * stride);
 	for (let cy = 0; cy < ch; cy++) {
 		const y0 = coarseOriginY + cy * coarseScale, y1 = Math.min(H, y0 + coarseScale);
-		let rowRunning = 0;
+		let rowBlack = 0, rowMapped = 0;
 		for (let cx = 0; cx < cw; cx++) {
 			const x0 = coarseOriginX + cx * coarseScale, x1 = Math.min(W, x0 + coarseScale);
-			let black = 0;
+			let black = 0, mapped = 0;
 			// Ignore black pixels outside the coach-drawn region. Otherwise the
 			// unmapped exterior can look like an enormous "object" and attract
-			// endpoints to precisely the region edge we want to de-emphasize.
+			// endpoints to precisely the region edge we want to de-emphasize. The
+			// denominator uses the same mapped footprint so boundary cells are not
+			// penalized merely because part of their window lies outside the region.
 			const hy = Math.floor((y0 + (y1 - y0) / 2) / hitzoneScale);
 			const hx = Math.floor((x0 + (x1 - x0) / 2) / hitzoneScale);
 			if (hy >= 0 && hx >= 0 && hy < hh && hx < hw && coarseHitzone[hy * hw + hx]) {
+				mapped = (x1 - x0) * (y1 - y0);
 				for (let y = y0; y < y1; y++) {
 					const row = y * W;
 					for (let x = x0; x < x1; x++) if (mask[row + x] === IMPASSABLE) black++;
 				}
 			}
-			rowRunning += black;
-			integral[(cy + 1) * stride + cx + 1] = integral[cy * stride + cx + 1] + rowRunning;
+			rowBlack += black;
+			rowMapped += mapped;
+			blackIntegral[(cy + 1) * stride + cx + 1]
+				= blackIntegral[cy * stride + cx + 1] + rowBlack;
+			mappedIntegral[(cy + 1) * stride + cx + 1]
+				= mappedIntegral[cy * stride + cx + 1] + rowMapped;
 		}
 	}
 
 	const halfCells = Math.max(1, Math.ceil(cfg.endpointObstacleWindowPx / (2 * coarseScale)));
-	let densityTotal = 0;
+	let total = 0;
 	for (let i = 0; i < sampleCells.length; i++) {
 		const ci = sampleCells[i], cx = ci % cw, cy = (ci - cx) / cw;
 		const x0 = Math.max(0, cx - halfCells), x1 = Math.min(cw, cx + halfCells + 1);
 		const y0 = Math.max(0, cy - halfCells), y1 = Math.min(ch, cy + halfCells + 1);
-		const blackCount = integral[y1 * stride + x1] - integral[y0 * stride + x1]
-			- integral[y1 * stride + x0] + integral[y0 * stride + x0];
-		const score = Math.pow(blackCount, Math.max(1, cfg.endpointDensityExponent));
-		densityTotal += score;
-		cumulative[i] = score;
-	}
-
-	// Area-centroid of the rasterized coach polygon. This is the geometrical
-	// centroid of the region to hitzone-grid precision, not the map-image center.
-	let regionCount = 0, centerX = 0, centerY = 0;
-	for (let hy = 0; hy < hh; hy++) {
-		for (let hx = 0; hx < hw; hx++) {
-			if (!coarseHitzone[hy * hw + hx]) continue;
-			regionCount++;
-			centerX += (hx + 0.5) * hitzoneScale;
-			centerY += (hy + 0.5) * hitzoneScale;
-		}
-	}
-	if (regionCount) { centerX /= regionCount; centerY /= regionCount; }
-	else { centerX = W / 2; centerY = H / 2; }
-	let radiusSq = 1;
-	for (let hy = 0; hy < hh; hy++) {
-		for (let hx = 0; hx < hw; hx++) {
-			if (!coarseHitzone[hy * hw + hx]) continue;
-			const dx = (hx + 0.5) * hitzoneScale - centerX;
-			const dy = (hy + 0.5) * hitzoneScale - centerY;
-			radiusSq = Math.max(radiusSq, dx * dx + dy * dy);
-		}
-	}
-
-	let total = 0, startTotal = 0;
-	const centerStrength = Math.max(0, cfg.startCenterBiasStrength);
-	for (let i = 0; i < sampleCells.length; i++) {
-		const ci = sampleCells[i], cx = ci % cw, cy = (ci - cx) / cw;
-		const score = cumulative[i];
+		const blackCount = blackIntegral[y1 * stride + x1] - blackIntegral[y0 * stride + x1]
+			- blackIntegral[y1 * stride + x0] + blackIntegral[y0 * stride + x0];
+		const mappedCount = mappedIntegral[y1 * stride + x1] - mappedIntegral[y0 * stride + x1]
+			- mappedIntegral[y1 * stride + x0] + mappedIntegral[y0 * stride + x0];
+		const score = mappedCount > 0 ? blackCount / mappedCount : 0;
 		total += score;
 		cumulative[i] = total;
-		const dx = coarseOriginX + (cx + 0.5) * coarseScale - centerX;
-		const dy = coarseOriginY + (cy + 0.5) * coarseScale - centerY;
-		const centerWeight = Math.exp(-centerStrength * (dx * dx + dy * dy) / radiusSq);
-		// A completely obstacle-free region still gets useful start centering.
-		startTotal += (densityTotal > 0 ? score : 1) * centerWeight;
-		startCumulative[i] = startTotal;
 	}
-	return {
-		cumulative, total, startCumulative, startTotal,
-		regionCenter: { x: centerX, y: centerY },
-	};
+	return { cumulative, total };
 }
 
 /**
@@ -875,7 +837,7 @@ export function samplePair(state, rng) {
 	const { sampleCells, artifact, mask, cfg } = state;
 	const { W } = artifact;
 	if (sampleCells.length < 2) return { reason: 'empty' };
-	const start = pixelInCell(state, sampleEndpointCell(state, rng, true), rng);
+	const start = pixelInCell(state, sampleEndpointCell(state, rng), rng);
 	if (!start) return { reason: 'empty' };
 	// Sample a goal inside the distance band.
 	let goal = null, dist = 0;
@@ -890,11 +852,23 @@ export function samplePair(state, rng) {
 	return { start, goal, dist };
 }
 
-/** Choose an eligible coarse cell from the uniform/density mixture. */
-function sampleEndpointCell(state, rng, start = false) {
+/** Absolute + proportional lateral-separation threshold for one route pair. */
+export function routeSideGapMinimumPx(config, directDistancePx) {
+	const floor = Number.isFinite(config?.sideGapMinPx) ? Math.max(0, config.sideGapMinPx) : 0;
+	const fraction = Number.isFinite(config?.sideGapMinDirectFraction)
+		? Math.max(0, config.sideGapMinDirectFraction)
+		: 0;
+	const distance = Number.isFinite(directDistancePx) ? Math.max(0, directDistancePx) : 0;
+	return Math.max(floor, distance * fraction);
+}
+
+/** Choose an eligible coarse cell by local obstacle percentage. */
+function sampleEndpointCell(state, rng) {
 	const { sampleCells, cfg } = state;
-	const cumulative = start ? state.startDensityCumulative : state.endpointDensityCumulative;
-	const total = start ? state.startDensityTotal : state.endpointDensityTotal;
+	const cumulative = state.endpointDensityCumulative;
+	const total = state.endpointDensityTotal;
+	// Obstacle-free maps have no meaningful feature signal; remain usable by
+	// falling back to uniform sampling instead of rejecting every endpoint.
 	if (!(total > 0) || rng() < cfg.endpointUniformMix)
 		return sampleCells[(rng() * sampleCells.length) | 0];
 	const target = rng() * total;
@@ -1572,7 +1546,7 @@ export function computeRouteOptions(state, start, goal, startSnap, goalSnap, opt
  * Also returns the terrain-weighted cost of the refined polyline: for kept
  * straight segments the `lineCost`, for A*-refined segments the A* `cost`.
  * These per-segment costs are what the caller sums to recompute the served
- * runtime (plan.md requires the gap re-check against the refined route).
+ * runtime used by the refined-route gap check.
  *
  * @returns {{ path: Array<{x,y}>, cost: number }}
  */
@@ -2061,6 +2035,7 @@ export function generateOnePair(state, { rng, maxAttempts = 4000, now, selection
 		const t0 = clock();
 		const sp = samplePair(state, rng);
 		if (sp.reason) { timings.sample += clock() - t0; bump(sp.reason); lastReason = sp.reason; retries++; continue; }
+		const sideGapMinPx = routeSideGapMinimumPx(cfg, sp.dist);
 		const tSample = clock(); timings.sample += tSample - t0;
 
 		// Route 1's budget covers the snap stubs → anchor the snap deadline at the
@@ -2080,7 +2055,7 @@ export function generateOnePair(state, { rng, maxAttempts = 4000, now, selection
 			goal: sp.goal,
 			config: {
 				...selectionDefaults,
-				minSideGap: cfg.sideGapMinPx,
+				minSideGap: sideGapMinPx,
 				maxRelativeGap: cfg.maxRelativeGap,
 				maxRouteIndexGap: cfg.maxSelectedRouteIndexGap,
 			},
@@ -2100,8 +2075,8 @@ export function generateOnePair(state, { rng, maxAttempts = 4000, now, selection
 		// Candidate R was discovered with every cumulative barrier before R, but
 		// only `skippedBarriers` exists in the final scene. Refine the accepted
 		// geometry against exactly that set so invisible later barriers cannot
-		// leave unexplained bends. A wider final corridor removes their local
-		// detours without changing passage surface identity.
+		// leave unexplained bends. Re-run the final refinement against the rendered
+		// blocker set without changing passage surface identity.
 		const finalRefineOpts = {
 			routeIndex: Infinity,
 			now: clock,
@@ -2153,7 +2128,7 @@ export function generateOnePair(state, { rng, maxAttempts = 4000, now, selection
 			goal: sp.goal,
 			config: {
 				...selectionDefaults,
-				minSideGap: cfg.sideGapMinPx,
+				minSideGap: sideGapMinPx,
 				maxRelativeGap: cfg.maxRelativeGap,
 				maxRouteIndexGap: Infinity,
 			},
@@ -2190,7 +2165,7 @@ export function generateOnePair(state, { rng, maxAttempts = 4000, now, selection
 			bump('timeout'); lastReason = 'timeout'; retries++; continue;
 		}
 
-		// Re-check the relative gap on the θ*-refined runtimes (plan.md).
+		// Re-check the relative gap on the θ*-refined runtimes.
 		const rtA = costA, rtB = costB;
 		const faster = Math.min(rtA, rtB), slower = Math.max(rtA, rtB);
 		const relGap = faster > 0 ? (slower - faster) / faster : Infinity;
@@ -2247,6 +2222,7 @@ export function generateOnePair(state, { rng, maxAttempts = 4000, now, selection
 				retries,
 				attempts: attempts + 1,
 				sideGap: finalSideGap,
+				sideGapMin: sideGapMinPx,
 				relGap,
 				legality,
 				passageRevision: state.passageRevision || null,

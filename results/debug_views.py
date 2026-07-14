@@ -4,14 +4,14 @@ from django.shortcuts import get_object_or_404, render
 from django.urls import reverse
 from django.views.decorators.http import require_GET, require_http_methods
 
-from project.media_access import (
+from project.services.media_access import (
     navgraph_artifact_is_current,
     serve_map_file,
     serve_mask_file,
     serve_navgraph_file,
 )
 from project.models import File
-from project.passage_validation import normalize_level_passages
+from project.services.passage_validation import normalize_level_passages
 
 from .models import ReportedInfinity
 
@@ -236,7 +236,7 @@ def debug_user_route_file_navgraph(request, file_id):
 def debug_user_route_file_passages(request, file_id):
     file = get_object_or_404(File, id=file_id, deleted=False)
     from project.navgraph import filter_level_passages_for_region, mask_dimensions
-    from project.media_access import navgraph_artifact_paths
+    from project.services.media_access import navgraph_artifact_paths
 
     document = normalize_level_passages(file.level_passages)
     _bin_path, mask_path = navgraph_artifact_paths(file)

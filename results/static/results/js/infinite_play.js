@@ -4,7 +4,7 @@ import {
 } from './infinite/mask_scene_source.js';
 import {
     cameraRotationForEndpoints,
-    orientMaskSceneForCamera,
+    orientSceneForCamera,
 } from './infinite/scene_orientation.js';
 
 /* =========================================================
@@ -806,10 +806,10 @@ async function next() {
     showMapSpinner();
     try {
         scene = await takeNextScene();
-        // Reversing an uploaded-map problem preserves its geometry and route
-        // choice, but can avoid an unnecessary half-turn from the previous
-        // camera heading. Do this only when the reverse direction is closer.
-        orientMaskSceneForCamera(scene, cam.rot);
+        // Reversing either kind of Infinity problem preserves its geometry and
+        // route choice, but can avoid an unnecessary half-turn from the
+        // previous camera heading. Only reverse when that direction is closer.
+        orientSceneForCamera(scene, cam.rot);
     } catch (err) {
         console.error('failed to load infinite map:', err);
         window.setTimeout(next, 500);

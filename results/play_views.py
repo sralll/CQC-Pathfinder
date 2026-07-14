@@ -8,7 +8,7 @@ from django.shortcuts import get_object_or_404, render
 from django.views.decorators.http import require_GET, require_POST
 
 from project.models import ControlPair, File, Route
-from project.media_access import serve_map_file, user_can_access_file, user_can_access_map_file
+from project.services.media_access import serve_map_file, user_can_access_file, user_can_access_map_file
 
 from .stats_views import _clear_stats_cache_for_team
 
@@ -123,7 +123,7 @@ def infinite_mask_maps(request):
             qs = qs.filter(team=active_team)
     qs = qs.select_related('team').order_by('-last_edited')
 
-    from project.media_access import navgraph_artifact_is_current
+    from project.services.media_access import navgraph_artifact_is_current
 
     maps = []
     for f in qs:

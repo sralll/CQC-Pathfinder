@@ -28,8 +28,8 @@ export const MASK_BLOCKING_STROKE_SOURCE_PX = 5;
 
 // Route-choice limits are real metres. Convert them to the full-resolution
 // mask pixels consumed by navgraph_router using the normal editor/play scale.
-const ROUTE_PICK_MIN_METRES = 40;
-const ROUTE_PICK_MAX_METRES = 120;
+const ROUTE_PICK_MIN_METRES = 100;
+const ROUTE_PICK_MAX_METRES = 300;
 const ROUTE_SIDE_MIN_METRES = 12;
 
 export { TRAIN_SCALE_VALUE };
@@ -64,9 +64,22 @@ export function maskScaleForMap(mapScale = REFERENCE_MAP_SCALE, editorScale = 1)
     const safeMapScale = Number.isFinite(parsedScale) && parsedScale > 0
         ? parsedScale
         : REFERENCE_MAP_SCALE;
-    const metresPerMapUnit = EDITOR_PX_TO_METRES * (safeMapScale / REFERENCE_MAP_SCALE);
-    const metresPerMaskPixel = metresPerMapUnit * TRAIN_SCALE_VALUE;
-    const barrierWidthPx = maskBarrierStrokeWidthMaskPx(safeMapScale, editorScale);
+    const parsedEditorScale = Number(editorScale);
+    const safeEditorScale = Number.isFinite(parsedEditorScale) && parsedEditorScale > 0
+        ? parsedEditorScale
+        : 1;
+    // Match the editor's calibration formula:
+    // metres = source-px * project.scale * 0.48 * map_scale / 4000.
+    // The generated mask has project.scale / TRAIN_SCALE_VALUE pixels per
+    // source pixel, so converting that calibrated source distance into mask
+    // pixels cancels project.scale. Keeping both steps explicit prevents the
+    // route band from accidentally reverting to uncalibrated image pixels.
+    const metresPerSourcePixel = safeEditorScale * EDITOR_PX_TO_METRES
+        * (safeMapScale / REFERENCE_MAP_SCALE);
+    const maskPixelsPerSourcePixel = safeEditorScale / TRAIN_SCALE_VALUE;
+    const metresPerMaskPixel = metresPerSourcePixel / maskPixelsPerSourcePixel;
+    const metresPerMapUnit = metresPerSourcePixel / safeEditorScale;
+    const barrierWidthPx = maskBarrierStrokeWidthMaskPx(safeMapScale, safeEditorScale);
     return {
         mapScale: safeMapScale,
         metresPerMapUnit,

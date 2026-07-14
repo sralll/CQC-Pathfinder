@@ -1,4 +1,4 @@
-"""Debug overlay visualizer for navgraph artifacts (WP 1.3).
+"""Debug overlay visualizer for navgraph artifacts.
 
 Renders, for each given mask, a PNG overlay next to its ``.navgraph.npz``
 artifact (``<base>.navgraph.debug.png``) showing:
@@ -427,7 +427,7 @@ def _parse_pair(s):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Render navgraph debug overlays (WP 1.3).")
+        description="Render navgraph debug overlays.")
     parser.add_argument("masks", nargs="+", help="mask PNG path(s)")
     parser.add_argument(
         "--pair", type=_parse_pair, default=None,

@@ -7,9 +7,6 @@ margin-growth full-map A*. Downstream stages (corridor + guided theta*) still
 run on the *true* full-resolution mask, so nothing the graph approximates can
 produce an illegal route — the graph only proposes waypoint chains.
 
-See ``plan.md`` (repo root) "Infinity mode on real masks" for the design.
-
-
 Terrain / cost model
 --------------------
 Masks are 8-bit terrain-class grids. ``0`` is impassable; every other value is
@@ -86,7 +83,7 @@ segment), ``2`` transition (an endpoint↔base connector) — and, for passage a
 transition edges, the owning passage ordinal (``-1`` for base edges). A
 ``passage_revision`` string (canonical over the normalized passage document plus
 mask dimensions) lets a reader reject an artifact whose passages no longer match
-the served ``File.level_passages``. See ``plan_3rd_dimension.md`` CR 8. A base-only
+the served ``File.level_passages``. A base-only
 build is a valid v4 artifact with ``base_node_count == N`` and zero passages.
 
 Array keys (npz):
@@ -569,7 +566,7 @@ def artifact_matches_passage_document(bin_path, level_passages,
     if header is None:
         return False
     try:
-        from .passage_validation import normalize_level_passages
+        from .services.passage_validation import normalize_level_passages
         document = normalize_level_passages(level_passages)
     except Exception:
         return False
@@ -671,12 +668,12 @@ def _passage_terminal_frames(points):
 def _normalize_passages_for_build(level_passages, map_width, map_height):
     """Validate the whole document and derive the small analytic build geometry.
 
-    Structural validation is owned by ``passage_validation``.  This second
+    Structural validation is owned by ``services.passage_validation``. This second
     layer intentionally mirrors only runtime geometry needed by the builder:
     consecutive-point normalization, flat terminal caps, round interior joins,
     self-overlap and the existing raster complexity budgets.
     """
-    from .passage_validation import normalize_level_passages
+    from .services.passage_validation import normalize_level_passages
 
     document = normalize_level_passages(level_passages)
     passages = []
@@ -990,7 +987,7 @@ def filter_level_passages_for_region(level_passages, region_polygon,
     centreline points and every consecutive segment must remain in the polygon.
     The persisted document itself is never modified.
     """
-    from .passage_validation import normalize_level_passages
+    from .services.passage_validation import normalize_level_passages
 
     document = normalize_level_passages(level_passages)
     if not isinstance(region_polygon, (list, tuple)) or len(region_polygon) < 3:
@@ -3185,7 +3182,7 @@ def build_navgraph(mask_path, region_polygon=None, level_passages=None,
     if not _HAVE_SKIMAGE:
         raise RuntimeError(
             "scikit-image is required for navgraph skeletonization; add it to "
-            "requirements.txt (see WP 1.1)."
+            "requirements.txt."
         )
     t_start = time.time()
     timings = {}
@@ -3762,12 +3759,9 @@ def build_navgraph(mask_path, region_polygon=None, level_passages=None,
         artifact["coarse_labels"] = np.zeros(labels.shape, dtype=np.uint8)
     stats["coarse_labels_compacted"] = True
 
-    # 11. Suitability estimate removed (Group 3 optimization).
-    #     The UI no longer surfaces suitability stats and the fixed 8 s budget
-    #     was ~20-25 % of median build time. The backend
-    #     (project/navgraph_suitability.py) is intentionally preserved so it
-    #     can be run on-demand via the management command. Stats key is kept as
-    #     None for backward-compat with any reader that inspects the .npz.
+    # 11. Suitability estimate removed. The UI no longer surfaces suitability
+    #     stats and the fixed 8 s budget was ~20-25 % of median build time. Keep
+    #     the key as None for compatibility with readers that inspect the .npz.
     stats["suitability"] = None
     stats["timings"] = {k: round(v, 2) for k, v in timings.items()}
     stats["build_seconds"] = round(time.time() - t_start, 2)

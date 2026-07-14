@@ -63,14 +63,14 @@ const CITY_SETTINGS = {
 //                    band entirely). Uses the per-batch seeded RNG so a given
 //                    seed stays reproducible.
 //
-// This object is mutable so scripts/balance_harness.mjs can sweep it; edit the
-// defaults below to change production behaviour.
+// This object remains mutable for diagnostic tuning; edit the defaults below
+// to change production behaviour.
 export const balanceRejectConfig = {
     maxRelativeGap: 0.05,
     probability: 0.8,
 };
 
-// Route-selection strategy (experimental — see scripts/selection_harness.mjs).
+// Route-selection strategy.
 //
 //   'closest'  — production default. Serve the two routes with the SMALLEST
 //                runtime gap (subject to balanceRejectConfig).

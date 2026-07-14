@@ -1,5 +1,0 @@
-{
-  "type": "module",
-  "private": true,
-  "description": "Dev-only harness for the pathing pipeline (bench.mjs). Not shipped."
-}

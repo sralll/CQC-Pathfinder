@@ -405,6 +405,11 @@ html, body {
 
 .play-cp-cell { text-align: center; color: var(--text-muted); }
 
+/* Infinity progress: zero is the same blue as the "new" play status;
+   completed counts stay bright and neutral. */
+.play-infinity-new   { color: #0044CC; font-weight: 600; }
+.play-infinity-count { color: var(--text-strong); }
+
 .play-label-chip {
     display: inline-block;
     border-radius: var(--radius-sm);

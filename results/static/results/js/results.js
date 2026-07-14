@@ -822,10 +822,14 @@ function formatDate(iso) {
 
 function infinityDoneCount(count) {
     const n = Math.max(0, Number(count) || 0);
-    return n === 0 ? gettext('new') : n;
+    return n === 0
+        ? `<span class="play-infinity-new">${gettext('new')}</span>`
+        : `<span class="play-infinity-count">${n}</span>`;
 }
 
 function infinityDoneText(count) {
     const n = Math.max(0, Number(count) || 0);
-    return n === 0 ? gettext('new') : `${n} ${gettext('done')}`;
+    return n === 0
+        ? `<span class="play-infinity-new">${gettext('new')}</span>`
+        : `<span class="play-infinity-count">${n} ${gettext('done')}</span>`;
 }

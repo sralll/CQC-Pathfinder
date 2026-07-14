@@ -324,10 +324,11 @@
                 <li><strong>Route löschen <x-icon name="trash" size="0.9em"></x-icon>:</strong> entfernt die einzelne Route.</li>
             </ul>
 
-            <h3>Maske</h3>
+            <h3>Maske <x-icon name="mask" size="0.9em"></x-icon></h3>
             <p>
                 Die Maske wird automatisch generiert, wenn eine Karte geladen wird. Sie beschreibt,
-                welche Bereiche für Auto-Pathfinding passierbar oder unpassierbar sind.
+                welche Bereiche für Auto-Pathfinding passierbar oder unpassierbar sind. Im Werkzeugrad
+                öffnet <x-icon name="mask" size="0.9em"></x-icon> die Maskenwerkzeuge.
             </p>
 
             <h4>Ansehen <x-icon name="lock" size="1em"></x-icon></h4>
@@ -343,6 +344,29 @@
                 Werkzeugmenü auf der Karte, solange die rechte Maustaste gehalten wird.
             </p>
 
+            <div class="guide-new">
+                <h3>Passagen auf einer zweiten Ebene <x-icon name="bridge" size="0.9em"></x-icon></h3>
+                <p>
+                    Unter <strong>Maske <x-icon name="mask" size="0.9em"></x-icon> → 3. Dimension
+                    <x-icon name="bridge" size="0.9em"></x-icon></strong> werden Passagen eingezeichnet,
+                    die der Pathfinder als zweite Ebene benutzen kann, zum Beispiel Brücken oder
+                    Unterführungen. Die Breite der nächsten Passage wird im Seitenpanel eingestellt.
+                </p>
+                <ul class="guide-detail-list">
+                    <li><strong>Linksklick auf eine freie Stelle:</strong> startet eine Passage; weitere Klicks setzen ihre Punkte.</li>
+                    <li><strong>Rechtsklick oder <kbd>Enter</kbd>:</strong> schliesst die Passage ab. Sie braucht mindestens zwei verschiedene Punkte.</li>
+                    <li><strong><kbd>Esc</kbd>:</strong> verwirft die Passage, die gerade gezeichnet wird.</li>
+                    <li><strong><kbd>D</kbd>:</strong> entfernt zuerst den letzten noch nicht gespeicherten Punkt; ohne offene Passage wird die zuletzt hinzugefügte Passage gelöscht.</li>
+                    <li><strong>Punkt ziehen:</strong> verschiebt einen bestehenden Passagenpunkt.</li>
+                    <li><strong>Mausrad über einer bestehenden Passage:</strong> ändert ihre Breite. Über dem Werkzeugknopf ändert das Mausrad die Breite der nächsten Passage.</li>
+                    <li><strong>Entfernen <x-icon name="eraser" size="0.9em"></x-icon>:</strong> ein Klick auf eine Passage löscht sie.</li>
+                    <li><strong>Touch:</strong> tippen setzt Punkte, langes Drücken schliesst eine offene Passage ab und Ziehen verschiebt einen Punkt.</li>
+                </ul>
+                <p>
+                    Geometrisch überlappende Passagen werden noch nicht unterstützt.
+                </p>
+            </div>
+
             <h3>Sperrgebiete <x-icon name="block" size="0.9em"></x-icon></h3>
             <p>
                 Sperrgebiete werden vom Auto-Pathfinding respektiert.
@@ -352,6 +376,34 @@
                 <li><strong>Fläche hinzufügen <x-icon name="draw-polygon" size="0.9em"></x-icon>:</strong> einmal klicken, um das Polygon zu starten, danach beliebig viele Punkte setzen und mit einem Klick auf den ersten Punkt abschliessen.</li>
                 <li><strong>Entfernen <x-icon name="eraser" size="0.9em"></x-icon>:</strong> in diesem Modus auf bestehende Sperrobjekte klicken, um sie zu löschen.</li>
             </ul>
+
+            <div class="guide-new">
+                <h3>Infinity auf eigenen Karten <x-icon name="infinity" size="0.9em"></x-icon></h3>
+                <p>
+                    Das Spielregion-Polygon legt den Teil der hochgeladenen Karte fest, in dem Infinity
+                    Postenpaare generieren darf. Diese Region sollte möglichst klein und kompakt bleiben,
+                    damit keine langen Umwegrouten am Kartenrand entstehen. Bereiche mit instabiler oder
+                    ungenauer Maske gehören nicht in das Polygon: Sie führen sonst zu schlechten Routen.
+                    Grosse offene Flächen ebenfalls weglassen – dort entstehen kaum interessante
+                    Routenwahlen. Der Modus wird nur für dichte urbane Gebiete empfohlen.
+                </p>
+                <h4>Spielregion zeichnen und bearbeiten</h4>
+                <ul class="guide-detail-list">
+                    <li><strong>Linksklick:</strong> setzt die Punkte des Polygons. Ein Klick auf den ersten Punkt schliesst es ab; mindestens drei Punkte sind nötig.</li>
+                    <li><strong>Punkt ziehen:</strong> verschiebt einen bestehenden Eckpunkt.</li>
+                    <li><strong>Klick auf eine Kante:</strong> fügt dort einen neuen Eckpunkt ein.</li>
+                    <li><strong>Punkt entfernen <x-icon name="eraser" size="0.9em"></x-icon>:</strong> löscht den angeklickten Eckpunkt, solange mindestens drei übrig bleiben.</li>
+                    <li><strong>Region löschen:</strong> entfernt das ganze Spielregion-Polygon.</li>
+                </ul>
+                <p>
+                    TrainerInnen müssen vor dem Freischalten besonders sorgfältig prüfen, ob die Maske
+                    wirklich stimmt. Bereits ein einziges fehlendes schwarzes Pixel in einer Mauer kann
+                    dem Pathfinder eine falsche Öffnung vortäuschen und sehr viele schlechte Routen
+                    erzeugen. Spiele deshalb auf jeder Karte zuerst mindestens 50 generierte Postenpaare
+                    selbst. Lass die Karte nur freigeschaltet, wenn diese Prüfung sauber ausfällt – sonst
+                    werden AthletInnen frustriert und melden entsprechend viele Fehler.
+                </p>
+            </div>
         </section>
 
         <section class="guide-section" id="play">
@@ -431,6 +483,14 @@
                 <li><strong>Training <x-icon name="book-open" size="0.9em"></x-icon>:</strong> funktioniert fast gleich, aber ohne Druck. Getrennt geführt, weil es bereits viele Trainingsresultate gibt.</li>
                 <li><strong>Infinity <x-icon name="infinity" size="0.9em"></x-icon>:</strong> Endlos-Modus mit generierten Karten und demselben L/R-Mechanismus. Eine Serie richtiger Wahlen treibt den Streak <x-icon name="flame" size="0.9em"></x-icon> hoch; die richtige Route wird danach mit der Krone <x-icon name="crown" size="0.9em"></x-icon> markiert. Falls bei einem generierten Posten ein grosser Fehler auffällt, kann er gemeldet werden; bitte nur bei deutlichen Fehlern benutzen, da jede Meldung von Hand geprüft wird.</li>
             </ul>
+            <div class="guide-new">
+                <p>
+                    Auf hochgeladenen Karten kann eine generierte Route gelegentlich nicht perfekt sein.
+                    Versuche, dich davon nicht zu sehr frustrieren zu lassen: Dieser Modus soll dich mit
+                    einer Karte vertraut machen und bietet dafür viel mehr Routenwahlen, als TrainerInnen
+                    von Hand vorbereiten könnten.
+                </p>
+            </div>
 
             <h3>Wiederholung</h3>
             <p>
@@ -556,6 +616,14 @@
                     <p class="guide-section-number">6</p>
                     <h2>Version</h2>
                 </div>
+            </div>
+            <div class="guide-new">
+                <h3>July 2026, CQC-Pathfinder Infinity 2.2</h3>
+                <ul class="guide-detail-list">
+                    <li>Tuned the route runtime distribution to a median gap of 10% behind the fastest route, with 6% variance.</li>
+                    <li>Added second-level passages in the editor, compatible with the pathfinder.</li>
+                    <li>Added Infinity mode for user-uploaded maps (requires a sparse navgraph for Dijkstra acceleration).</li>
+                </ul>
             </div>
             <h3>July 2026, CQC-Pathfinder 2.1 Infinity</h3>
             <ul class="guide-detail-list">

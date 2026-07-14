@@ -60,7 +60,7 @@ urlpatterns = [
     path('favicon.ico', RedirectView.as_view(url='/static/favicon.ico', permanent=True)),
 ]
 
-# DEBUG-only: one-request agent login (see CLAUDE.md). Registered conditionally
+# DEBUG-only: one-request agent login (see AGENTS.md). Registered conditionally
 # so the route does not exist at all on deployed instances (DEBUG=False).
 if settings.DEBUG:
     urlpatterns.append(

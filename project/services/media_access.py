@@ -1,3 +1,5 @@
+"""Secure access, serving, and lifecycle helpers for uploaded media artifacts."""
+
 import mimetypes
 import os
 import logging
@@ -7,7 +9,7 @@ from django.db.models import Q
 from django.http import FileResponse, HttpResponseNotFound
 from django.utils.translation import gettext as _
 
-from .models import File
+from ..models import File
 
 
 logger = logging.getLogger(__name__)
@@ -149,7 +151,7 @@ def navgraph_artifact_is_current(file):
     listed even via a direct URL. Any missing file, unreadable mask, or
     corruption is treated as not-current so a stale/broken artifact never
     reaches a player."""
-    from .navgraph import (
+    from ..navgraph import (
         artifact_matches_passage_document, filter_level_passages_for_region,
         mask_dimensions, region_revision,
     )

@@ -158,9 +158,6 @@
                 </div>
             </div>
 
-            <div id="cp-list"></div>
-            <div id="block-list"></div>
-            <div id="passage-list"></div>
             <div id="mask-controls">
                 <div id="mask-opacity-row" class="mask-slider-row">
                     <label class="mask-slider-label">{% trans "Fill" %}</label>
@@ -172,6 +169,9 @@
                 </div>
                 <p id="passage-help" class="passage-help" hidden>{% trans "Click: add point · Right click / Enter: finish · D: remove last point / last passage · Escape: cancel · Wheel over passage: width · Drag node: move" %}</p>
             </div>
+            <div id="cp-list"></div>
+            <div id="block-list"></div>
+            <div id="passage-list"></div>
             <!-- Infinity tool-mode panel (shown in body.mode-infinity). The
                  activation toggle lives in the navbar (left of Publish), not
                  here. Editing autosaves; there is no save/finish button. -->
@@ -207,7 +207,7 @@
 
                         <g class="tool-segment"
                             data-tool="control_pair"
-                            data-index="1">
+                            data-index="2">
 
                                 <path class="segment-bg"></path>
 
@@ -220,7 +220,7 @@
 
                         <g class="tool-segment"
                             data-tool="route"
-                            data-index="2">
+                            data-index="3">
 
                                 <path class="segment-bg"></path>
 
@@ -232,7 +232,7 @@
 
                         <g class="tool-segment"
                             data-tool="mask"
-                            data-index="3">
+                            data-index="5">
 
                                 <path class="segment-bg"></path>
 
@@ -256,7 +256,7 @@
 
                         <g class="tool-segment"
                             data-tool="infinity"
-                            data-index="5">
+                            data-index="6">
 
                                 <path class="segment-bg"></path>
 
@@ -268,7 +268,7 @@
 
                         <g class="tool-segment"
                             data-tool="no_tool"
-                            data-index="6">
+                            data-index="1">
 
                                 <path class="segment-bg"></path>
 

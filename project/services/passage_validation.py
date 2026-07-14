@@ -1,4 +1,4 @@
-"""Structural validation for the persisted level-passage document.
+"""Validate and canonicalize the persisted level-passage document.
 
 This module deliberately does not inspect a map or rasterize geometry.  Passage
 coordinates are in mask-pixel space, but bounds that depend on the current mask

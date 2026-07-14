@@ -1,7 +1,7 @@
 """Build (or backfill) ``.navgraph`` artifacts for uploaded map masks.
 
-Wraps ``project.navgraph.build_navgraph`` / ``save_navgraph`` (see WP 1.1,
-``plan.md`` repo root) with a management command so artifacts can be built
+Wraps ``project.navgraph.build_navgraph`` / ``save_navgraph`` with a management
+command so artifacts can be built
 one-off (``--file``) or backfilled for every mask (``--all``).
 
 Usage:
@@ -80,7 +80,7 @@ def _row_identity(row):
 
     An unreadable stored document yields a per-row sentinel so it never
     compares equal to another row (ambiguity is reported, not a crash)."""
-    from project.passage_validation import (
+    from project.services.passage_validation import (
         LevelPassagesValidationError, normalize_level_passages,
     )
 
@@ -215,7 +215,7 @@ def _rebuild_reasons(mask_path, region, level_passages):
         NAVGRAPH_VERSION, filter_level_passages_for_region, mask_dimensions,
         passage_revision, read_bin_header,
     )
-    from project.passage_validation import normalize_level_passages
+    from project.services.passage_validation import normalize_level_passages
 
     npz_path = _npz_path(mask_path)
     bin_path = _bin_path(mask_path)

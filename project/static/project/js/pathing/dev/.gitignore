@@ -1,2 +1,0 @@
-# Per-run baseline artifact — regenerate with `node bench.mjs --baseline`.
-bench-baseline.json
