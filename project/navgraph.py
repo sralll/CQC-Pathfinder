@@ -192,6 +192,27 @@ NAVGRAPH_REVISION_MAX_LEN = 256
 class NavgraphBuildCancelled(RuntimeError):
     """Raised when the owner reports that this build token was superseded."""
 
+
+class PassageConnectorError(ValueError):
+    """A numbered passage endpoint could not reach the nearby base graph.
+
+    ``passage_id`` remains available for stable machine lookup, while the
+    exception text uses the same one-based order shown in the editor sidebar.
+    """
+
+    def __init__(self, passage_id, endpoint, passage_number=None):
+        self.passage_id = str(passage_id)
+        self.endpoint = str(endpoint)
+        self.passage_number = (
+            int(passage_number) if passage_number is not None else None)
+        passage_label = (
+            f"Passage {self.passage_number}"
+            if self.passage_number is not None
+            else "A passage"
+        )
+        super().__init__(
+            f"{passage_label} {self.endpoint} endpoint has no legal base connector")
+
 # Typed edge kinds (mirror navgraph_router.js EDGE_KIND_*).
 EDGE_KIND_BASE = 0
 EDGE_KIND_PASSAGE = 1
@@ -212,9 +233,10 @@ PASSAGE_TRANSVERSE_MAX_DOT = 0.50
 PASSAGE_LONGITUDINAL_MIN_DOT = math.cos(math.radians(45.0))
 PASSAGE_BYPASS_MAX_PER_PASSAGE = 64
 PASSAGE_BYPASS_NEIGHBORS_PER_NODE = 12
-PASSAGE_CONNECTOR_RADIUS_PX = 160
-PASSAGE_CONNECTOR_SECTORS = 8
-PASSAGE_CONNECTOR_MAX_PER_ENDPOINT = 8
+PASSAGE_CONNECTOR_RADIUS_PX = 192
+PASSAGE_CONNECTOR_MAX_PER_ENDPOINT = 10
+PASSAGE_CONNECTOR_GRID_MARGIN_MIN_PX = 48
+PASSAGE_CONNECTOR_GRID_MARGIN_MAX_PX = 160
 PASSAGE_GEOMETRY_EPSILON = 1e-9
 
 # --- Terrain -----------------------------------------------------------------
@@ -2263,6 +2285,47 @@ def _weighted_edge_path(mask, xi, yi, xj, yj, straight, margin=EDGE_MARGIN,
     return cost
 
 
+def _passage_connector_cost(mask, a, b, margin=None):
+    """Return the terrain cost of a passage endpoint-to-base connection.
+
+    A clear chord keeps the cheap straight-line result. If that chord clips an
+    impassable pixel, use the same bounded 8-connected weighted raster search
+    that legalizes ordinary graph edges. Passage placement therefore depends
+    on actual pixel-grid connectivity rather than exact line of sight.
+
+    Unlike ordinary candidate edges, no detour-ratio rejection is applied:
+    these are topology anchors, and any connection inside the bounded local
+    grid is preferable to making the passage unusable because of a wall tip or
+    a slightly offset doorway.
+    """
+    ax, ay = map(int, a)
+    bx, by = map(int, b)
+    direct = _line_cost(mask, ax, ay, bx, by)
+    if direct is not None:
+        return float(direct), False
+
+    if margin is None:
+        span = math.hypot(bx - ax, by - ay)
+        margin = min(
+            PASSAGE_CONNECTOR_GRID_MARGIN_MAX_PX,
+            max(PASSAGE_CONNECTOR_GRID_MARGIN_MIN_PX, round(0.75 * span)),
+        )
+    H, W = mask.shape
+    y0 = max(0, min(ay, by) - margin)
+    y1 = min(H, max(ay, by) + margin + 1)
+    x0 = max(0, min(ax, bx) - margin)
+    x1 = min(W, max(ax, bx) + margin + 1)
+    result = _weighted_subgrid_path(
+        mask[y0:y1, x0:x1],
+        (ay - y0, ax - x0),
+        (by - y0, bx - x0),
+    )
+    if result is None:
+        return None
+    cost, _geom = result
+    return float(cost), True
+
+
 def _weight_edges(mask, nodes_xy, candidate_edges, astar_pairs,
                   local_detour_pairs=None, precomputed_line_results=None,
                   progress_callback=None):
@@ -2821,7 +2884,7 @@ def _sampling_grids(mask, dist_full, labels_full):
 
 
 def _apply_passage_topology(artifact, mask, passages, level_passages,
-                            region_polygon=None):
+                            region_polygon=None, graph_labels=None):
     """Isolate projected base topology, then append protected passage chains.
 
     This is deliberately a final build stage.  All generic base-node creation,
@@ -2968,6 +3031,7 @@ def _apply_passage_topology(artifact, mask, passages, level_passages,
     unusable_endpoints = []
     passage_edge_count = 0
     connector_count = 0
+    grid_connector_count = 0
     endpoint_graph_adjustments = []
 
     for ordinal, passage in enumerate(passages):
@@ -3022,58 +3086,62 @@ def _apply_passage_topology(artifact, mask, passages, level_passages,
 
         passage_connectors = []
         endpoint_specs = (
-            ("start", start_index, passage["frames"]["start"],
-             passage["frames"]["start_inward"]),
+            ("start", start_index, passage["frames"]["start"]),
             ("end", start_index + len(passage["points"]) - 1,
-             passage["frames"]["end"], passage["frames"]["end_inward"]),
+             passage["frames"]["end"]),
         )
-        for endpoint_name, passage_node, endpoint, inward in endpoint_specs:
+        for endpoint_name, passage_node, endpoint in endpoint_specs:
             graph_endpoint = all_nodes[passage_node]
-            per_sector = {}
+            endpoint_component = 0
+            if graph_labels is not None:
+                endpoint_component = int(
+                    graph_labels[graph_endpoint[1], graph_endpoint[0]])
+            # Base nodes inside the corridor were shadowed above. Wide passages
+            # therefore need a search radius that reaches beyond their own
+            # footprint before applying the ordinary graph-neighbour span.
+            connector_radius = (
+                PASSAGE_CONNECTOR_RADIUS_PX + passage["radius"])
+            nearby_candidates = []
             for base_index, base_point_array in enumerate(base_nodes):
                 base_point = tuple(map(int, base_point_array))
                 dx, dy = base_point[0] - endpoint[0], base_point[1] - endpoint[1]
                 distance = math.hypot(dx, dy)
-                if distance > PASSAGE_CONNECTOR_RADIUS_PX:
+                if distance > connector_radius:
                     continue
-                # Connect only through the outward entrance half-space.  An
-                # inward connector would recreate a mid-body surface switch.
-                if dx * inward[0] + dy * inward[1] > PASSAGE_GEOMETRY_EPSILON:
+                if (endpoint_component > 0
+                        and int(base_components[base_index]) != endpoint_component):
                     continue
-                if not (_segment_in_polygon(endpoint, base_point, region_polygon)
-                        and _segment_in_polygon(graph_endpoint, base_point, region_polygon)):
+                nearby_candidates.append((distance, base_index, base_point))
+
+            # Keep the ten nearest *connectable* neighbours. A blocked chord is
+            # not a rejection: ordinary navgraph edges already use bounded
+            # pixel-grid search for this case, and passage endpoints follow the
+            # same rule. Surface transitions still occur only at the serialized
+            # endpoint; a base connector may cross a projected passage footprint
+            # because it remains on the base surface throughout.
+            selected = []
+            for distance, base_index, base_point in sorted(nearby_candidates):
+                result = _passage_connector_cost(mask, graph_endpoint, base_point)
+                if result is None:
                     continue
-                if any(_segment_enters_passage_body(
-                        graph_endpoint, base_point, other,
-                        allow_start_contact=(
-                            other is passage
-                            or _point_in_passage_entrance(
-                                other, graph_endpoint[0], graph_endpoint[1])))
-                       for other in passages):
-                    continue
-                cost = _line_cost(mask, base_point[0], base_point[1],
-                                  graph_endpoint[0], graph_endpoint[1])
-                if cost is None:
-                    continue
-                angle = math.atan2(dy, dx)
-                sector = int(((angle + math.pi) / (2 * math.pi)) * PASSAGE_CONNECTOR_SECTORS)
-                sector = min(PASSAGE_CONNECTOR_SECTORS - 1, max(0, sector))
-                candidate = (distance, base_index, float(cost))
-                if sector not in per_sector or candidate < per_sector[sector]:
-                    per_sector[sector] = candidate
-            selected = sorted(per_sector.values())[:PASSAGE_CONNECTOR_MAX_PER_ENDPOINT]
+                cost, used_grid_path = result
+                selected.append((distance, base_index, cost, used_grid_path))
+                if len(selected) >= PASSAGE_CONNECTOR_MAX_PER_ENDPOINT:
+                    break
             if not selected:
                 unusable_endpoints.append({"id": passage["id"], "endpoint": endpoint_name})
-                raise ValueError(
-                    f"passage {passage['id']} {endpoint_name} endpoint has no legal base connector")
+                raise PassageConnectorError(
+                    passage["id"], endpoint_name, passage_number=ordinal + 1)
             endpoint_bases = []
-            for _, base_index, cost in selected:
+            for _, base_index, cost, used_grid_path in selected:
                 all_edges.append((base_index, passage_node))
                 all_weights.append(cost)
                 edge_kinds.append(EDGE_KIND_TRANSITION)
                 edge_passage.append(ordinal)
                 endpoint_bases.append(base_index)
                 connector_count += 1
+                if used_grid_path:
+                    grid_connector_count += 1
             passage_connectors.extend(endpoint_bases)
         connector_base_nodes.append(passage_connectors)
 
@@ -3131,6 +3199,7 @@ def _apply_passage_topology(artifact, mask, passages, level_passages,
         "passage_node_count": len(original_passage_points),
         "passage_edge_count": passage_edge_count,
         "passage_connector_count": connector_count,
+        "passage_grid_connector_count": grid_connector_count,
         "passage_endpoint_graph_adjustments": endpoint_graph_adjustments,
         "base_nodes_shadowed_by_passages": shadowed_per_passage,
         "base_nodes_outside_region_removed": len(outside_region - shadowed),
@@ -3698,8 +3767,9 @@ def build_navgraph(mask_path, region_polygon=None, level_passages=None,
     }
     if build_passages:
         passage_stats = _apply_passage_topology(
-            artifact, mask, build_passages, canonical_passages,
-            region_polygon=region_polygon if has_polygon else None)
+            artifact, topology_mask, build_passages, canonical_passages,
+            region_polygon=region_polygon if has_polygon else None,
+            graph_labels=graph_labels)
         stats.update(passage_stats)
         stats["n_nodes"] = int(len(artifact["nodes"]))
         stats["n_edges"] = int(len(artifact["edges"]))
@@ -3716,6 +3786,7 @@ def build_navgraph(mask_path, region_polygon=None, level_passages=None,
         stats["passage_node_count"] = 0
         stats["passage_edge_count"] = 0
         stats["passage_connector_count"] = 0
+        stats["passage_grid_connector_count"] = 0
         stats["base_nodes_shadowed_by_passages"] = []
         stats["retained_transverse_bypasses"] = 0
         stats["rejected_longitudinal_edges"] = 0

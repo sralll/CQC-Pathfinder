@@ -2906,12 +2906,10 @@ const PassageEditor = (() => {
             "stroke-linejoin": "round",
             class: `passage-corridor${preview ? " passage-corridor-preview" : ""}`,
         });
-        const start = svgNode("line", {
-            "stroke-linecap": "butt",
+        const start = svgNode("polygon", {
             class: "passage-entrance passage-entrance-start",
         });
-        const end = svgNode("line", {
-            "stroke-linecap": "butt",
+        const end = svgNode("polygon", {
             class: "passage-entrance passage-entrance-end",
         });
         parent.appendChild(body);
@@ -2951,17 +2949,22 @@ const PassageEditor = (() => {
             { node: view.start, point: frames.start, inward: frames.startInward },
             { node: view.end, point: frames.end, inward: frames.endInward },
         ].forEach(({ node, point, inward }) => {
-            // The entrance band sits outside the drawn corridor end.
-            const centreX = (point[0] - inward.x * portalDepth / 2) * PATHING_MASK_TRAIN_SCALE;
-            const centreY = (point[1] - inward.y * portalDepth / 2) * PATHING_MASK_TRAIN_SCALE;
+            // The stored endpoint is the centre of the triangle base. Its apex
+            // points into the passage by the former yellow-cap depth. The
+            // orange butt-capped corridor remains underneath all the way to
+            // the base, filling the two areas beside the yellow triangle.
+            const baseX = point[0] * PATHING_MASK_TRAIN_SCALE;
+            const baseY = point[1] * PATHING_MASK_TRAIN_SCALE;
             const halfWidth = width / 2;
             const normalX = -inward.y;
             const normalY = inward.x;
-            node.setAttribute("x1", centreX - normalX * halfWidth);
-            node.setAttribute("y1", centreY - normalY * halfWidth);
-            node.setAttribute("x2", centreX + normalX * halfWidth);
-            node.setAttribute("y2", centreY + normalY * halfWidth);
-            node.setAttribute("stroke-width", portalDepth * PATHING_MASK_TRAIN_SCALE);
+            const apexX = (point[0] + inward.x * portalDepth) * PATHING_MASK_TRAIN_SCALE;
+            const apexY = (point[1] + inward.y * portalDepth) * PATHING_MASK_TRAIN_SCALE;
+            node.setAttribute("points", [
+                `${baseX - normalX * halfWidth},${baseY - normalY * halfWidth}`,
+                `${baseX + normalX * halfWidth},${baseY + normalY * halfWidth}`,
+                `${apexX},${apexY}`,
+            ].join(" "));
             showNode(node);
         });
     }
@@ -5876,6 +5879,7 @@ const NavInfinity = (() => {
                         if (b) window.emitPublishWave?.(b);   // same ripple as publish
                     }
                     if (p.status === "failed") {
+                        if (p.passage_id) PassageEditor?.selectPassage?.(p.passage_id);
                         window.showModal?.({ message: p.error || gettext("Building the map failed.") });
                     }
                 }

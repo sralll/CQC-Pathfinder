@@ -14,6 +14,7 @@ from account.decorators import role_required
 from django.db.models import Prefetch
 import traceback
 import logging
+import re
 from django.conf import settings
 from django.utils import timezone
 from django.utils.translation import gettext as _
@@ -37,6 +38,42 @@ logger = logging.getLogger(__name__)
 
 _OCAD_CONVERSION_EXECUTOR = ThreadPoolExecutor(max_workers=1)
 _OCAD_CONVERSION_STALE_MINUTES = 15
+
+_PASSAGE_CONNECTOR_ERROR_RE = re.compile(
+    r'^passage ([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-'
+    r'[0-9a-fA-F]{4}-[0-9a-fA-F]{12}) (start|end) endpoint '
+    r'has no legal base connector$'
+)
+
+
+def _passage_connector_error_details(value):
+    """Return stable connector-error fields for new and legacy failures.
+
+    Old builds persisted only the developer-facing exception string. Parsing
+    that exact, bounded format keeps those already-stored failures from leaking
+    a UUID into the editor. Attribute lookup also tolerates a background worker
+    finishing across a development autoreload, where exception class identity
+    can differ even though its public fields are intact.
+    """
+    if isinstance(value, dict):
+        passage_id = value.get('passage_id')
+        endpoint = value.get('passage_endpoint')
+    else:
+        passage_id = getattr(value, 'passage_id', None)
+        endpoint = getattr(value, 'endpoint', None)
+    if passage_id and endpoint in ('start', 'end'):
+        try:
+            return str(uuid.UUID(str(passage_id))), endpoint
+        except (ValueError, AttributeError, TypeError):
+            return None
+
+    match = _PASSAGE_CONNECTOR_ERROR_RE.fullmatch(str(value))
+    if not match:
+        return None
+    try:
+        return str(uuid.UUID(match.group(1))), match.group(2)
+    except (ValueError, AttributeError, TypeError):
+        return None
 
 
 def _invalid_level_passages_response(exc):
@@ -837,6 +874,19 @@ def _rebuild_navgraph_for_file(file_id, enable_on_success=False, build_token=Non
             'build_token': build_token,
             'error': str(exc), 'updated_at': timezone.now().isoformat(),
         }
+        connector_details = _passage_connector_error_details(exc)
+        if connector_details:
+            passage_id, passage_endpoint = connector_details
+            # Keep the UUID for stable machine lookup, but never ask a coach to
+            # identify it. navgraph_build_status resolves it back to the same
+            # one-based document order shown in the editor passage sidebar.
+            failure.update({
+                'error_code': 'passage_connector',
+                'passage_id': passage_id,
+                'passage_endpoint': passage_endpoint,
+                'error': str(_(
+                    'A passage could not be connected to the map. Move one of its end points slightly and try again.')),
+            })
         if build_token:
             File.objects.filter(
                 id=file_id,
@@ -919,6 +969,39 @@ def navgraph_build_status(request, file_id):
     progress = file.batch_progress
     if not isinstance(progress, dict) or progress.get('type') != 'navgraph_build':
         return JsonResponse({'status': 'idle'})
+    progress = dict(progress)
+    connector_details = None
+    if progress.get('status') == 'failed':
+        if progress.get('error_code') == 'passage_connector':
+            connector_details = _passage_connector_error_details(progress)
+        if connector_details is None:
+            connector_details = _passage_connector_error_details(
+                progress.get('error', ''))
+    if connector_details:
+        passage_id, passage_endpoint = connector_details
+        progress.update({
+            'error_code': 'passage_connector',
+            'passage_id': passage_id,
+            'passage_endpoint': passage_endpoint,
+        })
+        try:
+            document = normalize_level_passages(file.level_passages)
+            passage_number = next(
+                (index for index, item in enumerate(document['items'], 1)
+                 if item['id'] == passage_id),
+                None,
+            )
+        except LevelPassagesValidationError:
+            passage_number = None
+        if passage_number is not None:
+            progress['passage_number'] = passage_number
+            progress['error'] = _(
+                'Passage %(number)s could not be connected to the map. Move one of its end points slightly and try again.'
+            ) % {'number': passage_number}
+        else:
+            progress['error'] = _(
+                'A passage could not be connected to the map. Move one of its end points slightly and try again.'
+            )
     return JsonResponse({'progress': progress})
 
 

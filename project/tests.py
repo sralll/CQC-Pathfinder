@@ -54,6 +54,64 @@ class MaskDilationTests(SimpleTestCase):
                 f'const MASK_EXPANSION = {UNet.MASK_OUTLINE};', source.read())
 
 
+class PassageConnectorGridTests(SimpleTestCase):
+    def test_connector_error_uses_sidebar_number_not_uuid(self):
+        from project.navgraph import PassageConnectorError
+
+        error = PassageConnectorError(PASSAGE_ID_1, 'start', passage_number=2)
+
+        self.assertEqual(
+            str(error),
+            'Passage 2 start endpoint has no legal base connector',
+        )
+        self.assertEqual(error.passage_id, PASSAGE_ID_1)
+
+    def test_connector_uses_pixel_grid_when_direct_line_is_blocked(self):
+        import numpy as np
+        from project.navgraph import _line_cost, _passage_connector_cost
+
+        mask = np.full((9, 9), 255, dtype=np.uint8)
+        mask[:, 4] = 0
+        mask[8, 4] = 255
+        start, goal = (2, 4), (6, 4)
+
+        self.assertIsNone(_line_cost(mask, *start, *goal))
+        result = _passage_connector_cost(mask, start, goal)
+
+        self.assertIsNotNone(result)
+        _cost, used_grid_path = result
+        self.assertTrue(used_grid_path)
+
+        mask[8, 4] = 0
+        self.assertIsNone(_passage_connector_cost(mask, start, goal))
+
+    def test_endpoint_at_region_edge_can_connect_to_inward_base_nodes(self):
+        from PIL import Image
+        from project.navgraph import build_navgraph
+
+        document = {
+            'version': 1,
+            'items': [{
+                'id': PASSAGE_ID_1,
+                'points': [[1, 128], [80, 128]],
+                'width': 8,
+            }],
+        }
+        region = [[0, 0], [255, 0], [255, 255], [0, 255]]
+        with tempfile.TemporaryDirectory() as directory:
+            mask_path = os.path.join(directory, 'edge-passage.png')
+            Image.new('L', (256, 256), color=255).save(mask_path)
+
+            artifact = build_navgraph(
+                mask_path,
+                region_polygon=region,
+                level_passages=document,
+            )
+
+        self.assertGreaterEqual(artifact['stats']['passage_connector_count'], 2)
+        self.assertEqual(artifact['stats']['unusable_endpoints'], [])
+
+
 def level_passages_document(*, passage_id=PASSAGE_ID_1, width=24, points=None):
     return {
         'version': 1,
@@ -222,6 +280,59 @@ class NavgraphInvalidationTests(TestCase):
             has_mask=True,
             infinite_enabled=True,
         )
+
+    def test_build_status_names_failed_passage_by_sidebar_number(self):
+        self.file.level_passages = {
+            'version': 1,
+            'items': [
+                {'id': PASSAGE_ID_1, 'points': [[1, 1], [2, 2]], 'width': 4},
+                {'id': PASSAGE_ID_2, 'points': [[3, 3], [4, 4]], 'width': 4},
+            ],
+        }
+        self.file.batch_progress = {
+            'type': 'navgraph_build',
+            'status': 'failed',
+            'error_code': 'passage_connector',
+            'passage_id': PASSAGE_ID_2,
+            'passage_endpoint': 'end',
+            'error': f'passage {PASSAGE_ID_2} end endpoint has no legal base connector',
+        }
+        self.file.save(update_fields=['level_passages', 'batch_progress'])
+
+        response = self.client.get(
+            reverse('navgraph_build_status', args=[self.file.id]))
+
+        self.assertEqual(response.status_code, 200)
+        progress = response.json()['progress']
+        self.assertEqual(progress['passage_number'], 2)
+        self.assertIn('Passage 2', progress['error'])
+        self.assertNotIn(PASSAGE_ID_2, progress['error'])
+
+    def test_build_status_names_legacy_raw_uuid_error_by_sidebar_number(self):
+        self.file.level_passages = {
+            'version': 1,
+            'items': [
+                {'id': PASSAGE_ID_1, 'points': [[1, 1], [2, 2]], 'width': 4},
+                {'id': PASSAGE_ID_2, 'points': [[3, 3], [4, 4]], 'width': 4},
+            ],
+        }
+        self.file.batch_progress = {
+            'type': 'navgraph_build',
+            'status': 'failed',
+            'error': f'passage {PASSAGE_ID_2} start endpoint has no legal base connector',
+        }
+        self.file.save(update_fields=['level_passages', 'batch_progress'])
+
+        response = self.client.get(
+            reverse('navgraph_build_status', args=[self.file.id]))
+
+        self.assertEqual(response.status_code, 200)
+        progress = response.json()['progress']
+        self.assertEqual(progress['passage_number'], 2)
+        self.assertEqual(progress['passage_id'], PASSAGE_ID_2)
+        self.assertEqual(progress['passage_endpoint'], 'start')
+        self.assertIn('Passage 2', progress['error'])
+        self.assertNotIn(PASSAGE_ID_2, progress['error'])
 
     @staticmethod
     def _write_artifacts(media_root, stem='enabled-map'):
@@ -1148,6 +1259,37 @@ class NavgraphRebuildAuthorityTests(TestCase):
             self.file.refresh_from_db()
             self.assertTrue(self.file.infinite_enabled)
             self.assertEqual(self.file.batch_progress['status'], 'done')
+
+    def test_connector_failure_is_persisted_as_structured_passage_error(self):
+        from project.navgraph import PassageConnectorError
+
+        with tempfile.TemporaryDirectory() as media_root, override_settings(MEDIA_ROOT=media_root):
+            self._run_build(
+                media_root,
+                PassageConnectorError(PASSAGE_ID_1, 'end'),
+            )
+
+        self.file.refresh_from_db()
+        progress = self.file.batch_progress
+        self.assertEqual(progress['status'], 'failed')
+        self.assertEqual(progress['error_code'], 'passage_connector')
+        self.assertEqual(progress['passage_id'], PASSAGE_ID_1)
+        self.assertEqual(progress['passage_endpoint'], 'end')
+        self.assertNotIn(PASSAGE_ID_1, progress['error'])
+
+    def test_legacy_shaped_connector_exception_is_persisted_structurally(self):
+        legacy_error = ValueError(
+            f'passage {PASSAGE_ID_1} start endpoint has no legal base connector')
+
+        with tempfile.TemporaryDirectory() as media_root, override_settings(MEDIA_ROOT=media_root):
+            self._run_build(media_root, legacy_error)
+
+        self.file.refresh_from_db()
+        progress = self.file.batch_progress
+        self.assertEqual(progress['error_code'], 'passage_connector')
+        self.assertEqual(progress['passage_id'], PASSAGE_ID_1)
+        self.assertEqual(progress['passage_endpoint'], 'start')
+        self.assertNotIn(PASSAGE_ID_1, progress['error'])
 
     def test_build_callback_persists_pollable_node_progress(self):
         document = level_passages_document(points=[[2, 2], [6, 6]])

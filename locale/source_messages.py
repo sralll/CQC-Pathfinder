@@ -11,6 +11,14 @@ that still need a row here, then `python manage_translations.py --build`.
 """
 
 DJANGO = {
+    "A passage could not be connected to the map. Move one of its end points slightly and try again.": (
+        "Eine Passage konnte nicht mit der Karte verbunden werden. Verschiebe einen ihrer Endpunkte leicht und versuche es erneut.",
+        "Un passage n’a pas pu être connecté à la carte. Déplace légèrement l’un de ses points d’extrémité et réessaie.",
+        "Non è stato possibile collegare un passaggio alla mappa. Sposta leggermente uno dei suoi punti finali e riprova."),
+    "Passage %(number)s could not be connected to the map. Move one of its end points slightly and try again.": (
+        "Passage %(number)s konnte nicht mit der Karte verbunden werden. Verschiebe einen ihrer Endpunkte leicht und versuche es erneut.",
+        "Le passage %(number)s n’a pas pu être connecté à la carte. Déplace légèrement l’un de ses points d’extrémité et réessaie.",
+        "Non è stato possibile collegare il passaggio %(number)s alla mappa. Sposta leggermente uno dei suoi punti finali e riprova."),
     "Delete region": ("Region löschen", "Supprimer la zone", "Elimina regione"),
     "Full route refinement (slow)": ("Vollständige Routenverfeinerung (langsam)", "Affinage complet du choix (lent)", "Rifinitura completa del percorso (lenta)"),
     "Click to place the selected endpoint. Use the mouse wheel to zoom; Shift-drag or middle-drag to pan.": (

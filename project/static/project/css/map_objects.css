@@ -194,11 +194,12 @@ body.mode-infinity #infinity-controls { display: flex; flex-direction: column; g
 #map-container.mode-mask .passage-corridor-preview { opacity: 0.78; }
 
 .passage-object.selected .passage-entrance {
-    stroke: #fff200;
+    fill: #fff200;
 }
 
 .passage-entrance {
-    stroke: #ffe600;
+    fill: #ffe600;
+    stroke: none;
     opacity: 1;
 }
 

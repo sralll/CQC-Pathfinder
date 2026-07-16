@@ -15,6 +15,9 @@ msgstr "%(name)s modifie ce fichier en ce moment."
 msgid "A negative sensitivity means your route decisions become more accurate when you think longer than the team average."
 msgstr "Une sensibilité négative signifie que tes choix deviennent plus précis lorsque tu réfléchis plus longtemps que la moyenne du cadre."
 
+msgid "A passage could not be connected to the map. Move one of its end points slightly and try again."
+msgstr "Un passage n’a pas pu être connecté à la carte. Déplace légèrement l’un de ses points d’extrémité et réessaie."
+
 msgid "A positive sensitivity means you intuitively make the right decision and thinking longer does not help you compared to other athletes."
 msgstr "Une sensibilité positive signifie que tu prends intuitivement la bonne décision et que réfléchir plus longtemps ne t'aide pas par rapport aux autres athlètes."
 
@@ -413,6 +416,9 @@ msgstr "Le terrain ouvert peut produire de mauvais itinéraires"
 
 msgid "PNG, JPEG or OCAD • max. 15 MB"
 msgstr "PNG, JPEG ou OCAD • max. 15 Mo"
+
+msgid "Passage %(number)s could not be connected to the map. Move one of its end points slightly and try again."
+msgstr "Le passage %(number)s n’a pas pu être connecté à la carte. Déplace légèrement l’un de ses points d’extrémité et réessaie."
 
 msgid "Password"
 msgstr "Mot de passe"
