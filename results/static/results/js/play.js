@@ -49,16 +49,8 @@ const MAX_ZOOM   = 8;
 const RUN_SPEED  = 4.75;   // m/s — flat-terrain reference speed
 const ALT_FLAT_EQUIV_M = 4;   // 1 m of elevation ≈ 4 m of flat running (≈ 0.84 s/m)
 const routeColor = ['#DD0011', '#E36A00', '#00A6A6', '#0055FF', '#5500BB', '#007A2A'];
-const ROUTE_STROKE_MULTIPLIER       = 2.5;
-const ROUTE_STROKE_SCALE_EXPONENT   = 0.33;
-const ROUTE_STROKE_MIN_CAMERA_SCALE = 0.05;
-
 function routeStrokeWidthForZoom(baseWidth, scale = cam.scale) {
-    const safeScale = Math.max(scale || 1, ROUTE_STROKE_MIN_CAMERA_SCALE);
-    const visualWidth = baseWidth
-        * ROUTE_STROKE_MULTIPLIER
-        * Math.pow(safeScale, ROUTE_STROKE_SCALE_EXPONENT);
-    return visualWidth / safeScale;
+    return RouteStrokeScale.attributeWidth(baseWidth, scale, scale);
 }
 
 function setAdaptiveRouteStroke(el, baseWidth) {

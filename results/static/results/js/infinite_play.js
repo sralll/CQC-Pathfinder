@@ -66,6 +66,7 @@ const FOUNTAIN_RADIUS = 0.5;
 const CONTROL_RADIUS = FOUNTAIN_RADIUS * 5;     // diameter is 5x the fountain diameter
 const CONTROL_DIAMETER_M = 25;
 const MAP_METRES_PER_UNIT = CONTROL_DIAMETER_M / (CONTROL_RADIUS * 2) / 2;
+const PLAY_MAP_METRES_PER_UNIT = 0.48;
 const CONTROL_SIZE_RATIO = CONTROL_RADIUS / PLAY_CONTROL_RADIUS;
 const CONTROL_STROKE_WIDTH = PLAY_CONTROL_STROKE_WIDTH * CONTROL_SIZE_RATIO;
 const BLOCKING_STROKE_WIDTH = PLAY_BLOCKING_STROKE_WIDTH * CONTROL_SIZE_RATIO * 2;
@@ -75,9 +76,6 @@ const ROUTE_BACKGROUND_STROKE_WIDTH = 3;
 const ROUTE_FOREGROUND_STROKE_WIDTH = 1.5;
 const ROUTE_DOT_SURFACE_RADIUS = 1;
 const ROUTE_HIT_WIDTH = 40;
-const ROUTE_STROKE_MULTIPLIER       = 2.5;
-const ROUTE_STROKE_SCALE_EXPONENT   = 0.33;
-const ROUTE_STROKE_MIN_CAMERA_SCALE = 0.05;
 const CITY_FIT_PAD  = 0.08;
 const GAP           = 8 * CONTROL_SIZE_RATIO;
 const MIN_ZOOM      = 0.2;
@@ -157,27 +155,34 @@ function maskVisualScaleForScene(sc = scene) {
     return mapScaleFactor * editorScaleFactor;
 }
 
-function routeStrokeWidthForZoom(baseWidth, scale = cam.scale) {
-    const safeScale = Math.max(scale || 1, ROUTE_STROKE_MIN_CAMERA_SCALE);
-    const visualWidth = baseWidth
-        * ROUTE_STROKE_MULTIPLIER
-        * Math.pow(safeScale, ROUTE_STROKE_SCALE_EXPONENT);
-    return visualWidth / cssCameraDeltaScale(scale);
+function routeEquivalentPlayZoom(scale = cam.scale, sc = scene) {
+    const cameraScale = Number.isFinite(Number(scale)) && Number(scale) > 0 ? Number(scale) : 1;
+    const sceneScale = Number.isFinite(Number(sc?.mapScale)) && Number(sc.mapScale) > 0
+        ? Number(sc.mapScale)
+        : 1;
+    const renderedMapZoom = sceneScale * cameraScale;
+
+    // Uploaded-map infinity scenes already use the editor/play coordinate
+    // system, including File.scale, so no metadata multiplier belongs here.
+    if (sc?.kind === 'mask') return renderedMapZoom;
+
+    // Generated-city units are physically larger than normal play map pixels.
+    // Convert their rendered scale to the equivalent 1:4000 play-map pixel
+    // scale before applying the same adaptive curve.
+    return renderedMapZoom * (PLAY_MAP_METRES_PER_UNIT / MAP_METRES_PER_UNIT);
 }
 
-// Route display widths use the same per-map base conversion as the controls.
-// The adaptive zoom calculation above remains unchanged, so routes still grow
-// more slowly than the map when the athlete zooms in.
-function routeDisplayBaseWidthForScene(baseWidth, sc = scene) {
-    return sc?.kind === 'mask'
-        ? baseWidth * maskVisualScaleForScene(sc)
-        : baseWidth * (2 / 3);
+function routeStrokeWidthForZoom(baseWidth, scale = cam.scale) {
+    return RouteStrokeScale.attributeWidth(
+        baseWidth,
+        routeEquivalentPlayZoom(scale),
+        cssCameraDeltaScale(scale),
+    );
 }
 
 function setAdaptiveRouteStroke(el, baseWidth) {
-    const sceneBaseWidth = routeDisplayBaseWidthForScene(baseWidth);
-    el.dataset.routeBaseStroke = String(sceneBaseWidth);
-    el.setAttribute('stroke-width', routeStrokeWidthForZoom(sceneBaseWidth));
+    el.dataset.routeBaseStroke = String(baseWidth);
+    el.setAttribute('stroke-width', routeStrokeWidthForZoom(baseWidth));
 }
 
 function updateRouteStrokeWidths() {

@@ -6,10 +6,11 @@ from unittest import mock
 
 from django.contrib.auth.models import Group, User
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.test import TestCase, override_settings
+from django.test import SimpleTestCase, TestCase, override_settings
 from django.urls import reverse
 
 from account.models import Profile, Team
+from project import UNet
 from project import views as project_views
 from project.models import ControlPair, File, FileSnapshot, Route
 from project.services.passage_validation import (
@@ -24,6 +25,33 @@ from project.services.passage_validation import (
 
 PASSAGE_ID_1 = '8cb8a384-c073-4a4d-9dce-b67e2c6de101'
 PASSAGE_ID_2 = '7b03b060-a710-4874-932f-cf4a2b425313'
+
+
+class MaskDilationTests(SimpleTestCase):
+    def test_impassable_outline_only_darkens_neighbouring_pixels(self):
+        import numpy as np
+
+        mask = np.array([
+            [255, 231, 241],
+            [135,   0, 200],
+            [199, 243, 255],
+        ], dtype=np.uint8)
+
+        result = UNet._add_impassable_outline(mask)
+
+        np.testing.assert_array_equal(result, np.array([
+            [200, 200, 200],
+            [135,   0, 200],
+            [199, 200, 200],
+        ], dtype=np.uint8))
+
+    def test_editor_uses_same_outline_greyscale(self):
+        editor_js = os.path.join(
+            os.path.dirname(UNet.__file__), 'static', 'project', 'js', 'editor.js')
+
+        with open(editor_js, encoding='utf-8') as source:
+            self.assertIn(
+                f'const MASK_EXPANSION = {UNet.MASK_OUTLINE};', source.read())
 
 
 def level_passages_document(*, passage_id=PASSAGE_ID_1, width=24, points=None):

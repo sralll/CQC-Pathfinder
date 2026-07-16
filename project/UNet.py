@@ -18,6 +18,25 @@ _mask_generation_jobs = {}
 _mask_generation_jobs_lock = threading.Lock()
 
 
+MASK_IMPASSABLE = 0
+MASK_OUTLINE = 200
+
+
+def _add_impassable_outline(vis):
+    """Darken the one-pixel border around impassable mask pixels in place."""
+    import numpy as np
+
+    impassable_mask = vis == MASK_IMPASSABLE
+    padded = np.pad(impassable_mask, 1, mode="constant", constant_values=False)
+    dilated = (
+        padded[:-2, :-2] | padded[:-2, 1:-1] | padded[:-2, 2:] |
+        padded[1:-1, :-2] | padded[1:-1, 1:-1] | padded[1:-1, 2:] |
+        padded[2:, :-2] | padded[2:, 1:-1] | padded[2:, 2:]
+    )
+    vis[dilated & (vis > MASK_OUTLINE)] = MASK_OUTLINE
+    return vis
+
+
 class _MaskGenerationJob:
     """Pub/sub progress relay for one background mask-generation run."""
 
@@ -147,7 +166,7 @@ def _run_mask_generation(*, job, job_key, map_path, scale, mask_filename,
                 job.publish({'current': processed, 'total': total_tiles})
 
         img = None
-        mo = SimpleNamespace(impassable=0, outline=200, very_slow=135, slow=231, cross=241, stairs=242, fast=243)
+        mo = SimpleNamespace(impassable=MASK_IMPASSABLE, very_slow=135, slow=231, cross=241, stairs=242, fast=243)
         vis = 255 * np.ones((img_h, img_w), dtype=np.uint8)
         vis[output_img < 10] = mo.impassable
         vis[(output_img >= 10) & (output_img < 22)] = mo.very_slow
@@ -159,14 +178,7 @@ def _run_mask_generation(*, job, job_key, map_path, scale, mask_filename,
         vis[output_img == 33] = mo.fast
         vis[output_img == 34] = mo.impassable
 
-        impassable_mask = vis == mo.impassable
-        padded = np.pad(impassable_mask, 1, mode="constant", constant_values=False)
-        dilated = (
-            padded[:-2, :-2] | padded[:-2, 1:-1] | padded[:-2, 2:] |
-            padded[1:-1, :-2] | padded[1:-1, 1:-1] | padded[1:-1, 2:] |
-            padded[2:, :-2] | padded[2:, 1:-1] | padded[2:, 2:]
-        )
-        vis[dilated & ~impassable_mask] = mo.outline
+        _add_impassable_outline(vis)
         final = Image.fromarray(vis, mode="L").convert("RGB")
         buf = BytesIO()
         final.save(buf, format="PNG")
@@ -175,7 +187,7 @@ def _run_mask_generation(*, job, job_key, map_path, scale, mask_filename,
         os.makedirs(os.path.dirname(mask_path), exist_ok=True)
         with open(mask_path, 'wb') as f:
             f.write(buf.read())
-        del vis, padded, dilated, impassable_mask, final, buf
+        del vis, final, buf
 
         if file_id is not None:
             File.objects.filter(id=file_id, deleted=False, map_file=filename).update(has_mask=True)

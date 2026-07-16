@@ -73,6 +73,7 @@ DJANGO = {
     "Close": ("Schliessen", "Fermer", "Chiudi"),
     "Competition": ("Wettkampf", "Compétition", "Gara"),
     "Competition mode": ("Wettkampfmodus", "Mode compétition", "Modalità gara"),
+    "Confirm": ("Bestätigen", "Confirmer", "Conferma"),
     "Confirm new password": ("Neues Passwort bestätigen", "Confirmer le nouveau mot de passe", "Conferma la nuova password"),
     "Control": ("Posten", "Poste", "Punto"),
     "Controls": ("Posten", "Postes", "Punti"),
@@ -83,6 +84,7 @@ DJANGO = {
     "Describe your topic…": ("Beschreibe dein Anliegen…", "Décris ta demande…", "Descrivi la tua richiesta…"),
     "Deutsch": ("Deutsch", "Allemand", "Tedesco"),
     "Distance": ("Distanz", "Distance", "Distanza"),
+    "DPI": ("DPI", "DPI", "DPI"),
     "Drop map here": ("Karte ablegen", "Dépose la carte ici", "Trascina qui la mappa"),
     "Duplicate": ("Duplizieren", "Dupliquer", "Duplica"),
     "Edit": ("Bearbeiten", "Modifier", "Modifica"),
@@ -108,24 +110,46 @@ DJANGO = {
         "Disegna e salva una regione della mappa prima di abilitare la modalità infinita."),
     "Infinity Mode": ("Infinity-Modus", "Mode infini", "Modalità infinita"),
     "Infinity mode": ("Infinity-Modus", "Mode infini", "Modalità infinita"),
-    "Mark the area athletes may be sent between.": (
-        "Markiere den Bereich, innerhalb dessen Athleten platziert werden dürfen.",
-        "Marque la zone dans laquelle les athlètes peuvent être envoyés.",
-        "Segna l'area entro cui gli atleti possono essere inviati."),
-    "Edit points": ("Punkte bearbeiten", "Modifier les points", "Modifica punti"),
-    "Remove point": ("Punkt entfernen", "Supprimer un point", "Rimuovi punto"),
-    "drag a corner to move it, or click an edge to add a point.": (
-        "eine Ecke ziehen zum Verschieben oder eine Kante anklicken, um einen Punkt hinzuzufügen.",
-        "glisse un coin pour le déplacer, ou clique une arête pour ajouter un point.",
-        "trascina un angolo per spostarlo, o clicca un bordo per aggiungere un punto."),
-    "click a point to delete it (at least 3 remain).": (
-        "einen Punkt anklicken zum Löschen (mindestens 3 bleiben).",
-        "clique un point pour le supprimer (au moins 3 restent).",
-        "clicca un punto per eliminarlo (ne restano almeno 3)."),
-    "Keep the selection tight and well inside the map edge, so generated routes can never run around the map.": (
-        "Halte die Auswahl eng und deutlich innerhalb des Kartenrands, damit generierte Routen nie um die Karte herum verlaufen können.",
-        "Garde la sélection serrée et bien à l'intérieur du bord de la carte, afin que les itinéraires générés ne puissent jamais contourner la carte.",
-        "Mantieni la selezione stretta e ben all'interno del bordo della mappa, così i percorsi generati non possano mai aggirare la mappa."),
+    "Controls placed only inside region": (
+        "Posten nur innerhalb der Region",
+        "Postes uniquement dans la région",
+        "Punti di controllo solo nella regione"),
+    "Drag point: move · Click edge: add": (
+        "Punkt ziehen: verschieben · Kante anklicken: hinzufügen",
+        "Glisser un point : déplacer · Cliquer une arête : ajouter",
+        "Trascina punto: sposta · Clicca bordo: aggiungi"),
+    "Remove tool: delete point (minimum 3)": (
+        "Entfernen: Punkt löschen (mindestens 3)",
+        "Supprimer : effacer un point (minimum 3)",
+        "Rimuovi: elimina punto (minimo 3)"),
+    "Keep region tight and inside map edge": (
+        "Region eng und innerhalb des Kartenrands halten",
+        "Région serrée et à l'intérieur du bord de carte",
+        "Regione compatta e dentro il bordo della mappa"),
+    "Check mask corridors, entrances, and barriers": (
+        "Durchgänge, Eingänge und Barrieren der Maske prüfen",
+        "Vérifier passages, entrées et barrières du masque",
+        "Controlla passaggi, ingressi e barriere della maschera"),
+    "Best on dense urban maps": (
+        "Am besten auf dichten Stadtkarten",
+        "Idéal sur les cartes urbaines denses",
+        "Ideale su mappe urbane dense"),
+    "Open terrain may produce poor routes": (
+        "Offenes Gelände kann schlechte Routen erzeugen",
+        "Le terrain ouvert peut produire de mauvais itinéraires",
+        "Il terreno aperto può produrre percorsi scadenti"),
+    "Elevation ignored — runtimes inaccurate": (
+        "Höhenunterschiede ignoriert — Laufzeiten ungenau",
+        "Dénivelé ignoré — temps de parcours inexacts",
+        "Dislivello ignorato — tempi di percorrenza imprecisi"),
+    "Drawn blocking elements ignored": (
+        "Gezeichnete Sperrgebiete werden ignoriert",
+        "Obstacles dessinés ignorés",
+        "Ostacoli disegnati ignorati"),
+    "Play-test extensively in Infinity mode": (
+        "Ausgiebig im Infinity-Modus testen",
+        "Tester longuement en mode infini",
+        "Testa a fondo in modalità infinita"),
     "Turn on infinite play for this map": (
         "Infinity-Modus für diese Karte aktivieren",
         "Activer le mode infini pour cette carte",
@@ -146,14 +170,6 @@ DJANGO = {
         "Fortschritt beim Navgraph-Aufbau",
         "Progression de la construction du navgraph",
         "Avanzamento della costruzione del navgraph"),
-    "Before enabling infinite play, check the mask in detail — every corridor, entrance, and barrier. Route generation relies entirely on the mask, and mask errors will serve athletes many bad routes.": (
-        "Prüfe die Maske im Detail, bevor du Infinity freigibst — jeden Durchgang, jeden Eingang, jede Barriere. Die Routengenerierung stützt sich vollständig auf die Maske; Maskenfehler führen zu vielen schlechten Routen für die Athleten.",
-        "Vérifie le masque en détail avant d'activer le mode infini — chaque passage, chaque entrée, chaque barrière. La génération d'itinéraires repose entièrement sur le masque ; des erreurs dans le masque donneront aux athlètes beaucoup de mauvais itinéraires.",
-        "Controlla la maschera in dettaglio prima di attivare la modalità infinita — ogni passaggio, ogni ingresso, ogni barriera. La generazione dei percorsi si basa interamente sulla maschera; gli errori nella maschera daranno agli atleti molti percorsi scadenti."),
-    "Infinite play works best on dense urban maps, similar to the autogenerated ones. Routes over open terrain are often not ideal.": (
-        "Infinity funktioniert am besten auf dichten Stadtkarten, ähnlich den automatisch generierten Karten. Routen über offenes Gelände sind oft nicht ideal.",
-        "Le mode infini fonctionne le mieux sur des cartes urbaines denses, semblables aux cartes générées automatiquement. Les itinéraires en terrain ouvert sont souvent loin d'être idéaux.",
-        "La modalità infinita funziona al meglio su mappe urbane dense, simili a quelle generate automaticamente. I percorsi su terreno aperto spesso non sono ideali."),
     "Valid rate": ("Erfolgsquote", "Taux de réussite", "Tasso di validità"),
     "Avg. retries": ("Ø Versuche", "Essais moy.", "Tentativi medi"),
     "Avg. time": ("Ø Zeit", "Temps moy.", "Tempo medio"),
@@ -221,6 +237,7 @@ DJANGO = {
         "I risultati sono elencati come allenamento – nessuna pressione né penalità di tempo per le decisioni tardive."),
     "Save": ("Speichern", "Enregistrer", "Salva"),
     "Scale": ("Massstab", "Échelle", "Scala"),
+    "Scale by DPI": ("Nach DPI skalieren", "Mettre à l'échelle selon le DPI", "Ridimensiona in base ai DPI"),
     "Search": ("Suche", "Recherche", "Cerca"),
     "Search topics…": ("Themen durchsuchen…", "Rechercher des sujets…", "Cerca argomenti…"),
     "Search...": ("Suchen...", "Rechercher...", "Cerca..."),
@@ -280,7 +297,6 @@ DJANGO = {
 }
 
 DJANGOJS = {
-    "Region deleted.": ("Region gelöscht.", "Zone supprimée.", "Regione eliminata."),
     "Graph preview": ("Graph-Vorschau", "Aperçu du graphe", "Anteprima del grafo"),
     "not checked": ("nicht geprüft", "non vérifié", "non verificato"),
     "Could not load maps:": ("Karten konnten nicht geladen werden:", "Impossible de charger les cartes :", "Impossibile caricare le mappe:"),
@@ -520,6 +536,7 @@ DJANGO.update({
     "File too large (max. 50 MB)": ("Datei zu gross (max. 50 MB)", "Fichier trop volumineux (max. 50 Mo)", "File troppo grande (max. 50 MB)"),
     "Invalid color": ("Ungültige Farbe", "Couleur non valide", "Colore non valido"),
     "July 2026: Version 2.1": ("Juli 2026: Version 2.1", "Juillet 2026 : version 2.1", "Luglio 2026: versione 2.1"),
+    "July 2026: Version 2.2": ("Juli 2026: Version 2.2", "Juillet 2026 : version 2.2", "Luglio 2026: versione 2.2"),
     "Label already exists": ("Label existiert bereits", "Ce label existe déjà", "Label già esistente"),
     "Map too large for the neural network. Check the scale.": ("Karte zu gross für das neuronale Netz. Skalierung prüfen.", "La carte est trop grande pour le réseau neuronal. Vérifie l'échelle.", "La mappa è troppo grande per la rete neurale. Controlla la scala."),
     "Name is required": ("Name erforderlich", "Nom requis", "Nome obbligatorio"),
@@ -578,42 +595,24 @@ DJANGOJS.update({
         "Zeichne eine Kartenregion, bevor du den Infinity-Modus aktivierst.",
         "Dessine une région de carte avant d'activer le mode infini.",
         "Disegna una regione della mappa prima di attivare la modalità infinita."),
-    "Loading region…": ("Region wird geladen…", "Chargement de la région…", "Caricamento della regione…"),
     "Loaded saved region.": ("Gespeicherte Region geladen.", "Région enregistrée chargée.", "Regione salvata caricata."),
     "Auto-suggested region — adjust and save.": ("Automatisch vorgeschlagene Region — anpassen und speichern.", "Région suggérée automatiquement — ajuste et enregistre.", "Regione suggerita automaticamente — modifica e salva."),
-    "Click to place the first region point.": (
-        "Klicke, um den ersten Regionspunkt zu setzen.",
-        "Clique pour placer le premier point de la région.",
-        "Clicca per posizionare il primo punto della regione."),
-    "Could not load region.": ("Region konnte nicht geladen werden.", "Impossible de charger la région.", "Impossibile caricare la regione."),
     "Suggesting…": ("Wird vorgeschlagen…", "Suggestion…", "Suggerimento…"),
     "Suggestion failed.": ("Vorschlag fehlgeschlagen.", "La suggestion a échoué.", "Suggerimento non riuscito."),
-    "A region needs at least 3 points.": ("Eine Region braucht mindestens 3 Punkte.", "Une région nécessite au moins 3 points.", "Una regione richiede almeno 3 punti."),
     "Saving & rebuilding…": ("Speichern & neu aufbauen…", "Enregistrement et reconstruction…", "Salvataggio e ricostruzione…"),
-    "Region saved.": ("Region gespeichert.", "Région enregistrée.", "Regione salvata."),
     "Rebuilding graph…": ("Graph wird neu aufgebaut…", "Reconstruction du graphe…", "Ricostruzione del grafo…"),
     "Region saved & graph rebuilt.": ("Region gespeichert & Graph neu aufgebaut.", "Région enregistrée et graphe reconstruit.", "Regione salvata e grafo ricostruito."),
     "Rebuild failed.": ("Neuaufbau fehlgeschlagen.", "La reconstruction a échoué.", "Ricostruzione non riuscita."),
-    "Save failed.": ("Speichern fehlgeschlagen.", "L'enregistrement a échoué.", "Salvataggio non riuscito."),
     "Save a map region first": ("Zuerst eine Kartenregion speichern", "Enregistre d'abord une région de carte", "Salva prima una regione della mappa"),
     "Enabling…": ("Wird aktiviert…", "Activation…", "Attivazione…"),
     "Disabling…": ("Wird deaktiviert…", "Désactivation…", "Disattivazione…"),
     "Infinite play enabled.": ("Infinity-Modus aktiviert.", "Mode infini activé.", "Modalità infinita abilitata."),
     "Edit points": ("Punkte bearbeiten", "Modifier les points", "Modifica punti"),
     "Remove point": ("Punkt entfernen", "Supprimer un point", "Rimuovi punto"),
-    "Saved region loaded.": ("Gespeicherte Region geladen.", "Région enregistrée chargée.", "Regione salvata caricata."),
     "Drag the corners inward to mark the map area.": (
         "Ziehe die Ecken nach innen, um den Kartenbereich zu markieren.",
         "Fais glisser les coins vers l'intérieur pour marquer la zone de la carte.",
         "Trascina gli angoli verso l'interno per segnare l'area della mappa."),
-    "Click to add points; click the first point to finish.": (
-        "Klicke, um Punkte hinzuzufügen; klicke den ersten Punkt zum Abschliessen.",
-        "Clique pour ajouter des points ; clique le premier point pour terminer.",
-        "Clicca per aggiungere punti; clicca il primo punto per completare."),
-    "Click the first point to finish.": (
-        "Klicke den ersten Punkt zum Abschliessen.",
-        "Clique le premier point pour terminer.",
-        "Clicca il primo punto per completare."),
     "Turn on infinite play for this map": (
         "Infinity-Modus für diese Karte aktivieren",
         "Activer le mode infini pour cette carte",

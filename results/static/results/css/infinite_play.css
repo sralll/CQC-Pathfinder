@@ -194,7 +194,7 @@ body.mobile .rp-report-btn {
 
 /* Map fills the play.css map-container */
 .rp-play-wrap #map-container {
-    background: linear-gradient(135deg, #181818 0%, #252525 55%, #303030 100%);
+    background: linear-gradient(135deg, var(--bg-1) 0%, var(--bg-4) 55%, var(--bg-5) 100%);
 }
 
 .rp-play-wrap #camera,
@@ -215,7 +215,7 @@ body.mobile .rp-report-btn {
 }
 
 #rp-spinner-overlay.rp-first-map-loading {
-    background: linear-gradient(135deg, #181818 0%, #252525 55%, #303030 100%);
+    background: linear-gradient(135deg, var(--bg-1) 0%, var(--bg-4) 55%, var(--bg-5) 100%);
 }
 
 #rp-rotation { transition: none; }

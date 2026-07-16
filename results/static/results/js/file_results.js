@@ -23,10 +23,6 @@ const MAP_R_CONTROL = 25;
 const MAP_GAP       = 8;
 const MAP_MAX_ZOOM  = 8;
 const ROUTE_COLORS  = ['#DD0011', '#E36A00', '#00A6A6', '#0055FF', '#5500BB', '#007A2A'];
-const ROUTE_STROKE_MULTIPLIER       = 2.5;
-const ROUTE_STROKE_SCALE_EXPONENT   = 0.33;
-const ROUTE_STROKE_MIN_CAMERA_SCALE = 0.05;
-
 let mapCam = { x: 0, y: 0, scale: 1, rot: 0 };
 let mapApplyTransform = () => {};
 let _mapCamAnim   = null;
@@ -35,11 +31,7 @@ let _mapRouteAnim = null;
 const USER_COLORS = ROUTE_COLORS;
 
 function routeStrokeWidthForZoom(baseWidth, scale = mapCam.scale) {
-    const safeScale = Math.max(scale || 1, ROUTE_STROKE_MIN_CAMERA_SCALE);
-    const visualWidth = baseWidth
-        * ROUTE_STROKE_MULTIPLIER
-        * Math.pow(safeScale, ROUTE_STROKE_SCALE_EXPONENT);
-    return visualWidth / safeScale;
+    return RouteStrokeScale.attributeWidth(baseWidth, scale, scale);
 }
 
 function setAdaptiveRouteStroke(el, baseWidth) {

@@ -21,9 +21,6 @@ msgstr "Eine Passage kann keine weiteren Punkte enthalten."
 msgid "A project with this name already exists."
 msgstr "Ein Projekt mit diesem Namen existiert bereits."
 
-msgid "A region needs at least 3 points."
-msgstr "Eine Region braucht mindestens 3 Punkte."
-
 msgid "Add"
 msgstr "Hinzufügen"
 
@@ -123,17 +120,8 @@ msgstr "Klicke die Knöpfe an, um eine detaillierte Auswertung zu sehen."
 msgid "Click the first point on the map…"
 msgstr "Klicke den ersten Punkt auf der Karte…"
 
-msgid "Click the first point to finish."
-msgstr "Klicke den ersten Punkt zum Abschliessen."
-
 msgid "Click the second point…"
 msgstr "Klicke den zweiten Punkt…"
-
-msgid "Click to add points; click the first point to finish."
-msgstr "Klicke, um Punkte hinzuzufügen; klicke den ersten Punkt zum Abschliessen."
-
-msgid "Click to place the first region point."
-msgstr "Klicke, um den ersten Regionspunkt zu setzen."
 
 msgid "Click to restore"
 msgstr "Klicken zum Wiederherstellen"
@@ -197,9 +185,6 @@ msgstr "Infinity-Modus konnte nicht aktiviert werden."
 
 msgid "Could not load maps:"
 msgstr "Karten konnten nicht geladen werden:"
-
-msgid "Could not load region."
-msgstr "Region konnte nicht geladen werden."
 
 msgid "Could not load this map:"
 msgstr "Diese Karte konnte nicht geladen werden:"
@@ -395,9 +380,6 @@ msgstr "Karte und Navgraph werden geladen…"
 
 msgid "Loading maps…"
 msgstr "Karten werden geladen…"
-
-msgid "Loading region…"
-msgstr "Region wird geladen…"
 
 msgid "Lock / view only"
 msgstr "Sperren / nur ansehen"
@@ -621,14 +603,8 @@ msgstr "Wiederherstellen"
 msgid "Refine"
 msgstr "Verfeinerung"
 
-msgid "Region deleted."
-msgstr "Region gelöscht."
-
 msgid "Region saved & graph rebuilt."
 msgstr "Region gespeichert & Graph neu aufgebaut."
-
-msgid "Region saved."
-msgstr "Region gespeichert."
 
 msgid "Rejections"
 msgstr "Ablehnungen"
@@ -723,14 +699,8 @@ msgstr "Routen"
 msgid "Save a map region first"
 msgstr "Zuerst eine Kartenregion speichern"
 
-msgid "Save failed."
-msgstr "Speichern fehlgeschlagen."
-
 msgid "Saved"
 msgstr "Gespeichert"
-
-msgid "Saved region loaded."
-msgstr "Gespeicherte Region geladen."
 
 msgid "Saving & rebuilding…"
 msgstr "Speichern & neu aufbauen…"

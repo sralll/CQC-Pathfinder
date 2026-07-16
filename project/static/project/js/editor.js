@@ -1463,6 +1463,7 @@ const RUN_SPEED = 4.75;         // average running speed in m/s
 const ALT_FLAT_EQUIV_M = 4;    // 1 m of elevation ≈ 4 m of flat running (≈ 0.84 s/m at RUN_SPEED)
 const PX_TO_M  = 0.48;         // pixels to metres conversion factor
 const REFERENCE_MAP_SCALE = 4000;
+const INCH_TO_METRES = 0.0254;
 const PATHING_MASK_TRAIN_SCALE = 0.710;
 const ROUTE_OBSTACLE_THRESHOLD = 200;
 const ROUTE_OBSTACLE_SECONDS_PER_ENTRY = 1;
@@ -2221,7 +2222,7 @@ const MaskLayer = (() => {
     const BRUSH_MAX = 25;
     const MASK_IMPASSABLE = 0;
     const MASK_FAST = 241;
-    const MASK_EXPANSION = 255 - 24;
+    const MASK_EXPANSION = 200;
 
     let canvas        = null;
     let ctx           = null;
@@ -4507,9 +4508,16 @@ function activateTool(toolObj) {
 const RCM = (() => {
     // Shared radii for the three-level menu. Non-mask tools use level 1 and
     // level 2; Mask additionally uses level 3 for the chosen family actions.
-    const RCM_RADII = Object.freeze({ center: 30, level1: 78, level2: 130, level3: 182 });
+    // Ring bands: centre and level1 are the always-visible wheel; the rim
+    // (chevron line) sits just outside it, and the level-2/3 expansion rings
+    // open OUTSIDE the rim so the rim stays visible as a boundary.
+    const RCM_RADII = Object.freeze({ center: 30, level1: 78, level2: 146, level3: 204 });
     const IR1 = RCM_RADII.center;
     const IR2 = RCM_RADII.level1;
+    const RIM_R1 = RCM_RADII.level1;        // 78 — flush against the inner ring
+    const RIM_R2 = RCM_RADII.level1 + 12;   // 90
+    const SUB_R1 = RIM_R2;                  // expansion rings start at the rim edge
+    const LEVEL3_R1 = RCM_RADII.level2 + (RIM_R2 - RIM_R1) / 2; // 6px divider
     const CLICK_MS = 200, MOVE_PX = 8;
 
     const MENU_TOOLS = [ToolMode.CONTROL_PAIR, ToolMode.ROUTE, ToolMode.BLOCK, ToolMode.MASK, ToolMode.INFINITY];
@@ -4538,10 +4546,14 @@ const RCM = (() => {
     // Angle offset that maps atan2 output to "0 = start of slice 0".
     const HIT_OFFSET = 90 + SECTOR / 2;
 
-    // Colors matching the sidebar tool wheel
-    const COL_DARK   = "#252525";
-    const COL_ORANGE = "#e07020";
-    const COL_HOVER  = "#f08030"; // slightly brighter on hover-of-hover
+    // Flat fills keep pointer-move repaints cheap. The slight overlap prevents
+    // browser anti-aliasing from exposing hairline gaps between adjacent paths.
+    const COL_DARK   = "#242424";
+    const COL_RIM    = "#171717";
+    const COL_RIM_ACTIVE = "var(--bg-5)";
+    const COL_ORANGE = "#e87528";
+    const PAINT_OVERLAP = 0.6;
+    const ANGLE_OVERLAP = 0.15;
 
     function slicePath(r1, r2, a1, a2) {
         const large = (a2 - a1) >= 180 ? 1 : 0;
@@ -4549,6 +4561,33 @@ const RCM = (() => {
         const [ax,ay] = c(r1,a1), [bx,by] = c(r2,a1);
         const [cx2,cy2] = c(r2,a2), [dx,dy] = c(r1,a2);
         return `M${ax} ${ay}L${bx} ${by}A${r2} ${r2} 0 ${large} 1 ${cx2} ${cy2}L${dx} ${dy}A${r1} ${r1} 0 ${large} 0 ${ax} ${ay}Z`;
+    }
+
+    function paintedSlicePath(r1, r2, a1, a2) {
+        return slicePath(
+            Math.max(0, r1 - PAINT_OVERLAP), r2 + PAINT_OVERLAP,
+            a1 - ANGLE_OVERLAP, a2 + ANGLE_OVERLAP,
+        );
+    }
+
+    function maskActionGeometry(branch) {
+        const actions = branch ? MASK_ACTION_DEFS[branch.id] || [] : [];
+        if (!branch || !actions.length) return null;
+
+        const familySector = SECTOR / MASK_TOOL_FAMILIES.length;
+        const familyIndex = MASK_TOOL_FAMILIES.indexOf(branch);
+        const maskIndex = MENU_TOOLS.indexOf(ToolMode.MASK);
+        const familyBase = segA1(maskIndex) + familyIndex * familySector;
+        // Twice the previous angular width per action. Centre the complete fan
+        // so its middle split stays on the middle of the level-2 family.
+        const actionSector = familySector * 2 / actions.length;
+        const totalSector = actionSector * actions.length;
+        const actionBase = familyBase + familySector / 2 - totalSector / 2;
+        const relativeActionBase = familyIndex * familySector
+            + familySector / 2 - totalSector / 2;
+        return {
+            actions, actionSector, totalSector, actionBase, relativeActionBase,
+        };
     }
 
     const svgNS = "http://www.w3.org/2000/svg";
@@ -4588,10 +4627,10 @@ const RCM = (() => {
          .forEach(e => e.style.fill = color);
     }
 
-    // No stroke — segments bound directly edge-to-edge
+    // Borderless segments overlap imperceptibly at their shared edges.
     function makeSegment(r1, r2, a1, a2, mid, iconName, transform, key, val, fill) {
         const g = svgEl("g"); g.dataset[key] = val;
-        const path = svgEl("path", { d: slicePath(r1, r2, a1, a2), fill, stroke:"none" });
+        const path = svgEl("path", { d: paintedSlicePath(r1, r2, a1, a2), fill, stroke:"none" });
         g.appendChild(path);
         g.appendChild(iconFO(mid, (r1+r2)/2, iconName, transform));
         if (fill !== COL_DARK) setIconColor(g, "black");
@@ -4606,12 +4645,34 @@ const RCM = (() => {
             + `width:${size}px;height:${size}px;pointer-events:none;z-index:99999;`;
         svg.setAttribute("viewBox", `${-size/2} ${-size/2} ${size} ${size}`);
 
-        // Inner ring — 4 segments, N/E/S/W
+        // Outer rim — thin dark frame, one arc per tool slice, each with a
+        // chevron hinting that the tool expands outward. Its section lights up
+        // while the matching secondary options are expanded.
+        const rimG = svgEl("g"); rimG.id = "rcm-rim";
+        MENU_TOOLS.forEach((mode, i) => {
+            const g = svgEl("g"); g.dataset.rim = mode;
+            g.appendChild(svgEl("path", {
+                class: "rcm-rim-arc",
+                d: paintedSlicePath(RIM_R1, RIM_R2, segA1(i), segA1(i) + SECTOR),
+                fill: COL_RIM, stroke: "none",
+            }));
+            g.appendChild(svgEl("path", {
+                class: "rcm-rim-chevron",
+                d: "M -2 -3.5 L 1.8 0 L -2 3.5",
+                fill: "none", stroke: "rgba(255,255,255,0.35)",
+                "stroke-width": "1.6", "stroke-linecap": "round",
+                "stroke-linejoin": "round",
+                transform: `rotate(${segMid(i)}) translate(${(RIM_R1 + RIM_R2) / 2} 0)`,
+            }));
+            rimG.appendChild(g);
+        });
+        svg.appendChild(rimG);
+
+        // Inner ring — one segment per tool.
         const innerG = svgEl("g"); innerG.id = "rcm-inner";
         MENU_TOOLS.forEach((mode, i) => {
-            const fill = mode === currentToolMode ? COL_ORANGE : COL_DARK;
             innerG.appendChild(makeSegment(IR1, IR2, segA1(i), segA1(i)+SECTOR,
-                segMid(i), TOOL_ICON[mode], undefined, "mode", mode, fill));
+                segMid(i), TOOL_ICON[mode], undefined, "mode", mode, COL_DARK));
         });
         svg.appendChild(innerG);
 
@@ -4620,16 +4681,15 @@ const RCM = (() => {
         svg.appendChild(outerG);
 
         // Centre circle — clicking here → no_tool
-        const cFill = currentToolMode === ToolMode.NONE ? COL_ORANGE : COL_DARK;
         const cg = svgEl("g"); cg.id = "rcm-center";
-        cg.appendChild(svgEl("circle", { cx:0, cy:0, r:IR1, fill:cFill, stroke:"none" }));
+        cg.appendChild(svgEl("circle", { cx:0, cy:0, r:IR1 + PAINT_OVERLAP, fill:COL_DARK, stroke:"none" }));
         cg.appendChild(centeredFO("lock"));
-        if (cFill !== COL_DARK) setIconColor(cg, "black");
         svg.appendChild(cg);
 
         // Guide line on top
         const guide = svgEl("line", { id:"rcm-guide", x1:0, y1:0, x2:0, y2:0,
-            stroke:"#000", "stroke-width":"1.2", "stroke-opacity":"0.6" });
+            stroke:"#fff", "stroke-width":"1.5", "stroke-opacity":"0.4",
+            "stroke-linecap":"round" });
         svg.appendChild(guide);
 
         return svg;
@@ -4638,23 +4698,18 @@ const RCM = (() => {
     function rebuildOuter(mode) {
         const outerG = menuEl?.querySelector("#rcm-outer");
         if (!outerG) return;
-        const oldGroups = outerG.querySelectorAll(".rcm-subtools");
-        oldGroups.forEach(g => {
-            g.classList.remove("rcm-subtools-enter");
-            g.classList.add("rcm-subtools-exit");
-            g.addEventListener("animationend", () => g.remove(), { once: true });
-        });
+        outerG.replaceChildren();
         if (!mode || mode === ToolMode.NONE) return;
 
         const toolIdx = MENU_TOOLS.indexOf(mode);
         const base = segA1(toolIdx);
         if (mode === ToolMode.MASK) {
             const familySector = SECTOR / MASK_TOOL_FAMILIES.length;
-            const familiesG = svgEl("g", { class: "rcm-subtools rcm-level2 rcm-subtools-enter" });
+            const familiesG = svgEl("g", { class: "rcm-subtools rcm-level2" });
             MASK_TOOL_FAMILIES.forEach((family, fi) => {
                 const a1 = base + fi * familySector;
                 const segment = makeSegment(
-                    RCM_RADII.level1, RCM_RADII.level2, a1, a1 + familySector,
+                    SUB_R1, RCM_RADII.level2, a1, a1 + familySector,
                     a1 + familySector / 2, family.icon, undefined, "family", family.id, COL_DARK,
                 );
                 familiesG.appendChild(segment);
@@ -4662,16 +4717,32 @@ const RCM = (() => {
             outerG.appendChild(familiesG);
 
             const branch = MASK_TOOL_FAMILIES.find(family => family.id === hoveredFamily);
-            const actions = branch ? MASK_ACTION_DEFS[branch.id] : [];
-            if (!branch || !actions.length) return;
-            const familyIndex = MASK_TOOL_FAMILIES.indexOf(branch);
-            const familyBase = base + familyIndex * familySector;
-            const actionSector = familySector / actions.length;
-            const actionsG = svgEl("g", { class: "rcm-subtools rcm-level3 rcm-subtools-enter" });
+            const geometry = maskActionGeometry(branch);
+            if (!geometry) return;
+            const { actions, actionSector, actionBase } = geometry;
+
+            // One half-width, chevron-free divider segment per action. The
+            // complete fan intentionally overlaps adjacent level-2 families.
+            const dividerG = svgEl("g", { class: "rcm-level3-divider" });
             actions.forEach((action, ai) => {
-                const a1 = familyBase + ai * actionSector;
+                const a1 = actionBase + ai * actionSector;
+                const divider = svgEl("path", {
+                    d: paintedSlicePath(
+                        RCM_RADII.level2, LEVEL3_R1, a1, a1 + actionSector,
+                    ),
+                    fill: COL_RIM, stroke: "none",
+                });
+                divider.dataset.dividerFamily = branch.id;
+                divider.dataset.dividerSub = action.id;
+                dividerG.appendChild(divider);
+            });
+            outerG.appendChild(dividerG);
+
+            const actionsG = svgEl("g", { class: "rcm-subtools rcm-level3" });
+            actions.forEach((action, ai) => {
+                const a1 = actionBase + ai * actionSector;
                 const segment = makeSegment(
-                    RCM_RADII.level2, RCM_RADII.level3, a1, a1 + actionSector,
+                    LEVEL3_R1, RCM_RADII.level3, a1, a1 + actionSector,
                     a1 + actionSector / 2, action.icon, action.transform,
                     "sub", action.id, COL_DARK,
                 );
@@ -4685,12 +4756,12 @@ const RCM = (() => {
 
         const defs = SUBTOOL_DEFS[mode];
         if (!defs?.length) return;
-        const subtoolsG = svgEl("g", { class: "rcm-subtools rcm-level2 rcm-subtools-enter" });
+        const subtoolsG = svgEl("g", { class: "rcm-subtools rcm-level2" });
         const sub = SECTOR / defs.length;
         defs.forEach((def, si) => {
             const a1 = base + si * sub;
             const segment = makeSegment(
-                RCM_RADII.level1, RCM_RADII.level2, a1, a1 + sub, a1 + sub / 2,
+                SUB_R1, RCM_RADII.level2, a1, a1 + sub, a1 + sub / 2,
                 def.icon, def.transform, "sub", def.id, COL_DARK,
             );
             segment.dataset.rcmMode = mode;
@@ -4709,11 +4780,46 @@ const RCM = (() => {
         // Centre circle → no_tool
         if (dist < IR1) return { ring:"center", mode: ToolMode.NONE, family:null, sub: null };
 
+        // The widened third-level fan can extend beyond Mask's original
+        // top-level sector. Keep its active branch hit-testable across that
+        // overlap instead of switching to the neighbouring tool.
+        if (dist >= RCM_RADII.level2
+            && hoveredTool === ToolMode.MASK && hoveredFamily) {
+            const branch = MASK_TOOL_FAMILIES.find(f => f.id === hoveredFamily);
+            const geometry = maskActionGeometry(branch);
+            if (geometry) {
+                const maskIndex = MENU_TOOLS.indexOf(ToolMode.MASK);
+                const relativeAngle = (
+                    (norm - maskIndex * SECTOR + 180 + 360) % 360
+                ) - 180;
+                const actionOffset = relativeAngle - geometry.relativeActionBase;
+                if (actionOffset >= 0 && actionOffset < geometry.totalSector) {
+                    if (dist < LEVEL3_R1) {
+                        return {
+                            ring:"level3-divider", mode:ToolMode.MASK,
+                            family:branch.id, sub:null,
+                        };
+                    }
+                    const actionIndex = Math.min(
+                        Math.floor(actionOffset / geometry.actionSector),
+                        geometry.actions.length - 1,
+                    );
+                    return {
+                        ring: dist < RCM_RADII.level3 ? "level3" : "extended",
+                        mode:ToolMode.MASK,
+                        family:branch.id,
+                        sub:geometry.actions[actionIndex].id,
+                    };
+                }
+            }
+        }
+
         const toolIdx = Math.floor(norm/SECTOR) % N;
         const mode    = MENU_TOOLS[toolIdx];
         const rel = (norm - toolIdx * SECTOR + 360) % 360;
 
         if (dist < IR2) return { ring:"inner", mode, family:null, sub:null };
+        if (dist < RIM_R2) return { ring:"rim", mode, family:null, sub:null };
 
         if (mode === ToolMode.MASK) {
             const familySector = SECTOR / MASK_TOOL_FAMILIES.length;
@@ -4724,17 +4830,21 @@ const RCM = (() => {
             if (dist < RCM_RADII.level2) {
                 return { ring:"level2", mode, family:family.id, sub:null };
             }
-            const actions = MASK_ACTION_DEFS[family.id] || [];
-            if (actions.length) {
-                const familyRel = rel - familyIndex * familySector;
+            const geometry = maskActionGeometry(family);
+            if (geometry) {
+                if (dist < LEVEL3_R1) {
+                    return { ring:"level3-divider", mode, family:family.id, sub:null };
+                }
+                const actionOffset = rel - geometry.relativeActionBase;
                 const actionIndex = Math.min(
-                    Math.floor(familyRel / (familySector / actions.length)), actions.length - 1,
+                    Math.max(0, Math.floor(actionOffset / geometry.actionSector)),
+                    geometry.actions.length - 1,
                 );
                 return {
                     ring: dist < RCM_RADII.level3 ? "level3" : "extended",
                     mode,
                     family:family.id,
-                    sub:actions[actionIndex].id,
+                    sub:geometry.actions[actionIndex].id,
                 };
             }
             return {
@@ -4753,17 +4863,35 @@ const RCM = (() => {
         return { ring:"extended", mode, family:null, sub };
     }
 
-    function segFill(isCurrentTool, isHovered) {
-        if (isHovered && isCurrentTool) return COL_HOVER;  // brighter if already orange
-        if (isHovered || isCurrentTool)  return COL_ORANGE;
-        return COL_DARK;
-    }
-
-    function applySegmentState(g, isCurrentTool, isHovered, baseColor) {
-        const fill = isHovered || isCurrentTool ? segFill(isCurrentTool, isHovered) : baseColor;
+    function applySegmentState(g, isHovered, baseColor = COL_DARK) {
+        const fill = isHovered ? COL_ORANGE : baseColor;
         const p = g.querySelector("path") || g.querySelector("circle");
         if (p) p.setAttribute("fill", fill);
-        setIconColor(g, (isHovered || isCurrentTool) ? "black" : "white");
+        setIconColor(g, isHovered ? "black" : "white");
+    }
+
+    function updateRimState(mode) {
+        const hasSecondary = mode === ToolMode.MASK
+            ? MASK_TOOL_FAMILIES.length > 0
+            : Boolean(SUBTOOL_DEFS[mode]?.length);
+        menuEl.querySelectorAll("[data-rim]").forEach(g => {
+            const isExpanded = hasSecondary && g.dataset.rim === mode;
+            const arc = g.querySelector(".rcm-rim-arc");
+            const chevron = g.querySelector(".rcm-rim-chevron");
+            if (arc) arc.setAttribute("fill", isExpanded ? COL_RIM_ACTIVE : COL_RIM);
+            if (chevron) chevron.setAttribute(
+                "stroke", isExpanded ? "var(--text-muted)" : "rgba(255,255,255,0.35)",
+            );
+        });
+    }
+
+    function updateLevel3DividerState(family, sub) {
+        menuEl.querySelectorAll(".rcm-level3-divider > path").forEach(path => {
+            const isHighlighted = Boolean(sub)
+                && path.dataset.dividerFamily === family
+                && path.dataset.dividerSub === sub;
+            path.setAttribute("fill", isHighlighted ? COL_RIM_ACTIVE : COL_RIM);
+        });
     }
 
     function updateHover(cx, cy) {
@@ -4785,32 +4913,24 @@ const RCM = (() => {
             || hit.ring === "extended"
         ) ? hit.sub : null;
 
-        // Always keep the centre circle in sync (unconditional — it's cheap)
+        // The centre and all other options are highlighted by hover only.
         const centerEl = menuEl.querySelector("#rcm-center circle");
         const centerFO = menuEl.querySelector("#rcm-center foreignObject");
         if (centerEl) {
             const isCenter  = hit?.ring === "center";
-            const isCurNone = currentToolMode === ToolMode.NONE;
-            centerEl.setAttribute("fill", (isCenter || isCurNone)
-                ? (isCenter && isCurNone ? COL_HOVER : COL_ORANGE) : COL_DARK);
+            centerEl.setAttribute("fill", isCenter ? COL_ORANGE : COL_DARK);
             if (centerFO) {
-                const lit = isCenter || isCurNone;
                 centerFO.querySelectorAll("svg, path, rect, circle, polygon")
-                    .forEach(e => e.style.fill = lit ? "black" : "white");
+                    .forEach(e => e.style.fill = isCenter ? "black" : "white");
             }
         }
 
-        // Only the currently active action is highlighted; for Mask that is
-        // the exact family/action pair, never a whole family's action ring.
+        // Subtool highlighting is hover-only as well.
         const styleActionSegment = g => {
             const rcmMode = g.dataset.rcmMode;
-            const active = rcmMode === ToolMode.MASK
-                ? (g.dataset.family === maskToolState.family
-                    && g.dataset.sub === maskToolState.action)
-                : g.dataset.sub === activeSubtool[rcmMode];
             const isHovered = g.dataset.sub === newSub
                 && (rcmMode !== ToolMode.MASK || g.dataset.family === newFamily);
-            applySegmentState(g, active, isHovered, COL_DARK);
+            applySegmentState(g, isHovered);
         };
 
         if (newTool !== hoveredTool || newFamily !== hoveredFamily) {
@@ -4819,24 +4939,25 @@ const RCM = (() => {
 
             // Update inner tool segments
             menuEl.querySelectorAll("[data-mode]").forEach(g => {
-                const isCurrent = g.dataset.mode === currentToolMode;
                 const isHov     = g.dataset.mode === hoveredTool;
-                applySegmentState(g, isCurrent, isHov, COL_DARK);
+                applySegmentState(g, isHov);
             });
 
             rebuildOuter(hoveredTool === ToolMode.NONE ? null : hoveredTool);
+            updateRimState(hoveredTool);
+            updateLevel3DividerState(newFamily, newSub);
             menuEl.querySelectorAll("[data-sub]").forEach(styleActionSegment);
         }
         if (newSub !== hoveredSub) {
             hoveredSub = newSub;
+            updateLevel3DividerState(newFamily, newSub);
             menuEl.querySelectorAll("[data-sub]").forEach(styleActionSegment);
         }
         // Level-3 action segments also carry data-family for hit grouping;
         // exclude them here so only true level-2 family segments are styled.
         menuEl.querySelectorAll("[data-family]:not([data-sub])").forEach(g => {
-            const active = maskToolState.family === g.dataset.family;
             const isHovered = newTool === ToolMode.MASK && g.dataset.family === newFamily;
-            applySegmentState(g, active, isHovered, COL_DARK);
+            applySegmentState(g, isHovered);
         });
     }
 
@@ -5158,6 +5279,10 @@ const RegionEditor = (() => {
     let previewPt = null;               // current cursor while drawing
     let dragIdx = -1;
     let moved = false;
+    // Invalidates region requests when another project replaces the current one.
+    // Without this, a slow response for the previous file can restore its polygon
+    // (or its infinity flags) after the editor has already switched projects.
+    let projectGeneration = 0;
     // Persistent SVG nodes.
     let gRoot = null, outline = null, draftLine = null, startCloseRing = null;
     const handlePool = [];              // reusable <circle> handles
@@ -5275,13 +5400,6 @@ const RegionEditor = (() => {
         for (const c of handlePool) hideNode(c);
     }
 
-    function setStatus(msg, isError) {
-        const el = document.getElementById("region-status");
-        if (!el) return;
-        el.textContent = msg || "";
-        el.classList.toggle("region-status-error", !!isError);
-    }
-
     function updateDeleteButton() {
         const button = document.getElementById("region-delete-btn");
         if (!button) return;
@@ -5294,13 +5412,12 @@ const RegionEditor = (() => {
         // Note: no readOnly guard — the region is editable regardless of publish
         // state (autosave is allowed server-side; only team membership is checked).
         if (!project.id || !project.has_mask) {
-            setStatus(gettext("Add a mask to this map first."), true);
             return;
         }
         editing = true;
         updateDeleteButton();
-        setStatus(gettext("Loading region…"));
-        await loadFromServer();
+        const loadedCurrentProject = await loadFromServer();
+        if (!loadedCurrentProject) return;
         render();
         updateDeleteButton();
     }
@@ -5317,10 +5434,16 @@ const RegionEditor = (() => {
 
     // Fetch the saved region, or the whole-map frame for a fresh map.
     async function loadFromServer() {
+        const projectId = project.id;
+        const generation = projectGeneration;
+        const isCurrentProject = () => (
+            generation === projectGeneration && project.id === projectId
+        );
         try {
-            const res = await fetch(`/editor/region-suggest/${project.id}/`);
+            const res = await fetch(`/editor/region-suggest/${projectId}/`);
             const data = await res.json();
-            if (data.error) { setStatus(data.error, true); verts = []; return; }
+            if (!isCurrentProject()) return false;
+            if (data.error) { verts = []; return true; }
             verts = (data.polygon || []).map(p => clampToMask(m2w(p)));
             drawing = data.source !== "saved";
             previewPt = null;
@@ -5330,16 +5453,15 @@ const RegionEditor = (() => {
                 updateSubtoolPanel(ToolMode.INFINITY);
                 window.updateNavInfinityBtn?.();
             }
-            setStatus(data.source === "saved"
-                ? gettext("Saved region loaded.")
-                : gettext("Click to place the first region point."));
             updateDeleteButton();
+            return true;
         } catch (e) {
-            setStatus(gettext("Could not load region."), true);
+            if (!isCurrentProject()) return false;
             verts = [];
             drawing = false;
             previewPt = null;
             updateDeleteButton();
+            return true;
         }
     }
 
@@ -5348,26 +5470,35 @@ const RegionEditor = (() => {
     // with only the latest queued snapshot retained. This also guarantees
     // that a queued deletion cannot be overtaken by an older polygon save.
     let _saving = false, _queuedSave = null;
-    async function persistPolygon(polygon, successMessage) {
+    async function persistPolygon(polygon, queuedRequest = null) {
+        const request = queuedRequest || {
+            polygon,
+            projectId: project.id,
+            generation: projectGeneration,
+        };
+        const isCurrentProject = () => (
+            request.generation === projectGeneration && project.id === request.projectId
+        );
         if (_saving) {
-            _queuedSave = { polygon, successMessage };
+            _queuedSave = request;
             return;
         }
         _saving = true;
         try {
             const csrf = document.cookie.match(/csrftoken=([^;]+)/)?.[1] ?? "";
-            const res = await fetch(`/editor/save-region/${project.id}/`, {
+            const res = await fetch(`/editor/save-region/${request.projectId}/`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json", "X-CSRFToken": csrf },
-                body: JSON.stringify({ polygon }),
+                body: JSON.stringify({ polygon: request.polygon }),
             });
             const data = await res.json();
-            if (data.error) { setStatus(data.error, true); return; }
+            if (!isCurrentProject()) return;
+            if (data.error) return;
             // Do not let an obsolete response overwrite the status/state of a
             // newer queued edit. The queued snapshot is applied immediately
             // after this request finishes.
             if (!_queuedSave) {
-                const savedPolygon = Array.isArray(data.polygon) ? data.polygon : polygon;
+                const savedPolygon = Array.isArray(data.polygon) ? data.polygon : request.polygon;
                 verts = savedPolygon.map(p => clampToMask(m2w(p)));
                 project.infinite_region_set = savedPolygon.length >= 3;
                 if (data.infinite_enabled === false) {
@@ -5376,27 +5507,25 @@ const RegionEditor = (() => {
                 } else {
                     window.updateNavInfinityBtn?.();
                 }
-                setStatus(successMessage);
                 updateDeleteButton();
             }
         } catch (e) {
-            setStatus(gettext("Save failed."), true);
+            // Autosave failures remain silent in the editor panel.
         } finally {
             _saving = false;
             if (_queuedSave) {
                 const queued = _queuedSave;
                 _queuedSave = null;
-                persistPolygon(queued.polygon, queued.successMessage);
+                if (queued.generation === projectGeneration && project.id === queued.projectId) {
+                    persistPolygon(queued.polygon, queued);
+                }
             }
         }
     }
 
     function autosave() {
-        if (verts.length < 3) {
-            setStatus(gettext("A region needs at least 3 points."), true);
-            return;
-        }
-        persistPolygon(verts.map(w2m), gettext("Region saved."));
+        if (verts.length < 3) return;
+        persistPolygon(verts.map(w2m));
     }
 
     function deleteRegion() {
@@ -5414,7 +5543,7 @@ const RegionEditor = (() => {
         updateSubtoolPanel(ToolMode.INFINITY);
         render();
         updateDeleteButton();
-        persistPolygon([], gettext("Region deleted."));
+        persistPolygon([]);
     }
 
     // ---- Interaction (called from the input dispatcher) -----------------
@@ -5445,10 +5574,7 @@ const RegionEditor = (() => {
     function subtool() { return getSubtool(ToolMode.INFINITY); }
 
     function finishDrawing() {
-        if (verts.length < 3) {
-            setStatus(gettext("A region needs at least 3 points."), true);
-            return;
-        }
+        if (verts.length < 3) return;
         drawing = false;
         previewPt = null;
         render();
@@ -5470,9 +5596,6 @@ const RegionEditor = (() => {
         }
         if (hi >= 0) return;
         verts.push({ x: pt.x, y: pt.y });
-        setStatus(verts.length === 1
-            ? gettext("Click to add points; click the first point to finish.")
-            : gettext("Click the first point to finish."));
         render();
     }
 
@@ -5511,10 +5634,7 @@ const RegionEditor = (() => {
         // "Remove point" subtool: clicking a vertex deletes it (min 3 kept).
         if (subtool() === "remove") {
             if (hi < 0) return false;   // empty space → let pan handle it
-            if (verts.length <= 3) {
-                setStatus(gettext("A region needs at least 3 points."), true);
-                return true;
-            }
+            if (verts.length <= 3) return true;
             verts.splice(hi, 1);
             render();
             autosave();
@@ -5563,12 +5683,16 @@ const RegionEditor = (() => {
     }
 
     function onProjectChanged() {
+        projectGeneration++;
+        _queuedSave = null;
         if (editing) exit();
+        else clearRender();
         verts = [];
         drawing = false;
         previewPt = null;
+        dragIdx = -1;
+        moved = false;
         drawGesture.cancel();
-        setStatus("");
         updateDeleteButton();
     }
 
@@ -7563,6 +7687,7 @@ function resetProjectForOcadUpload() {
     setReadOnly(false);
     checkinCurrentFile();
     if (activeTool !== ControlPairTool) activateTool(ControlPairTool);
+    window.RegionEditor?.onProjectChanged?.();
     project = {
         id: null,
         name: keepName,
@@ -7595,7 +7720,7 @@ function resetProjectForOcadUpload() {
     updateNavLabel();
     updateCPList();
     _updateScalePanel();
-    window.InfiniteToggle?.onProjectChanged?.();
+    window.NavInfinity?.onProjectChanged?.();
 
     activeSubtool[ToolMode.CONTROL_PAIR] = "add";
     setTool(ToolMode.CONTROL_PAIR);
@@ -7858,6 +7983,7 @@ function _startScaleDrawing() {
     _scaleDragIdx  = null;
     _hideScaleForm();
     _clearRuler();
+    _resetDpiScaleForm();
     mapContainer.style.cursor = "default";
     _setScaleStatus(gettext("Click the first point on the map…"));
 }
@@ -7882,6 +8008,48 @@ function _hideScaleForm() {
 function _setScaleStatus(msg) {
     const el = document.getElementById("scale-status");
     if (el) el.textContent = msg;
+}
+
+// An exported raster pixel represents one printed dot. Convert its physical
+// paper size to ground metres at the selected map scale, then express that in
+// the editor's scale convention. The map-scale terms cancel mathematically,
+// but keeping both steps explicit documents the physical calibration.
+function editorScaleFromDpi(dpi, mapScale) {
+    const parsedDpi = Number(dpi);
+    const parsedMapScale = Number(mapScale);
+    if (!(parsedDpi > 0) || !(parsedMapScale > 0)) return NaN;
+    const metresPerRasterPixel = INCH_TO_METRES * parsedMapScale / parsedDpi;
+    return metresPerRasterPixel * REFERENCE_MAP_SCALE / parsedMapScale / PX_TO_M;
+}
+
+function _resetDpiScaleForm() {
+    const dpiInp = document.getElementById("scale-dpi-input");
+    const ratioInp = document.getElementById("scale-dpi-ratio-input");
+    const submitBtn = document.getElementById("scale-dpi-submit-btn");
+    if (!dpiInp || !ratioInp || !submitBtn) return;
+
+    dpiInp.value = "";
+    ratioInp.value = String(projectMapScale());
+    submitBtn.disabled = true;
+
+    const check = () => {
+        submitBtn.disabled = !(Number(dpiInp.value) > 0 && Number(ratioInp.value) > 0);
+    };
+    dpiInp.oninput = check;
+    ratioInp.oninput = check;
+
+    const onEnter = e => {
+        if (e.key === "Enter" && !submitBtn.disabled) submitBtn.click();
+    };
+    dpiInp.onkeydown = onEnter;
+    ratioInp.onkeydown = onEnter;
+
+    submitBtn.onclick = () => {
+        const mapScale = Number(ratioInp.value);
+        const editorScale = editorScaleFromDpi(dpiInp.value, mapScale);
+        if (!(editorScale > 0)) return;
+        _completeScaleCalibration(editorScale, mapScale);
+    };
 }
 
 // ── Ctrl+Z undo for scaling points ────────────────────────
@@ -7994,36 +8162,40 @@ function _showScaleForm() {
         if (!(meters > 0) || !(_scalePixelDist > 0)) return;
 
         // Same formula as old coursesetter: inputValue * 4000 / mapScale / dist / 0.48
-        project.scale    = meters * 4000 / mapScale / _scalePixelDist / 0.48;
-        project.map_scale = mapScale;
-        project.scaled   = true;
-        recalculateProjectRoutes();
-
-        _hideScaleForm();
-        _clearRuler();
-        _cancelScaleDrawing();
-        applyProjectScale();
-        fitMapToCamera();
-        const scaleSave = saveFile("scale");
-        saveSnapshot("autosave");
-        _updateScalePanel();
-        // Scaling is a point of no return — clear all undo history
-        undoStack = []; redoStack = []; actionCount = 0;
-        clearMaskUndoStacks();
-        updateUndoMenu();
-        // Start in add-control-pair mode
-        activeSubtool[ToolMode.CONTROL_PAIR] = "add";
-        setTool(ToolMode.CONTROL_PAIR);
-        startNewPlacement();
-        // Kick off mask generation silently in the background
-        const maskMapFile = project.map_file;
-        const maskScale = project.scale;
-        Promise.resolve(scaleSave).then(() => {
-            if (project.map_file === maskMapFile && project.scale === maskScale && project.id) {
-                startMaskGeneration(maskMapFile, maskScale, project.id);
-            }
-        });
+        const editorScale = meters * 4000 / mapScale / _scalePixelDist / 0.48;
+        _completeScaleCalibration(editorScale, mapScale);
     };
+}
+
+function _completeScaleCalibration(editorScale, mapScale) {
+    if (!(editorScale > 0) || !(mapScale > 0)) return;
+    project.scale = editorScale;
+    project.map_scale = mapScale;
+    project.scaled = true;
+    recalculateProjectRoutes();
+
+    _cancelScaleDrawing();
+    applyProjectScale();
+    fitMapToCamera();
+    const scaleSave = saveFile("scale");
+    saveSnapshot("autosave");
+    _updateScalePanel();
+    // Scaling is a point of no return — clear all undo history
+    undoStack = []; redoStack = []; actionCount = 0;
+    clearMaskUndoStacks();
+    updateUndoMenu();
+    // Start in add-control-pair mode
+    activeSubtool[ToolMode.CONTROL_PAIR] = "add";
+    setTool(ToolMode.CONTROL_PAIR);
+    startNewPlacement();
+    // Kick off mask generation silently in the background
+    const maskMapFile = project.map_file;
+    const maskScale = project.scale;
+    Promise.resolve(scaleSave).then(() => {
+        if (project.map_file === maskMapFile && project.scale === maskScale && project.id) {
+            startMaskGeneration(maskMapFile, maskScale, project.id);
+        }
+    });
 }
 
 // ── Mouse interception for ruler drawing ───────────────────

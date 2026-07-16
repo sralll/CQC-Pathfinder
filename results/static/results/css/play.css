@@ -58,7 +58,7 @@ body.desktop #play-btn-bar {
     min-height: 0;
     position: relative;
     overflow: hidden;
-    background: #2a2a2a;
+    background: var(--bg-map);
     cursor: grab;
 }
 
@@ -72,7 +72,7 @@ body.desktop #play-btn-bar {
     transform: translate(-50%, -50%);
     pointer-events: none;
     background: rgba(10, 10, 10, 0.88);
-    color: #fff;
+    color: var(--text-strong);
     border-radius: 8px;
     padding: 0.22em 0.44em;
     font-size: clamp(42px, 8vw, 96px);

@@ -593,7 +593,7 @@ body.desktop #stats-header { width: 100%; max-width: none; }
     width: 12px;
     height: 12px;
     margin-left: 2px;
-    color: #666;
+    color: var(--text-dim);
     font-size: 11px;
     line-height: 1;
 }
@@ -700,7 +700,7 @@ body.mobile .stats-tooltip          { font-size: var(--font-md); padding: 8px 12
     transition: color var(--t-med), transform var(--t-med);
 }
 #stats-table tbody tr.stats-row-clickable:hover td:first-child {
-    color: #fff;
+    color: var(--text-strong);
     transform: translateX(3px);
 }
 

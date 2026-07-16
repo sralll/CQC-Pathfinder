@@ -21,6 +21,8 @@
     --bg-2: #1a1a1a;       /* card / panel */
     --bg-3: #1f1f1f;       /* hovered row / nested */
     --bg-4: #252525;       /* button hover */
+    --bg-5: #2e2e2e;       /* hover on elevated surfaces */
+    --bg-map: #2a2a2a;     /* map canvas surround (editor, play, file_results) */
 
     /* ── Borders ────────────────────────────────────────── */
     --border-soft:   #222;

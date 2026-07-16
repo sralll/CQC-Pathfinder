@@ -1142,6 +1142,11 @@ async function createFileWithTitle() {
     if (duplicate) { markError(gettext("A project with this name already exists.")); input?.focus(); return; }
 
     // ── Reset project state — server save happens after map is scaled ──
+    // Leave no tool-owned state from the previously open file behind. The
+    // infinity polygon is held privately by RegionEditor as well as represented
+    // by flags on the project JSON, so clearing only the SVG layers is not enough.
+    window.setTool?.("no_tool");
+    window.RegionEditor?.onProjectChanged?.();
     project.id            = null;   // assigned on first real save (after scaling)
     project.name          = name;
     project.scale         = null;
@@ -1149,8 +1154,12 @@ async function createFileWithTitle() {
     project.scaled        = false;
     project.map_file      = "";
     project.has_mask      = false;
+    project.infinite_enabled = false;
+    project.infinite_region_set = false;
     project.blocked_terrain = null;
+    project.level_passages = emptyLevelPassages();
     project.control_pairs = [];
+    window.NavInfinity?.onProjectChanged?.();
     window.detachMaskGenerationUi?.();
     window.clearMapDisplayForUpload?.({ clearLayers: true });
     window.clearMaskUndoStacks?.();

@@ -21,9 +21,6 @@ msgstr "Un passage ne peut pas contenir davantage de points."
 msgid "A project with this name already exists."
 msgstr "Un projet portant ce nom existe déjà."
 
-msgid "A region needs at least 3 points."
-msgstr "Une région nécessite au moins 3 points."
-
 msgid "Add"
 msgstr "Ajouter"
 
@@ -123,17 +120,8 @@ msgstr "Clique les boutons pour voir une évaluation détaillée."
 msgid "Click the first point on the map…"
 msgstr "Clique le premier point sur la carte…"
 
-msgid "Click the first point to finish."
-msgstr "Clique le premier point pour terminer."
-
 msgid "Click the second point…"
 msgstr "Clique le deuxième point…"
-
-msgid "Click to add points; click the first point to finish."
-msgstr "Clique pour ajouter des points ; clique le premier point pour terminer."
-
-msgid "Click to place the first region point."
-msgstr "Clique pour placer le premier point de la région."
 
 msgid "Click to restore"
 msgstr "Cliquer pour restaurer"
@@ -197,9 +185,6 @@ msgstr "Impossible d'activer le mode infini."
 
 msgid "Could not load maps:"
 msgstr "Impossible de charger les cartes :"
-
-msgid "Could not load region."
-msgstr "Impossible de charger la région."
 
 msgid "Could not load this map:"
 msgstr "Impossible de charger cette carte :"
@@ -395,9 +380,6 @@ msgstr "Chargement de la carte et du navgraph…"
 
 msgid "Loading maps…"
 msgstr "Chargement des cartes…"
-
-msgid "Loading region…"
-msgstr "Chargement de la région…"
 
 msgid "Lock / view only"
 msgstr "Verrouiller / lecture seule"
@@ -621,14 +603,8 @@ msgstr "Rétablir"
 msgid "Refine"
 msgstr "Raffinement"
 
-msgid "Region deleted."
-msgstr "Zone supprimée."
-
 msgid "Region saved & graph rebuilt."
 msgstr "Région enregistrée et graphe reconstruit."
-
-msgid "Region saved."
-msgstr "Région enregistrée."
 
 msgid "Rejections"
 msgstr "Rejets"
@@ -723,14 +699,8 @@ msgstr "Choix"
 msgid "Save a map region first"
 msgstr "Enregistre d'abord une région de carte"
 
-msgid "Save failed."
-msgstr "L'enregistrement a échoué."
-
 msgid "Saved"
 msgstr "Enregistré"
-
-msgid "Saved region loaded."
-msgstr "Région enregistrée chargée."
 
 msgid "Saving & rebuilding…"
 msgstr "Enregistrement et reconstruction…"

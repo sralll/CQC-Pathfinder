@@ -21,9 +21,6 @@ msgstr "Un passaggio non può contenere altri punti."
 msgid "A project with this name already exists."
 msgstr "Esiste già un progetto con questo nome."
 
-msgid "A region needs at least 3 points."
-msgstr "Una regione richiede almeno 3 punti."
-
 msgid "Add"
 msgstr "Aggiungi"
 
@@ -123,17 +120,8 @@ msgstr "Clicca i pulsanti per vedere una valutazione dettagliata."
 msgid "Click the first point on the map…"
 msgstr "Clicca il primo punto sulla mappa…"
 
-msgid "Click the first point to finish."
-msgstr "Clicca il primo punto per completare."
-
 msgid "Click the second point…"
 msgstr "Clicca il secondo punto…"
-
-msgid "Click to add points; click the first point to finish."
-msgstr "Clicca per aggiungere punti; clicca il primo punto per completare."
-
-msgid "Click to place the first region point."
-msgstr "Clicca per posizionare il primo punto della regione."
 
 msgid "Click to restore"
 msgstr "Clicca per ripristinare"
@@ -197,9 +185,6 @@ msgstr "Impossibile abilitare la modalità infinita."
 
 msgid "Could not load maps:"
 msgstr "Impossibile caricare le mappe:"
-
-msgid "Could not load region."
-msgstr "Impossibile caricare la regione."
 
 msgid "Could not load this map:"
 msgstr "Impossibile caricare questa mappa:"
@@ -395,9 +380,6 @@ msgstr "Caricamento della mappa e del navgraph…"
 
 msgid "Loading maps…"
 msgstr "Caricamento delle mappe…"
-
-msgid "Loading region…"
-msgstr "Caricamento della regione…"
 
 msgid "Lock / view only"
 msgstr "Blocca / sola visualizzazione"
@@ -621,14 +603,8 @@ msgstr "Ripristina"
 msgid "Refine"
 msgstr "Raffinamento"
 
-msgid "Region deleted."
-msgstr "Regione eliminata."
-
 msgid "Region saved & graph rebuilt."
 msgstr "Regione salvata e grafo ricostruito."
-
-msgid "Region saved."
-msgstr "Regione salvata."
 
 msgid "Rejections"
 msgstr "Rifiuti"
@@ -723,14 +699,8 @@ msgstr "Percorsi"
 msgid "Save a map region first"
 msgstr "Salva prima una regione della mappa"
 
-msgid "Save failed."
-msgstr "Salvataggio non riuscito."
-
 msgid "Saved"
 msgstr "Salvato"
-
-msgid "Saved region loaded."
-msgstr "Regione salvata caricata."
 
 msgid "Saving & rebuilding…"
 msgstr "Salvataggio e ricostruzione…"

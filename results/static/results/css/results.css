@@ -365,7 +365,7 @@ html, body {
     width: 12px;
     height: 12px;
     margin-left: 2px;
-    color: #666;
+    color: var(--text-dim);
     font-size: 11px;
     line-height: 1;
 }
@@ -393,7 +393,7 @@ html, body {
 }
 
 .play-name-cell {
-    color: #eee;
+    color: var(--text);
     font-weight: 700;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -479,7 +479,7 @@ html, body {
 .play-card-name {
     font-size: var(--font-md);
     font-weight: 700;
-    color: #eee;
+    color: var(--text);
     overflow: hidden;
     text-overflow: ellipsis;
     display: -webkit-box;
