@@ -362,8 +362,10 @@ function detectSceneSource() {
 
 function handleMaskSourceError(err) {
     console.error('mask scene source failed to initialise; falling back to city:', err);
+    const failedSource = maskSource;
     sceneSource = 'city';
     maskSource = null;
+    failedSource?.destroy();
     return null;
 }
 

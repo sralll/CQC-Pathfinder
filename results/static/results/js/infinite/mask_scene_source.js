@@ -117,6 +117,35 @@ async function fetchJson(url) {
 }
 
 /**
+ * Fetch the uploaded map once and wait until it is decoded. The SVG renderer
+ * uses the resulting in-memory object URL, so its background can be painted
+ * immediately instead of racing the first choice timer or a second request.
+ */
+async function preloadMapImage(url) {
+    const res = await fetch(url, { credentials: 'same-origin' });
+    if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
+    const objectUrl = URL.createObjectURL(await res.blob());
+    const image = new Image();
+    image.decoding = 'async';
+    const loaded = new Promise((resolve, reject) => {
+        image.addEventListener('load', resolve, { once: true });
+        image.addEventListener('error', () => {
+            URL.revokeObjectURL(objectUrl);
+            reject(new Error(`failed to load map image ${url}`));
+        }, { once: true });
+    });
+    image.src = objectUrl;
+    await loaded;
+    try {
+        if (typeof image.decode === 'function') await image.decode();
+    } catch (err) {
+        URL.revokeObjectURL(objectUrl);
+        throw err;
+    }
+    return { image, objectUrl };
+}
+
+/**
  * Decode a mask PNG (from /editor/mask/<id>/) into a greyscale Uint8Array,
  * one byte per pixel, taking channel 0 — mirrors the editor's
  * sendMaskToPathingWorker() decode. Uses createImageBitmap + OffscreenCanvas
@@ -174,6 +203,27 @@ export class MaskSceneSource {
         this.metresPerMapUnit = this.scale.metresPerMapUnit;
         this.mapImageUrl = `/editor/map/${filename}`;
 
+        // Start the potentially large raster request immediately. Navgraph +
+        // mask boot happens independently in ready(), and route generation is
+        // still gated on the worker's navgraph acknowledgement.
+        this._mapImage = null;
+        this._mapObjectUrl = null;
+        this.mapReady = preloadMapImage(this.mapImageUrl).then((loadedMap) => {
+            if (this._destroyed) {
+                URL.revokeObjectURL(loadedMap.objectUrl);
+                return loadedMap.image;
+            }
+            this._mapImage = loadedMap.image;
+            this._mapObjectUrl = loadedMap.objectUrl;
+            this.mapImageUrl = loadedMap.objectUrl;
+            // Route pairs can finish while the raster is loading. Point any
+            // already-buffered scenes at the in-memory map too.
+            for (const scene of this.buffer) {
+                if (scene?.mapImage) scene.mapImage.href = this.mapImageUrl;
+            }
+            return loadedMap.image;
+        });
+
         this.worker = null;
         this.width = 0;
         this.height = 0;
@@ -185,6 +235,7 @@ export class MaskSceneSource {
         this._inFlight = 0;        // outstanding generatePair requests
         this._refillScheduled = false;
         this._destroyed = false;
+        this._readyPromise = null;
         this.metrics = { requested: 0, completed: 0, failed: 0, slow: 0, starved: 0, maxPairMs: 0 };
     }
 
@@ -193,9 +244,15 @@ export class MaskSceneSource {
     get mapHeight() { return this.height * this.mapUnitScale; }
 
     async ready() {
-        if (this.navReady) return this.navReady;
-        this.navReady = this._boot();
-        return this.navReady;
+        if (!this.navReady) this.navReady = this._boot();
+        if (!this._readyPromise) {
+            // The worker can begin filling the route-pair buffer as soon as
+            // navgraph + mask setup finishes, while the map raster continues
+            // loading in parallel. Play is ready only when both are complete.
+            this._readyPromise = Promise.all([this.navReady, this.mapReady])
+                .then(([ack]) => ack);
+        }
+        return this._readyPromise;
     }
 
     async _boot() {
@@ -399,6 +456,9 @@ export class MaskSceneSource {
         this._destroyed = true;
         try { this.worker?.postMessage({ type: 'invalidate' }); } catch (_) {}
         try { this.worker?.terminate(); } catch (_) {}
+        if (this._mapObjectUrl) URL.revokeObjectURL(this._mapObjectUrl);
+        this._mapObjectUrl = null;
+        this._mapImage = null;
         this.worker = null;
     }
 }
