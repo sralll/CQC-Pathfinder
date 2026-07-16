@@ -62,12 +62,12 @@ pg_dump --format=custom --no-owner --no-acl "$PROD_URL" \
   | pg_restore --no-owner --no-acl --dbname="$TARGET_URL"
 log "Mirror transfer completed in $((SECONDS - transfer_start))s."
 
-# Default is a plain copy: prod already carries the full migration history, so
-# no migrate run is needed after restore. Opt back in with
-# RUN_DJANGO_MIGRATIONS_AFTER_RESTORE=true while staging code carries
-# migrations that are not yet deployed to prod (otherwise the mirrored schema
-# lags behind staging's code until the next staging deploy runs migrate).
-if [[ "${RUN_DJANGO_MIGRATIONS_AFTER_RESTORE:-false}" == "true" && -f "manage.py" ]]; then
+# By default, bring the restored production schema up to the staging code's migration
+# level. This matters whenever staging contains migrations that have not reached
+# production yet: each nightly restore replaces django_migrations and the schema
+# with production's older state.
+# Set RUN_DJANGO_MIGRATIONS_AFTER_RESTORE=false only for exceptional maintenance.
+if [[ "${RUN_DJANGO_MIGRATIONS_AFTER_RESTORE:-true}" == "true" && -f "manage.py" ]]; then
   export DATABASE_URL="$TARGET_URL"
   export SECRET_KEY="${SECRET_KEY:-db-mirror-temporary-secret-key}"
 
@@ -75,8 +75,8 @@ if [[ "${RUN_DJANGO_MIGRATIONS_AFTER_RESTORE:-false}" == "true" && -f "manage.py
   migrate_start=$SECONDS
   python manage.py migrate --noinput
   log "Django migrations completed in $((SECONDS - migrate_start))s."
-elif [[ "${RUN_DJANGO_MIGRATIONS_AFTER_RESTORE:-false}" != "true" ]]; then
-  log "Skipping Django migrations because RUN_DJANGO_MIGRATIONS_AFTER_RESTORE is not true."
+elif [[ "${RUN_DJANGO_MIGRATIONS_AFTER_RESTORE:-true}" != "true" ]]; then
+  log "Skipping Django migrations because RUN_DJANGO_MIGRATIONS_AFTER_RESTORE is false."
 else
   log "Skipping Django migrations because manage.py was not found in this container."
 fi
