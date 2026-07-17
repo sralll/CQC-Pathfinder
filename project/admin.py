@@ -158,6 +158,6 @@ class LabelAdmin(admin.ModelAdmin):
 
 @admin.register(EditorSettings)
 class EditorSettingsAdmin(StaffHiddenAdmin, admin.ModelAdmin):
-    list_display = ('profile', 'auto_pathfind', 'auto_jump', 'autosave')
+    list_display = ('profile', 'auto_pathfind', 'auto_jump', 'auto_obstacle')
     search_fields = ('profile__user__username',)
-    list_filter = ('auto_pathfind', 'auto_jump', 'autosave')
+    list_filter = ('auto_pathfind', 'auto_jump', 'auto_obstacle')

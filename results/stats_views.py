@@ -1,3 +1,4 @@
+import time
 from datetime import timedelta
 
 from django.conf import settings
@@ -68,49 +69,83 @@ def stats_view(request):
 
 CHOICE_BUCKETS = ('fastest', 'less_5', 'between_5_10', 'more_10')
 STATS_TEAM_CACHE_TIMEOUT = getattr(settings, 'STATS_TEAM_CACHE_TIMEOUT', 600)
+# The per-team generation key must outlive every derived entry it stamps (see
+# _team_stats_version) so its expiry can never resurrect stale entries. Keep it
+# far longer than STATS_TEAM_CACHE_TIMEOUT rather than the DatabaseCache default
+# (300s), which would be shorter than the entries it governs.
+STATS_TEAM_VERSION_TIMEOUT = getattr(settings, 'STATS_TEAM_VERSION_TIMEOUT', 60 * 60 * 24 * 30)
 
 
-def _team_choice_cache_key(team_id, competition_flag):
-    return f"stats:team-choice:v2:{team_id}:{int(competition_flag)}"
+def _team_stats_version_key(team_id):
+    return f"stats:team-version:v1:{team_id}"
 
 
-def _team_random_cache_key(team_id):
-    return f"stats:team-random:v1:{team_id}"
+def _new_stats_version():
+    """A monotonically increasing generation stamp (wall-clock milliseconds)."""
+    return int(time.time() * 1000)
 
 
-def _team_activity_cache_key(team_id, mode):
-    return f"stats:team-activity:v1:{team_id}:{mode}"
+def _team_stats_version(team_id):
+    """Current cache generation for a team, embedded in every derived key.
+
+    On a miss (never set, expired, or culled by DatabaseCache) seed with a
+    fresh millisecond timestamp. That value is strictly greater than any
+    generation minted earlier, so entries cached under an older generation stay
+    unreachable and can never be resurrected by a re-seed. ``add`` only writes
+    when the key is still absent, so a concurrent bump wins the race.
+    """
+    version_key = _team_stats_version_key(team_id)
+    version = cache.get(version_key)
+    if version is None:
+        version = _new_stats_version()
+        cache.add(version_key, version, STATS_TEAM_VERSION_TIMEOUT)
+        version = cache.get(version_key) or version
+    return version
 
 
-def _stats_table_cache_key(team_id, mode):
-    return f"stats:table:v8:{team_id}:{mode}"
+def _team_choice_cache_key(team_id, competition_flag, version):
+    return f"stats:team-choice:v2:{team_id}:{int(competition_flag)}:g{version}"
 
 
-def _team_progress_cache_key(team_id):
-    return f"stats:progress:v2:{team_id}"
+def _team_random_cache_key(team_id, version):
+    return f"stats:team-random:v1:{team_id}:g{version}"
 
 
-def _team_error_fit_cache_key(team_id, competition_flag):
-    return f"stats:team-error-fit:v1:{team_id}:{int(competition_flag)}"
+def _team_activity_cache_key(team_id, mode, version):
+    return f"stats:team-activity:v1:{team_id}:{mode}:g{version}"
 
 
-def _team_random_error_fit_cache_key(team_id):
-    return f"stats:team-random-error-fit:v1:{team_id}"
+def _stats_table_cache_key(team_id, mode, version):
+    return f"stats:table:v8:{team_id}:{mode}:g{version}"
+
+
+def _team_progress_cache_key(team_id, version):
+    return f"stats:progress:v2:{team_id}:g{version}"
+
+
+def _team_error_fit_cache_key(team_id, competition_flag, version):
+    return f"stats:team-error-fit:v1:{team_id}:{int(competition_flag)}:g{version}"
+
+
+def _team_random_error_fit_cache_key(team_id, version):
+    return f"stats:team-random-error-fit:v1:{team_id}:g{version}"
 
 
 def _clear_stats_cache_for_team(team):
+    """Invalidate every team-scoped stats cache entry in a single write.
+
+    Instead of deleting each derived key, bump the team's generation: all
+    derived keys embed the generation (see the ``_..._cache_key`` builders), so
+    a new generation makes every previously cached entry unreachable at once.
+    The new value is ``max(now_ms, current + 1)`` so the generation strictly
+    increases even if the wall clock steps backwards, never reusing a stamp
+    that a still-live derived entry might carry.
+    """
     if not team:
         return
-    cache.delete(_team_choice_cache_key(team.id, True))
-    cache.delete(_team_choice_cache_key(team.id, False))
-    cache.delete(_team_random_cache_key(team.id))
-    cache.delete(_team_random_error_fit_cache_key(team.id))
-    cache.delete(_team_progress_cache_key(team.id))
-    cache.delete(_team_error_fit_cache_key(team.id, True))
-    cache.delete(_team_error_fit_cache_key(team.id, False))
-    for mode in ('competition', 'training', 'random'):
-        cache.delete(_team_activity_cache_key(team.id, mode))
-        cache.delete(_stats_table_cache_key(team.id, mode))
+    current = _team_stats_version(team.id)
+    new_version = max(_new_stats_version(), current + 1)
+    cache.set(_team_stats_version_key(team.id), new_version, STATS_TEAM_VERSION_TIMEOUT)
 
 
 def _bucket_choice(choice, min_time_per_cp):
@@ -593,7 +628,8 @@ def _aggregate_choice_queryset(qs):
 
 
 def _cached_team_choice_stats(active_team, competition_flag):
-    cache_key = _team_choice_cache_key(active_team.id, competition_flag)
+    version = _team_stats_version(active_team.id)
+    cache_key = _team_choice_cache_key(active_team.id, competition_flag, version)
     stats = cache.get(cache_key)
     if stats is not None:
         return stats
@@ -608,7 +644,8 @@ def _cached_team_choice_stats(active_team, competition_flag):
 
 
 def _cached_team_random_stats(active_team):
-    cache_key = _team_random_cache_key(active_team.id)
+    version = _team_stats_version(active_team.id)
+    cache_key = _team_random_cache_key(active_team.id, version)
     stats = cache.get(cache_key)
     if stats is not None:
         return stats
@@ -627,7 +664,8 @@ def _cached_team_activity(active_team, mode):
     Only the rolling seven-day window needed by the trainer chart is cached.
     Cache invalidation is shared with the other team statistics.
     """
-    cache_key = _team_activity_cache_key(active_team.id, mode)
+    version = _team_stats_version(active_team.id)
+    cache_key = _team_activity_cache_key(active_team.id, mode, version)
     activity = cache.get(cache_key)
     if activity is not None:
         return activity
@@ -668,7 +706,8 @@ def _cached_team_activity(active_team, mode):
 
 
 def _cached_team_error_potential_fit(active_team, competition_flag):
-    cache_key = _team_error_fit_cache_key(active_team.id, competition_flag)
+    version = _team_stats_version(active_team.id)
+    cache_key = _team_error_fit_cache_key(active_team.id, competition_flag, version)
     fit = cache.get(cache_key)
     if fit is not None:
         return fit
@@ -692,7 +731,8 @@ def _cached_team_error_potential_fit(active_team, competition_flag):
 
 
 def _cached_team_random_error_potential_fit(active_team):
-    cache_key = _team_random_error_fit_cache_key(active_team.id)
+    version = _team_stats_version(active_team.id)
+    cache_key = _team_random_error_fit_cache_key(active_team.id, version)
     fit = cache.get(cache_key)
     if fit is not None:
         return fit
@@ -909,7 +949,8 @@ def _cached_team_progress(active_team):
     constraint, so a CP is completed in exactly one of training/competition —
     the two counts never overlap. Cached because counting the team's total
     available control pairs means scanning every accessible file."""
-    cache_key = _team_progress_cache_key(active_team.id)
+    version = _team_stats_version(active_team.id)
+    cache_key = _team_progress_cache_key(active_team.id, version)
     cached = cache.get(cache_key)
     if cached is not None:
         return cached
@@ -968,7 +1009,8 @@ def get_stats_table(request):
     if not active_team:
         return JsonResponse([], safe=False)
 
-    table_cache_key = _stats_table_cache_key(active_team.id, mode)
+    version = _team_stats_version(active_team.id)
+    table_cache_key = _stats_table_cache_key(active_team.id, mode, version)
     cached_table = cache.get(table_cache_key)
     if cached_table is not None:
         return JsonResponse(cached_table, safe=False)

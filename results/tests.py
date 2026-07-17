@@ -26,6 +26,7 @@ from .stats_views import (
     _random_error_potential_fit,
     _route_runtime_stats_for_cp,
     _team_activity_cache_key,
+    _team_stats_version,
 )
 
 
@@ -756,11 +757,17 @@ class StatsSecurityTests(TestCase):
             {row.timestamp.isoformat() for row in included},
         )
         self.assertEqual(len(team_activity['activity_quality']), 2)
-        cache_key = _team_activity_cache_key(self.team.id, 'random')
+        version = _team_stats_version(self.team.id)
+        cache_key = _team_activity_cache_key(self.team.id, 'random', version)
         self.assertEqual(cache.get(cache_key), team_activity)
 
+        # Invalidation bumps the team generation, so the entry is unreachable
+        # under the new version even though the old entry is not deleted.
         _clear_stats_cache_for_team(self.team)
-        self.assertIsNone(cache.get(cache_key))
+        new_version = _team_stats_version(self.team.id)
+        self.assertNotEqual(new_version, version)
+        new_key = _team_activity_cache_key(self.team.id, 'random', new_version)
+        self.assertIsNone(cache.get(new_key))
 
     def test_trainer_stats_page_replaces_facts_with_team_activity_card(self):
         response = self.client.get(reverse('results_stats'))

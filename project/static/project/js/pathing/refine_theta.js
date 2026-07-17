@@ -8,8 +8,8 @@
 // Same-dir relative imports work unchanged in Node (harness) and in the browser
 // worker. Nothing here touches the DOM, `self`, or the network.
 //
-// Public entry point:
-//   refineRouteTheta(state, path, barriers, opts) -> { path, cost, mode, ... }
+// Public flow:
+//   prepareRouteTheta(...) -> refinePreparedRouteTheta(...)
 //
 // The refinement of one route (mirrors the tail of runPipeline):
 //   1. legal spine  = refineRouteLegal(path)   — plays the `wps` role; the
@@ -22,14 +22,12 @@
 //   3. barriers     = every barrier with attemptIndex < routeIndex stamped into
 //      the subgrid as a butt-capped rectangle using state.cfg.barrierWidthPx,
 //      the exact mask-space projection of the visible player stroke.
-//   4. corridorMask -> applyCorridor -> guidedThetaStar (switch radius 10, with
-//      an optional deadline) -> simplifyThetaPath (10°, 5 px).
+//   4. graph-spine bounding box -> weighted pixel A* -> normal editor corridor ->
+//      guidedThetaStar (switch radius 10) -> simplifyThetaPath (10°, 5 px).
 //   5. runtime      = Σ lineCost over the FINAL polyline on the TRUE mask (bars
 //      are virtual fences — terrain cost is real).
-//   6. timeout/failure -> `legal-fallback` (serve the legal spine); the pair
-//      only rejects (`timeout`) if the legal spine itself is unusable. The
-//      fallback/reject policy is coordinated by the caller (generateOnePair)
-//      via `refineTimeoutPolicy`; this function reports the per-route outcome.
+//   6. timeout/failure -> `legal-fallback` diagnostic result; production pair
+//      generation rejects it and samples another pair.
 // =============================================================================
 
 import { refineRouteLegal, countLegalityViolations, lineCost, BARRIER_DRAW_WIDTH_MASK_PX } from './navgraph_router.js';
@@ -299,10 +297,7 @@ function tryTheta(state, spine, activeBarriers, corridorRadius, deadline, diag =
 		spineFlat[2 * i + 1] = Math.round(spine[i].y - y0);
 	}
 
-	// 4. Corridor + θ*. Confine the terrain (incl. stamped bars) to the tube,
-	// then snap endpoints to free inside the constrained grid.
-	const corridor = corridorMask(spineFlat, sw, sh, corridorRadius);
-	const constrained = applyCorridor(sub, corridor);
+	const constrained = applyCorridor(sub, corridorMask(spineFlat, sw, sh, corridorRadius));
 	const startSub = snapToFree(constrained, sw, sh, (first.x - x0) | 0, (first.y - y0) | 0);
 	const goalSub = snapToFree(constrained, sw, sh, (last.x - x0) | 0, (last.y - y0) | 0);
 	if (!startSub || !goalSub) return fail('snap');
@@ -380,16 +375,10 @@ function tryTheta(state, spine, activeBarriers, corridorRadius, deadline, diag =
  *   tTheta: number            // ms spent on corridor + θ*
  * }}
  */
-export function refineRouteTheta(state, path, barriers, opts = {}) {
+export function prepareRouteTheta(state, path, barriers, opts = {}) {
 	const { cfg } = state;
 	const clock = opts.now || nowMs;
 	const routeIndex = Number.isFinite(opts.routeIndex) ? opts.routeIndex : Infinity;
-	const corridorRadius = Number.isFinite(opts.corridorRadius)
-		? opts.corridorRadius
-		: (Number.isFinite(cfg?.corridorRadius) ? cfg.corridorRadius : 24);
-	const budgetMs = Number.isFinite(opts.budgetMs)
-		? opts.budgetMs
-		: (Number.isFinite(cfg?.refineBudgetMs) ? cfg.refineBudgetMs : 600);
 
 	// 1. Legal spine (Phase-2 validated, guaranteed-legal waypoint chain).
 	// refineRouteLegal already returns its terrain-weighted cost on the same
@@ -414,6 +403,21 @@ export function refineRouteTheta(state, path, barriers, opts = {}) {
 	if (countLegalityViolations(state, legalPath) > 0) {
 		return { ...base, path: legalPath, cost: legalCost, mode: 'unusable', thetaCost: null, tTheta: 0 };
 	}
+	return { ...base, path: legalPath, cost: legalCost, mode: 'prepared', thetaCost: null, tTheta: 0 };
+}
+
+/** Run corridor A* + Theta* using an already-computed legal spine. */
+export function refinePreparedRouteTheta(state, prepared, opts = {}) {
+	if (!prepared || prepared.mode === 'unusable') return prepared;
+	const { cfg } = state;
+	const clock = opts.now || nowMs;
+	const corridorRadius = Number.isFinite(opts.corridorRadius)
+		? opts.corridorRadius
+		: (Number.isFinite(cfg?.corridorRadius) ? cfg.corridorRadius : 24);
+	const budgetMs = Number.isFinite(opts.budgetMs)
+		? opts.budgetMs
+		: (Number.isFinite(cfg?.refineBudgetMs) ? cfg.refineBudgetMs : 600);
+	const { legalPath, legalCost, activeBarriers } = prepared;
 
 	// 2–5. θ* attempt under a per-route budget.
 	const tT0 = clock();
@@ -430,7 +434,7 @@ export function refineRouteTheta(state, path, barriers, opts = {}) {
 	const tTheta = clock() - tT0;
 
 	if (!theta) {
-		return { ...base, path: legalPath, cost: legalCost, mode: 'legal-fallback', thetaCost: null, thetaFail: diag.reason, tTheta };
+		return { ...prepared, path: legalPath, cost: legalCost, mode: 'legal-fallback', thetaCost: null, thetaFail: diag.reason, tTheta };
 	}
-	return { ...base, path: theta.path, cost: theta.cost, mode: 'theta', thetaCost: theta.cost, thetaFail: null, tTheta };
+	return { ...prepared, path: theta.path, cost: theta.cost, mode: 'theta', thetaCost: theta.cost, thetaFail: null, tTheta };
 }

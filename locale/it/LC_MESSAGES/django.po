@@ -84,6 +84,9 @@ msgstr "Ideale su mappe urbane dense"
 msgid "Browse"
 msgstr "Sfoglia"
 
+msgid "Building the map failed."
+msgstr "La costruzione della mappa non è riuscita."
+
 msgid "Cancel"
 msgstr "Annulla"
 
@@ -212,6 +215,9 @@ msgstr "Inglese"
 
 msgid "Enlarge"
 msgstr "Ingrandisci"
+
+msgid "Error"
+msgstr "Errore"
 
 msgid "Error potential detection"
 msgstr "Rilevamento del potenziale di errore"
@@ -393,6 +399,9 @@ msgstr "Nessuna disponibile"
 msgid "OCAD analysis failed: %(error)s"
 msgstr "Analisi OCAD non riuscita: %(error)s"
 
+msgid "OCAD conversion failed."
+msgstr "Conversione OCAD non riuscita."
+
 msgid "OCAD conversion failed: %(error)s"
 msgstr "Conversione OCAD non riuscita: %(error)s"
 
@@ -443,6 +452,9 @@ msgstr "Punto 2"
 
 msgid "Progress"
 msgstr "Progresso"
+
+msgid "Project data is too large to save."
+msgstr "I dati del progetto sono troppo grandi per essere salvati."
 
 msgid "Project menu"
 msgstr "Menu del progetto"
@@ -575,6 +587,9 @@ msgstr "Questa mappa non ha ancora una maschera."
 
 msgid "This map will be ready for infinity mode soon…"
 msgstr "Questa mappa sarà presto pronta per la modalità infinita…"
+
+msgid "This project has too many control pairs or routes."
+msgstr "Questo progetto contiene troppi punti o percorsi."
 
 msgid "This region may struggle to generate pairs reliably — consider drawing a tighter or more structured region."
 msgstr "Questa regione potrebbe avere difficoltà a generare coppie in modo affidabile — valuta di disegnare una regione più ristretta o più strutturata."

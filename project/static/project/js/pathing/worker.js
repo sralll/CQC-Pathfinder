@@ -12,7 +12,6 @@ import {
     loadArtifact, buildState, attachSerializedPassages, makeRng, generateOnePair,
     snapEndpoint, computeRouteOptions, refineTypedNavgraphRoute,
     calcRouteObstacle, countLegalityViolations, countTypedLegalityViolations,
-    SUPPORTED_VERSION,
 } from './navgraph_router.js';
 import { passageRevision } from './navgraph_passage_overlay.js';
 // route_pair_selection.js is a pure, dependency-free module in the results app.
@@ -35,7 +34,7 @@ let navgraph = null;
 //   key,          // mapId ?? filename
 //   filename,
 //   w, h,
-//   state,        // buildState(artifact, mask) — sampler + graph + CSR adjacency
+//   state,        // buildState(artifact, mask) — endpoint sampler + navgraph
 // };
 
 // it as a PNG Blob. Pixel value 0 → transparent black so the impassable
@@ -79,32 +78,6 @@ function ensureGridAndLabels(blocked) {
     // eslint-disable-next-line no-console
     console.log(`[${LOG_PREFIX}] grid+labels rebuild: ${ncomp} components (${Math.round(dt)}ms)`);
     return { ok: true, cached: false };
-}
-
-/** Count passage items in a canonical document or bare items array. */
-function documentItemCount(document) {
-    if (Array.isArray(document)) return document.length;
-    if (document && document.version === 1 && Array.isArray(document.items)) return document.items.length;
-    return 0;
-}
-
-/**
- * Bind the fetched passage document to a freshly built navgraph state.
- * A v3 artifact carries the passage topology in its CSR; the document only
- * supplies rasters and is validated against the artifact's baked revision
- * (a mismatch is a stale build, never an empty-passage fallback — CR 8.3). A
- * legacy v2 base-only artifact may run only for a file with no passages.
- */
-function attachPassageDocument(state, artifact, document) {
-    if (artifact.version === SUPPORTED_VERSION) {
-        return attachSerializedPassages(state, document);
-    }
-    if (documentItemCount(document) > 0) {
-        throw new Error('passage-bearing file requires a v3 navgraph rebuild');
-    }
-    const revision = passageRevision(document, artifact.W, artifact.H);
-    state.passageRevision = revision;
-    return { revision, passageCount: 0, passageNodeCount: 0, passageEdges: 0, transitions: 0 };
 }
 
 function passageKey(document) {
@@ -243,8 +216,8 @@ self.addEventListener('message', async (e) => {
     }
 
     // -------------------------------------------------------------- navgraph
-    // Main thread transfers the artifact + the full-res greyscale mask (both as
-    // zero-copy ArrayBuffers). Parse + build sampler/graph state once, cache it.
+    // Main thread transfers the artifact + full-res greyscale mask as zero-copy
+    // ArrayBuffers. Parse + build the reusable endpoint sampler once.
     if (msg.type === 'navgraphReady') {
         const key = msg.mapId != null ? String(msg.mapId) : String(msg.filename || '');
         const revision = passageRevision(
@@ -252,19 +225,24 @@ self.addEventListener('message', async (e) => {
             navgraph?.key === key ? navgraph.w : msg.width,
             navgraph?.key === key ? navgraph.h : msg.height,
         );
+        const regionRevision = String(msg.regionRevision || '');
         // Fast path: same map + same passage revision already built → reuse. A
-        // v3 artifact bakes its passages in, so a changed passage document arrives
+        // legacy graph artifact bakes its passages in, so a changed passage document arrives
         // as a *new* artifact with a different baked revision; this comparison then
         // misses and the artifact below is rebuilt from scratch (CR 8.3 — there is
         // no "same base artifact, new passages" rebuild any more).
-        if (navgraph && navgraph.key === key && navgraph.passageRevision === revision) {
+        if (navgraph && navgraph.key === key
+                && navgraph.passageRevision === revision
+                && navgraph.regionRevision === regionRevision) {
             // eslint-disable-next-line no-console
             console.log(`[${LOG_PREFIX}] navgraph already cached for ${key}`);
             self.postMessage({
                 type: 'navgraph', mapId: msg.mapId, ready: true,
+                version: navgraph.state.artifact.version,
                 nodes: navgraph.state.artifact.N, edges: navgraph.state.artifact.E,
                 sampleCells: navgraph.state.sampleCells.length,
                 passageRevision: navgraph.passageRevision,
+                regionRevision: navgraph.regionRevision,
                 cached: true,
             });
             return;
@@ -272,6 +250,9 @@ self.addEventListener('message', async (e) => {
         try {
             const t0 = performance.now();
             const artifact = loadArtifact(msg.binBuffer);
+            if (artifact.regionRevision !== regionRevision) {
+                throw new Error(`region revision ${regionRevision} != artifact ${artifact.regionRevision}`);
+            }
             // Prefer the transferred mask; else reuse the editor's active raw
             // mask if it's the same map (avoids a second transfer).
             let mask;
@@ -284,14 +265,17 @@ self.addEventListener('message', async (e) => {
                 return;
             }
             if (artifact.W !== msg.width || artifact.H !== msg.height) {
-                // eslint-disable-next-line no-console
-                console.log(`[${LOG_PREFIX}] navgraph dims ${artifact.W}x${artifact.H} != mask ${msg.width}x${msg.height}`);
+                // A stale artifact/mask combination would silently misroute
+                // (the router indexes the mask with the artifact's W). Every
+                // other integrity failure is fatal; so is this one.
+                throw new Error(`navgraph dims ${artifact.W}x${artifact.H} != mask ${msg.width}x${msg.height}`);
             }
             const state = buildState(artifact, mask, msg.config);
-            const passageStats = attachPassageDocument(state, artifact, msg.levelPassages);
+            const passageStats = attachSerializedPassages(state, msg.levelPassages);
             navgraph = {
                 key, filename: msg.filename, w: artifact.W, h: artifact.H, state,
                 passageRevision: passageStats.revision,
+                regionRevision,
             };
             const dt = performance.now() - t0;
             // eslint-disable-next-line no-console
@@ -302,8 +286,11 @@ self.addEventListener('message', async (e) => {
                 `${state.sampleCells.length} sample cells (${Math.round(dt)}ms)`);
             self.postMessage({
                 type: 'navgraph', mapId: msg.mapId, ready: true,
+                version: artifact.version,
                 nodes: artifact.N, edges: artifact.E, sampleCells: state.sampleCells.length,
                 passageRevision: passageStats.revision,
+                regionRevision,
+                polygonComponents: null,
             });
         } catch (err) {
             navgraph = null;
@@ -333,12 +320,22 @@ self.addEventListener('message', async (e) => {
             });
             return;
         }
+        if (msg.regionRevision && msg.regionRevision !== navgraph.regionRevision) {
+            self.postMessage({
+                type: 'pair', msgId,
+                error: `region revision mismatch (have ${navgraph.regionRevision})`,
+                regionRevision: navgraph.regionRevision,
+            });
+            return;
+        }
         const maxAttempts = Number.isFinite(msg.maxAttempts) ? msg.maxAttempts : 4000;
         const rng = Number.isFinite(msg.seed) ? makeRng(msg.seed >>> 0) : undefined;
         const t0 = performance.now();
         let res;
         try {
-            res = generateOnePair(navgraph.state, { rng, maxAttempts, selection: routePairSelection });
+            res = generateOnePair(navgraph.state, {
+                rng, maxAttempts, selection: routePairSelection,
+            });
         } catch (err) {
             self.postMessage({ type: 'pair', msgId, error: String(err && err.message || err) });
             return;
@@ -363,7 +360,7 @@ self.addEventListener('message', async (e) => {
         console.log(`[${LOG_PREFIX}] generatePair OK: retries=${res.meta.retries} attempts=${res.meta.attempts} ` +
             `sideGap=${res.meta.sideGap?.toFixed?.(1)} relGap=${res.meta.relGap?.toFixed?.(3)} legality=${res.meta.legality} ` +
             `rejects={${rejectStr}} ` +
-            `refine=${res.meta.refineMode}${res.meta.refineFallback ? '(fallback)' : ''} ` +
+            `refine=${res.meta.refineMode} ` +
             `[sample ${Math.round(tm.sample)}ms, snap ${Math.round(tm.snap)}ms, route ${Math.round(tm.route)}ms, refine ${Math.round(tm.refine)}ms, theta ${Math.round(tm.theta || 0)}ms] total ${Math.round(dt)}ms`);
         self.postMessage({
             type: 'pair',

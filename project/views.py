@@ -1,7 +1,9 @@
+from datetime import timedelta
 from math import isfinite
 
 from django.shortcuts import get_object_or_404, render
 from django.http import JsonResponse, HttpResponseNotFound
+from django.core.exceptions import RequestDataTooBig
 from django.views.decorators.http import require_GET, require_POST
 from django.db import transaction
 from django.db.models import Count, Q
@@ -12,7 +14,6 @@ from .services.passage_validation import (
 )
 from account.decorators import role_required
 from django.db.models import Prefetch
-import traceback
 import logging
 import re
 from django.conf import settings
@@ -20,10 +21,12 @@ from django.utils import timezone
 from django.utils.translation import gettext as _
 import os
 import tempfile
+import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 
+from .services.heavy_jobs import HEAVY_JOB_SLOT
 from .services.media_access import (
     delete_navgraph_artifacts,
     safe_media_filename,
@@ -35,6 +38,105 @@ from .services.media_access import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Advisory editor lock: a lock held by another user is honoured while it is
+# younger than this. Shared by open_file (acquisition) and every write
+# endpoint (conflict rule).
+EDITOR_LOCK_TIMEOUT = timedelta(minutes=15)
+MAX_EDITOR_JSON_BYTES = 16 * 1024 * 1024
+MAX_EDITOR_CONTROL_PAIRS = 1_000
+MAX_EDITOR_ROUTES = 10_000
+
+
+def _unexpected_error_response(context):
+    """Log the diagnostic server-side and return a safe client response."""
+    logger.exception("Unexpected error in %s", context)
+    return JsonResponse({'error': _('Error')}, status=500)
+
+
+def _editor_payload_limit_response(request):
+    """Reject oversized JSON before deserializing it into Python objects."""
+    content_length = request.META.get('CONTENT_LENGTH')
+    try:
+        content_length = int(content_length) if content_length else None
+    except (TypeError, ValueError):
+        content_length = None
+    if content_length is not None and content_length > MAX_EDITOR_JSON_BYTES:
+        return JsonResponse({
+            'error': 'payload_too_large',
+            'message': _('Project data is too large to save.'),
+        }, status=413)
+    # Content-Length is optional for some clients. Accessing request.body here
+    # still happens before JSON decoding, so chunked/odd clients get the same
+    # bound as ordinary requests.
+    try:
+        body_size = len(request.body)
+    except RequestDataTooBig:
+        body_size = MAX_EDITOR_JSON_BYTES + 1
+    if body_size > MAX_EDITOR_JSON_BYTES:
+        return JsonResponse({
+            'error': 'payload_too_large',
+            'message': _('Project data is too large to save.'),
+        }, status=413)
+    return None
+
+
+def _control_pair_payload_limit_response(control_pairs):
+    """Reject unbounded CP/route snapshots before they reach the JSONField."""
+    if not isinstance(control_pairs, list):
+        return None
+    route_count = sum(
+        len(cp.get('routes', []))
+        for cp in control_pairs
+        if isinstance(cp, dict) and isinstance(cp.get('routes', []), list)
+    )
+    if (len(control_pairs) > MAX_EDITOR_CONTROL_PAIRS
+            or route_count > MAX_EDITOR_ROUTES):
+        return JsonResponse({
+            'error': 'payload_too_large',
+            'message': _('This project has too many control pairs or routes.'),
+        }, status=413)
+    return None
+
+
+def _editor_count_limit_response(n_control_pairs, n_routes):
+    """Validate the optional client-reported snapshot counters as well."""
+    if any(
+        isinstance(value, bool) or not isinstance(value, int) or value < 0
+        for value in (n_control_pairs, n_routes)
+    ):
+        return JsonResponse({
+            'error': 'payload_too_large',
+            'message': _('This project has too many control pairs or routes.'),
+        }, status=413)
+    if (n_control_pairs > MAX_EDITOR_CONTROL_PAIRS
+            or n_routes > MAX_EDITOR_ROUTES):
+        return JsonResponse({
+            'error': 'payload_too_large',
+            'message': _('This project has too many control pairs or routes.'),
+        }, status=413)
+    return None
+
+
+def _locked_file_conflict_response(file, user):
+    """Return the 409 conflict response when another user holds a fresh lock.
+
+    This is the exact rule (and response shape) ``save_file`` has always
+    enforced; the granular endpoints reuse it so the editor client's existing
+    conflict handling applies identically. Returns ``None`` when ``user`` may
+    write. Call this with the ``File`` row already locked via
+    ``select_for_update`` so the check and the following write are atomic.
+    """
+    if (file.locked_by and file.locked_by != user
+            and file.locked_at
+            and (timezone.now() - file.locked_at) < EDITOR_LOCK_TIMEOUT):
+        locker = file.locked_by.first_name or file.locked_by.username
+        return JsonResponse({
+            'error': 'conflict',
+            'message': _('%(name)s is currently editing this file.') % {'name': locker},
+        }, status=409)
+    return None
+
 
 _OCAD_CONVERSION_EXECUTOR = ThreadPoolExecutor(max_workers=1)
 _OCAD_CONVERSION_STALE_MINUTES = 15
@@ -312,6 +414,27 @@ def _create_db_snapshot(file, user, trigger):
         n_control_pairs=len(cp_data), n_routes=n_routes,
     )
 
+
+def _queue_db_snapshot(file_id, user_id, trigger):
+    """Create an expensive snapshot after the write response can return."""
+    def _snapshot_thread():
+        from django.contrib.auth import get_user_model
+        from django.db import close_old_connections
+
+        close_old_connections()
+        try:
+            file = File.objects.select_related('label').get(
+                id=file_id, deleted=False)
+            user = get_user_model().objects.get(id=user_id)
+            _create_db_snapshot(file, user, trigger)
+        except Exception:
+            logger.exception(
+                "Background %s snapshot failed for file %s", trigger, file_id)
+        finally:
+            close_old_connections()
+
+    threading.Thread(target=_snapshot_thread, daemon=True).start()
+
 # open editor
 @role_required('Trainer')
 def editor(request):
@@ -345,37 +468,19 @@ def get_files(request):
             .annotate(cp_count=Count('control_pairs'))
         )
         labels = Label.objects.filter(team=active_team)
-
-        team_qs = File.objects.filter(deleted=False)
-
-        if not request.user.is_superuser:
-            if active_team:
-                if active_team.shared_pool:
-                    team_qs = team_qs.filter(
-                        Q(team=active_team) | Q(team__shared_pool=True)
-                    )
-                else:
-                    team_qs = team_qs.filter(team=active_team)
-            else:
-                team_qs = File.objects.none()
-
-        available_teams = (
-            team_qs
-            .values_list("team__name", flat=True)
-            .distinct()
-        )
+        available_teams = set()
 
         from django.utils import timezone as tz
-        from datetime import timedelta
-        LOCK_TIMEOUT = timedelta(minutes=15)
 
         files = []
         for obj in qs:
+            if obj.team:
+                available_teams.add(obj.team.name)
             is_locked = bool(
                 obj.locked_by and
                 obj.locked_by != request.user and
                 obj.locked_at and
-                (tz.now() - obj.locked_at) < LOCK_TIMEOUT
+                (tz.now() - obj.locked_at) < EDITOR_LOCK_TIMEOUT
             )
             files.append({
                 'id': obj.id,
@@ -405,12 +510,11 @@ def get_files(request):
             'active_team': active_team.name if active_team else '',
             'shared_pool': active_team.shared_pool if active_team else False,
             'labels': [{'id': l.id, 'name': l.name, 'color': l.color} for l in labels],
-            'teams': list(filter(None, available_teams)),
+            'teams': sorted(available_teams),
         })
 
-    except Exception as e:
-        traceback.print_exc()
-        return JsonResponse({'error': str(e)}, status=500)
+    except Exception:
+        return _unexpected_error_response('get_files')
 
 @role_required('Trainer')
 @require_GET
@@ -418,6 +522,7 @@ def open_file(request, file_id):
     try:
         profile = request.user.profile
         active_team = profile.active_team
+        own_team = request.user.is_superuser
 
         file = get_object_or_404(
             File.objects
@@ -443,6 +548,7 @@ def open_file(request, file_id):
 
             if not (own or shared):
                 return JsonResponse({'error': 'Permission denied'}, status=403)
+            own_team = own
 
         # Validate before acquiring an editor lock. Unsupported future versions
         # remain untouched and cannot accidentally enter an editable v1 session.
@@ -460,29 +566,38 @@ def open_file(request, file_id):
 
         # Determine read-only state: published takes priority, then active lock
         from django.utils import timezone as tz
-        from datetime import timedelta
-        LOCK_TIMEOUT = timedelta(minutes=15)
-        locked_by_other = (
-            file.locked_by and
-            file.locked_by != request.user and
-            file.locked_at and
-            (tz.now() - file.locked_at) < LOCK_TIMEOUT
-        )
         if file.published:
             read_only      = True
             locked_by_name = None
             read_only_reason = 'published'
-        elif locked_by_other:
+        elif not own_team:
             read_only      = True
-            locked_by_name = file.locked_by.first_name or file.locked_by.username
-            read_only_reason = 'locked'
-        else:
-            read_only      = False
             locked_by_name = None
-            read_only_reason = None
-            file.locked_by = request.user
-            file.locked_at = tz.now()
-            file.save(update_fields=['locked_by', 'locked_at'])
+            read_only_reason = 'shared'
+        else:
+            # Read-decide-write on the advisory lock must be atomic, or two
+            # simultaneous opens can both see "free" and both acquire. The
+            # heavy prefetch above stays outside the lock; only the lock
+            # fields are re-read under select_for_update for the decision.
+            with transaction.atomic():
+                locked = File.objects.select_for_update().get(id=file.id)
+                locked_by_other = (
+                    locked.locked_by and
+                    locked.locked_by != request.user and
+                    locked.locked_at and
+                    (tz.now() - locked.locked_at) < EDITOR_LOCK_TIMEOUT
+                )
+                if locked_by_other:
+                    read_only      = True
+                    locked_by_name = locked.locked_by.first_name or locked.locked_by.username
+                    read_only_reason = 'locked'
+                else:
+                    read_only      = False
+                    locked_by_name = None
+                    read_only_reason = None
+                    locked.locked_by = request.user
+                    locked.locked_at = tz.now()
+                    locked.save(update_fields=['locked_by', 'locked_at'])
 
         return JsonResponse({
             'project': {
@@ -534,11 +649,12 @@ def open_file(request, file_id):
 
     except LevelPassagesValidationError as exc:
         return _invalid_level_passages_response(exc)
-    except Exception as e:
-        traceback.print_exc()
-        return JsonResponse({'error': str(e)}, status=500)
+    except Exception:
+        return _unexpected_error_response('open_file')
 
-@role_required('Trainer')
+# The map/mask/navgraph/pathing-config endpoints are fetched by mask-mode
+# Infinity play, which any logged-in player may use. Login is enforced by
+# LoginRequiredMiddleware; team scoping by user_can_access_file/-map_file.
 @require_GET
 def get_map(request, filename):
     if not user_can_access_map_file(request, filename):
@@ -546,7 +662,6 @@ def get_map(request, filename):
     return serve_map_file(filename)
 
 
-@role_required('Trainer')
 @require_GET
 def get_mask(request, file_id):
     file = get_object_or_404(File, id=file_id, deleted=False)
@@ -555,7 +670,6 @@ def get_mask(request, file_id):
     return serve_mask_file(file)
 
 
-@role_required('Trainer')
 @require_GET
 def get_navgraph(request, file_id):
     file = get_object_or_404(File, id=file_id, deleted=False)
@@ -583,6 +697,52 @@ def get_level_passages(request, file_id):
             document, _ignored = filter_level_passages_for_region(
                 document, file.infinite_region, width, height)
         return JsonResponse(document)
+    except LevelPassagesValidationError as exc:
+        return _invalid_level_passages_response(exc)
+
+
+@require_GET
+def get_infinity_pathing_config(request, file_id):
+    """Return the exact polygon and effective passages used by Infinity play.
+
+    This is deliberately separate from the canonical level-passages endpoint:
+    the worker needs the coach polygon to clip the final pixel search exactly,
+    while editor consumers still expect the passage document by itself.
+    """
+    file = get_object_or_404(File, id=file_id, deleted=False)
+    if not user_can_access_file(request, file):
+        return HttpResponseNotFound()
+    try:
+        from .navgraph import (
+            clip_region_polygon,
+            filter_level_passages_for_region,
+            mask_dimensions,
+            region_revision,
+        )
+
+        mask_path = _mask_path_for_file(file)
+        if not mask_path or not os.path.isfile(mask_path):
+            return HttpResponseNotFound("Mask not found.")
+        width, height = mask_dimensions(mask_path)
+        region = file.infinite_region
+        if not isinstance(region, list) or len(region) < 3:
+            return JsonResponse({
+                'error': _('Draw a map region before enabling infinite play.'),
+            }, status=409)
+        region = clip_region_polygon(region, width, height)
+        passages, _ignored = filter_level_passages_for_region(
+            normalize_level_passages(file.level_passages),
+            region,
+            width,
+            height,
+        )
+        return JsonResponse({
+            'region': region,
+            'region_revision': region_revision(region, width, height),
+            'level_passages': passages,
+            'width': width,
+            'height': height,
+        })
     except LevelPassagesValidationError as exc:
         return _invalid_level_passages_response(exc)
 
@@ -682,6 +842,21 @@ def region_suggest(request, file_id):
 
 
 def _rebuild_navgraph_for_file(file_id, enable_on_success=False, build_token=None):
+    """Entry point for the background navgraph rebuild thread.
+
+    Waits for the process-wide heavy-job slot (``services.heavy_jobs``) so at
+    most one navgraph build or mask generation holds large arrays at a time;
+    queued builds simply start when the slot frees. The build-token check in
+    ``_rebuild_navgraph_for_file_locked`` runs only *after* the slot is
+    acquired, so a build superseded while queued still no-ops. Releasing after
+    the inner call returns also means the worker's frame — and the built
+    artifact it references — is gone before the next job starts allocating."""
+    with HEAVY_JOB_SLOT:
+        _rebuild_navgraph_for_file_locked(
+            file_id, enable_on_success=enable_on_success, build_token=build_token)
+
+
+def _rebuild_navgraph_for_file_locked(file_id, enable_on_success=False, build_token=None):
     """Background rebuild of a File's navgraph honouring its saved region *and*
     its canonical passage document (CR 8.4).
 
@@ -845,7 +1020,7 @@ def _rebuild_navgraph_for_file(file_id, enable_on_success=False, build_token=Non
                 file.save(update_fields=['infinite_enabled', 'batch_progress'])
                 return
             # Current: publish the artifact atomically, then flip the flag.
-            save_navgraph(artifact, mask_path)
+            save_navgraph(artifact, mask_path, include_npz=False)
             file.infinite_enabled = bool(enable_on_success)
             file.batch_progress = {
                 'type': 'navgraph_build', 'status': 'done',
@@ -872,7 +1047,8 @@ def _rebuild_navgraph_for_file(file_id, enable_on_success=False, build_token=Non
         failure = {
             'type': 'navgraph_build', 'status': 'failed',
             'build_token': build_token,
-            'error': str(exc), 'updated_at': timezone.now().isoformat(),
+            'error': str(_('Building the map failed.')),
+            'updated_at': timezone.now().isoformat(),
         }
         connector_details = _passage_connector_error_details(exc)
         if connector_details:
@@ -920,7 +1096,7 @@ def save_region(request, file_id):
             return JsonResponse({'error': error}, status=400)
 
         file = get_object_or_404(File, id=file_id, deleted=False)
-        if not request.user.is_superuser and file.team != request.user.profile.active_team:
+        if not user_can_access_file(request, file, require_own_team=True):
             return JsonResponse({'error': 'Permission denied'}, status=403)
 
         # The SVG editor can round a drag just beyond the final mask pixel.
@@ -954,9 +1130,8 @@ def save_region(request, file_id):
             'polygon': file.infinite_region or [],
             'infinite_enabled': False,
         })
-    except Exception as e:
-        traceback.print_exc()
-        return JsonResponse({'error': str(e)}, status=500)
+    except Exception:
+        return _unexpected_error_response('project view')
 
 
 @role_required('Trainer')
@@ -1006,42 +1181,6 @@ def navgraph_build_status(request, file_id):
 
 
 @role_required('Trainer')
-@require_GET
-def region_suitability(request, file_id):
-    """Return the build-time infinite-play suitability estimate (WP 4.3).
-
-    Reads the ``suitability`` block navgraph builds stash in
-    ``stats`` inside the ``.navgraph.npz``. The value is read from the artifact,
-    not computed on request.
-
-    JSON: ``{suitability: {valid_rate, mean_retries, mean_ms, n_attempts,
-    n_valid, reasons, warn} | null}``. ``null`` when the map has no mask, no
-    navgraph has been built yet, or the build's simulation failed."""
-    file = get_object_or_404(File, id=file_id, deleted=False)
-    if not user_can_access_file(request, file):
-        return HttpResponseNotFound("Not found.")
-
-    mask_path = _mask_path_for_file(file)
-    if not mask_path:
-        return JsonResponse({'suitability': None})
-    base, _ext = os.path.splitext(mask_path)
-    npz_path = base + '.navgraph.npz'
-    if not os.path.isfile(npz_path):
-        return JsonResponse({'suitability': None})
-
-    try:
-        import json as _json
-        import numpy as _np
-        data = _np.load(npz_path, allow_pickle=True)
-        stats = _json.loads(str(data['stats'])) if 'stats' in data else {}
-        suitability = stats.get('suitability')
-    except Exception:
-        traceback.print_exc()
-        return JsonResponse({'suitability': None})
-    return JsonResponse({'suitability': suitability})
-
-
-@role_required('Trainer')
 @require_POST
 def toggle_infinite(request, file_id):
     """Activate / deactivate infinite play for a map.
@@ -1062,7 +1201,7 @@ def toggle_infinite(request, file_id):
         enabled = bool(data.get('enabled'))
 
         file = get_object_or_404(File, id=file_id, deleted=False)
-        if not request.user.is_superuser and file.team != request.user.profile.active_team:
+        if not user_can_access_file(request, file, require_own_team=True):
             return JsonResponse({'error': 'Permission denied'}, status=403)
 
         if not enabled:
@@ -1110,20 +1249,17 @@ def toggle_infinite(request, file_id):
             'build_token': build_token,
             'infinite_enabled': False,
         })
-    except Exception as e:
-        traceback.print_exc()
-        return JsonResponse({'error': str(e)}, status=500)
+    except Exception:
+        return _unexpected_error_response('project view')
 
 
 @role_required('Trainer')
 @require_POST
 def toggle_publish(request, file_id):
     try:
-        file = get_object_or_404(
-            File,
-            id=file_id,
-            team=request.user.profile.active_team
-        )
+        file = get_object_or_404(File, id=file_id, deleted=False)
+        if not user_can_access_file(request, file, require_own_team=True):
+            return JsonResponse({'error': 'Permission denied'}, status=403)
 
         # Only validate when publishing (not when unpublishing)
         if not file.published:
@@ -1149,32 +1285,14 @@ def toggle_publish(request, file_id):
         file_id_  = file.id
         user_id_  = request.user.id
 
-        import threading
-        from django.db import connection as _db_conn
-
-        def _snapshot_thread():
-            from django.db import close_old_connections
-            close_old_connections()
-            try:
-                from django.contrib.auth import get_user_model
-                _file = File.objects.select_related('label').get(id=file_id_)
-                _user = get_user_model().objects.get(id=user_id_)
-                _create_db_snapshot(_file, _user, trigger)
-            except Exception:
-                traceback.print_exc()
-
-        threading.Thread(target=_snapshot_thread, daemon=True).start()
+        _queue_db_snapshot(file_id_, user_id_, trigger)
 
         return JsonResponse({
             'published': file.published
         })
 
-    except Exception as e:
-        traceback.print_exc()
-
-        return JsonResponse({
-            'error': str(e)
-        }, status=500)
+    except Exception:
+        return _unexpected_error_response('toggle_publish')
 
 
 @role_required('Trainer')
@@ -1239,9 +1357,8 @@ def get_snapshots(request, file_id):
             'label__name', 'label__color',
         )
         return JsonResponse({'snapshots': list(snaps), 'has_more': not show_all and total > 10})
-    except Exception as e:
-        traceback.print_exc()
-        return JsonResponse({'error': str(e)}, status=500)
+    except Exception:
+        return _unexpected_error_response('project view')
 
 
 @role_required('Trainer')
@@ -1280,9 +1397,8 @@ def load_snapshot(request, snapshot_id):
         })
     except LevelPassagesValidationError as exc:
         return _invalid_level_passages_response(exc)
-    except Exception as e:
-        traceback.print_exc()
-        return JsonResponse({'error': str(e)}, status=500)
+    except Exception:
+        return _unexpected_error_response('project view')
 
 
 @role_required('Trainer')
@@ -1292,6 +1408,9 @@ def save_file(request):
     import json as _json
     from django.utils import timezone as tz
     try:
+        limit_response = _editor_payload_limit_response(request)
+        if limit_response:
+            return limit_response
         data        = _json.loads(request.body)
         level_passages = normalize_level_passages(data.get('level_passages'))
         profile     = request.user.profile
@@ -1299,68 +1418,68 @@ def save_file(request):
         file_id     = data.get('id')
         client_trigger = data.get('_trigger', '')
 
-        # Decide: update existing or create new
-        file = None
-        if file_id:
-            try:
-                existing = File.objects.select_related('locked_by').get(id=file_id, deleted=False)
-                if existing.team == active_team:
-                    # Lock-based conflict: reject if someone else holds a fresh lock
-                    from datetime import timedelta
-                    LOCK_TIMEOUT = timedelta(minutes=15)
-                    if (existing.locked_by and existing.locked_by != request.user
-                            and existing.locked_at
-                            and (tz.now() - existing.locked_at) < LOCK_TIMEOUT):
-                        locker = existing.locked_by.first_name or existing.locked_by.username
-                        return JsonResponse({
-                            'error': 'conflict',
-                            'message': _('%(name)s is currently editing this file.') % {'name': locker},
-                        }, status=409)
-                    file = existing          # same team → overwrite
-                # else: different team → fall through and create new
-            except File.DoesNotExist:
-                pass
-
-        if file is None:
-            file = File(team=active_team,
-                        author=request.user.first_name or request.user.username)
-
-        incoming_map_file = data.get('map_file', '')
-        if incoming_map_file:
-            incoming_map_file = safe_media_filename(incoming_map_file)
-            if not incoming_map_file:
-                return JsonResponse({'error': 'Invalid map filename'}, status=400)
-            if not _map_file_is_claimable(request, incoming_map_file):
-                return JsonResponse({'error': 'Permission denied for map file'}, status=403)
-
-        # A full save can also change the passage document; if it does, the
-        # baked Infinity artifact for this file is stale (CR 8.4). Read the
-        # stored document before it is overwritten below.
-        passages_changed = (
-            file.pk is not None
-            and _passage_document_changed(file.level_passages, level_passages)
-        )
-        file.name            = data.get('name', _('New project'))
-        file.scale           = data.get('scale')
-        file.map_scale       = _map_scale_value(data.get('map_scale'))
-        file.scaled          = data.get('scaled', False)
-        file.map_file        = incoming_map_file
-        file.has_mask        = data.get('has_mask', False)
-        file.blocked_terrain = data.get('blocked_terrain')
-        file.level_passages  = level_passages
-        file.last_edited     = tz.now()
-        file.locked_by       = request.user   # refresh lock
-        file.locked_at       = tz.now()
-        if passages_changed:
-            _revoke_infinite_for_passage_change(file, [])
-        file.save()
-        if passages_changed:
-            delete_navgraph_artifacts(file)
-
-        # Rebuild control pairs atomically using bulk_create (2 INSERTs vs N×M)
-        from django.db import transaction as _tx
+        # The whole decide/overwrite/rebuild sequence runs under a row lock on
+        # the File so a full save and the granular endpoints (save_element,
+        # delete_element, save_cp_order) serialize instead of interleaving —
+        # interleaving could lose writes or trip unique_together(file, order).
+        limit_response = _control_pair_payload_limit_response(
+            data.get('control_pairs', []))
+        if limit_response:
+            return limit_response
         cp_data_list = _normalize_order_payload(data.get('control_pairs', []))
-        with _tx.atomic():
+        with transaction.atomic():
+            # Decide: update existing or create new
+            file = None
+            if file_id:
+                try:
+                    existing = File.objects.select_for_update().get(id=file_id, deleted=False)
+                    if user_can_access_file(request, existing, require_own_team=True):
+                        # Lock-based conflict: reject if someone else holds a
+                        # fresh lock. Checked under the row lock so check and
+                        # write are atomic.
+                        conflict = _locked_file_conflict_response(existing, request.user)
+                        if conflict:
+                            return conflict
+                        file = existing          # same team → overwrite
+                    # else: different team → fall through and create new
+                except File.DoesNotExist:
+                    pass
+
+            if file is None:
+                file = File(team=active_team,
+                            author=request.user.first_name or request.user.username)
+
+            incoming_map_file = data.get('map_file', '')
+            if incoming_map_file:
+                incoming_map_file = safe_media_filename(incoming_map_file)
+                if not incoming_map_file:
+                    return JsonResponse({'error': 'Invalid map filename'}, status=400)
+                if not _map_file_is_claimable(request, incoming_map_file):
+                    return JsonResponse({'error': 'Permission denied for map file'}, status=403)
+
+            # A full save can also change the passage document; if it does, the
+            # baked Infinity artifact for this file is stale (CR 8.4). Read the
+            # stored document before it is overwritten below.
+            passages_changed = (
+                file.pk is not None
+                and _passage_document_changed(file.level_passages, level_passages)
+            )
+            file.name            = data.get('name', _('New project'))
+            file.scale           = data.get('scale')
+            file.map_scale       = _map_scale_value(data.get('map_scale'))
+            file.scaled          = data.get('scaled', False)
+            file.map_file        = incoming_map_file
+            file.has_mask        = data.get('has_mask', False)
+            file.blocked_terrain = data.get('blocked_terrain')
+            file.level_passages  = level_passages
+            file.last_edited     = tz.now()
+            file.locked_by       = request.user   # refresh lock
+            file.locked_at       = tz.now()
+            if passages_changed:
+                _revoke_infinite_for_passage_change(file, [])
+            file.save()
+
+            # Rebuild control pairs atomically using bulk_create (2 INSERTs vs N×M)
             ControlPair.objects.filter(file=file).delete()   # cascades to routes
 
             created_cps = ControlPair.objects.bulk_create([
@@ -1390,6 +1509,12 @@ def save_file(request):
                     ))
             created_routes = Route.objects.bulk_create(route_objects)
 
+        # Filesystem cleanup only after the transaction committed; a rolled-
+        # back save must not delete artifacts for a passage change that was
+        # never persisted.
+        if passages_changed:
+            delete_navgraph_artifacts(file)
+
         # Build id_map from the bulk-created objects
         id_map  = []
         r_index = 0
@@ -1412,9 +1537,8 @@ def save_file(request):
 
     except LevelPassagesValidationError as exc:
         return _invalid_level_passages_response(exc)
-    except Exception as e:
-        traceback.print_exc()
-        return JsonResponse({'error': str(e)}, status=500)
+    except Exception:
+        return _unexpected_error_response('project view')
 
 
 @role_required('Trainer')
@@ -1430,36 +1554,44 @@ def delete_element(request):
         active_team  = request.user.profile.active_team
 
         file = get_object_or_404(File, id=file_id, deleted=False)
-        if file.team != active_team:
+        if not user_can_access_file(request, file, require_own_team=True):
             return JsonResponse({'error': 'Permission denied'}, status=403)
 
-        def _touch_file():
-            file.author      = request.user.first_name or request.user.username
-            file.last_edited = tz.now()
-            file.locked_by   = request.user
-            file.locked_at   = tz.now()
-            file.save(update_fields=['author', 'last_edited', 'locked_by', 'locked_at'])
-            return file.last_edited.isoformat()
+        if element_type not in ('control_pair', 'route'):
+            return JsonResponse({'error': f'Unknown type: {element_type}'}, status=400)
 
-        if element_type == 'control_pair':
-            db_id = data.get('db_id')
-            cp = get_object_or_404(ControlPair, id=db_id, file=file)
-            cp.delete()
-            return JsonResponse({'status': 'ok', 'last_edited': _touch_file()})
+        with transaction.atomic():
+            # Serialize with save_file's rebuild and the other granular
+            # endpoints, then honour the advisory editor lock atomically.
+            file = File.objects.select_for_update().get(id=file.id)
+            conflict = _locked_file_conflict_response(file, request.user)
+            if conflict:
+                return conflict
 
-        elif element_type == 'route':
-            db_id    = data.get('db_id')
-            cp_db_id = data.get('cp_db_id')
-            cp = get_object_or_404(ControlPair, id=cp_db_id, file=file)
-            route = get_object_or_404(Route, id=db_id, control_pair=cp)
-            route.delete()
-            return JsonResponse({'status': 'ok', 'last_edited': _touch_file()})
+            def _touch_file():
+                file.author      = request.user.first_name or request.user.username
+                file.last_edited = tz.now()
+                file.locked_by   = request.user
+                file.locked_at   = tz.now()
+                file.save(update_fields=['author', 'last_edited', 'locked_by', 'locked_at'])
+                return file.last_edited.isoformat()
 
-        return JsonResponse({'error': f'Unknown type: {element_type}'}, status=400)
+            if element_type == 'control_pair':
+                db_id = data.get('db_id')
+                cp = get_object_or_404(ControlPair, id=db_id, file=file)
+                cp.delete()
+                return JsonResponse({'status': 'ok', 'last_edited': _touch_file()})
 
-    except Exception as e:
-        traceback.print_exc()
-        return JsonResponse({'error': str(e)}, status=500)
+            elif element_type == 'route':
+                db_id    = data.get('db_id')
+                cp_db_id = data.get('cp_db_id')
+                cp = get_object_or_404(ControlPair, id=cp_db_id, file=file)
+                route = get_object_or_404(Route, id=db_id, control_pair=cp)
+                route.delete()
+                return JsonResponse({'status': 'ok', 'last_edited': _touch_file()})
+
+    except Exception:
+        return _unexpected_error_response('project view')
 
 
 @role_required('Trainer')
@@ -1473,11 +1605,18 @@ def save_cp_order(request):
         pairs   = data.get('order', [])   # [{db_id, order}, ...]
 
         file = get_object_or_404(File, id=file_id, deleted=False)
-        if file.team != request.user.profile.active_team:
+        if not user_can_access_file(request, file, require_own_team=True):
             return JsonResponse({'error': 'Permission denied'}, status=403)
 
         from django.utils import timezone as tz
         with transaction.atomic():
+            # Serialize with save_file's rebuild and the other granular
+            # endpoints, then honour the advisory editor lock atomically.
+            file = File.objects.select_for_update().get(id=file.id)
+            conflict = _locked_file_conflict_response(file, request.user)
+            if conflict:
+                return conflict
+
             # Shift all to high temporary values to free constraint space
             offset = ControlPair.objects.filter(file=file).count() + 1000
             for p in pairs:
@@ -1486,12 +1625,11 @@ def save_cp_order(request):
             for p in pairs:
                 ControlPair.objects.filter(id=p['db_id'], file=file).update(order=p['order'])
 
-        file.last_edited = tz.now()
-        file.save(update_fields=['last_edited'])
+            file.last_edited = tz.now()
+            file.save(update_fields=['last_edited'])
         return JsonResponse({'status': 'ok'})
-    except Exception as e:
-        traceback.print_exc()
-        return JsonResponse({'error': str(e)}, status=500)
+    except Exception:
+        return _unexpected_error_response('project view')
 
 
 @role_required('Trainer')
@@ -1507,7 +1645,7 @@ def save_element(request):
         active_team  = request.user.profile.active_team
 
         file = get_object_or_404(File, id=file_id, deleted=False)
-        if file.team != active_team:
+        if not user_can_access_file(request, file, require_own_team=True):
             return JsonResponse({'error': 'Permission denied'}, status=403)
 
         # ── Control pair ──────────────────────────────────────────────────
@@ -1515,23 +1653,31 @@ def save_element(request):
             cp_data = data.get('control_pair', {})
             cp_db_id = cp_data.get('db_id')   # separate from frontend order-based id
 
-            if cp_db_id:
-                cp = ControlPair.objects.filter(id=cp_db_id, file=file).first()
-                if not cp:
-                    return JsonResponse({'error': 'Control pair does not belong to this file'}, status=404)
-            else:
-                cp = ControlPair(file=file)
+            with transaction.atomic():
+                # Serialize with save_file's rebuild and the other granular
+                # endpoints, then honour the advisory editor lock atomically.
+                file = File.objects.select_for_update().get(id=file.id)
+                conflict = _locked_file_conflict_response(file, request.user)
+                if conflict:
+                    return conflict
 
-            cp.order   = cp_data.get('order', 0)
-            cp.start   = cp_data.get('start')
-            cp.ziel    = cp_data.get('ziel')
-            cp.complex = cp_data.get('complex', False)
-            cp.save()
-            file.author      = request.user.first_name or request.user.username
-            file.last_edited = tz.now()
-            file.locked_by   = request.user
-            file.locked_at   = tz.now()
-            file.save(update_fields=['author', 'last_edited', 'locked_by', 'locked_at'])
+                if cp_db_id:
+                    cp = ControlPair.objects.filter(id=cp_db_id, file=file).first()
+                    if not cp:
+                        return JsonResponse({'error': 'Control pair does not belong to this file'}, status=404)
+                else:
+                    cp = ControlPair(file=file)
+
+                cp.order   = cp_data.get('order', 0)
+                cp.start   = cp_data.get('start')
+                cp.ziel    = cp_data.get('ziel')
+                cp.complex = cp_data.get('complex', False)
+                cp.save()
+                file.author      = request.user.first_name or request.user.username
+                file.last_edited = tz.now()
+                file.locked_by   = request.user
+                file.locked_at   = tz.now()
+                file.save(update_fields=['author', 'last_edited', 'locked_by', 'locked_at'])
             return JsonResponse({'db_id': cp.id, 'last_edited': file.last_edited.isoformat()})
 
         # ── Route ─────────────────────────────────────────────────────────
@@ -1540,44 +1686,60 @@ def save_element(request):
             route_data  = data.get('route', {})
             route_db_id = route_data.get('db_id')
 
-            cp = ControlPair.objects.filter(id=cp_db_id, file=file).first()
-            if not cp:
-                return JsonResponse({'error': 'Control pair does not belong to this file'}, status=404)
+            with transaction.atomic():
+                # Serialize with save_file's rebuild and the other granular
+                # endpoints, then honour the advisory editor lock atomically.
+                file = File.objects.select_for_update().get(id=file.id)
+                conflict = _locked_file_conflict_response(file, request.user)
+                if conflict:
+                    return conflict
 
-            if route_db_id:
-                route = Route.objects.filter(id=route_db_id, control_pair=cp).first()
-                if not route:
-                    return JsonResponse({'error': 'Route does not belong to this control pair'}, status=404)
-            else:
-                route = Route(control_pair=cp)
+                cp = ControlPair.objects.filter(id=cp_db_id, file=file).first()
+                if not cp:
+                    return JsonResponse({'error': 'Control pair does not belong to this file'}, status=404)
 
-            route.order     = route_data.get('order', 0)
-            route.rP        = route_data.get('rP')
-            route.noA       = route_data.get('noA')
-            route.pos       = route_data.get('pos')
-            route.length    = route_data.get('length')
-            route.run_time  = route_data.get('run_time')
-            route.elevation = route_data.get('elevation')
-            route.obstacle  = route_data.get('obstacle')
-            route.save()
-            if not cp.complex and cp.routes.count() > 2:
-                cp.complex = True
-                cp.save(update_fields=['complex'])
-            file.author      = request.user.first_name or request.user.username
-            file.last_edited = tz.now()
-            file.locked_by   = request.user
-            file.locked_at   = tz.now()
-            file.save(update_fields=['author', 'last_edited', 'locked_by', 'locked_at'])
+                if route_db_id:
+                    route = Route.objects.filter(id=route_db_id, control_pair=cp).first()
+                    if not route:
+                        return JsonResponse({'error': 'Route does not belong to this control pair'}, status=404)
+                else:
+                    route = Route(control_pair=cp)
+
+                route.order     = route_data.get('order', 0)
+                route.rP        = route_data.get('rP')
+                route.noA       = route_data.get('noA')
+                route.pos       = route_data.get('pos')
+                route.length    = route_data.get('length')
+                route.run_time  = route_data.get('run_time')
+                route.elevation = route_data.get('elevation')
+                route.obstacle  = route_data.get('obstacle')
+                route.save()
+                if not cp.complex and cp.routes.count() > 2:
+                    cp.complex = True
+                    cp.save(update_fields=['complex'])
+                file.author      = request.user.first_name or request.user.username
+                file.last_edited = tz.now()
+                file.locked_by   = request.user
+                file.locked_at   = tz.now()
+                file.save(update_fields=['author', 'last_edited', 'locked_by', 'locked_at'])
             return JsonResponse({'db_id': route.id, 'last_edited': file.last_edited.isoformat()})
 
         # ── Blocked terrain ───────────────────────────────────────────────
         elif element_type == 'blocked_terrain':
-            file.blocked_terrain = data.get('blocked_terrain')
-            file.author      = request.user.first_name or request.user.username
-            file.last_edited = tz.now()
-            file.locked_by   = request.user
-            file.locked_at   = tz.now()
-            file.save(update_fields=['author', 'blocked_terrain', 'last_edited', 'locked_by', 'locked_at'])
+            with transaction.atomic():
+                # Same serialization + advisory-lock rule as the other
+                # branches: blocked_terrain is a File-row write too.
+                file = File.objects.select_for_update().get(id=file.id)
+                conflict = _locked_file_conflict_response(file, request.user)
+                if conflict:
+                    return conflict
+
+                file.blocked_terrain = data.get('blocked_terrain')
+                file.author      = request.user.first_name or request.user.username
+                file.last_edited = tz.now()
+                file.locked_by   = request.user
+                file.locked_at   = tz.now()
+                file.save(update_fields=['author', 'blocked_terrain', 'last_edited', 'locked_by', 'locked_at'])
             return JsonResponse({'status': 'ok', 'last_edited': file.last_edited.isoformat()})
 
         # ── Additional level passages ─────────────────────────────────────────────────
@@ -1586,6 +1748,9 @@ def save_element(request):
             with transaction.atomic():
                 # Serialize the document and its derived route metrics together.
                 file = File.objects.select_for_update().get(id=file.id)
+                conflict = _locked_file_conflict_response(file, request.user)
+                if conflict:
+                    return conflict
                 route_updates = _validate_passage_route_updates(data, file)
                 for route, metrics in route_updates:
                     route.obstacle = metrics['obstacle']
@@ -1632,9 +1797,8 @@ def save_element(request):
         return _invalid_level_passages_response(exc)
     except InvalidPassageRouteUpdate as exc:
         return _invalid_passage_route_update_response(exc, status=exc.status)
-    except Exception as e:
-        traceback.print_exc()
-        return JsonResponse({'error': str(e)}, status=500)
+    except Exception:
+        return _unexpected_error_response('project view')
 
 
 @role_required('Trainer')
@@ -1643,21 +1807,30 @@ def save_snapshot(request):
     """Save a FileSnapshot of the current project state."""
     import json as _json
     try:
+        limit_response = _editor_payload_limit_response(request)
+        if limit_response:
+            return limit_response
         data    = _json.loads(request.body)
         file_id = data.get('id')
         trigger = data.get('trigger', 'autosave')
         cps     = data.get('control_pairs', [])
+        limit_response = _control_pair_payload_limit_response(cps)
+        if limit_response:
+            return limit_response
         level_passages = normalize_level_passages(data.get('level_passages'))
 
         if not file_id:
             return JsonResponse({'error': 'Missing file id'}, status=400)
 
-        file = File.objects.filter(id=file_id, team=request.user.profile.active_team).first()
-        if not file:
+        file = File.objects.filter(id=file_id, deleted=False).first()
+        if not user_can_access_file(request, file, require_own_team=True):
             return JsonResponse({'error': 'File not found'}, status=404)
 
         n_control_pairs = data.get('n_control_pairs', len(cps))
         n_routes        = data.get('n_routes', sum(len(cp.get('routes', [])) for cp in cps))
+        limit_response = _editor_count_limit_response(n_control_pairs, n_routes)
+        if limit_response:
+            return limit_response
 
         from .models import FileSnapshot
         FileSnapshot.objects.create(
@@ -1681,9 +1854,8 @@ def save_snapshot(request):
 
     except LevelPassagesValidationError as exc:
         return _invalid_level_passages_response(exc)
-    except Exception as e:
-        traceback.print_exc()
-        return JsonResponse({'error': str(e)}, status=500)
+    except Exception:
+        return _unexpected_error_response('project view')
 
 
 @role_required('Trainer')
@@ -1697,20 +1869,15 @@ def mark_has_mask(request):
         file_id = data.get('file_id')
         file = get_object_or_404(File, id=file_id, deleted=False)
         # Only require team membership — no lock/publish check needed for this field
-        if not request.user.is_superuser:
-            active_team = request.user.profile.active_team
-            own    = file.team == active_team
-            shared = active_team and active_team.shared_pool and file.team and file.team.shared_pool
-            if not (own or shared):
-                return JsonResponse({'error': 'Permission denied'}, status=403)
+        if not user_can_access_file(request, file, require_own_team=True):
+            return JsonResponse({'error': 'Permission denied'}, status=403)
         from django.utils import timezone as tz
         file.has_mask    = True
         file.last_edited = tz.now()
         file.save(update_fields=['has_mask', 'last_edited'])
         return JsonResponse({'status': 'ok'})
-    except Exception as e:
-        traceback.print_exc()
-        return JsonResponse({'error': str(e)}, status=500)
+    except Exception:
+        return _unexpected_error_response('project view')
 
 
 @role_required('Trainer')
@@ -1727,7 +1894,7 @@ def save_mask(request):
     if not filename:
         return JsonResponse({'error': 'Invalid filename'}, status=400)
     file = get_object_or_404(File, id=file_id, deleted=False)
-    if not request.user.is_superuser and file.team != request.user.profile.active_team:
+    if not user_can_access_file(request, file, require_own_team=True):
         return JsonResponse({'error': 'Permission denied'}, status=403)
     if file.map_file != filename:
         return JsonResponse({'error': 'file_id does not match filename'}, status=409)
@@ -1778,21 +1945,20 @@ def assign_label(request, file_id):
         label_id    = data.get('label_id')
         active_team = request.user.profile.active_team
         file = get_object_or_404(File, id=file_id, deleted=False)
-        if file.team != active_team:
+        if not user_can_access_file(request, file, require_own_team=True):
             return JsonResponse({'error': 'Permission denied'}, status=403)
         if label_id:
             label      = get_object_or_404(Label, id=label_id, team=active_team)
             file.label = label
             file.save(update_fields=['label'])
-            _create_db_snapshot(file, request.user, 'Label')
+            _queue_db_snapshot(file.id, request.user.id, 'Label')
         else:
             file.label = None
             file.save(update_fields=['label'])
-            _create_db_snapshot(file, request.user, 'Label')
+            _queue_db_snapshot(file.id, request.user.id, 'Label')
         return JsonResponse({'status': 'ok'})
-    except Exception as e:
-        traceback.print_exc()
-        return JsonResponse({'error': str(e)}, status=500)
+    except Exception:
+        return _unexpected_error_response('project view')
 
 
 @role_required('Trainer')
@@ -1812,9 +1978,8 @@ def create_label(request):
         if not created:
             return JsonResponse({'error': _('Label already exists')}, status=400)
         return JsonResponse({'id': label.id, 'name': label.name, 'color': label.color})
-    except Exception as e:
-        traceback.print_exc()
-        return JsonResponse({'error': str(e)}, status=500)
+    except Exception:
+        return _unexpected_error_response('project view')
 
 
 @role_required('Trainer')
@@ -1825,9 +1990,8 @@ def delete_label(request, label_id):
         label = get_object_or_404(Label, id=label_id, team=active_team)
         label.delete()
         return JsonResponse({'status': 'ok'})
-    except Exception as e:
-        traceback.print_exc()
-        return JsonResponse({'error': str(e)}, status=500)
+    except Exception:
+        return _unexpected_error_response('project view')
 
 
 @role_required('Trainer')
@@ -1846,9 +2010,8 @@ def update_label_color(request, label_id):
         label.color = color
         label.save(update_fields=['color'])
         return JsonResponse({'status': 'ok', 'color': label.color})
-    except Exception as e:
-        traceback.print_exc()
-        return JsonResponse({'error': str(e)}, status=500)
+    except Exception:
+        return _unexpected_error_response('project view')
 
 
 @role_required('Trainer')
@@ -1856,7 +2019,7 @@ def update_label_color(request, label_id):
 def delete_project_file(request, file_id):
     try:
         file = get_object_or_404(File, id=file_id, deleted=False)
-        if file.team != request.user.profile.active_team:
+        if not user_can_access_file(request, file, require_own_team=True):
             return JsonResponse({'error': 'Permission denied'}, status=403)
         # Rename so the (name, team) unique constraint doesn't block reuse of the name
         from django.utils import timezone as tz
@@ -1867,9 +2030,8 @@ def delete_project_file(request, file_id):
         file.last_edited = tz.now()
         file.save(update_fields=['name', 'deleted', 'last_edited'])
         return JsonResponse({'status': 'ok'})
-    except Exception as e:
-        traceback.print_exc()
-        return JsonResponse({'error': str(e)}, status=500)
+    except Exception:
+        return _unexpected_error_response('project view')
 
 
 def _ocad_conversion_payload(conversion, map_filename):
@@ -1961,7 +2123,12 @@ def _run_ocad_conversion(file_id, source_path, map_filename, uploaded_name):
         )
     except Exception as exc:
         logger.exception("Unexpected OCAD conversion failure for %s", uploaded_name)
-        _set_ocad_progress(file_id, 'failed', source_name=uploaded_name, error=str(exc))
+        _set_ocad_progress(
+            file_id,
+            'failed',
+            source_name=uploaded_name,
+            error=str(_('OCAD conversion failed.')),
+        )
     finally:
         try:
             os.unlink(source_path)
@@ -2084,9 +2251,8 @@ def upload_map(request):
             for chunk in uploaded.chunks():
                 f.write(chunk)
         return JsonResponse({'status': 'ok', 'map_file': filename})
-    except Exception as e:
-        traceback.print_exc()
-        return JsonResponse({'error': str(e)}, status=500)
+    except Exception:
+        return _unexpected_error_response('project view')
 
 
 @role_required('Trainer')
@@ -2132,9 +2298,8 @@ def analyze_ocad(request):
                 'map_scale': conversion.get('ocad_map_scale'),
             },
         })
-    except Exception as e:
-        traceback.print_exc()
-        return JsonResponse({'error': str(e)}, status=500)
+    except Exception:
+        return _unexpected_error_response('project view')
     finally:
         try:
             os.unlink(source_path)
@@ -2202,9 +2367,8 @@ def import_courses(request):
             'n_routes': sum(len(cp.get('routes', [])) for cp in control_pairs),
             'meta': meta,
         })
-    except Exception as e:
-        traceback.print_exc()
-        return JsonResponse({'error': str(e)}, status=500)
+    except Exception:
+        return _unexpected_error_response('project view')
     finally:
         try:
             os.unlink(source_path)
@@ -2248,9 +2412,8 @@ def toggle_editor_setting(request):
             s.save(update_fields=['auto_obstacle'])
             return JsonResponse({'auto_obstacle': s.auto_obstacle})
         return JsonResponse({'error': 'unknown setting'}, status=400)
-    except Exception as e:
-        traceback.print_exc()
-        return JsonResponse({'error': str(e)}, status=500)
+    except Exception:
+        return _unexpected_error_response('project view')
 
 
 @role_required('Trainer')
@@ -2275,6 +2438,5 @@ def checkin(request):
             locked_by=None, locked_at=None
         )
         return JsonResponse({'status': 'ok'})
-    except Exception as e:
-        traceback.print_exc()
-        return JsonResponse({'error': str(e)}, status=500)
+    except Exception:
+        return _unexpected_error_response('project view')

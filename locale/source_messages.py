@@ -11,6 +11,23 @@ that still need a row here, then `python manage_translations.py --build`.
 """
 
 DJANGO = {
+    "Building the map failed.": (
+        "Der Kartenaufbau ist fehlgeschlagen.",
+        "La construction de la carte a échoué.",
+        "La costruzione della mappa non è riuscita."),
+    "Error": ("Fehler", "Erreur", "Errore"),
+    "OCAD conversion failed.": (
+        "OCAD-Konvertierung fehlgeschlagen.",
+        "La conversion OCAD a échoué.",
+        "Conversione OCAD non riuscita."),
+    "Project data is too large to save.": (
+        "Die Projektdaten sind zu gross zum Speichern.",
+        "Les données du projet sont trop volumineuses pour être enregistrées.",
+        "I dati del progetto sono troppo grandi per essere salvati."),
+    "This project has too many control pairs or routes.": (
+        "Dieses Projekt enthält zu viele Posten oder Routen.",
+        "Ce projet contient trop de postes ou de choix.",
+        "Questo progetto contiene troppi punti o percorsi."),
     "A passage could not be connected to the map. Move one of its end points slightly and try again.": (
         "Eine Passage konnte nicht mit der Karte verbunden werden. Verschiebe einen ihrer Endpunkte leicht und versuche es erneut.",
         "Un passage n’a pas pu être connecté à la carte. Déplace légèrement l’un de ses points d’extrémité et réessaie.",
@@ -305,6 +322,10 @@ DJANGO = {
 }
 
 DJANGOJS = {
+    "This shared file is read-only": (
+        "Diese geteilte Datei ist schreibgeschützt",
+        "Ce fichier partagé est en lecture seule",
+        "Questo file condiviso è di sola lettura"),
     "Graph preview": ("Graph-Vorschau", "Aperçu du graphe", "Anteprima del grafo"),
     "not checked": ("nicht geprüft", "non vérifié", "non verificato"),
     "Could not load maps:": ("Karten konnten nicht geladen werden:", "Impossible de charger les cartes :", "Impossibile caricare le mappe:"),

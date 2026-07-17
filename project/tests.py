@@ -2,12 +2,14 @@ import json
 import math
 import os
 import tempfile
+from datetime import timedelta
 from unittest import mock
 
 from django.contrib.auth.models import Group, User
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import SimpleTestCase, TestCase, override_settings
 from django.urls import reverse
+from django.utils import timezone
 
 from account.models import Profile, Team
 from project import UNet
@@ -142,6 +144,82 @@ class AuthenticatedSurfaceTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
 
+class DevAgentLoginTests(SimpleTestCase):
+    @override_settings(DEBUG=True)
+    def test_next_must_be_a_local_path(self):
+        from CQCPathfinder.views import dev_agent_login
+        from django.test import RequestFactory
+
+        with mock.patch('account.dev.ensure_agent_user', return_value=User()), \
+                mock.patch('CQCPathfinder.views.login'):
+            request = RequestFactory().get(
+                '/dev/agent-login/', {'next': '//evil.example/login'})
+            response = dev_agent_login(request)
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.url, '/')
+
+    @override_settings(DEBUG=True)
+    def test_local_next_path_is_preserved(self):
+        from CQCPathfinder.views import dev_agent_login
+        from django.test import RequestFactory
+
+        with mock.patch('account.dev.ensure_agent_user', return_value=User()), \
+                mock.patch('CQCPathfinder.views.login'):
+            request = RequestFactory().get(
+                '/dev/agent-login/', {'next': '/editor/'})
+            response = dev_agent_login(request)
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.url, '/editor/')
+
+
+class EditorPayloadLimitTests(TestCase):
+    def setUp(self):
+        self.team = Team.objects.create(name='Payload Team')
+        self.trainer = User.objects.create_user(username='payload-trainer', password='pw')
+        Group.objects.create(name='Trainer').user_set.add(self.trainer)
+        profile = Profile.objects.create(user=self.trainer, active_team=self.team)
+        profile.teams.add(self.team)
+        self.file = File.objects.create(name='Payload map', team=self.team)
+        self.client.force_login(self.trainer)
+
+    def oversized_control_pairs(self):
+        return [
+            {'order': index, 'start': None, 'ziel': None, 'routes': []}
+            for index in range(project_views.MAX_EDITOR_CONTROL_PAIRS + 1)
+        ]
+
+    def test_full_save_rejects_too_many_control_pairs_before_persisting(self):
+        response = self.client.post(
+            reverse('save_file'),
+            data=json.dumps({
+                'id': self.file.id,
+                'name': self.file.name,
+                'control_pairs': self.oversized_control_pairs(),
+            }),
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 413)
+        self.assertEqual(response.json()['error'], 'payload_too_large')
+        self.assertEqual(self.file.control_pairs.count(), 0)
+
+    def test_snapshot_rejects_too_many_control_pairs_before_persisting(self):
+        response = self.client.post(
+            reverse('save_snapshot'),
+            data=json.dumps({
+                'id': self.file.id,
+                'control_pairs': self.oversized_control_pairs(),
+            }),
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 413)
+        self.assertEqual(response.json()['error'], 'payload_too_large')
+        self.assertEqual(self.file.snapshots.count(), 0)
+
+
 class EditorSecurityTests(TestCase):
     def setUp(self):
         self.team = Team.objects.create(name='Team A')
@@ -263,6 +341,34 @@ class EditorSecurityTests(TestCase):
         progress = failed_response.json()['progress']
         self.assertEqual(progress['status'], 'failed')
         self.assertIn('bad file', progress['error'])
+
+
+    def test_shared_pool_file_is_read_only_to_non_owner(self):
+        self.team.shared_pool = True
+        self.team.save(update_fields=['shared_pool'])
+        self.other_team.shared_pool = True
+        self.other_team.save(update_fields=['shared_pool'])
+        shared_file = File.objects.create(name='Shared', team=self.other_team)
+
+        open_response = self.client.get(reverse('open_file', args=[shared_file.id]))
+
+        self.assertEqual(open_response.status_code, 200)
+        project = open_response.json()['project']
+        self.assertTrue(project['read_only'])
+        self.assertEqual(project['read_only_reason'], 'shared')
+
+        save_response = self.client.post(
+            reverse('save_element'),
+            data=json.dumps({
+                'file_id': shared_file.id,
+                'type': 'control_pair',
+                'control_pair': {'order': 0},
+            }),
+            content_type='application/json',
+        )
+
+        self.assertEqual(save_response.status_code, 403)
+        self.assertEqual(shared_file.control_pairs.count(), 0)
 
 
 class NavgraphInvalidationTests(TestCase):
@@ -991,6 +1097,220 @@ class LevelPassagesPersistenceTests(TestCase):
         self.assertEqual(len(other_file.level_passages['items']), 1)
 
 
+class EditorLockConflictTests(TestCase):
+    """Granular editor writes honour the advisory editor lock (RACE-1/RACE-2)."""
+
+    def setUp(self):
+        self.team = Team.objects.create(name='Lock Team')
+        trainer_group = Group.objects.create(name='Trainer')
+        self.alice = User.objects.create_user(
+            username='lock-alice', first_name='Alice', password='pw')
+        self.bob = User.objects.create_user(
+            username='lock-bob', first_name='Bob', password='pw')
+        trainer_group.user_set.add(self.alice, self.bob)
+        for user in (self.alice, self.bob):
+            profile = Profile.objects.create(user=user, active_team=self.team)
+            profile.teams.add(self.team)
+        self.file = File.objects.create(name='Locked map', team=self.team)
+        self.client.force_login(self.bob)
+
+    def lock_as(self, user, age=timedelta(minutes=1)):
+        self.file.locked_by = user
+        self.file.locked_at = timezone.now() - age
+        self.file.save(update_fields=['locked_by', 'locked_at'])
+
+    def save_control_pair(self):
+        return self.client.post(
+            reverse('save_element'),
+            data=json.dumps({
+                'file_id': self.file.id,
+                'type': 'control_pair',
+                'control_pair': {
+                    'order': 0,
+                    'start': {'x': 1, 'y': 2},
+                    'ziel': {'x': 3, 'y': 4},
+                },
+            }),
+            content_type='application/json',
+        )
+
+    def assert_conflict(self, response):
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()['error'], 'conflict')
+        self.assertIn('Alice', response.json()['message'])
+
+    def test_granular_control_pair_save_conflicts_with_fresh_foreign_lock(self):
+        self.lock_as(self.alice)
+
+        self.assert_conflict(self.save_control_pair())
+        self.assertEqual(self.file.control_pairs.count(), 0)
+        self.file.refresh_from_db()
+        self.assertEqual(self.file.locked_by, self.alice)
+
+    def test_granular_save_succeeds_when_foreign_lock_is_stale(self):
+        self.lock_as(self.alice, age=timedelta(minutes=16))
+
+        response = self.save_control_pair()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.file.control_pairs.count(), 1)
+        self.file.refresh_from_db()
+        self.assertEqual(self.file.locked_by, self.bob)
+
+    def test_granular_save_succeeds_when_requester_holds_the_lock(self):
+        self.lock_as(self.bob)
+
+        response = self.save_control_pair()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.file.control_pairs.count(), 1)
+
+    def test_granular_route_save_conflicts_with_fresh_foreign_lock(self):
+        control_pair = ControlPair.objects.create(file=self.file, order=0)
+        self.lock_as(self.alice)
+
+        response = self.client.post(
+            reverse('save_element'),
+            data=json.dumps({
+                'file_id': self.file.id,
+                'type': 'route',
+                'cp_db_id': control_pair.id,
+                'route': {'order': 0, 'rP': [{'x': 1, 'y': 2}]},
+            }),
+            content_type='application/json',
+        )
+
+        self.assert_conflict(response)
+        self.assertEqual(control_pair.routes.count(), 0)
+
+    def test_save_cp_order_conflicts_with_fresh_foreign_lock(self):
+        control_pair = ControlPair.objects.create(file=self.file, order=0)
+        self.lock_as(self.alice)
+
+        response = self.client.post(
+            reverse('save_cp_order'),
+            data=json.dumps({
+                'file_id': self.file.id,
+                'order': [{'db_id': control_pair.id, 'order': 5}],
+            }),
+            content_type='application/json',
+        )
+
+        self.assert_conflict(response)
+        control_pair.refresh_from_db()
+        self.assertEqual(control_pair.order, 0)
+
+    def test_save_cp_order_succeeds_when_foreign_lock_is_stale(self):
+        control_pair = ControlPair.objects.create(file=self.file, order=0)
+        self.lock_as(self.alice, age=timedelta(minutes=16))
+
+        response = self.client.post(
+            reverse('save_cp_order'),
+            data=json.dumps({
+                'file_id': self.file.id,
+                'order': [{'db_id': control_pair.id, 'order': 5}],
+            }),
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()['status'], 'ok')
+        control_pair.refresh_from_db()
+        self.assertEqual(control_pair.order, 5)
+
+    def test_delete_element_conflicts_with_fresh_foreign_lock(self):
+        control_pair = ControlPair.objects.create(file=self.file, order=0)
+        self.lock_as(self.alice)
+
+        response = self.client.post(
+            reverse('delete_element'),
+            data=json.dumps({
+                'file_id': self.file.id,
+                'type': 'control_pair',
+                'db_id': control_pair.id,
+            }),
+            content_type='application/json',
+        )
+
+        self.assert_conflict(response)
+        self.assertTrue(ControlPair.objects.filter(id=control_pair.id).exists())
+
+    def test_delete_element_succeeds_when_requester_holds_the_lock(self):
+        control_pair = ControlPair.objects.create(file=self.file, order=0)
+        self.lock_as(self.bob)
+
+        response = self.client.post(
+            reverse('delete_element'),
+            data=json.dumps({
+                'file_id': self.file.id,
+                'type': 'control_pair',
+                'db_id': control_pair.id,
+            }),
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(ControlPair.objects.filter(id=control_pair.id).exists())
+
+    def test_passage_save_conflicts_with_fresh_foreign_lock(self):
+        self.lock_as(self.alice)
+
+        response = self.client.post(
+            reverse('save_element'),
+            data=json.dumps({
+                'file_id': self.file.id,
+                'type': 'level_passages',
+                'level_passages': level_passages_document(),
+            }),
+            content_type='application/json',
+        )
+
+        self.assert_conflict(response)
+        self.file.refresh_from_db()
+        self.assertIsNone(self.file.level_passages)
+
+    def test_full_save_still_conflicts_with_fresh_foreign_lock(self):
+        self.lock_as(self.alice)
+
+        response = self.client.post(
+            reverse('save_file'),
+            data=json.dumps({
+                'id': self.file.id,
+                'name': 'Renamed',
+                'map_file': '',
+                'control_pairs': [],
+                'level_passages': None,
+            }),
+            content_type='application/json',
+        )
+
+        self.assert_conflict(response)
+        self.file.refresh_from_db()
+        self.assertEqual(self.file.name, 'Locked map')
+
+    def test_open_file_acquires_lock_and_second_opener_is_read_only(self):
+        response = self.client.get(reverse('open_file', args=[self.file.id]))
+
+        self.assertEqual(response.status_code, 200)
+        project = response.json()['project']
+        self.assertFalse(project['read_only'])
+        self.assertIsNone(project['locked_by_name'])
+        self.assertIsNone(project['read_only_reason'])
+        self.file.refresh_from_db()
+        self.assertEqual(self.file.locked_by, self.bob)
+
+        self.client.force_login(self.alice)
+        second = self.client.get(reverse('open_file', args=[self.file.id]))
+
+        self.assertEqual(second.status_code, 200)
+        project = second.json()['project']
+        self.assertTrue(project['read_only'])
+        self.assertEqual(project['locked_by_name'], 'Bob')
+        self.assertEqual(project['read_only_reason'], 'locked')
+        self.file.refresh_from_db()
+        self.assertEqual(self.file.locked_by, self.bob)
+
+
 class LevelPassagesReadEndpointTests(TestCase):
     def setUp(self):
         self.team = Team.objects.create(name='Infinity Passage Team')
@@ -1071,11 +1391,54 @@ class LevelPassagesReadEndpointTests(TestCase):
         self.assertEqual(
             [item['id'] for item in response.json()['items']], [inside_id])
 
+    def test_infinity_pathing_config_returns_exact_region_and_effective_passages(self):
+        inside_id = PASSAGE_ID_2
+        outside_id = PASSAGE_ID_1
+        document = {"version": 1, "items": [
+            {"id": inside_id, "points": [[1, 1], [3, 3]], "width": 4},
+            {"id": outside_id, "points": [[5, 5], [7, 7]], "width": 4},
+        ]}
+        with tempfile.TemporaryDirectory() as media_root, override_settings(MEDIA_ROOT=media_root):
+            self.file.map_file = 'pathing-config.png'
+            self.file.infinite_region = [[0, 0], [4, 0], [4, 4], [0, 4]]
+            self.file.level_passages = normalize_level_passages(document)
+            self.file.save(update_fields=[
+                'map_file', 'infinite_region', 'level_passages'])
+            _write_mask_png(os.path.join(
+                media_root, 'masks', 'mask_pathing-config.png'), width=8, height=8)
+            self.client.force_login(self.trainer)
 
-def _write_navgraph_bin(bin_path, revision, height=8, width=8):
-    """Write a minimal but structurally valid v3 ``.navgraph.bin`` carrying a
-    chosen baked ``passage_revision`` (test helper for the serving/listing
-    revision gate)."""
+            response = self.client.get(
+                reverse('get_infinity_pathing_config', args=[self.file.id]))
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload['region'], [[0.0, 0.0], [4.0, 0.0], [4.0, 4.0], [0.0, 4.0]])
+        self.assertEqual(payload['width'], 8)
+        self.assertEqual(payload['height'], 8)
+        self.assertTrue(payload['region_revision'])
+        self.assertEqual(
+            [item['id'] for item in payload['level_passages']['items']],
+            [inside_id],
+        )
+
+    def test_infinity_pathing_config_requires_a_saved_region(self):
+        with tempfile.TemporaryDirectory() as media_root, override_settings(MEDIA_ROOT=media_root):
+            self.file.map_file = 'pathing-config-no-region.png'
+            self.file.save(update_fields=['map_file'])
+            _write_mask_png(os.path.join(
+                media_root, 'masks', 'mask_pathing-config-no-region.png'), width=8, height=8)
+            self.client.force_login(self.trainer)
+
+            response = self.client.get(
+                reverse('get_infinity_pathing_config', args=[self.file.id]))
+
+        self.assertEqual(response.status_code, 409)
+
+
+def _write_navgraph_bin(bin_path, revision, height=8, width=8,
+                        region_rev=''):
+    """Write a minimal current ``.navgraph.bin`` with chosen revisions."""
     import numpy as np
     from project import navgraph
 
@@ -1100,6 +1463,7 @@ def _write_navgraph_bin(bin_path, revision, height=8, width=8):
         'hitzone_scale': 1,
         'base_node_count': 0,
         'passage_revision': revision,
+        'region_revision': region_rev,
     }
     navgraph._write_bin(bin_path, artifact)
 
@@ -1121,10 +1485,12 @@ class NavgraphServingGateTests(TestCase):
         profile.teams.add(self.team)
         self.client.force_login(self.trainer)
 
-    def _make_file(self, media_root, *, passages, infinite_enabled=True):
+    def _make_file(self, media_root, *, passages, infinite_enabled=True,
+                   region=None):
         file = File.objects.create(
             name='Gate mask', team=self.team, map_file='gate-map.png',
             has_mask=True, infinite_enabled=infinite_enabled,
+            infinite_region=region,
             level_passages=normalize_level_passages(passages) if passages else None,
         )
         masks_dir = os.path.join(media_root, 'masks')
@@ -1145,11 +1511,59 @@ class NavgraphServingGateTests(TestCase):
             self.assertEqual(response.status_code, 200)
             response.close()  # release the served .bin handle before cleanup
 
+    def test_artifact_currency_reuses_short_lived_result(self):
+        document = level_passages_document()
+        with tempfile.TemporaryDirectory() as media_root, override_settings(MEDIA_ROOT=media_root):
+            file, _mask, bin_path = self._make_file(media_root, passages=document)
+            from project.navgraph import passage_revision
+            from project.services.media_access import navgraph_artifact_is_current
+
+            rev = passage_revision(normalize_level_passages(document), 8, 8)
+            _write_navgraph_bin(bin_path, rev, height=8, width=8)
+            self.assertTrue(navgraph_artifact_is_current(file))
+
+            with mock.patch('project.navgraph.mask_dimensions',
+                            side_effect=AssertionError('cache miss')):
+                self.assertTrue(navgraph_artifact_is_current(file))
+
     def test_stale_artifact_is_not_served(self):
         document = level_passages_document()
         with tempfile.TemporaryDirectory() as media_root, override_settings(MEDIA_ROOT=media_root):
             file, _mask, bin_path = self._make_file(media_root, passages=document)
             _write_navgraph_bin(bin_path, 'p1-staaaaaale0000', height=8, width=8)
+
+            response = self.client.get(reverse('get_navgraph', args=[file.id]))
+            self.assertEqual(response.status_code, 404)
+
+    def test_polygon_artifact_is_served_without_debug_npz(self):
+        region = [[1, 1], [7, 1], [7, 7], [1, 7]]
+        with tempfile.TemporaryDirectory() as media_root, override_settings(MEDIA_ROOT=media_root):
+            file, _mask, bin_path = self._make_file(
+                media_root, passages=None, region=region)
+            from project.navgraph import (
+                _passage_items, passage_revision, region_revision)
+            passage_rev = passage_revision(_passage_items(None), 8, 8)
+            region_rev = region_revision(region, 8, 8)
+            _write_navgraph_bin(
+                bin_path, passage_rev, height=8, width=8,
+                region_rev=region_rev)
+
+            self.assertFalse(os.path.exists(
+                bin_path[:-len('.navgraph.bin')] + '.navgraph.npz'))
+            response = self.client.get(reverse('get_navgraph', args=[file.id]))
+            self.assertEqual(response.status_code, 200)
+            response.close()
+
+    def test_stale_polygon_revision_is_not_served(self):
+        region = [[1, 1], [7, 1], [7, 7], [1, 7]]
+        with tempfile.TemporaryDirectory() as media_root, override_settings(MEDIA_ROOT=media_root):
+            file, _mask, bin_path = self._make_file(
+                media_root, passages=None, region=region)
+            from project.navgraph import _passage_items, passage_revision
+            passage_rev = passage_revision(_passage_items(None), 8, 8)
+            _write_navgraph_bin(
+                bin_path, passage_rev, height=8, width=8,
+                region_rev='r1-stale-region')
 
             response = self.client.get(reverse('get_navgraph', args=[file.id]))
             self.assertEqual(response.status_code, 404)
@@ -1177,7 +1591,7 @@ class NavgraphServingGateTests(TestCase):
             response = self.client.get(reverse('get_navgraph', args=[file.id]))
             self.assertEqual(response.status_code, 404)
 
-    def test_base_only_v3_serves_for_empty_passages(self):
+    def test_current_base_only_artifact_serves_for_empty_passages(self):
         with tempfile.TemporaryDirectory() as media_root, override_settings(MEDIA_ROOT=media_root):
             file, _mask, bin_path = self._make_file(media_root, passages=None)
             from project.navgraph import passage_revision, _passage_items
@@ -1413,3 +1827,23 @@ class BuildNavgraphCommandAmbiguityTests(TestCase):
         # Ambiguity must not produce an artifact.
         self.assertFalse(os.path.isfile(
             os.path.join(media_root, 'masks', 'mask_shared.navgraph.bin')))
+
+    def test_default_build_is_binary_only_and_binary_is_fresh(self):
+        from django.core.management import call_command
+        from io import StringIO
+
+        with tempfile.TemporaryDirectory() as media_root, override_settings(MEDIA_ROOT=media_root):
+            mask_path = os.path.join(media_root, 'masks', 'mask_orphan.png')
+            _write_mask_png(mask_path, width=32, height=32)
+
+            first = StringIO()
+            call_command('build_navgraph', file=mask_path, stdout=first)
+            bin_path = os.path.splitext(mask_path)[0] + '.navgraph.bin'
+            npz_path = os.path.splitext(mask_path)[0] + '.navgraph.npz'
+            self.assertTrue(os.path.isfile(bin_path))
+            self.assertFalse(os.path.isfile(npz_path))
+
+            second = StringIO()
+            call_command('build_navgraph', file=mask_path, stdout=second)
+            self.assertIn('SKIP', second.getvalue())
+            self.assertIn('up to date', second.getvalue())

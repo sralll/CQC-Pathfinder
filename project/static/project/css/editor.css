@@ -2138,35 +2138,6 @@ x-icon.spin svg { animation: spin 1s linear infinite; }
     opacity: .5;
 }
 
-/* --- Suitability report (WP 4.3) --------------------------------------- */
-.suitability-report {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    margin-top: 2px;
-    padding-top: 8px;
-    border-top: 1px solid var(--border);
-}
-.suitability-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: baseline;
-    font-size: 13px;
-}
-.suitability-label { color: var(--text-muted); }
-.suitability-value { color: var(--text); font-variant-numeric: tabular-nums; }
-.suitability-value.suitability-value-warn { color: #ffb347; }
-.suitability-warning {
-    margin-top: 4px;
-    padding: 6px 8px;
-    font-size: 12px;
-    line-height: 1.4;
-    color: #ffb347;
-    background: rgba(255, 179, 71, 0.1);
-    border: 1px solid rgba(255, 179, 71, 0.35);
-    border-radius: 5px;
-}
-
 .cp-add-btn {
     width: 100%;
     min-height: 32px;

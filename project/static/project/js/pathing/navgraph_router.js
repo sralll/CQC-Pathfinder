@@ -21,26 +21,25 @@
 // (refine_theta imports refineRouteLegal/countLegalityViolations/lineCost from
 // here) but only used inside function bodies, so ES-module live bindings resolve
 // it lazily at call time — safe in both Node and the browser.
-import { refineRouteTheta, countBarrierViolations, stampBarrierLine } from './refine_theta.js';
+import {
+	prepareRouteTheta, refinePreparedRouteTheta,
+	countBarrierViolations, stampBarrierLine,
+} from './refine_theta.js';
 import { normalizePassagesForRuntime } from './passage_geometry.js';
 import { layeredRouteDistinct } from './layered_distinct.js';
 import {
 	refineDenseLeg as refineEditorDenseLeg,
 	optimizeRefinedPortalAnchors,
 } from './layered_pipeline.js';
-import {
-	buildPassageOverlay, blockedDynamicEdges, nodePathToTypedRoute,
-	overlayNodeCoord, passageRevision,
-} from './navgraph_passage_overlay.js';
+import { passageRevision } from './navgraph_passage_overlay.js';
+import { MinHeap } from './heap.js';
 
 // ------------------------------------------------------------------ constants
 export const IMPASSABLE = 0;
-// Current typed-passage .bin layout (navgraph.py NAVGRAPH_VERSION). A legacy v2
-// artifact (base-only, no passage section) is still parsed, but only a file with
-// no passages may run on it — the caller compares passageRevision (CR 8.3/8.4).
-export const SUPPORTED_VERSION = 4;
-export const LEGACY_TYPED_VERSION = 3;
-export const LEGACY_BASE_ONLY_VERSION = 2;
+// Compact graph-backed .bin layout (navgraph.py NAVGRAPH_VERSION). Older
+// artifact versions are rejected with a rebuild hint — there are no production
+// files on legacy formats.
+export const SUPPORTED_VERSION = 6;
 // Typed edge kinds (mirror navgraph.py EDGE_KIND_*).
 export const EDGE_KIND_BASE = 0;
 export const EDGE_KIND_PASSAGE = 1;
@@ -109,16 +108,18 @@ export const DEFAULT_CONFIG = Object.freeze({
 	// a wide passage and look passable even though the graph edge is blocked.
 	passageBarrierOverhangPx: 2,
 	// --- selection (shared route_pair_selection.js, injected) ----------------
-	sideGapMinPx: 40,          // minSideGap in px (side is normalized to px on masks)
+	sideGapMinPx: 50,          // minSideGap in px (side is normalized to px on masks)
 	// Scale the geometric separation requirement with the direct start→goal
 	// distance. The absolute value above remains a floor for shorter routes.
-	sideGapMinDirectFraction: 0.12,
+	sideGapMinDirectFraction: 0.15,
 	maxRelativeGap: 0.40,      // ROUTE_PAIR_MAX_RELATIVE_GAP (shared weighted picker)
+	// Reject obviously mismatched graph routes before building their legal spines.
+	graphPrefilterRelativeGap: 0.40,
 	routeAttempts: 5,          // == city selectionConfig.maxRoutes (deeper exploration for highRouteIndexBias)
-	// Only adjacent cumulative alternates may form a pair. A wider index gap
-	// means the later route avoided multiple barriers that cannot be rendered
-	// because they would cross the earlier selected route ("ghost blockers").
-	maxSelectedRouteIndexGap: 1,
+	// Any two of the five cumulative alternates may form the served pair. Every
+	// unselected lower-index route below the larger selected index is rendered as
+	// a blocker, so higher-index alternatives remain visually explained.
+	maxSelectedRouteIndexGap: Infinity,
 	// --- per-route A* time budgets + timeout kicks (RoutePlanner parity) ------
 	// Routes 1–2 get primaryBudgetMs, routes 3+ extraBudgetMs. The budget covers
 	// the whole per-route step (graph A* + route 1's snap stubs). A route whose
@@ -129,7 +130,7 @@ export const DEFAULT_CONFIG = Object.freeze({
 	// --- balance reject (route-choice difficulty tuning) ---------------------
 	// The two served routes are the closest pair in runtime; when they are too
 	// close the choice is a coin-flip and does not train route selection. With
-	// `balanceRejectProbability` we reject a problem whose (refined) runtime
+	// `balanceRejectProbability` we reject a problem whose legal-spine runtime
 	// relative gap is within `balanceRejectMaxRelativeGap` and retry, skewing the
 	// served distribution toward clearer decisions. Set probability 0 to disable,
 	// 1 to remove the band entirely. Mirrors balanceRejectConfig in the city
@@ -138,22 +139,14 @@ export const DEFAULT_CONFIG = Object.freeze({
 	balanceRejectProbability: 0.8,
 	// --- corridor + guided θ* refinement of the served pair (WP 5.2) ----------
 	// Applied to the accepted pair's two routes only (outside the retry loop).
-	// The legal spine (refineRouteLegal) is the waypoint chain; a `corridorRadius`
-	// tube is carved around it and guidedThetaStar produces the smooth any-angle
-	// polyline. `refineBudgetMs` bounds θ* per route; on timeout/failure the
-	// policy decides what to serve.
+	// The legal spine bounds a weighted pixel A* correction; `corridorRadius`
+	// then gives that A* path the same narrow Theta* tube used by the editor.
+	// `refineBudgetMs` bounds the full refinement per route.
 	corridorRadius: 24,          // mask px; tube radius around the legal spine (editor uses 24 @ scale 0.5)
 	refineBudgetMs: 600,         // per-route θ* budget; exceeded → legal-spine fallback
 	// After selection, re-optimize against only the blockers actually rendered.
-	// Keep the established 24 px tube so the final Theta* pass stays within its
-	// runtime budget while final side/distinctness checks preserve the route choice.
-	finalCorridorRadius: 24,
+	finalCorridorRadius: 30,
 	finalRefineBudgetMs: 1200,
-	// 'reject': θ* fail/timeout on EITHER route rejects the pair as `timeout`.
-	//   A legal spine is an internal corridor input, not a presentable route.
-	// 'fallback': retain the diagnostic/benchmark option to serve BOTH legal
-	//   spines on the same cost basis, but never use it in uploaded-map Infinity.
-	refineTimeoutPolicy: 'reject',
 	// Dynamic passage overlay: entrance pixels are sampled deterministically
 	// across the cap. The count scales with width and is bounded in the overlay.
 	passageCorridorRadius: 24,
@@ -177,6 +170,16 @@ function sliceTyped(buf, offset, length, Ctor) {
 	return new Ctor(ab);
 }
 
+function unpackBits(bits, length) {
+	const values = new Uint8Array(length);
+	for (let i = 0; i < length; i++) values[i] = (bits[i >>> 3] >>> (i & 7)) & 1;
+	return values;
+}
+
+function bitIsSet(bits, index) {
+	return ((bits[index >>> 3] >>> (index & 7)) & 1) !== 0;
+}
+
 /** Read the 4-byte magic as latin1 without Node's Buffer.toString. */
 function magic4(buf) {
 	return String.fromCharCode(buf[0], buf[1], buf[2], buf[3]);
@@ -193,29 +196,23 @@ function requireCount(name, value, max) {
 }
 
 /**
- * Parse a `.navgraph.bin` (magic `NVG1`) from an ArrayBuffer or Uint8Array.
- * Returns a plain object with typed arrays + scalar header fields, including the
- * v3 typed-passage topology (`baseNodeCount`, `passageCount`, `passageRevision`,
- * `edgeKinds`, `edgePassage`, `passageNodeStart`, `passageNodeCount`).
- *
- * v3 is the current typed format. A legacy v2 artifact (base-only, no passage
- * section) is still parsed for backward compatibility and reported as
- * `baseNodeCount === N`, zero passages, `passageRevision === null`; the caller
- * decides whether the served file may run on it (CR 8.3/8.4). Every count is
- * bounds-checked and the exact byte length is verified, so a truncated or
- * overflowing artifact is rejected rather than read as silent zeros.
+ * Parse a v6 `.navgraph.bin` (magic `NVG1`) from an ArrayBuffer or Uint8Array.
+ * Returns a plain object with scalar header fields, graph arrays/typed-passage
+ * topology, and packed sampling metadata. Any other artifact version is
+ * rejected with a rebuild hint. Every count is bounds-checked and the exact
+ * byte length is verified, so a truncated or overflowing artifact is rejected
+ * rather than read as silent zeros.
  *
  * @param {ArrayBuffer|Uint8Array} input  raw bytes of the .navgraph.bin
  */
 export function loadArtifact(input) {
 	const buf = input instanceof Uint8Array ? input : new Uint8Array(input);
-	if (buf.length < 52) throw new Error('navgraph artifact too small (truncated header)');
+	if (buf.length < 80) throw new Error('navgraph artifact too small (truncated header)');
 	const magic = magic4(buf);
 	if (magic !== 'NVG1') throw new Error(`bad magic ${JSON.stringify(magic)} in navgraph artifact`);
 	const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
 	const version = dv.getUint32(4, true);
-	if (version !== SUPPORTED_VERSION && version !== LEGACY_TYPED_VERSION
-		&& version !== LEGACY_BASE_ONLY_VERSION)
+	if (version !== SUPPORTED_VERSION)
 		throw new Error(`unsupported navgraph version ${version} ` +
 			`(need v${SUPPORTED_VERSION}); ${REBUILD_HINT}`);
 	const H = dv.getInt32(8, true);
@@ -232,80 +229,62 @@ export function loadArtifact(input) {
 	if (H <= 0 || W <= 0 || coarseScale <= 0 || hitzoneScale <= 0)
 		throw new Error('navgraph artifact has invalid mask/scale dimensions');
 
-	// --- passage section header (v3/v4) + cropped-grid origin (v4) ---
-	let headerEnd = 52;
-	let baseNodeCount = N;
-	let passageCount = 0;
-	let passageRevision = null;
-	let coarseOriginX = 0, coarseOriginY = 0;
-	const typedVersion = version === SUPPORTED_VERSION || version === LEGACY_TYPED_VERSION;
-	if (typedVersion) {
-		if (buf.length < 64) throw new Error('navgraph v3 artifact too small (truncated header)');
-		baseNodeCount = requireCount('base node count', dv.getUint32(52, true), N);
-		passageCount = requireCount('passage count', dv.getUint32(56, true), N);
-		const revLen = requireCount('revision length', dv.getUint32(60, true), NAVGRAPH_REVISION_MAX_LEN);
-		const fixedEnd = version === SUPPORTED_VERSION ? 72 : 64;
-		if (buf.length < fixedEnd) throw new Error('navgraph v4 artifact too small (truncated header)');
-		if (version === SUPPORTED_VERSION) {
-			coarseOriginX = dv.getInt32(64, true);
-			coarseOriginY = dv.getInt32(68, true);
-		}
-		if (fixedEnd + revLen > buf.length) throw new Error('navgraph artifact revision string overruns buffer');
-		passageRevision = revLen ? new TextDecoder('ascii').decode(buf.subarray(fixedEnd, fixedEnd + revLen)) : '';
-		headerEnd = fixedEnd + revLen;
-	}
-	const P = passageCount;
+	const baseNodeCount = requireCount('base node count', dv.getUint32(52, true), N);
+	const P = requireCount('passage count', dv.getUint32(56, true), N);
+	const revLen = requireCount('revision length', dv.getUint32(60, true), NAVGRAPH_REVISION_MAX_LEN);
+	const coarseOriginX = dv.getInt32(64, true);
+	const coarseOriginY = dv.getInt32(68, true);
+	const regionRevLen = requireCount('region revision length', dv.getUint32(72, true), NAVGRAPH_REVISION_MAX_LEN);
+	const flags = dv.getUint32(76, true);
+	const fixedEnd = 80;
+	if (fixedEnd + revLen + regionRevLen > buf.length)
+		throw new Error('navgraph artifact revision strings overrun buffer');
+	const passageRevision = revLen
+		? new TextDecoder('ascii').decode(buf.subarray(fixedEnd, fixedEnd + revLen)) : '';
+	const regionRevision = new TextDecoder('ascii')
+		.decode(buf.subarray(fixedEnd + revLen, fixedEnd + revLen + regionRevLen));
+	const headerEnd = fixedEnd + revLen + regionRevLen;
 
 	// --- exact byte-length check (rejects truncation and overflow) ---
-	const kindsBytes = typedVersion ? E : 0;
-	const edgePassageBytes = typedVersion ? E * 4 : 0;
-	const passageRangeBytes = typedVersion ? P * 4 * 2 : 0;
-	const expected = headerEnd
-		+ N * 2 * 4 + E * 2 * 4 + E * 4 + N * 4
-		+ kindsBytes + edgePassageBytes + passageRangeBytes
-		+ ch * cw + ch * cw + ch * cw * (version === SUPPORTED_VERSION ? 1 : 4) + hh * hw;
+	const sampleBitBytes = Math.ceil(ch * cw / 8);
+	const hitzoneBitBytes = Math.ceil(hh * hw / 8);
+	const nodeBytes = (flags & 1) ? 4 : 2;
+	const indexBytes = (flags & 2) ? 4 : 2;
+	const expected = headerEnd + N * 2 * nodeBytes + E * 2 * indexBytes + E * 4
+		+ E + E * 4 + P * indexBytes * 2
+		+ sampleBitBytes + hitzoneBitBytes;
 	if (expected !== buf.length)
 		throw new Error(`navgraph artifact byte length ${buf.length} != expected ${expected} (corrupt/truncated); ${REBUILD_HINT}`);
 
 	let off = headerEnd;
-	const nodes = sliceTyped(buf, off, N * 2, Int32Array); off += N * 2 * 4;
-	const edges = sliceTyped(buf, off, E * 2, Int32Array); off += E * 2 * 4;
+	const NodeArray = (flags & 1) ? Uint32Array : Uint16Array;
+	const IndexArray = (flags & 2) ? Uint32Array : Uint16Array;
+	const nodes = sliceTyped(buf, off, N * 2, NodeArray); off += N * 2 * nodeBytes;
+	const edges = sliceTyped(buf, off, E * 2, IndexArray); off += E * 2 * indexBytes;
 	const weights = sliceTyped(buf, off, E, Float32Array); off += E * 4;
-	const components = sliceTyped(buf, off, N, Int32Array); off += N * 4;
-	let edgeKinds = null;
-	let edgePassage = null;
-	let passageNodeStart = new Int32Array(0);
-	let passageNodeCount = new Int32Array(0);
-	if (typedVersion) {
-		edgeKinds = sliceTyped(buf, off, E, Uint8Array); off += E;
-		edgePassage = sliceTyped(buf, off, E, Int32Array); off += E * 4;
-		passageNodeStart = sliceTyped(buf, off, P, Int32Array); off += P * 4;
-		passageNodeCount = sliceTyped(buf, off, P, Int32Array); off += P * 4;
-	}
-	const coarseMinval = sliceTyped(buf, off, ch * cw, Uint8Array); off += ch * cw;
-	const coarseClear = sliceTyped(buf, off, ch * cw, Uint8Array); off += ch * cw;
-	const coarseLabels = version === SUPPORTED_VERSION
-		? sliceTyped(buf, off, ch * cw, Uint8Array)
-		: sliceTyped(buf, off, ch * cw, Int32Array);
-	off += ch * cw * (version === SUPPORTED_VERSION ? 1 : 4);
-	const coarseHitzone = sliceTyped(buf, off, hh * hw, Uint8Array); off += hh * hw;
+	const edgeKinds = sliceTyped(buf, off, E, Uint8Array); off += E;
+	const edgePassage = sliceTyped(buf, off, E, Int32Array); off += E * 4;
+	const passageNodeStart = sliceTyped(buf, off, P, IndexArray); off += P * indexBytes;
+	const passageNodeCount = sliceTyped(buf, off, P, IndexArray); off += P * indexBytes;
+	const sampleableBits = sliceTyped(buf, off, sampleBitBytes, Uint8Array); off += sampleBitBytes;
+	const hitzoneBits = sliceTyped(buf, off, hitzoneBitBytes, Uint8Array); off += hitzoneBitBytes;
+	const coarseHitzone = unpackBits(hitzoneBits, hh * hw);
 
-	if (typedVersion)
-		validatePassageTopology(N, E, P, baseNodeCount, edges, edgeKinds, edgePassage,
-			passageNodeStart, passageNodeCount);
+	validatePassageTopology(N, E, P, baseNodeCount, edges, edgeKinds, edgePassage,
+		passageNodeStart, passageNodeCount);
 
 	return {
 		version, H, W, minCostPerPx, N, E,
 		coarseScale, coarseOriginX, coarseOriginY, ch, cw, hitzoneScale, hh, hw,
-		nodes, edges, weights, components,
-		coarseMinval, coarseClear, coarseLabels, coarseHitzone,
-		baseNodeCount, passageCount: P, passageRevision,
+		nodes, edges, weights, coarseHitzone,
+		sampleableBits,
+		baseNodeCount, passageCount: P, passageRevision, regionRevision,
 		edgeKinds, edgePassage, passageNodeStart, passageNodeCount,
 	};
 }
 
 /**
- * Strict topology validation for a parsed v3 artifact: edge endpoints in range,
+ * Strict topology validation for a parsed graph artifact: edge endpoints in range,
  * every edge kind known and its owning-passage ordinal consistent, and passage
  * node ranges contiguous, ordered, and covering exactly the tail `[baseNodeCount, N)`.
  * Throws on the first violation — a reader never invents a mid-passage transition
@@ -344,42 +323,9 @@ function validatePassageTopology(N, E, P, baseNodeCount, edges, edgeKinds, edgeP
 // Full-res weighted A* on a subgrid (port of navgraph.py _astar_subgrid)
 // =============================================================================
 
-// Reusable binary min-heap of (priority, payload) — small, allocation-light.
-export class MinHeap {
-	constructor() { this.k = []; this.v = []; }
-	get size() { return this.k.length; }
-	push(key, val) {
-		const k = this.k, v = this.v;
-		let i = k.length; k.push(key); v.push(val);
-		while (i > 0) {
-			const p = (i - 1) >> 1;
-			if (k[p] <= k[i]) break;
-			[k[p], k[i]] = [k[i], k[p]];
-			[v[p], v[i]] = [v[i], v[p]];
-			i = p;
-		}
-	}
-	pop() {
-		const k = this.k, v = this.v, n = k.length;
-		const top = v[0];
-		const lk = k.pop(), lv = v.pop();
-		if (n > 1) {
-			k[0] = lk; v[0] = lv;
-			let i = 0;
-			for (;;) {
-				const l = 2 * i + 1, r = l + 1;
-				let m = i;
-				if (l < k.length && k[l] < k[m]) m = l;
-				if (r < k.length && k[r] < k[m]) m = r;
-				if (m === i) break;
-				[k[m], k[i]] = [k[i], k[m]];
-				[v[m], v[i]] = [v[i], v[m]];
-				i = m;
-			}
-		}
-		return top;
-	}
-}
+// Shared binary min-heap of (priority, payload) — the same open-list class the
+// editor A*/Theta* modules use (heap.js). Re-exported for existing consumers.
+export { MinHeap };
 
 /**
  * Weighted 8-connected A* on a subgrid extracted from `mask`. Coordinates are
@@ -481,48 +427,18 @@ export function lineCost(mask, W, x0, y0, x1, y1, regionAllowed = null) {
  */
 export function buildState(artifact, mask, config = DEFAULT_CONFIG) {
 	const cfg = { ...DEFAULT_CONFIG, ...config };
-	const { N, E, ch, cw, coarseScale, hitzoneScale, coarseLabels, coarseMinval,
-		coarseClear, coarseHitzone, hh, hw, nodes, edges, weights } = artifact;
-	const coarseOriginX = artifact.coarseOriginX || 0;
-	const coarseOriginY = artifact.coarseOriginY || 0;
+	const { N, E, ch, cw, hitzoneScale, coarseHitzone, hh, hw,
+		nodes, edges, weights } = artifact;
 
-	// Main free component = most frequent nonzero label in coarse_labels.
-	let maxLabel = 0;
-	for (let i = 0; i < coarseLabels.length; i++) if (coarseLabels[i] > maxLabel) maxLabel = coarseLabels[i];
-	const counts = new Int32Array(maxLabel + 1);
-	for (let i = 0; i < coarseLabels.length; i++) counts[coarseLabels[i]]++;
-	let mainComp = 0, best = 0;
-	for (let l = 1; l <= maxLabel; l++) if (counts[l] > best) { best = counts[l]; mainComp = l; }
-
-	// Sampleable coarse cells (store as flat index into ch*cw grid). coarseMinval
-	// is a block minimum, so a value below the endpoint threshold does not prove
-	// that the whole cell is too dark. Keep mixed cells when at least one exact
-	// full-res pixel is eligible; pixelInCell applies the same threshold again.
+	// Endpoint eligibility is baked into the artifact's sampleable bitset at
+	// build time, so runtime overrides of those thresholds cannot take effect.
+	if (cfg.clearanceMinPx !== DEFAULT_CONFIG.clearanceMinPx
+			|| cfg.terrainMinValue !== DEFAULT_CONFIG.terrainMinValue) {
+		throw new Error('artifact sampling bitset does not match overridden endpoint thresholds');
+	}
 	const sampleCells = [];
-	for (let cy = 0; cy < ch; cy++) {
-		for (let cx = 0; cx < cw; cx++) {
-			const ci = cy * cw + cx;
-			if (coarseLabels[ci] !== mainComp) continue;
-			if (coarseClear[ci] < cfg.clearanceMinPx) continue;
-			if (coarseMinval[ci] < cfg.terrainMinValue) {
-				let hasEligiblePixel = false;
-				const x0 = coarseOriginX + cx * coarseScale;
-				const y0 = coarseOriginY + cy * coarseScale;
-				for (let dy = 0; dy < coarseScale && y0 + dy < artifact.H && !hasEligiblePixel; dy++) {
-					for (let dx = 0; dx < coarseScale && x0 + dx < artifact.W; dx++) {
-						if (mask[(y0 + dy) * artifact.W + x0 + dx] >= cfg.terrainMinValue) {
-							hasEligiblePixel = true;
-							break;
-						}
-					}
-				}
-				if (!hasEligiblePixel) continue;
-			}
-			const hy = Math.floor((coarseOriginY + cy * coarseScale) / hitzoneScale);
-			const hx = Math.floor((coarseOriginX + cx * coarseScale) / hitzoneScale);
-			if (hy >= hh || hx >= hw || !coarseHitzone[hy * hw + hx]) continue;
-			sampleCells.push(ci);
-		}
+	for (let ci = 0; ci < ch * cw; ci++) {
+		if (bitIsSet(artifact.sampleableBits, ci)) sampleCells.push(ci);
 	}
 	const endpointDensity = buildEndpointDensitySampler(artifact, mask, sampleCells, cfg);
 	const regionAllowed = (x, y) => {
@@ -542,7 +458,7 @@ export function buildState(artifact, mask, config = DEFAULT_CONFIG) {
 		nodeInRegion[i] = (hy >= 0 && hx >= 0 && hy < hh && hx < hw
 			&& coarseHitzone[hy * hw + hx]) ? 1 : 0;
 	}
-	// Serialized passage nodes (v3, indices [baseNodeCount, N)) were already
+	// Serialized passage nodes (legacy graph format, indices [baseNodeCount, N)) were already
 	// polygon-checked at build time; the coarse hit-zone raster can clip a node
 	// that is legitimately inside the drawn region, so trust the build here and
 	// keep every passage node routable (CR 8.3). Base-only artifacts have
@@ -576,7 +492,7 @@ export function buildState(artifact, mask, config = DEFAULT_CONFIG) {
 	}
 
 	return {
-		artifact, mask, cfg, mainComp, sampleCells, nodeInRegion,
+		artifact, mask, cfg, sampleCells, nodeInRegion,
 		endpointDensityCumulative: endpointDensity.cumulative,
 		endpointDensityTotal: endpointDensity.total,
 		buckets, bucketCell: cell, regionAllowed,
@@ -656,36 +572,15 @@ function buildEndpointDensitySampler(artifact, mask, sampleCells, cfg) {
 	return { cumulative, total };
 }
 
-/**
- * Replace only the dynamic passage overlay on an already parsed base navgraph.
- * The base artifact, sampler, CSR arrays, and mask are retained verbatim.
- */
-export function attachLevelPassages(state, documentOrItems) {
-	const { W, H } = state.artifact;
-	const revision = passageRevision(documentOrItems, W, H);
-	const normalized = normalizePassagesForRuntime(documentOrItems, { mapWidth: W, mapHeight: H });
-	state.passageOverlay = buildPassageOverlay(state, normalized.passages, {
-		snapEndpoint,
-		astarSubgrid,
-	});
-	state.passageRevision = revision;
-	state.passageDiagnostics = normalized.diagnostics;
-	return {
-		revision,
-		diagnostics: normalized.diagnostics,
-		...state.passageOverlay.stats,
-	};
-}
-
 // -----------------------------------------------------------------------------
-// CR 8.3 — consume the *serialized* v3 passage topology instead of a dynamic
-// overlay. Passage nodes are already baked into the CSR (`[baseNodeCount, N)`);
-// the only thing the runtime still needs from the canonical document is the
-// per-passage raster (for surface-aware refinement, obstacle scoring, and
-// layered distinctness). `attachSerializedPassages` verifies the fetched
-// document against the artifact's baked revision (a mismatch is a stale build,
-// never an empty-passage fallback) and indexes the rasters by passage id, using
-// the same codepoint id sort as project/navgraph.py to map ordinal -> id.
+// CR 8.3 — consume the artifact's serialized passage topology. Passage nodes
+// are baked into the CSR (`[baseNodeCount, N)`); the only thing the runtime
+// still needs from the canonical document is the per-passage raster (for
+// surface-aware refinement, obstacle scoring, and layered distinctness).
+// `attachSerializedPassages` verifies the fetched document against the
+// artifact's baked revision (a mismatch is a stale build, never an
+// empty-passage fallback) and indexes the rasters by passage id, using the
+// same codepoint id sort as project/navgraph.py to map ordinal -> id.
 // -----------------------------------------------------------------------------
 
 /** Passage ids in the artifact's canonical ordinal order (codepoint id sort). */
@@ -698,8 +593,8 @@ function canonicalOrdinalIds(passages) {
 export function attachSerializedPassages(state, documentOrItems) {
 	const { artifact } = state;
 	const { W, H, N } = artifact;
-	if (artifact.version !== SUPPORTED_VERSION || !artifact.edgeKinds)
-		throw new Error('serialized passages require a v3 navgraph artifact');
+	if (!artifact.edgeKinds)
+		throw new Error('serialized passages require a graph-backed artifact');
 	const revision = passageRevision(documentOrItems, W, H);
 	if (revision !== artifact.passageRevision)
 		throw new Error(`passage document revision ${revision} != artifact ${artifact.passageRevision} `
@@ -742,9 +637,6 @@ export function attachSerializedPassages(state, documentOrItems) {
 		minCostPerPx,
 		diagnostics: normalized.diagnostics,
 	};
-	// A serialized v3 artifact is the single source of passage topology — never
-	// also run the dynamic overlay on the same state (CR 8.3).
-	state.passageOverlay = null;
 	state.passageRevision = revision;
 	state.passageDiagnostics = normalized.diagnostics;
 	return {
@@ -764,17 +656,14 @@ function countEdgesOfKind(artifact, kind) {
 	return count;
 }
 
-/** Runtime passage raster for a leg's passage id (serialized or dynamic overlay). */
+/** Runtime passage raster for a leg's passage id. */
 function passageForId(state, passageId) {
-	const key = String(passageId);
-	return state.serializedPassages?.passageById?.get(key)
-		|| state.passageOverlay?.passageById?.get(key)
-		|| null;
+	return state.serializedPassages?.passageById?.get(String(passageId)) || null;
 }
 
-/** Active runtime passages regardless of topology source. */
+/** Active runtime passages. */
 function activePassages(state) {
-	return state.serializedPassages?.passages || state.passageOverlay?.passages || [];
+	return state.serializedPassages?.passages || [];
 }
 
 // =============================================================================
@@ -784,12 +673,18 @@ function activePassages(state) {
 /** mulberry32 seeded RNG → () => float in [0,1). */
 export function makeRng(seed) {
 	let a = seed >>> 0;
-	return function () {
+	const rng = function () {
 		a |= 0; a = (a + 0x6D2B79F5) | 0;
 		let t = Math.imul(a ^ (a >>> 15), 1 | a);
 		t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
 		return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
 	};
+	// Benchmark checkpoints can resume the exact deterministic sequence. These
+	// methods do not alter normal callers, which continue using rng as a plain
+	// zero-argument function.
+	rng.getState = () => a >>> 0;
+	rng.setState = state => { a = Number(state) >>> 0; };
+	return rng;
 }
 
 /** Random endpoint-eligible full-res pixel inside coarse cell `ci`, or null. */
@@ -948,22 +843,29 @@ export function snapEndpoint(state, pt, deadline = null) {
 export function graphAstar(state, goalPt, startSnap, goalSnap, blockedEdges, deadline = null) {
 	const { artifact, adjStart, adjTo, adjW, adjEdge } = state;
 	const { N, nodes, minCostPerPx } = artifact;
-	const GRAPH_N = state.passageOverlay?.totalNodeCount || N;
-	const START = GRAPH_N, GOAL = GRAPH_N + 1, TOTAL = GRAPH_N + 2;
-	const blockedBase = blockedEdges?.baseEdges || blockedEdges;
-	const blockedDynamic = blockedEdges?.dynamicEdges || null;
+	const START = N, GOAL = N + 1, TOTAL = N + 2;
 	const goalX = goalPt.x, goalY = goalPt.y;
-	const g = new Float32Array(TOTAL).fill(Infinity);
-	const parent = new Int32Array(TOTAL).fill(-1);
-	const closed = new Uint8Array(TOTAL);
+	// Reuse per-state scratch arrays: graph A* runs up to five times per attempt
+	// across thousands of attempts, so allocating three O(N) arrays per call is
+	// pure GC churn. The fills below reset them completely.
+	let scratch = state._graphAstarScratch;
+	if (!scratch || scratch.g.length !== TOTAL) {
+		scratch = state._graphAstarScratch = {
+			g: new Float32Array(TOTAL),
+			parent: new Int32Array(TOTAL),
+			closed: new Uint8Array(TOTAL),
+		};
+	}
+	const g = scratch.g.fill(Infinity);
+	const parent = scratch.parent.fill(-1);
+	const closed = scratch.closed.fill(0);
 	// Incoming goal edges: map node -> weight.
 	const goalFrom = new Map();
 	for (const s of goalSnap) goalFrom.set(s.node, s.w);
 	const heap = new MinHeap();
 	g[START] = 0;
 	heap.push(0, START);
-	const heuristicCostPerPx = state.serializedPassages?.minCostPerPx
-		?? state.passageOverlay?.minCostPerPx ?? minCostPerPx;
+	const heuristicCostPerPx = state.serializedPassages?.minCostPerPx ?? minCostPerPx;
 	const hEuclid = (nx, ny) => Math.hypot(goalX - nx, goalY - ny) * heuristicCostPerPx;
 	let popCount = 0;
 	while (heap.size > 0) {
@@ -984,18 +886,10 @@ export function graphAstar(state, goalPt, startSnap, goalSnap, blockedEdges, dea
 		if (cur === START) {
 			for (const s of startSnap) relax(s.node, gc + s.w, cur);
 		} else {
-			// Real base node: serialized CSR neighbours. Overlay portal nodes have
-			// only dynamic adjacency and therefore never index the base CSR arrays.
-			if (cur < N) {
-				const s0 = adjStart[cur], s1 = adjStart[cur + 1];
-				for (let e = s0; e < s1; e++) {
-					if (blockedBase && blockedBase.has(adjEdge[e])) continue;
-					relax(adjTo[e], gc + adjW[e], cur);
-				}
-			}
-			for (const edge of state.passageOverlay?.adjacency?.get(cur) || []) {
-				if (blockedDynamic?.has(edge.id)) continue;
-				relax(edge.to, gc + edge.weight, cur);
+			const s0 = adjStart[cur], s1 = adjStart[cur + 1];
+			for (let e = s0; e < s1; e++) {
+				if (blockedEdges && blockedEdges.has(adjEdge[e])) continue;
+				relax(adjTo[e], gc + adjW[e], cur);
 			}
 			if (goalFrom.has(cur)) relax(GOAL, gc + goalFrom.get(cur), cur);
 		}
@@ -1008,13 +902,7 @@ export function graphAstar(state, goalPt, startSnap, goalSnap, blockedEdges, dea
 		if (to < N && state.nodeInRegion && !state.nodeInRegion[to]) return;
 		if (closed[to] || tentative >= g[to]) return;
 		g[to] = tentative; parent[to] = from;
-		let hx = 0;
-		if (to !== GOAL) {
-			const point = to < N
-				? { x: nodes[2 * to], y: nodes[2 * to + 1] }
-				: overlayNodeCoord(state, to);
-			hx = hEuclid(point.x, point.y);
-		}
+		const hx = to === GOAL ? 0 : hEuclid(nodes[2 * to], nodes[2 * to + 1]);
 		heap.push(tentative + hx, to);
 	}
 }
@@ -1095,8 +983,6 @@ export function nodePathToTypedRouteSerialized(state, nodePath, start, goal) {
 function typedRouteFor(state, nodePath, start, goal) {
 	if (state.serializedPassages?.passages?.length)
 		return nodePathToTypedRouteSerialized(state, nodePath, start, goal);
-	if (state.passageOverlay?.nodeCount)
-		return nodePathToTypedRoute(state, nodePath, start, goal);
 	return { path: nodePathToCoords(state, nodePath, start, goal), legs: null };
 }
 
@@ -1272,6 +1158,7 @@ export function findBarrier(state, path) {
 		return {
 			ax: a.x, ay: a.y, bx: b.x, by: b.y,
 			enclosed: true,
+			routeFraction: p.frac,
 		};
 	};
 	const isClearOfRouteNodes = (p) =>
@@ -1348,12 +1235,21 @@ export function blockedByBarriers(state, barriers) {
 	const { E, edges, nodes, edgeKinds, edgePassage } = artifact;
 	const ordinalIds = state.serializedPassages?.ordinalIds;
 	const blocked = new Set();
-	if (!barriers.length) {
-		return state.passageOverlay?.nodeCount ? { baseEdges: blocked, dynamicEdges: new Set() } : blocked;
-	}
+	if (!barriers.length) return blocked;
 	const width = Number.isFinite(cfg?.barrierWidthPx) && cfg.barrierWidthPx > 0
 		? cfg.barrierWidthPx
 		: BARRIER_DRAW_WIDTH_MASK_PX;
+	const half = width / 2;
+	// Cheap per-barrier bounding box (stroke rectangle inflated by half the
+	// width). The exact Liang-Barsky test below runs only for edges whose own
+	// bbox overlaps one — the vast majority of the E edges are nowhere near any
+	// barrier, so this prefilter removes almost the entire O(E×B) scan cost.
+	const barrierBoxes = barriers.map((b) => ({
+		minX: Math.min(b.ax, b.bx) - half,
+		maxX: Math.max(b.ax, b.bx) + half,
+		minY: Math.min(b.ay, b.by) - half,
+		maxY: Math.max(b.ay, b.by) + half,
+	}));
 	const intersectsStroke = (x0, y0, x1, y1, b) => {
 		const dx = b.bx - b.ax, dy = b.by - b.ay;
 		const len = Math.hypot(dx, dy);
@@ -1382,27 +1278,24 @@ export function blockedByBarriers(state, barriers) {
 	for (let e = 0; e < E; e++) {
 		const u = edges[2 * e], v = edges[2 * e + 1];
 		const ux = nodes[2 * u], uy = nodes[2 * u + 1], vx = nodes[2 * v], vy = nodes[2 * v + 1];
+		const edgeMinX = ux < vx ? ux : vx, edgeMaxX = ux < vx ? vx : ux;
+		const edgeMinY = uy < vy ? uy : vy, edgeMaxY = uy < vy ? vy : uy;
 		// A serialized passage edge lives on its passage surface; base and
 		// transition (endpoint connector) edges are base terrain.
 		let surface = 'base';
 		if (edgeKinds && edgeKinds[e] === EDGE_KIND_PASSAGE && ordinalIds) {
 			surface = `passage:${ordinalIds[edgePassage[e]]}`;
 		}
-		for (const b of barriers) {
+		for (let bi = 0; bi < barriers.length; bi++) {
+			const b = barriers[bi];
 			if ((b.surface || 'base') !== surface) continue;
+			const box = barrierBoxes[bi];
+			if (edgeMaxX < box.minX || edgeMinX > box.maxX
+				|| edgeMaxY < box.minY || edgeMinY > box.maxY) continue;
 			if (intersectsStroke(ux, uy, vx, vy, b)) { blocked.add(e); break; }
 		}
 	}
-	if (!state.passageOverlay?.nodeCount) return blocked;
-	return {
-		baseEdges: blocked,
-		dynamicEdges: blockedDynamicEdges(
-			state,
-			barriers,
-			(x0, y0, x1, y1, ax, ay, bx, by) =>
-				intersectsStroke(x0, y0, x1, y1, { ax, ay, bx, by }),
-		),
-	};
+	return blocked;
 }
 
 function barrierSurfaceForTypedRoute(wall, typedLegs) {
@@ -1858,9 +1751,67 @@ function optimizeInfinityPortalAnchors(state, legs, barriers, routeIndex) {
 	};
 }
 
+/** Build the full-resolution legal spine without starting corridor A* or Theta*. */
+export function prepareTypedNavgraphRoute(state, route, barriers, opts = {}) {
+	if (!route?.typedLegs) return prepareRouteTheta(state, route.path, barriers, opts);
+	const routeIndex = Number.isFinite(opts.routeIndex) ? opts.routeIndex : Infinity;
+	const legalLegs = [];
+	const preparedLegs = [];
+	let legalCost = 0;
+	let tRefine = 0;
+	for (const leg of route.typedLegs) {
+		if (leg.surface === 'base') {
+			const surfaceBarriers = (barriers || []).filter((barrier) => !barrier.surface || barrier.surface === 'base');
+			const prepared = prepareRouteTheta(state, leg.points, surfaceBarriers, opts);
+			tRefine += prepared.tRefine || 0;
+			if (prepared.mode === 'unusable') {
+				return { ...prepared, path: route.path, cost: route.cost, legalPath: route.path,
+					legalCost: route.cost, tRefine, typedLegs: route.typedLegs, preparedLegs };
+			}
+			legalCost += prepared.legalCost;
+			legalLegs.push({ ...leg, points: prepared.legalPath });
+			preparedLegs.push({ surface: 'base', prepared });
+		} else {
+			const passage = passageForId(state, leg.passageId);
+			const legalPath = (leg.points || []).map((point) => ({ x: point.x, y: point.y }));
+			const cost = passage ? passagePolylineCost(passage, legalPath) : null;
+			if (cost === null) {
+				return { path: route.path, cost: route.cost, mode: 'unusable', legalPath: route.path,
+					legalCost: route.cost, tRefine, tTheta: 0, activeBarriers: [], routeIndex,
+					typedLegs: route.typedLegs, preparedLegs };
+			}
+			legalCost += cost;
+			legalLegs.push({ ...leg, points: legalPath });
+			preparedLegs.push({ surface: leg.surface, legalPath, legalCost: cost });
+		}
+	}
+	const legal = flattenTypedLegs(legalLegs);
+	const activeBarriers = (barriers || []).filter((barrier) => {
+		const attemptIndex = Number.isFinite(barrier.attemptIndex) ? barrier.attemptIndex : -Infinity;
+		return attemptIndex < routeIndex;
+	});
+	return {
+		path: legal.path,
+		cost: legalCost,
+		mode: 'prepared',
+		legalPath: legal.path,
+		legalCost,
+		thetaCost: null,
+		tRefine,
+		tTheta: 0,
+		activeBarriers,
+		routeIndex,
+		typedLegs: legalLegs,
+		passageSpans: legal.passageSpans,
+		preparedLegs,
+	};
+}
+
 /** Surface-aware legal/Theta refinement for a navgraph route with passage legs. */
 export function refineTypedNavgraphRoute(state, route, barriers, opts = {}) {
-	if (!route?.typedLegs) return refineRouteTheta(state, route.path, barriers, opts);
+	const preparedRoute = opts.prepared || prepareTypedNavgraphRoute(state, route, barriers, opts);
+	if (preparedRoute.mode === 'unusable') return preparedRoute;
+	if (!route?.typedLegs) return refinePreparedRouteTheta(state, preparedRoute, opts);
 	const routeIndex = Number.isFinite(opts.routeIndex) ? opts.routeIndex : Infinity;
 	const selectedLegs = [];
 	const legalLegs = [];
@@ -1870,11 +1821,11 @@ export function refineTypedNavgraphRoute(state, route, barriers, opts = {}) {
 	let tRefine = 0;
 	let tTheta = 0;
 	let fallback = false;
-	for (const leg of route.typedLegs) {
+	for (let legIndex = 0; legIndex < route.typedLegs.length; legIndex++) {
+		const leg = route.typedLegs[legIndex];
 		let refined;
 		if (leg.surface === 'base') {
-			const surfaceBarriers = (barriers || []).filter((barrier) => !barrier.surface || barrier.surface === 'base');
-			refined = refineRouteTheta(state, leg.points, surfaceBarriers, opts);
+			refined = refinePreparedRouteTheta(state, preparedRoute.preparedLegs[legIndex].prepared, opts);
 			tRefine += refined.tRefine || 0;
 		} else {
 			refined = refinePassageLeg(state, leg);
@@ -1931,9 +1882,7 @@ export function refineTypedNavgraphRoute(state, route, barriers, opts = {}) {
 		activeBarriers,
 		routeIndex,
 		typedLegs: selectedLegs,
-		legalTypedLegs: legalLegs,
 		passageSpans: selected.passageSpans,
-		legalPassageSpans: legal.passageSpans,
 		portalOptimization,
 	};
 }
@@ -1967,23 +1916,12 @@ function countTypedBarrierViolations(state, refined) {
 	return hits;
 }
 
-/**
- * Decide whether two final refinement outcomes may be exposed as a route pair.
- * `unusable` is never valid. Under the production `reject` policy both routes
- * must have completed the any-angle Theta* stage; the dense legal spine is
- * only an internal corridor input and a diagnostic fallback.
- */
-export function refinementPairCanBeServed(policy, modeA, modeB) {
-	if (modeA === 'unusable' || modeB === 'unusable') return false;
-	return policy !== 'reject' || (modeA === 'theta' && modeB === 'theta');
-}
-
 // =============================================================================
 // generateOnePair — bounded attempt loop returning the FIRST valid, refined
 // pair (worker-facing; never hangs). This is the WP 3.2 analogue of the
 // harness `generatePairs`, but stops at the first accepted pair, refines its
-// two routes to legal full-res polylines, recomputes runtime from the refined
-// geometry, and re-checks the relative gap (re-reject if now > maxRelativeGap).
+// candidates to legal full-res polylines, selects the final two there, and only
+// then runs the expensive corridor + Theta* quality pass on those two routes.
 // =============================================================================
 
 /**
@@ -2027,7 +1965,7 @@ export function generateOnePair(state, { rng, maxAttempts = 4000, now, selection
 	const rejectionCounts = {
 		empty: 0, distance: 0, obstacle: 0, snap: 0, unreachable: 0, distinct: 0,
 		runtime: 0, side: 0, routeside: 0, lateral: 0, timeout: 0,
-		runtime_refined: 0, balanced: 0,
+		balanced: 0,
 	};
 	const bump = (reason) => { if (reason in rejectionCounts) rejectionCounts[reason]++; };
 
@@ -2050,7 +1988,55 @@ export function generateOnePair(state, { rng, maxAttempts = 4000, now, selection
 		const tRoute = clock(); timings.route += tRoute - tSnap;
 		if (routeResult.paths.length < 2) { bump(routeResult.reason); lastReason = routeResult.reason; retries++; continue; }
 
-		const sel = selection.selectWeightedRoutePair(routeResult.paths, {
+		const provisionalSelector = typeof selection.selectRoutePairClosestToTarget === 'function'
+			? selection.selectRoutePairClosestToTarget
+			: selection.selectWeightedRoutePair;
+		const sel = provisionalSelector(routeResult.paths, {
+			start: sp.start,
+			goal: sp.goal,
+			config: {
+				...selectionDefaults,
+				minSideGap: sideGapMinPx,
+				// Cheap graph-stage prefilter before full-resolution legalization.
+				maxRelativeGap: cfg.graphPrefilterRelativeGap,
+				maxRouteIndexGap: cfg.maxSelectedRouteIndexGap,
+			},
+			rng,
+		});
+		if (!sel.ok) { bump(sel.reason); lastReason = sel.reason; retries++; continue; }
+
+		const finalRefineOpts = {
+			routeIndex: Infinity,
+			now: clock,
+			corridorRadius: cfg.finalCorridorRadius,
+			budgetMs: cfg.finalRefineBudgetMs,
+		};
+		const preparedCandidates = [];
+		for (const original of routeResult.paths) {
+			const prepared = prepareTypedNavgraphRoute(state, original, [], finalRefineOpts);
+			timings.refine += prepared.tRefine || 0;
+			if (prepared.mode !== 'unusable') {
+				preparedCandidates.push({
+					original,
+					prepared,
+					selectionRecord: {
+						...original,
+						path: prepared.legalPath,
+						run_time: prepared.legalCost,
+						side: undefined,
+						sideLabel: undefined,
+					},
+				});
+			}
+		}
+		if (preparedCandidates.length < 2) {
+			bump('timeout'); lastReason = 'timeout'; retries++; continue;
+		}
+
+		// Legal spines are the last stable cost/geometry representation before the
+		// expensive corridor searches. Select the final two here so approximate
+		// graph costs cannot lock in the wrong pair.
+		const legalPairGate = provisionalSelector(preparedCandidates.map((item) => item.selectionRecord), {
 			start: sp.start,
 			goal: sp.goal,
 			config: {
@@ -2061,83 +2047,81 @@ export function generateOnePair(state, { rng, maxAttempts = 4000, now, selection
 			},
 			rng,
 		});
-		if (!sel.ok) { bump(sel.reason); lastReason = sel.reason; retries++; continue; }
+		if (!legalPairGate.ok) {
+			bump(legalPairGate.reason); lastReason = legalPairGate.reason; retries++; continue;
+		}
+		const selectedEntries = legalPairGate.selected.map((selected) => {
+			const candidate = preparedCandidates.find((item) => item.original.routeIndex === selected.routeIndex);
+			return { ...candidate, side: selected.side };
+		}).sort((a, b) => a.side - b.side);
+		const ordered = selectedEntries.map((entry) => entry.original);
 
-		// Barriers of faster lower-index routes that were skipped by the pick —
-		// WP 5.3 draws + enforces these at full resolution.
-		const skippedBarriers = selection.skippedBarriersForSelection(routeResult.paths, sel.selected);
-
-		// Order the two selected routes by side (L negative first, R positive).
-		const ordered = sel.selected.slice().sort((x, y) => x.side - y.side);
-		// WP 5.2: corridor + guided θ* refinement of the accepted pair. Each
-		// route gets its legal spine + a θ* pass around it, with active
-		// barriers (attemptIndex < routeIndex) stamped into its subgrid.
-		// Candidate R was discovered with every cumulative barrier before R, but
-		// only `skippedBarriers` exists in the final scene. Refine the accepted
-		// geometry against exactly that set so invisible later barriers cannot
-		// leave unexplained bends. Re-run the final refinement against the rendered
-		// blocker set without changing passage surface identity.
-		const finalRefineOpts = {
-			routeIndex: Infinity,
-			now: clock,
-			corridorRadius: cfg.finalCorridorRadius,
-			budgetMs: cfg.finalRefineBudgetMs,
+		// Barriers of faster lower-index routes skipped by the legal-spine pick are
+		// the exact blockers rendered and enforced during the two Theta* passes.
+		const skippedBarriers = selection.skippedBarriersForSelection(routeResult.paths, ordered);
+		const bindPreparedBarriers = (entry) => {
+			const preparedLegs = entry.prepared.preparedLegs?.map((preparedLeg) => {
+				if (preparedLeg.surface !== 'base') return preparedLeg;
+				return {
+					...preparedLeg,
+					prepared: {
+						...preparedLeg.prepared,
+						activeBarriers: skippedBarriers.filter((barrier) => !barrier.surface || barrier.surface === 'base'),
+						routeIndex: Infinity,
+					},
+				};
+			});
+			return {
+				...entry.prepared,
+				activeBarriers: skippedBarriers,
+				routeIndex: Infinity,
+				preparedLegs,
+			};
 		};
-		const refA = ordered[0].typedLegs
-			? refineTypedNavgraphRoute(state, ordered[0], skippedBarriers, finalRefineOpts)
-			: refineRouteTheta(state, ordered[0].path, skippedBarriers, finalRefineOpts);
-		const refB = ordered[1].typedLegs
-			? refineTypedNavgraphRoute(state, ordered[1], skippedBarriers, finalRefineOpts)
-			: refineRouteTheta(state, ordered[1].path, skippedBarriers, finalRefineOpts);
-		timings.refine += (refA.tRefine || 0) + (refB.tRefine || 0);
+		const prepA = bindPreparedBarriers(selectedEntries[0]);
+		const prepB = bindPreparedBarriers(selectedEntries[1]);
+
+		const legalFaster = Math.min(prepA.legalCost, prepB.legalCost);
+		const legalSlower = Math.max(prepA.legalCost, prepB.legalCost);
+		const legalRelGap = legalFaster > 0 ? (legalSlower - legalFaster) / legalFaster : Infinity;
+		if (legalRelGap <= cfg.balanceRejectMaxRelativeGap && rng() < cfg.balanceRejectProbability) {
+			bump('balanced'); lastReason = 'balanced'; retries++; continue;
+		}
+
+		const legalPassageSpansA = prepA.passageSpans || [];
+		const legalPassageSpansB = prepB.passageSpans || [];
+		const layeredPassages = activePassages(state);
+		if ((legalPassageSpansA.length || legalPassageSpansB.length) && layeredPassages.length) {
+			const candidateRoute = prepA.legalPath.slice();
+			candidateRoute.passageSpans = legalPassageSpansA;
+			const existingRoute = prepB.legalPath.slice();
+			existingRoute.passageSpans = legalPassageSpansB;
+			const verdict = layeredRouteDistinct(
+				candidateRoute, [existingRoute],
+				state.mask, state.artifact.W, state.artifact.H,
+				layeredPassages,
+			);
+			if (!verdict.distinct) { bump('distinct'); lastReason = 'distinct'; retries++; continue; }
+		}
+
+		const refA = refineTypedNavgraphRoute(state, ordered[0], skippedBarriers, {
+			...finalRefineOpts, prepared: prepA,
+		});
+		const refB = refineTypedNavgraphRoute(state, ordered[1], skippedBarriers, {
+			...finalRefineOpts, prepared: prepB,
+		});
 		timings.theta += (refA.tTheta || 0) + (refB.tTheta || 0);
 
-		// A final route is valid only when the configured refinement policy allows
-		// both outcomes. Production uses `reject`, so any Theta* abort retries the
-		// pair instead of exposing the dense legal spine.
-		if (!refinementPairCanBeServed(cfg.refineTimeoutPolicy, refA.mode, refB.mode)) {
+		// Legal spines are corridor inputs, never served routes. Any failed Theta*
+		// pass rejects the pair and samples another candidate set.
+		if (refA.mode !== 'theta' || refB.mode !== 'theta') {
 			bump('timeout'); lastReason = 'timeout'; retries++; continue;
 		}
-		let pathA = refA.path, costA = refA.cost, modeA = refA.mode;
-		let pathB = refB.path, costB = refB.cost, modeB = refB.mode;
-		let typedA = refA.typedLegs || null, typedB = refB.typedLegs || null;
-		let passageSpansA = refA.passageSpans || [], passageSpansB = refB.passageSpans || [];
-		let refineFallback = 0;
-		let finalSideGap = sel.sideGap;
-		if (modeA === 'legal-fallback' || modeB === 'legal-fallback') {
-			// Serve BOTH as the legal spine so the two runtimes share a cost
-			// basis (θ* paths are systematically slightly cheaper; mixing bases
-			// would bias the gap).
-			pathA = refA.legalPath; costA = refA.legalCost; modeA = 'legal-fallback';
-			pathB = refB.legalPath; costB = refB.legalCost; modeB = 'legal-fallback';
-			typedA = refA.legalTypedLegs || typedA;
-			typedB = refB.legalTypedLegs || typedB;
-			passageSpansA = refA.legalPassageSpans || passageSpansA;
-			passageSpansB = refB.legalPassageSpans || passageSpansB;
-			refineFallback = 1;
-		}
-
-		// The wider rendered-barrier-only pass is allowed to shorten a homotopy,
-		// but not to collapse the two alternatives onto one side. Re-run the same
-		// side/centre/lateral gate on the geometry that will actually be served.
-		const finalPairGate = selection.selectWeightedRoutePair([
-			{ path: pathA, run_time: costA, routeIndex: ordered[0].routeIndex },
-			{ path: pathB, run_time: costB, routeIndex: ordered[1].routeIndex },
-		], {
-			start: sp.start,
-			goal: sp.goal,
-			config: {
-				...selectionDefaults,
-				minSideGap: sideGapMinPx,
-				maxRelativeGap: cfg.maxRelativeGap,
-				maxRouteIndexGap: Infinity,
-			},
-			rng: () => 0,
-		});
-		if (!finalPairGate.ok) {
-			bump(finalPairGate.reason); lastReason = finalPairGate.reason; retries++; continue;
-		}
-		finalSideGap = finalPairGate.sideGap;
+		const pathA = refA.path, costA = refA.cost;
+		const pathB = refB.path, costB = refB.cost;
+		const typedA = refA.typedLegs || null, typedB = refB.typedLegs || null;
+		const passageSpansA = refA.passageSpans || [], passageSpansB = refB.passageSpans || [];
+		const finalSideGap = legalPairGate.sideGap;
 
 		// Barrier legality: a served route must not cross any of its active
 		// barriers. θ* routes are barrier-clean by construction (validated on the
@@ -2165,36 +2149,11 @@ export function generateOnePair(state, { rng, maxAttempts = 4000, now, selection
 			bump('timeout'); lastReason = 'timeout'; retries++; continue;
 		}
 
-		// Re-check the relative gap on the θ*-refined runtimes.
+		// The refined runtime gap is telemetry only; pair rejection already
+		// happened on the legal spines before Theta*.
 		const rtA = costA, rtB = costB;
 		const faster = Math.min(rtA, rtB), slower = Math.max(rtA, rtB);
 		const relGap = faster > 0 ? (slower - faster) / faster : Infinity;
-		if (relGap > cfg.maxRelativeGap) { bump('runtime_refined'); lastReason = 'runtime_refined'; retries++; continue; }
-
-		// Balance reject (post-refinement): too-close routes are a coin-flip
-		// choice — drop them with cfg.balanceRejectProbability and retry.
-		if (relGap <= cfg.balanceRejectMaxRelativeGap && rng() < cfg.balanceRejectProbability) {
-			bump('balanced'); lastReason = 'balanced'; retries++; continue;
-		}
-
-		// Surface-aware pair distinctness: two routes that share their passage
-		// traversal are not a route choice even when a level-0 obstacle projected
-		// underneath the passage technically separates the two lines. Reuse the
-		// editor's layered distinctness on the refined pair; base-only pairs keep
-		// the established selection tuning untouched.
-		const layeredPassages = activePassages(state);
-		if ((passageSpansA.length || passageSpansB.length) && layeredPassages.length) {
-			const candidateRoute = pathA.slice();
-			candidateRoute.passageSpans = passageSpansA;
-			const existingRoute = pathB.slice();
-			existingRoute.passageSpans = passageSpansB;
-			const verdict = layeredRouteDistinct(
-				candidateRoute, [existingRoute],
-				state.mask, state.artifact.W, state.artifact.H,
-				layeredPassages,
-			);
-			if (!verdict.distinct) { bump('distinct'); lastReason = 'distinct'; retries++; continue; }
-		}
 
 		const legality = typedA || typedB
 			? countTypedLegalityViolations(state, typedA || [{ surface: 'base', points: pathA }])
@@ -2228,8 +2187,7 @@ export function generateOnePair(state, { rng, maxAttempts = 4000, now, selection
 				passageRevision: state.passageRevision || null,
 				rejectionCounts,
 				// WP 5.2 refinement outcome (WP 5.4 threads these to stats).
-				refineMode: modeA,           // both routes share a basis after coordination
-				refineFallback,              // 1 if the pair fell back to legal spines
+				refineMode: 'theta',
 				refine: [
 					{ mode: refA.mode, thetaCost: refA.thetaCost, legalCost: refA.legalCost,
 						thetaFail: refA.thetaFail, routeIndex: refA.routeIndex, activeBarriers: refA.activeBarriers },

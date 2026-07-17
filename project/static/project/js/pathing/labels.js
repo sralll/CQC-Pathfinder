@@ -85,3 +85,119 @@ export function labelConnected(grid, w, h) {
     }
     return { labels: out, ncomp: final };
 }
+
+/**
+ * Return whether two passable pixels share an 8-connected component.
+ *
+ * Unlike labelConnected(), this single-query helper does not label or remap
+ * every component in the image. It is used for alternate-route exhaustion
+ * proofs where only start-to-goal reachability matters.
+ */
+export function areConnected8(grid, w, h, start, goal, destructive = false) {
+    const sx = start?.x | 0, sy = start?.y | 0;
+    const gx = goal?.x | 0, gy = goal?.y | 0;
+    if (sx < 0 || sx >= w || sy < 0 || sy >= h
+            || gx < 0 || gx >= w || gy < 0 || gy >= h) return false;
+    const startIndex = sy * w + sx;
+    const goalIndex = gy * w + gx;
+    if (!grid[startIndex] || !grid[goalIndex]) return false;
+    if (startIndex === goalIndex) return true;
+
+    const queue = new Int32Array(w * h);
+    let head = 0, tail = 0;
+    if (destructive) {
+        // Callers may opt in when the grid is a disposable search-domain copy.
+        // Marking visited pixels directly avoids a second full-size allocation
+        // and a second random-access array in the alternate-route proof.
+        grid[startIndex] = 0;
+        queue[tail++] = startIndex;
+        while (head < tail) {
+            const index = queue[head++];
+            const x = index % w;
+            const y = (index - x) / w;
+            if (x > 0 && x + 1 < w && y > 0 && y + 1 < h) {
+                // Most visited pixels are interior. Preserve the same
+                // top-to-bottom, left-to-right neighbour order without the
+                // per-node min/max work and nested-loop bookkeeping.
+                let next = index - w - 1;
+                if (grid[next]) {
+                    if (next === goalIndex) return true;
+                    grid[next] = 0; queue[tail++] = next;
+                }
+                next = index - w;
+                if (grid[next]) {
+                    if (next === goalIndex) return true;
+                    grid[next] = 0; queue[tail++] = next;
+                }
+                next = index - w + 1;
+                if (grid[next]) {
+                    if (next === goalIndex) return true;
+                    grid[next] = 0; queue[tail++] = next;
+                }
+                next = index - 1;
+                if (grid[next]) {
+                    if (next === goalIndex) return true;
+                    grid[next] = 0; queue[tail++] = next;
+                }
+                next = index + 1;
+                if (grid[next]) {
+                    if (next === goalIndex) return true;
+                    grid[next] = 0; queue[tail++] = next;
+                }
+                next = index + w - 1;
+                if (grid[next]) {
+                    if (next === goalIndex) return true;
+                    grid[next] = 0; queue[tail++] = next;
+                }
+                next = index + w;
+                if (grid[next]) {
+                    if (next === goalIndex) return true;
+                    grid[next] = 0; queue[tail++] = next;
+                }
+                next = index + w + 1;
+                if (grid[next]) {
+                    if (next === goalIndex) return true;
+                    grid[next] = 0; queue[tail++] = next;
+                }
+                continue;
+            }
+            const y0 = Math.max(0, y - 1), y1 = Math.min(h - 1, y + 1);
+            const x0 = Math.max(0, x - 1), x1 = Math.min(w - 1, x + 1);
+            for (let ny = y0; ny <= y1; ny++) {
+                const base = ny * w;
+                for (let nx = x0; nx <= x1; nx++) {
+                    if (nx === x && ny === y) continue;
+                    const next = base + nx;
+                    if (!grid[next]) continue;
+                    if (next === goalIndex) return true;
+                    grid[next] = 0;
+                    queue[tail++] = next;
+                }
+            }
+        }
+        return false;
+    }
+
+    const seen = new Uint8Array(w * h);
+    seen[startIndex] = 1;
+    queue[tail++] = startIndex;
+    while (head < tail) {
+        const index = queue[head++];
+        const x = index % w;
+        const y = (index - x) / w;
+        const y0 = Math.max(0, y - 1), y1 = Math.min(h - 1, y + 1);
+        const x0 = Math.max(0, x - 1), x1 = Math.min(w - 1, x + 1);
+        for (let ny = y0; ny <= y1; ny++) {
+            const base = ny * w;
+            for (let nx = x0; nx <= x1; nx++) {
+                if (nx === x && ny === y) continue;
+                const next = base + nx;
+                if (seen[next] || !grid[next]) continue;
+                if (next === goalIndex) return true;
+                seen[next] = 1;
+                queue[tail++] = next;
+            }
+        }
+    }
+    return false;
+}

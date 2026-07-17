@@ -50,13 +50,40 @@ function stampDisk(surface, globalX, globalY, radius) {
     }
 }
 
+function stampBarrier(surface, barrier, width) {
+    const x0 = barrier.ax - surface.originX;
+    const y0 = barrier.ay - surface.originY;
+    const x1 = barrier.bx - surface.originX;
+    const y1 = barrier.by - surface.originY;
+    const dx = x1 - x0, dy = y1 - y0, lengthSquared = dx * dx + dy * dy;
+    if (lengthSquared < 1e-9) return;
+    const length = Math.sqrt(lengthSquared);
+    const half = Math.max(0, Number(width) / 2);
+    const minX = Math.max(0, Math.floor(Math.min(x0, x1) - half));
+    const maxX = Math.min(surface.w - 1, Math.ceil(Math.max(x0, x1) + half));
+    const minY = Math.max(0, Math.floor(Math.min(y0, y1) - half));
+    const maxY = Math.min(surface.h - 1, Math.ceil(Math.max(y0, y1) + half));
+    for (let y = minY; y <= maxY; y++) {
+        for (let x = minX; x <= maxX; x++) {
+            const t = ((x - x0) * dx + (y - y0) * dy) / lengthSquared;
+            if (t < 0 || t > 1) continue;
+            const cross = Math.abs((x - x0) * dy - (y - y0) * dx);
+            if (cross / length <= half) surface.grid[y * surface.w + x] = 0;
+        }
+    }
+}
+
 /**
  * Clone and route-mask a base subgrid plus normalized passage rasters.
  *
  * @returns {{base:object,passages:Array<object>,classifications:Array<object>}}
  */
-export function applySurfaceRouteMasks(base, passages, routes) {
-    if (!routes?.length) return { base, passages, classifications: [] };
+export function applySurfaceRouteMasks(
+    base, passages, routes, barriers = [], barrierWidthPx = 7,
+) {
+    if (!routes?.length && !barriers?.length) {
+        return { base, passages, classifications: [] };
+    }
     const maskedBase = { ...base, grid: new Uint8Array(base.grid) };
     const maskedPassages = passages.map(passage => ({ ...passage, grid: new Uint8Array(passage.grid) }));
     const surfaces = new Map([['base', maskedBase]]);
@@ -113,6 +140,10 @@ export function applySurfaceRouteMasks(base, passages, routes) {
                 stampDisk(surface, pixels[k], pixels[k + 1], radius);
             }
         }
+    }
+    for (const barrier of barriers || []) {
+        const surface = surfaces.get(barrier.surface || 'base') || maskedBase;
+        stampBarrier(surface, barrier, barrierWidthPx);
     }
     return { base: maskedBase, passages: maskedPassages, classifications };
 }

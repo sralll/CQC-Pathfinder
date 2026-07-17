@@ -792,6 +792,9 @@ msgstr "Questa mappa non ha un navgraph aggiornato. Ricostruiscilo nell’editor
 msgid "This passage geometry is not valid."
 msgstr "La geometria di questo passaggio non è valida."
 
+msgid "This shared file is read-only"
+msgstr "Questo file condiviso è di sola lettura"
+
 msgid "Time"
 msgstr "Tempo"
 

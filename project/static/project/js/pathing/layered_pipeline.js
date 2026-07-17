@@ -560,7 +560,7 @@ function refinementDiagnostics(search, refined, baseSurface, passages) {
  */
 export function runLayeredPipeline(
     grid, w, h, startGrid, goalGrid, passages,
-    logPrefix, mapScale = null, routes = [],
+    logPrefix, mapScale = null, routes = [], barriers = [], barrierWidthPx = 7,
 ) {
     const timings = {};
     const tTotal = nowMs();
@@ -593,7 +593,7 @@ export function runLayeredPipeline(
             h: sub.sh,
             originX: sub.offsetX,
             originY: sub.offsetY,
-        }, passages, routes);
+        }, passages, routes, barriers, barrierWidthPx);
         sub.subgrid = masked.base.grid;
         requestPassages = masked.passages;
         const startSnap = snapToFree(sub.subgrid, sub.sw, sub.sh, sub.startSub.x, sub.startSub.y);

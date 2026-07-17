@@ -3,6 +3,8 @@
 import mimetypes
 import os
 import logging
+import threading
+import time
 
 from django.conf import settings
 from django.db.models import Q
@@ -13,6 +15,15 @@ from ..models import File
 
 
 logger = logging.getLogger(__name__)
+
+
+# The player-facing Infinity picker and the superuser route-debug picker both
+# validate every candidate's on-disk artifact. Keep that filesystem/PIL work
+# short-lived and process-local; the key includes both artifact fingerprints and
+# the File's last-edited state, so editor writes naturally miss the cache.
+_NAVGRAPH_CURRENCY_CACHE_TTL = 5.0
+_navgraph_currency_cache = {}
+_navgraph_currency_cache_lock = threading.Lock()
 
 
 def safe_media_filename(filename):
@@ -50,7 +61,15 @@ def user_can_access_map_file(request, filename, *, require_published=False):
     return qs.exists()
 
 
-def user_can_access_file(request, file, *, require_published=False):
+def user_can_access_file(request, file, *, require_published=False,
+                         require_own_team=False):
+    """Return whether ``request.user`` may access ``file``.
+
+    Files owned by the active team are readable and writable. A shared-pool
+    team may read/play files owned by another shared-pool team, but those files
+    remain read-only to the non-owning team. Editor write endpoints must pass
+    ``require_own_team=True`` so that policy is explicit and consistent.
+    """
     if not file or file.deleted:
         return False
     if require_published and not file.published:
@@ -66,6 +85,8 @@ def user_can_access_file(request, file, *, require_published=False):
         return False
 
     own = file.team == active_team
+    if require_own_team:
+        return own
     shared = active_team.shared_pool and file.team and file.team.shared_pool
     return own or shared
 
@@ -142,15 +163,9 @@ def delete_navgraph_artifacts(file):
                            exc_info=True)
 
 
-def navgraph_artifact_is_current(file):
-    """True when the on-disk ``.navgraph.bin`` matches ``file``'s canonical
-    passage document + mask dimensions (CR 8.4).
-
-    A committed passage edit bakes a new ``passage_revision``; until the file is
-    reactivated and rebuilt, the old artifact is stale and must not be served or
-    listed even via a direct URL. Any missing file, unreadable mask, or
-    corruption is treated as not-current so a stale/broken artifact never
-    reaches a player."""
+def _navgraph_artifact_is_current_uncached(file, bin_path, mask_path,
+                                           mask_stat, bin_stat):
+    """Perform the full artifact currency check without using the short cache."""
     from ..navgraph import (
         artifact_matches_passage_document, filter_level_passages_for_region,
         mask_dimensions, region_revision,
@@ -158,17 +173,13 @@ def navgraph_artifact_is_current(file):
 
     if not file.infinite_enabled:
         return False
-    bin_path, mask_path = navgraph_artifact_paths(file)
-    if not bin_path or not os.path.isfile(bin_path) or not os.path.isfile(mask_path):
+
+    # A mask replacement must force a rebuild even when its dimensions and
+    # passage document are unchanged. Application writes also delete the
+    # artifact, while this timestamp check covers external/manual changes.
+    if mask_stat.st_mtime_ns > bin_stat.st_mtime_ns:
         return False
-    try:
-        # A mask replacement must force a rebuild even when its dimensions and
-        # passage document are unchanged. Application writes also delete the
-        # artifact, while this timestamp check covers external/manual changes.
-        if os.path.getmtime(mask_path) > os.path.getmtime(bin_path):
-            return False
-    except OSError:
-        return False
+
     try:
         width, height = mask_dimensions(mask_path)
     except Exception:
@@ -179,26 +190,69 @@ def navgraph_artifact_is_current(file):
             bin_path, effective_passages, width, height):
         return False
 
-    # Polygon revisions live in the companion NPZ. A coach-enabled artifact is current only
-    # when its baked polygon identity matches the saved File revision.
+    # v5 is self-contained: the served binary carries the polygon identity, so
+    # production does not need to retain the full debug NPZ merely to pass the
+    # currency gate.
     region = file.infinite_region
-    if isinstance(region, list) and len(region) >= 3:
-        npz_path = bin_path[:-len(".navgraph.bin")] + ".navgraph.npz"
-        if not os.path.isfile(npz_path):
-            return False
-        try:
-            import json
-            import numpy as np
+    expected_region_revision = (
+        region_revision(region, width, height)
+        if isinstance(region, list) and len(region) >= 3 else "")
+    try:
+        from ..navgraph import read_bin_header
+        header = read_bin_header(bin_path)
+    except Exception:
+        return False
+    return bool(
+        header is not None
+        and (header.get("region_revision") or "") == expected_region_revision
+    )
 
-            with np.load(npz_path, allow_pickle=True) as data:
-                stats = json.loads(str(data["stats"]))
-            baked = stats.get("region_revision")
-            expected = region_revision(region, width, height)
-            if baked != expected:
-                return False
-        except Exception:
-            return False
-    return True
+
+def navgraph_artifact_is_current(file):
+    """True when the on-disk ``.navgraph.bin`` matches ``file``'s canonical
+    passage document + mask dimensions (CR 8.4).
+
+    A committed passage edit bakes a new ``passage_revision``; until the file is
+    reactivated and rebuilt, the old artifact is stale and must not be served or
+    listed even via a direct URL. Any missing file, unreadable mask, or
+    corruption is treated as not-current so a stale/broken artifact never
+    reaches a player."""
+    if not file.infinite_enabled:
+        return False
+    bin_path, mask_path = navgraph_artifact_paths(file)
+    if not bin_path:
+        return False
+    try:
+        mask_stat = os.stat(mask_path)
+        bin_stat = os.stat(bin_path)
+    except OSError:
+        return False
+
+    last_edited = getattr(file, 'last_edited', None)
+    cache_key = (
+        file.pk,
+        bin_path,
+        (mask_stat.st_mtime_ns, mask_stat.st_size),
+        (bin_stat.st_mtime_ns, bin_stat.st_size),
+        bool(file.infinite_enabled),
+        last_edited.isoformat() if last_edited else None,
+    )
+    now = time.monotonic()
+    with _navgraph_currency_cache_lock:
+        cached = _navgraph_currency_cache.get(cache_key)
+        if cached and now - cached[0] < _NAVGRAPH_CURRENCY_CACHE_TTL:
+            return cached[1]
+
+    current = _navgraph_artifact_is_current_uncached(
+        file, bin_path, mask_path, mask_stat, bin_stat)
+    with _navgraph_currency_cache_lock:
+        _navgraph_currency_cache[cache_key] = (now, current)
+        if len(_navgraph_currency_cache) > 1024:
+            cutoff = now - _NAVGRAPH_CURRENCY_CACHE_TTL
+            for key, value in list(_navgraph_currency_cache.items()):
+                if value[0] < cutoff:
+                    _navgraph_currency_cache.pop(key, None)
+    return current
 
 
 def serve_navgraph_file(file):

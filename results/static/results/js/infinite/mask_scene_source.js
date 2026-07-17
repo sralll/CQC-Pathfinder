@@ -13,11 +13,14 @@
 
 import { TRAIN_SCALE_VALUE } from '/static/project/js/pathing/pipeline.js';
 
-// Keep five future validated pairs ready. Generation runs entirely in the
+// Keep fifteen future validated pairs ready. The deeper buffer absorbs the
+// measured multi-pair latency bursts on phone-class CPUs (including isolated
+// 5 s+ reference-device outliers under the conservative 4x replay). It remains
+// bounded: generation runs entirely in the
 // pathing Web Worker: takeScene() can return an already-buffered scene
 // immediately while the worker continues replenishing later pairs. Counting
 // in-flight jobs toward the target avoids an unbounded queue on slower phones.
-const PREFETCH_TARGET = 5;
+const PREFETCH_TARGET = 15;
 const PAIR_TIMEOUT_MS = 20000;
 const PAIR_WARN_MS = 5000;
 const REFERENCE_MAP_SCALE = 4000;
@@ -30,7 +33,7 @@ export const MASK_BLOCKING_STROKE_SOURCE_PX = 5;
 // mask pixels consumed by navgraph_router using the normal editor/play scale.
 const ROUTE_PICK_MIN_METRES = 100;
 const ROUTE_PICK_MAX_METRES = 300;
-const ROUTE_SIDE_MIN_METRES = 12;
+const ROUTE_SIDE_MIN_METRES = 15;
 
 export { TRAIN_SCALE_VALUE };
 
@@ -80,6 +83,12 @@ export function maskScaleForMap(mapScale = REFERENCE_MAP_SCALE, editorScale = 1)
     const metresPerMaskPixel = metresPerSourcePixel / maskPixelsPerSourcePixel;
     const metresPerMapUnit = metresPerSourcePixel / safeEditorScale;
     const barrierWidthPx = maskBarrierStrokeWidthMaskPx(safeMapScale, safeEditorScale);
+    // Match project/pathing/pipeline.js scaledPx(): the editor's corridor defaults
+    // are calibrated at project.scale=0.5 and scale inversely thereafter. The
+    // served pair's final quality pass keeps the tuned 30 px radius
+    // (DEFAULT_CONFIG.finalCorridorRadius), scaled the same way.
+    const editorCorridorRadiusPx = Math.max(1, Math.round(24 * 0.5 / safeEditorScale));
+    const finalCorridorRadiusPx = Math.max(1, Math.round(30 * 0.5 / safeEditorScale));
     return {
         mapScale: safeMapScale,
         metresPerMapUnit,
@@ -92,6 +101,9 @@ export function maskScaleForMap(mapScale = REFERENCE_MAP_SCALE, editorScale = 1)
             // unchanged SVG stroke used by infinite_play.
             barrierWidthPx,
             barrierClearNodeDistPx: barrierWidthPx,
+            corridorRadius: editorCorridorRadiusPx,
+            finalCorridorRadius: finalCorridorRadiusPx,
+            passageCorridorRadius: editorCorridorRadiusPx,
         },
     };
 }
@@ -232,6 +244,7 @@ export class MaskSceneSource {
         this._msgId = 1;
         this._pendingPairs = new Map();  // msgId → {resolve, reject, timer}
         this.buffer = [];          // validated scenes ready to serve
+        this._sceneWaiters = [];   // FIFO takeScene() resolvers awaiting a scene
         this._inFlight = 0;        // outstanding generatePair requests
         this._refillScheduled = false;
         this._destroyed = false;
@@ -265,13 +278,17 @@ export class MaskSceneSource {
             console.warn('[mask-source] worker error:', e.message || e);
         });
 
-        const [binBuffer, mask, passageDocument] = await Promise.all([
+        const [binBuffer, mask, pathingConfig] = await Promise.all([
             fetchArrayBuffer(`/editor/navgraph/${this.fileId}/`),
             decodeMaskGreyscale(`/editor/mask/${this.fileId}/`),
-            fetchJson(`/editor/level-passages/${this.fileId}/`),
+            fetchJson(`/editor/infinity-pathing-config/${this.fileId}/`),
         ]);
         this.width = mask.width;
         this.height = mask.height;
+        if (Number(pathingConfig.width) !== mask.width
+                || Number(pathingConfig.height) !== mask.height) {
+            throw new Error('pathing config and mask dimensions differ');
+        }
 
         const ackPromise = new Promise((resolve, reject) => {
             this._navAck = { resolve, reject };
@@ -288,11 +305,23 @@ export class MaskSceneSource {
             width: mask.width,
             height: mask.height,
             config: this.scale.navConfig,
-            levelPassages: passageDocument.items,
+            levelPassages: pathingConfig.level_passages,
+            region: pathingConfig.region,
+            regionRevision: pathingConfig.region_revision,
+            editorScale: this.editorScale,
+            mapScaleDenominator: this.mapScale,
         }, [binBuffer, mask.greys.buffer]);
 
         const ack = await ackPromise;
+        this.navgraphVersion = ack.version;
         this.passageRevision = ack.passageRevision || null;
+        this.regionRevision = ack.regionRevision || null;
+        const playWrap = document.getElementById('play-wrap');
+        if (playWrap && Number.isInteger(ack.version)) {
+            // Invisible integration diagnostic used by browser/e2e checks. Its
+            // absence also distinguishes a fallback city scene from mask mode.
+            playWrap.dataset.navgraphVersion = String(ack.version);
+        }
         // Kick off prefetch immediately so the buffer is warm before first take.
         this._scheduleRefill();
         return ack;
@@ -305,10 +334,12 @@ export class MaskSceneSource {
             if (!this._navAck) return;
             if (msg.error) this._navAck.reject(new Error(msg.error));
             else this._navAck.resolve({
+                version: msg.version,
                 nodes: msg.nodes,
                 edges: msg.edges,
                 sampleCells: msg.sampleCells,
                 passageRevision: msg.passageRevision || null,
+                regionRevision: msg.regionRevision || null,
             });
             this._navAck = null;
             return;
@@ -340,6 +371,7 @@ export class MaskSceneSource {
             msgId,
             mapId: this.mapId,
             passageRevision: this.passageRevision,
+            regionRevision: this.regionRevision,
         });
         return promise.then((msg) => {
             const elapsed = performance.now() - started;
@@ -371,14 +403,20 @@ export class MaskSceneSource {
                 .then((pairMsg) => {
                     if (this._destroyed) return;
                     if (pairMsg.error) {
+                        // A worker-side reject (revision mismatch, exhausted
+                        // attempts, ...) can return instantly. Retry with a new
+                        // pair, but through the same backoff as transport
+                        // failures so a persistent error never hot-loops the
+                        // worker at full CPU.
                         console.warn('[mask-source] pair rejected:', pairMsg.error);
-                    } else {
-                        const scene = this._wrapPair(pairMsg);
-                        if (scene) {
-                            this.buffer.push(scene);
-                            const waiter = this._sceneWaiter;
-                            if (waiter) { this._sceneWaiter = null; waiter(this.buffer.shift()); }
-                        }
+                        setTimeout(() => this._scheduleRefill(), 300);
+                        return;
+                    }
+                    const scene = this._wrapPair(pairMsg);
+                    if (scene) {
+                        this.buffer.push(scene);
+                        const waiter = this._sceneWaiters.shift();
+                        if (waiter) waiter.resolve(this.buffer.shift());
                     }
                     this._scheduleRefill();
                 })
@@ -436,13 +474,17 @@ export class MaskSceneSource {
             return scene;
         }
         this.metrics.starved++;
-        // Buffer empty (first take or a burst) — wait for the next produced scene.
+        // Buffer empty (first take or a burst) — wait for the next produced
+        // scene. Waiters queue FIFO so concurrent takeScene calls each get a
+        // scene instead of overwriting one another's resolver.
         this._scheduleRefill();
         return new Promise((resolve, reject) => {
-            this._sceneWaiter = resolve;
+            const waiter = { resolve };
+            this._sceneWaiters.push(waiter);
             setTimeout(() => {
-                if (this._sceneWaiter === resolve) {
-                    this._sceneWaiter = null;
+                const index = this._sceneWaiters.indexOf(waiter);
+                if (index !== -1) {
+                    this._sceneWaiters.splice(index, 1);
                     reject(new Error('no mask scene available (buffer starved)'));
                 }
             }, PAIR_TIMEOUT_MS);

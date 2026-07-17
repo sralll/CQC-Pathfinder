@@ -37,14 +37,6 @@ class Profile(models.Model):
         return self.user.username
 
 
-class Device(models.Model):
-    team = models.OneToOneField(Team, null=True, blank=True, on_delete=models.CASCADE, related_name='device')
-    mobile = models.PositiveIntegerField(default=0)
-    desktop = models.PositiveIntegerField(default=0)
-
-    def __str__(self):
-        return f"{self.team.name} - Mobile: {self.mobile}, Desktop: {self.desktop}"
-    
 class ForumThread(models.Model):
     """A discussion topic on the feedback forum."""
     author = models.ForeignKey('auth.User', on_delete=models.SET_NULL, null=True, blank=True,

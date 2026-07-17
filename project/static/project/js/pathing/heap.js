@@ -10,44 +10,45 @@ export class MinHeap {
     }
     get size() { return this._ps.length; }
     push(priority, value) {
-        this._ps.push(priority);
-        this._vs.push(value);
-        this._swim(this._ps.length - 1);
-    }
-    pop() {
-        const lastIdx = this._ps.length - 1;
-        const v = this._vs[0];
-        if (lastIdx > 0) {
-            this._ps[0] = this._ps[lastIdx];
-            this._vs[0] = this._vs[lastIdx];
-        }
-        this._ps.pop();
-        this._vs.pop();
-        if (this._ps.length > 0) this._sink(0);
-        return v;
-    }
-    _swim(i) {
         const ps = this._ps, vs = this._vs;
+        let i = ps.length;
+        ps.push(priority);
+        vs.push(value);
+        // Move the hole upward and write the new entry once. This has the
+        // exact comparison/tie behaviour of the former swap loop (`<=` keeps
+        // an equal-priority parent above the new entry), with fewer array
+        // reads and writes on the hot A*/Theta* open-list path.
         while (i > 0) {
             const parent = (i - 1) >> 1;
-            if (ps[parent] <= ps[i]) break;
-            [ps[parent], ps[i]] = [ps[i], ps[parent]];
-            [vs[parent], vs[i]] = [vs[i], vs[parent]];
+            if (ps[parent] <= priority) break;
+            ps[i] = ps[parent];
+            vs[i] = vs[parent];
             i = parent;
         }
+        ps[i] = priority;
+        vs[i] = value;
     }
-    _sink(i) {
+    pop() {
         const ps = this._ps, vs = this._vs;
+        const rootValue = vs[0];
+        const lastPriority = ps.pop();
+        const lastValue = vs.pop();
         const n = ps.length;
-        while (true) {
-            const l = 2 * i + 1, r = 2 * i + 2;
-            let smallest = i;
-            if (l < n && ps[l] < ps[smallest]) smallest = l;
-            if (r < n && ps[r] < ps[smallest]) smallest = r;
-            if (smallest === i) break;
-            [ps[smallest], ps[i]] = [ps[i], ps[smallest]];
-            [vs[smallest], vs[i]] = [vs[i], vs[smallest]];
-            i = smallest;
+        if (n === 0) return rootValue;
+
+        let i = 0;
+        const half = n >> 1;
+        while (i < half) {
+            let child = i * 2 + 1;
+            const right = child + 1;
+            if (right < n && ps[right] < ps[child]) child = right;
+            if (lastPriority <= ps[child]) break;
+            ps[i] = ps[child];
+            vs[i] = vs[child];
+            i = child;
         }
+        ps[i] = lastPriority;
+        vs[i] = lastValue;
+        return rootValue;
     }
 }

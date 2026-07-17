@@ -2184,7 +2184,6 @@ function buildMaskScene(pair) {
             workerMs: pair.meta?.workerMs ?? null,
             rejectionCounts: pair.meta?.rejectionCounts || {},
             refineMode: pair.meta?.refineMode ?? null,
-            refineFallback: pair.meta?.refineFallback ?? 0,
             refine: pair.meta?.refine || [],
         },
     };

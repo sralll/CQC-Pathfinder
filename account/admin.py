@@ -2,7 +2,7 @@ from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin, GroupAdmin
 from django.contrib.auth.models import User, Group
 from django.contrib.auth.forms import UserCreationForm
-from .models import Role, Team, Profile, Device, ForumThread, ForumComment
+from .models import Role, Team, Profile, ForumThread, ForumComment
 from .admin_access import StaffHiddenAdmin
 
 admin.site.site_header = 'CQC Pathfinder Admin'
@@ -11,7 +11,6 @@ admin.site.index_title = 'Administration'
 # ---------------------------------------------------------------------------
 # Staff (non-superuser) admin access matrix. Superusers see/do everything.
 # Non-superuser staff are limited to, and scoped to their own active_team:
-#   account.Device  — view only
 #   auth.User       — add / change / delete
 #   project.File    — full        (see project/admin.py)
 #   project.Label   — full        (see project/admin.py)
@@ -137,33 +136,6 @@ class TeamAdmin(StaffHiddenAdmin, admin.ModelAdmin):
     list_display = ("name", "shared_pool")
     list_filter = ("shared_pool",)
 
-
-# --- Device admin ---
-@admin.register(Device)
-class DeviceAdmin(admin.ModelAdmin):
-    list_display = ('team', 'mobile', 'desktop')
-
-    def get_queryset(self, request):
-        qs = super().get_queryset(request)
-        if request.user.is_superuser:
-            return qs
-        try:
-            active_team = request.user.profile.active_team
-            return qs.filter(team=active_team)
-        except Profile.DoesNotExist:
-            return qs.none()
-
-    # Staff: view-only, scoped to their active_team. Superuser: full access.
-    def has_module_permission(self, request):
-        return True
-    def has_view_permission(self, request, obj=None):
-        return True
-    def has_add_permission(self, request):
-        return request.user.is_superuser
-    def has_change_permission(self, request, obj=None):
-        return request.user.is_superuser
-    def has_delete_permission(self, request, obj=None):
-        return request.user.is_superuser
 
 # --- Forum admin (superuser-only, for moderation) ---
 class ForumCommentInline(admin.TabularInline):

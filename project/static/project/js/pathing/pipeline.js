@@ -3,11 +3,12 @@
 
 import {
     applyBlockedTerrain, extractSubgrid, snapToFree,
-    corridorMask, applyCorridor, drawRouteMask,
+    corridorMask, applyCorridor, drawRouteMask, stampBarrierLine,
 } from './preprocess.js';
 import { astar } from './astar.js';
 import { simplifyAStarSameTerrainPath, simplifyThetaPath } from './simplify.js';
 import { guidedThetaStar } from './theta_star.js';
+import { areConnected8 } from './labels.js';
 
 // Direct port of the retired server route finder.
 // Constants match the old preprocessing and theta* defaults so
@@ -52,7 +53,10 @@ function log(prefix, msg) {
  * @param {string} logPrefix               console prefix, e.g. "theta-client"
  * @returns {{path:Array<number>|null, timings:Object, error?:string}}
  */
-export function runPipeline(grid, labels, w, h, startGrid, zielGrid, wasCached, logPrefix, mapScale = null, routesGrid = []) {
+export function runPipeline(
+    grid, labels, w, h, startGrid, zielGrid, wasCached, logPrefix,
+    mapScale = null, routesGrid = [], barriers = [], barrierWidthPx = 7,
+) {
     const timings = {};
     const tTotal = nowMs();
     const initialMargin = scaledPx(INITIAL_MARGIN_BASE, mapScale);
@@ -99,12 +103,25 @@ export function runPipeline(grid, labels, w, h, startGrid, zielGrid, wasCached, 
         return out;
     }
 
+    function stampBarriers(subgrid, sw, sh, offsetX, offsetY) {
+        for (const barrier of barriers || []) {
+            if ((barrier.surface || 'base') !== 'base') continue;
+            stampBarrierLine(
+                subgrid, sw, sh,
+                barrier.ax - offsetX, barrier.ay - offsetY,
+                barrier.bx - offsetX, barrier.by - offsetY,
+                barrierWidthPx,
+            );
+        }
+    }
+
     // 3. Margin-growth subgrid + A*
     let aStarPath = null;
     let sub = null;
     let margin = initialMargin;
     let aStarTotal = 0;
     let routeMaskTotal = 0;
+    let blockedConnectivityTotal = 0;
     const aStarScratch = {};
     while (margin <= maxMargin) {
         const tA = nowMs();
@@ -115,6 +132,11 @@ export function runPipeline(grid, labels, w, h, startGrid, zielGrid, wasCached, 
             if (routesSub.length) {
                 sub.subgrid = drawRouteMask(sub.subgrid, sub.sw, sub.sh, routesSub, sub.startSub, sub.zielSub);
             }
+            routeMaskTotal += nowMs() - tR;
+        }
+        if (barriers.length) {
+            const tR = nowMs();
+            stampBarriers(sub.subgrid, sub.sw, sub.sh, sub.offsetX, sub.offsetY);
             routeMaskTotal += nowMs() - tR;
         }
         const startSnap = snapToFree(sub.subgrid, sub.sw, sub.sh, sub.startSub.x, sub.startSub.y);
@@ -134,11 +156,69 @@ export function runPipeline(grid, labels, w, h, startGrid, zielGrid, wasCached, 
             log(logPrefix, `A* OK at margin=${margin}, subgrid=(${sub.sh}, ${sub.sw}), pts=${aStarPath.length / 2} (${Math.round(dt)}ms)`);
             break;
         }
+
+        // Alternate-route searches can be genuinely disconnected after the
+        // accepted route(s) are stamped into the grid. The legacy loop would
+        // then repeat A* at every larger margin even though no route exists in
+        // the largest allowed domain. After the first miss, prove that case
+        // once with an 8-connected component check at maxMargin. If the two
+        // snapped endpoints are disconnected there, every smaller domain is a
+        // subset and the normal margin-growth loop is guaranteed to exhaust.
+        // Connected cases continue unchanged, preserving the editor's exact
+        // smallest-successful-margin route choice.
+        if ((routesGrid.length || barriers.length) && margin === initialMargin && maxMargin > margin) {
+            const tConnectivity = nowMs();
+            const maxSub = extractSubgrid(grid, w, h, startGrid, zielGrid, maxMargin);
+            const maxRoutesSub = routesForSubgrid(
+                routesGrid, maxSub.offsetX, maxSub.offsetY,
+            );
+            if (maxRoutesSub.length) {
+                const tR = nowMs();
+                maxSub.subgrid = drawRouteMask(
+                    maxSub.subgrid, maxSub.sw, maxSub.sh,
+                    maxRoutesSub, maxSub.startSub, maxSub.zielSub,
+                );
+                routeMaskTotal += nowMs() - tR;
+            }
+            if (barriers.length) {
+                const tR = nowMs();
+                stampBarriers(
+                    maxSub.subgrid, maxSub.sw, maxSub.sh,
+                    maxSub.offsetX, maxSub.offsetY,
+                );
+                routeMaskTotal += nowMs() - tR;
+            }
+            const maxStartSnap = snapToFree(
+                maxSub.subgrid, maxSub.sw, maxSub.sh,
+                maxSub.startSub.x, maxSub.startSub.y,
+            );
+            const maxZielSnap = snapToFree(
+                maxSub.subgrid, maxSub.sw, maxSub.sh,
+                maxSub.zielSub.x, maxSub.zielSub.y,
+            );
+            let connected = false;
+            if (maxStartSnap && maxZielSnap) {
+                connected = areConnected8(
+                    maxSub.subgrid, maxSub.sw, maxSub.sh,
+                    maxStartSnap, maxZielSnap, true,
+                );
+            }
+            blockedConnectivityTotal += nowMs() - tConnectivity;
+            if (!connected) {
+                timings.a_star = aStarTotal;
+                timings.route_mask = routeMaskTotal;
+                timings.blocked_connectivity = blockedConnectivityTotal;
+                timings.total = nowMs() - tTotal;
+                log(logPrefix, `A* alternate disconnected at max margin (${Math.round(blockedConnectivityTotal)}ms)`);
+                return { path: null, timings, error: 'A* exhausted margin' };
+            }
+        }
         log(logPrefix, `A* no path at margin=${margin} (${Math.round(dt)}ms)`);
         margin += marginStep;
     }
     timings.a_star = aStarTotal;
     timings.route_mask = routeMaskTotal;
+    timings.blocked_connectivity = blockedConnectivityTotal;
     if (routeMaskTotal > 0) {
         log(logPrefix, `route mask on subgrid: ${Math.round(routeMaskTotal)}ms`);
     }

@@ -792,6 +792,9 @@ msgstr "Cette carte ne possède pas de navgraph à jour. Reconstruis-le dans l�
 msgid "This passage geometry is not valid."
 msgstr "La géométrie de ce passage n'est pas valide."
 
+msgid "This shared file is read-only"
+msgstr "Ce fichier partagé est en lecture seule"
+
 msgid "Time"
 msgstr "Temps"
 

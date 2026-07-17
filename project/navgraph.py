@@ -1,11 +1,10 @@
 """Navgraph builder — free-space skeleton graph over a terrain mask.
 
 This module turns a terrain-class mask PNG (as produced by ``project/UNet.py``)
-into a compact, weighted navigation graph plus coarse sampling metadata. The
-graph replaces exactly one stage of the client theta* pipeline: the slow
-margin-growth full-map A*. Downstream stages (corridor + guided theta*) still
-run on the *true* full-resolution mask, so nothing the graph approximates can
-produce an illegal route — the graph only proposes waypoint chains.
+into a compact weighted navigation graph plus endpoint-sampling metadata.
+Production play uses graph A* to propose route alternatives, then runs the
+full-resolution corridor and Theta* stages on the true mask for the selected
+two routes. Pixel-grid A* remains the benchmark oracle, not a production stage.
 
 Terrain / cost model
 --------------------
@@ -67,15 +66,17 @@ every edge-building path. Automatic/legacy builds retain the global topology.
 
 Artifact contents
 -----------------
-``build_navgraph()`` returns a dict; ``save_navgraph()`` writes two files next to
-the mask:
+``build_navgraph()`` returns a dict. ``save_navgraph()`` always writes the
+served binary and can optionally write the full debug artifact next to the
+mask:
 
-* ``<mask>.navgraph.npz`` — full arrays for Python/debug tooling.
+* ``<mask>.navgraph.npz`` — optional full arrays for Python/debug tooling.
 * ``<mask>.navgraph.bin`` — compact little-endian binary for the JS worker.
 
-Passage topology and compact grids (v4)
----------------------------------------
-The artifact is a *typed* graph. Nodes ``[0, base_node_count)`` are ordinary base
+Compact served graph and sampling metadata (v6)
+-----------------------------------------------
+The served ``.bin`` and optional debug ``.npz`` contain a *typed* graph. Nodes
+``[0, base_node_count)`` are ordinary base
 nodes; nodes ``[base_node_count, N)`` are protected passage-chain nodes, grouped
 by passage in canonical passage-id order (``passage_node_start`` / ``_count``).
 Every edge carries a ``kind`` — ``0`` base, ``1`` passage (a centreline-chain
@@ -84,7 +85,12 @@ transition edges, the owning passage ordinal (``-1`` for base edges). A
 ``passage_revision`` string (canonical over the normalized passage document plus
 mask dimensions) lets a reader reject an artifact whose passages no longer match
 the served ``File.level_passages``. A base-only
-build is a valid v4 artifact with ``base_node_count == N`` and zero passages.
+build has ``base_node_count == N`` and zero passages.
+
+The binary stores compact node/edge topology, the exact preclassified endpoint
+cell set, and the polygon hitzone. Coordinates and node indices use uint16 when
+possible; endpoint and hitzone grids are bit-packed. Debug-only coarse rasters
+and component labels remain exclusive to the optional ``.npz``.
 
 Array keys (npz):
     nodes         (N,2) int32   full-res (x, y) per node (base then passage)
@@ -99,12 +105,14 @@ Array keys (npz):
                                       (NPZ/debug metadata; not duplicated in .bin)
     base_node_count     int32   count of base nodes; passage nodes follow
     passage_revision    str     canonical passage/mask revision (see passage_revision)
+    region_revision     str     canonical polygon/mask revision (empty without polygon)
     min_cost_per_px    float32  cheapest per-pixel step cost = 255 - max value
     mask_shape    (2,)  int32   (height, width) of the full-res mask
     version             int32   NAVGRAPH_VERSION
     coarse_scale        int32   sampling grid downsample factor (== SAMPLE_DS)
     coarse_origin (2,)  int32   full-res (x,y) origin of cropped coarse grids
     coarse_minval (h,w) uint8   ÷SAMPLE_DS block-min terrain value (passability)
+    coarse_maxval (h,w) uint8   ÷SAMPLE_DS block-max terrain value
     coarse_clear  (h,w) uint8   ÷SAMPLE_DS block-max clearance (px, capped 255)
     coarse_labels (h,w) uint8   dominant-component eligibility (1 = eligible)
     hitzone_scale       int32   hit-zone grid downsample factor (== HITZONE_DS)
@@ -115,44 +123,42 @@ Array keys (npz):
 
     offset  type            field
     0       char[4]         magic "NVG1"
-    4       uint32          version  (== 4)
+    4       uint32          version  (== 6)
     8       int32           mask height H
     12      int32           mask width  W
     16      float32         min_cost_per_px
-    20      uint32          N  (node count: base + passage)
-    24      uint32          E  (edge count: base + passage + transition)
+    20      uint32          N  (node count)
+    24      uint32          E  (edge count)
     28      int32           coarse_scale  (SAMPLE_DS)
     32      int32           coarse height  ch
     36      int32           coarse width   cw
     40      int32           hitzone_scale  (HITZONE_DS)
     44      int32           hitzone height hh
     48      int32           hitzone width  hw
-    52      uint32          base_node_count  (nodes [0, base_node_count) are base)
+    52      uint32          base_node_count
     56      uint32          P  (passage count)
-    60      uint32          rev_len  (UTF-8 byte length of passage_revision)
+    60      uint32          passage_rev_len (UTF-8 byte length)
     64      int32           coarse_origin_x (full-res px)
     68      int32           coarse_origin_y (full-res px)
-    72      char[rev_len]   passage_revision (ASCII)
-    ...     int32[N*2]      nodes, row-major (x0,y0, x1,y1, ...)
-    ...     int32[E*2]      edges (u0,v0, u1,v1, ...)
-    ...     float32[E]      weights
-    ...     int32[N]        components
-    ...     uint8[E]        edge_kinds
-    ...     int32[E]        edge_passage  (owning passage ordinal, -1 for base)
-    ...     int32[P]        passage_node_start
-    ...     int32[P]        passage_node_count
-    ...     uint8[ch*cw]    coarse_minval  (row-major)
-    ...     uint8[ch*cw]    coarse_clear   (row-major)
-    ...     uint8[ch*cw]    coarse_labels eligibility mask (row-major)
-    ...     uint8[hh*hw]    coarse_hitzone (row-major)
+    72      uint32          region_rev_len
+    76      uint32          flags (bit0 coord32, bit1 index32)
+    80      char[passage_rev_len] passage_revision (ASCII)
+    ...     char[region_rev_len]  region_revision (ASCII; empty without polygon)
+    ...     uint16/uint32[N*2] nodes
+    ...     uint16/uint32[E*2] edges
+    ...     float32[E] weights
+    ...     uint8[E] edge kinds
+    ...     int32[E] edge passage ordinals
+    ...     uint16/uint32[P] passage node starts
+    ...     uint16/uint32[P] passage node counts
+    ...     uint8[ceil(ch*cw/8)] endpoint-sampleable cell bitset
+    ...     uint8[ceil(hh*hw/8)] polygon hitzone bitset
 
-Everything after the ``72 + rev_len`` header is derivable from N, E, P, ch, cw,
-hh, hw, so every reader can validate the exact byte length.
+The header counts, dimensions, and flags determine the exact payload length, so
+every reader rejects truncated or overlong artifacts.
 
-A legacy v2 artifact (fixed 52-byte header, no passage section) remains readable
-*only* for a file whose canonical passage list is empty; a passage-bearing file
-must rebuild to v4. Typed v3 artifacts are parsed for migration but considered
-stale by the serving gate.
+Legacy v2-v5 artifacts remain readable for diagnostics and migration, but only
+v6 passes the production serving gate.
 """
 
 import heapq
@@ -178,13 +184,11 @@ except Exception:  # pragma: no cover - dependency guard
     _HAVE_SKIMAGE = False
 
 
-NAVGRAPH_VERSION = 4  # v4: typed passages + region-cropped coarse-grid origin
-NAVGRAPH_VERSION_LEGACY_TYPED = 3
+# v6: compact served graph + endpoint/polygon bitsets. Older artifact versions
+# are not read; they fail the currency gate and trigger a rebuild.
+NAVGRAPH_VERSION = 6
 NAVGRAPH_MAGIC = b"NVG1"
 
-# Legacy v2 (coarse_hitzone, base-only) is still parsed by readers for files that
-# have no passages; a passage-bearing file must rebuild to v3.
-NAVGRAPH_VERSION_LEGACY_BASE_ONLY = 2
 # Cap on the serialized passage-revision string (bounds check for every reader).
 NAVGRAPH_REVISION_MAX_LEN = 256
 
@@ -276,35 +280,35 @@ SKELETON_MAX_DS = 8
 # they are converted to coarse px (value/ds) at build time. This keeps node
 # density roughly constant in map units regardless of the adaptive factor.
 SPUR_MIN_LEN = 4             # prune skeleton branches shorter than this (coarse px)
-RESAMPLE_SPACING_PX = 48     # add a node every ~this many full-res px along a segment
+RESAMPLE_SPACING_PX = 36     # denser skeleton sampling for closer pixel-oracle parity
 # Obstacle-biased sampling.  The skeleton guarantees broad connectivity, while
 # these nodes give the graph enough local choices around walls/buildings and in
 # narrow gates.  Open space stays deliberately sparse; otherwise most of the
 # artifact budget is spent where a straight crossing already works well.
 OBSTACLE_CLEARANCE_PX = 16   # dense sampling at/below this distance from a wall
-BOTTLENECK_SPACING_PX = 16   # extra low-clearance skeleton anchors
+BOTTLENECK_SPACING_PX = 12   # extra low-clearance skeleton anchors
 CONTOUR_SIMPLIFY_PX = 8      # ignore smaller boundary wiggles/noise
 CONTOUR_MIN_LENGTH_PX = 32   # ignore tiny isolated obstacle specks
 CONTOUR_CORNER_ANGLE_DEG = 45  # minimum direction change worth a feature node
 CONTOUR_NODE_OFFSET_PX = 2   # stay close to the same obstacle side
-CONTOUR_SAMPLE_SPACING_PX = 24  # arc-length samples, never a global XY grid
+CONTOUR_SAMPLE_SPACING_PX = 18  # arc-length samples, never a global XY grid
 CONTOUR_SEGMENT_ANCHOR_MIN_PX = 16  # shorter simplified runs are noise/covered by ends
-CONTOUR_AREA_SPACING_PX = 32  # LOS-aware thinning radius along one contour run
+CONTOUR_AREA_SPACING_PX = 24  # LOS-aware thinning radius along one contour run
 CONTOUR_TINY_AREA_PX = 256  # compact isolated obstacles need no local roadmap
 CONTOUR_TINY_SPAN_PX = 20   # long/thin walls are never classified as tiny
 CONTOUR_TARGET_PX = 20_000_000  # ds=1 normally; at most a light ds=2 on huge maps
 CONTOUR_MAX_DS = 2
 NARROW_CENTERLINE_MERGE_PX = 12  # conservative: connectivity beats extra nodes
-NARROW_CENTERLINE_SAMPLE_PX = 8  # sample between sparse skeleton endpoints
+NARROW_CENTERLINE_SAMPLE_PX = 6  # sample between sparse skeleton endpoints
 # NARROW_ALLEY_REDUCTION: set this single flag to False to restore the previous
 # contour/bottleneck retention and ordinary k-NN behaviour in narrow alleys.
 NARROW_ALLEY_REDUCTION_ENABLED = True
 NARROW_BACKBONE_CLEARANCE_PX = 8  # only the tightest alleys become backbone-only
-NODE_DEDUPE_PX = 6           # merge only nearly coincident, mutually visible nodes
+NODE_DEDUPE_PX = 4           # retain the denser local roadmap while merging near duplicates
 NODE_DEDUPE_TERRAIN_DELTA = 16  # never merge a path node into nearby slow terrain
 NEAR_OBSTACLE_CLEARANCE_PX = 80  # denser lattice up to this clearance from obstacles
-LATTICE_SPACING_NEAR_PX = 32  # transition band between boundary and open space
-LATTICE_SPACING_FAR_PX = 64   # plaza/interior open-space lattice spacing
+LATTICE_SPACING_NEAR_PX = 24  # transition band between boundary and open space
+LATTICE_SPACING_FAR_PX = 48   # plaza/interior open-space lattice spacing
 
 # --- Edges -------------------------------------------------------------------
 EDGE_NEIGHBOR_SCAN_K = 32    # all of these bounded geometric neighbours are evaluated
@@ -343,7 +347,7 @@ EDGE_SKELETON_DETOUR = 6.0   # detour tolerance for skeleton backbone A*
 # Only non-topological open-lattice nodes are considered. A node is removable
 # when every route through it already has a short local witness path that avoids
 # it. No shortcut edge is invented, so client geometry remains honest.
-PRUNE_WITNESS_STRETCH = 1.03
+PRUNE_WITNESS_STRETCH = 1.01
 PRUNE_WITNESS_RADIUS_PX = 180
 PRUNE_MAX_DEGREE = 8
 
@@ -358,6 +362,8 @@ BRIDGE_TRIES = 4             # candidate main-node targets to try per fragment
 
 # --- Sampling metadata -------------------------------------------------------
 SAMPLE_DS = 4                # ÷4 sampling grids, matching the plan
+ENDPOINT_CLEARANCE_MIN_PX = 12
+ENDPOINT_TERRAIN_MIN_VALUE = 200
 
 
 # =============================================================================
@@ -538,38 +544,35 @@ def mask_dimensions(mask_path):
 
 
 def read_bin_header(bin_path):
-    """Cheaply read a ``.navgraph.bin`` header without loading its arrays.
+    """Cheaply read a v6 ``.navgraph.bin`` header without loading its arrays.
 
-    Returns ``{"version", "height", "width", "passage_revision"}`` or ``None``
-    when the file is missing, truncated, has a bad magic, or an out-of-range
-    revision length.  A legacy v2 artifact carries no baked revision, so its
-    ``passage_revision`` is ``None`` (see ``NAVGRAPH_VERSION_LEGACY_BASE_ONLY``).
+    Returns version, dimensions, passage revision, and the polygon-region
+    revision, or ``None`` when the file is missing, truncated, has a bad magic,
+    an unsupported (legacy) version, or an out-of-range revision length.
     Reading only the fixed header keeps the request/serving path off numpy.
     """
     try:
         with open(bin_path, "rb") as f:
-            head = f.read(72)
-            if len(head) < 52 or head[:4] != NAVGRAPH_MAGIC:
+            head = f.read(80)
+            if len(head) < 80 or head[:4] != NAVGRAPH_MAGIC:
                 return None
             (version,) = struct.unpack_from("<I", head, 4)
+            if version != NAVGRAPH_VERSION:
+                return None
             height, width = struct.unpack_from("<ii", head, 8)
-            if version == NAVGRAPH_VERSION_LEGACY_BASE_ONLY:
-                return {"version": version, "height": height,
-                        "width": width, "passage_revision": None}
-            if version not in (NAVGRAPH_VERSION_LEGACY_TYPED, NAVGRAPH_VERSION):
+            (passage_rev_len,) = struct.unpack_from("<I", head, 60)
+            (region_rev_len,) = struct.unpack_from("<I", head, 72)
+            if (passage_rev_len > NAVGRAPH_REVISION_MAX_LEN
+                    or region_rev_len > NAVGRAPH_REVISION_MAX_LEN):
                 return None
-            (rev_len,) = struct.unpack_from("<I", head, 60)
-            if rev_len > NAVGRAPH_REVISION_MAX_LEN:
-                return None
-            fixed = 72 if version == NAVGRAPH_VERSION else 64
-            if len(head) < fixed:
-                return None
-            f.seek(fixed)
-            rev_bytes = f.read(rev_len)
-        if len(rev_bytes) != rev_len:
+            passage_rev_bytes = f.read(passage_rev_len)
+            region_rev_bytes = f.read(region_rev_len)
+        if (len(passage_rev_bytes) != passage_rev_len
+                or len(region_rev_bytes) != region_rev_len):
             return None
         return {"version": version, "height": height, "width": width,
-                "passage_revision": rev_bytes.decode("ascii")}
+                "passage_revision": passage_rev_bytes.decode("ascii"),
+                "region_revision": region_rev_bytes.decode("ascii")}
     except (OSError, ValueError, UnicodeDecodeError):
         return None
 
@@ -578,11 +581,10 @@ def artifact_matches_passage_document(bin_path, level_passages,
                                       map_width, map_height):
     """True when the on-disk artifact is current for a passage document.
 
-    A current v4 artifact must carry the exact baked ``passage_revision`` for the
-    normalized document + mask dimensions.  A legacy v2 artifact is current
-    only for an empty passage document (the documented base-only compatibility
-    path).  Any corruption, unknown version, or invalid document is treated as
-    a non-match so a stale/broken artifact is never served.
+    A current artifact must carry the exact baked ``passage_revision`` for the
+    normalized document + mask dimensions.  Any corruption, legacy version, or
+    invalid document is treated as a non-match so a stale/broken artifact is
+    never served.
     """
     header = read_bin_header(bin_path)
     if header is None:
@@ -591,12 +593,6 @@ def artifact_matches_passage_document(bin_path, level_passages,
         from .services.passage_validation import normalize_level_passages
         document = normalize_level_passages(level_passages)
     except Exception:
-        return False
-    if header["version"] == NAVGRAPH_VERSION_LEGACY_BASE_ONLY:
-        return len(_passage_items(document)) == 0
-    # v3 remains readable for diagnostics/migration, but it contains the old
-    # full-map sampling grids and must never pass the current serving gate.
-    if header["version"] != NAVGRAPH_VERSION:
         return False
     return header["passage_revision"] == passage_revision(
         document, map_width, map_height)
@@ -2857,6 +2853,7 @@ def _sampling_grids(mask, dist_full, labels_full):
     """Build the ÷SAMPLE_DS coarse sampling grids.
 
     * ``coarse_minval`` — block-min terrain value (0 if any impassable in block).
+    * ``coarse_maxval`` — block-max terrain value (endpoint eligibility).
     * ``coarse_clear``  — block-max clearance (px, capped 255).
     * ``coarse_labels`` — free-space component id at the block's freest pixel.
     """
@@ -2867,6 +2864,7 @@ def _sampling_grids(mask, dist_full, labels_full):
 
     mv = mask[:hh, :ww].reshape(ch, ds, cw, ds)
     coarse_minval = mv.min(axis=(1, 3)).astype(np.uint8)
+    coarse_maxval = mv.max(axis=(1, 3)).astype(np.uint8)
 
     dv = dist_full[:hh, :ww].reshape(ch, ds, cw, ds)
     coarse_clear = np.clip(dv.max(axis=(1, 3)), 0, 255).astype(np.uint8)
@@ -2880,7 +2878,7 @@ def _sampling_grids(mask, dist_full, labels_full):
     coarse_labels = np.take_along_axis(lbl_flat, argmax[:, :, None], axis=2)[:, :, 0]
     # Blocks with no passable pixel get label 0 (== "not free space").
     coarse_labels[val_flat.max(axis=2) == IMPASSABLE] = 0
-    return coarse_minval, coarse_clear, coarse_labels.astype(np.int32)
+    return coarse_minval, coarse_maxval, coarse_clear, coarse_labels.astype(np.int32)
 
 
 def _apply_passage_topology(artifact, mask, passages, level_passages,
@@ -3670,7 +3668,8 @@ def build_navgraph(mask_path, region_polygon=None, level_passages=None,
 
     # 10. Sampling metadata.
     t = time.time()
-    coarse_minval, coarse_clear, coarse_labels = _sampling_grids(mask, dist_full, labels_full)
+    coarse_minval, coarse_maxval, coarse_clear, coarse_labels = _sampling_grids(
+        mask, dist_full, labels_full)
     coarse_origin = np.asarray([0, 0], dtype=np.int32)
     if has_polygon and prune_region and region_full is not None and region_full.any():
         region_y, region_x = np.where(region_full)
@@ -3679,6 +3678,7 @@ def build_navgraph(mask_path, region_polygon=None, level_passages=None,
         gy1 = min(coarse_minval.shape[0], int(region_y.max()) // SAMPLE_DS + 1)
         gx1 = min(coarse_minval.shape[1], int(region_x.max()) // SAMPLE_DS + 1)
         coarse_minval = coarse_minval[gy0:gy1, gx0:gx1].copy()
+        coarse_maxval = coarse_maxval[gy0:gy1, gx0:gx1].copy()
         coarse_clear = coarse_clear[gy0:gy1, gx0:gx1].copy()
         coarse_labels = coarse_labels[gy0:gy1, gx0:gx1].copy()
         coarse_origin = np.asarray(
@@ -3759,10 +3759,12 @@ def build_navgraph(mask_path, region_polygon=None, level_passages=None,
         "coarse_scale": np.int32(SAMPLE_DS),
         "coarse_origin": coarse_origin,
         "coarse_minval": coarse_minval,
+        "coarse_maxval": coarse_maxval,
         "coarse_clear": coarse_clear,
         "coarse_labels": coarse_labels,
         "hitzone_scale": np.int32(hz_ds),
         "coarse_hitzone": hz_sample.astype(np.uint8),
+        "region_revision": stats["region_revision"] or "",
         "stats": stats,
     }
     if build_passages:
@@ -3818,9 +3820,9 @@ def build_navgraph(mask_path, region_polygon=None, level_passages=None,
     stats["ignored_passages_outside_region"] = len(ignored_passage_ids)
     stats["ignored_passage_ids_outside_region"] = ignored_passage_ids
 
-    # v4 stores the only coarse-label fact consumed at runtime: whether a cell
-    # belongs to the dominant sample component. This is lossless for endpoint
-    # sampling and cuts the former int32 grid to one byte per cell.
+    # Compact the only coarse-label fact needed to derive the served endpoint
+    # bitset: whether a cell belongs to the dominant sample component. The full
+    # debug NPZ also benefits from replacing the former int32 label grid.
     labels = np.asarray(artifact["coarse_labels"])
     nonzero = labels[labels > 0]
     if nonzero.size:
@@ -3970,7 +3972,7 @@ def _main_component_connectivity(nodes_arr, edges_arr, components, main_comp):
 # =============================================================================
 
 def _attach_passage_topology(artifact, level_passages, map_width, map_height):
-    """Fill the v3 typed-passage fields on ``artifact`` in place.
+    """Fill legacy typed-passage fields on ``artifact`` in place.
 
     A base-only artifact gets the degenerate topology (all edges ``base``, no passages,
     ``base_node_count == N``). Fields already present (e.g. from a future passage
@@ -4066,14 +4068,16 @@ def _attach_passage_topology(artifact, level_passages, map_width, map_height):
     return artifact
 
 
-def save_navgraph(artifact, mask_path):
-    """Write ``.navgraph.npz`` and ``.navgraph.bin`` next to ``mask_path``.
+def save_navgraph(artifact, mask_path, *, include_npz=True):
+    """Write the served ``.bin`` and optionally the debug ``.npz``.
 
     Both files are written to temporary siblings first and then atomically
     ``os.replace``-d into place, so a crashed/interrupted build never leaves a
     half-written binary that a reader or the serving path could pick up.
 
-    Returns ``(npz_path, bin_path)``.
+    ``include_npz=False`` is the production path: the full graph is debug/build
+    data and is removed after the authoritative served binary is installed.
+    Returns ``(npz_path_or_none, bin_path)``.
     """
     import tempfile
 
@@ -4091,18 +4095,26 @@ def save_navgraph(artifact, mask_path):
         # Pass an open handle (not a path) to ``savez_compressed`` so it writes
         # exactly where we point it — a bare path lacking ``.npz`` would get the
         # suffix appended, defeating the atomic rename.
-        fd, tmp_npz = tempfile.mkstemp(prefix=".navgraph-", suffix=".npztmp", dir=out_dir)
-        with os.fdopen(fd, "wb") as handle:
-            _save_npz(handle, artifact)
+        if include_npz:
+            fd, tmp_npz = tempfile.mkstemp(
+                prefix=".navgraph-", suffix=".npztmp", dir=out_dir)
+            with os.fdopen(fd, "wb") as handle:
+                _save_npz(handle, artifact)
 
         fd, tmp_bin = tempfile.mkstemp(prefix=".navgraph-", suffix=".bintmp", dir=out_dir)
         os.close(fd)
         _write_bin(tmp_bin, artifact)
 
-        os.replace(tmp_npz, npz_path)
-        tmp_npz = None
+        if include_npz:
+            os.replace(tmp_npz, npz_path)
+            tmp_npz = None
         os.replace(tmp_bin, bin_path)
         tmp_bin = None
+        if not include_npz:
+            try:
+                os.remove(npz_path)
+            except FileNotFoundError:
+                pass
     finally:
         for leftover in (tmp_npz, tmp_bin):
             if leftover and os.path.exists(leftover):
@@ -4110,7 +4122,7 @@ def save_navgraph(artifact, mask_path):
                     os.remove(leftover)
                 except OSError:
                     pass
-    return npz_path, bin_path
+    return (npz_path if include_npz else None), bin_path
 
 
 def _save_npz(npz_file, artifact):
@@ -4133,11 +4145,14 @@ def _save_npz(npz_file, artifact):
             "shadowed_base_edges", np.zeros((0, 2, 2), dtype=np.int32)),
         base_node_count=np.int32(artifact["base_node_count"]),
         passage_revision=artifact["passage_revision"],
+        region_revision=artifact.get(
+            "region_revision", artifact.get("stats", {}).get("region_revision") or ""),
         min_cost_per_px=artifact["min_cost_per_px"],
         mask_shape=artifact["mask_shape"],
         coarse_scale=artifact["coarse_scale"],
         coarse_origin=artifact.get("coarse_origin", np.zeros(2, dtype=np.int32)),
         coarse_minval=artifact["coarse_minval"],
+        coarse_maxval=artifact.get("coarse_maxval", artifact["coarse_minval"]),
         coarse_clear=artifact["coarse_clear"],
         coarse_labels=artifact["coarse_labels"],
         hitzone_scale=artifact["hitzone_scale"],
@@ -4147,62 +4162,108 @@ def _save_npz(npz_file, artifact):
 
 
 def _write_bin(bin_path, artifact):
-    """Serialize the compact little-endian v4 binary (see module docstring)."""
+    """Serialize the compact graph-backed little-endian v6 served binary.
+
+    Production play needs the graph itself.  Coordinates and edge endpoints use
+    16-bit integers whenever the map/node counts permit it; endpoint eligibility
+    and the polygon hitzone remain packed bitsets.  Debug-only coarse rasters and
+    component labels are not served.
+    """
     if "passage_revision" not in artifact:
         H0, W0 = int(artifact["mask_shape"][0]), int(artifact["mask_shape"][1])
         _attach_passage_topology(artifact, level_passages=None, map_width=W0, map_height=H0)
 
-    nodes = np.ascontiguousarray(artifact["nodes"], dtype="<i4")
-    edges = np.ascontiguousarray(artifact["edges"], dtype="<i4")
+    nodes_source = np.asarray(artifact["nodes"])
+    edges_source = np.asarray(artifact["edges"])
     weights = np.ascontiguousarray(artifact["weights"], dtype="<f4")
-    components = np.ascontiguousarray(artifact["components"], dtype="<i4")
     edge_kinds = np.ascontiguousarray(artifact["edge_kinds"], dtype="<u1")
     edge_passage = np.ascontiguousarray(artifact["edge_passage"], dtype="<i4")
-    passage_node_start = np.ascontiguousarray(artifact["passage_node_start"], dtype="<i4")
-    passage_node_count = np.ascontiguousarray(artifact["passage_node_count"], dtype="<i4")
+    passage_node_start_source = np.asarray(artifact["passage_node_start"])
+    passage_node_count_source = np.asarray(artifact["passage_node_count"])
     coarse_minval = np.ascontiguousarray(artifact["coarse_minval"], dtype="<u1")
+    coarse_maxval = np.ascontiguousarray(
+        artifact.get("coarse_maxval", artifact["coarse_minval"]), dtype="<u1")
     coarse_clear = np.ascontiguousarray(artifact["coarse_clear"], dtype="<u1")
     coarse_labels = np.ascontiguousarray(artifact["coarse_labels"], dtype="<u1")
     coarse_hitzone = np.ascontiguousarray(artifact["coarse_hitzone"], dtype="<u1")
 
     H, W = int(artifact["mask_shape"][0]), int(artifact["mask_shape"][1])
-    N = nodes.shape[0]
-    E = edges.shape[0]
+    N = int(nodes_source.shape[0])
+    E = int(edges_source.shape[0])
+    base_node_count = int(artifact["base_node_count"])
+    P = int(passage_node_start_source.shape[0])
+    node32 = W > 65535 or H > 65535
+    index32 = N > 65535
+    nodes = np.ascontiguousarray(nodes_source, dtype="<u4" if node32 else "<u2")
+    edges = np.ascontiguousarray(edges_source, dtype="<u4" if index32 else "<u2")
+    passage_node_start = np.ascontiguousarray(
+        passage_node_start_source, dtype="<u4" if index32 else "<u2")
+    passage_node_count = np.ascontiguousarray(
+        passage_node_count_source, dtype="<u4" if index32 else "<u2")
     ch, cw = coarse_minval.shape
     hh_, hw_ = coarse_hitzone.shape
-    base_node_count = int(artifact["base_node_count"])
-    P = int(passage_node_start.shape[0])
     rev_bytes = str(artifact["passage_revision"]).encode("ascii")
+    region_rev_bytes = str(artifact.get(
+        "region_revision", artifact.get("stats", {}).get("region_revision") or ""
+    )).encode("ascii")
     coarse_origin = np.asarray(
         artifact.get("coarse_origin", (0, 0)), dtype="<i4").reshape(2)
     if len(rev_bytes) > NAVGRAPH_REVISION_MAX_LEN:
         raise ValueError(
             f"passage_revision too long ({len(rev_bytes)} > {NAVGRAPH_REVISION_MAX_LEN})")
+    if len(region_rev_bytes) > NAVGRAPH_REVISION_MAX_LEN:
+        raise ValueError(
+            f"region_revision too long ({len(region_rev_bytes)} > {NAVGRAPH_REVISION_MAX_LEN})")
 
-    # Fixed 72-byte v4 header + revision string, then tightly packed arrays.
+    if int(artifact["version"]) != NAVGRAPH_VERSION:
+        raise ValueError(f"cannot write served navgraph version {artifact['version']}")
+
+    sampleable = (
+        (coarse_labels != 0)
+        & (coarse_clear >= ENDPOINT_CLEARANCE_MIN_PX)
+        & (coarse_maxval >= ENDPOINT_TERRAIN_MIN_VALUE)
+    )
+    coarse_scale = int(artifact["coarse_scale"])
+    hitzone_scale = int(artifact["hitzone_scale"])
+    xs = (int(coarse_origin[0]) + np.arange(cw) * coarse_scale) // hitzone_scale
+    ys = (int(coarse_origin[1]) + np.arange(ch) * coarse_scale) // hitzone_scale
+    valid_x = (xs >= 0) & (xs < hw_)
+    valid_y = (ys >= 0) & (ys < hh_)
+    hitzone_for_cells = np.zeros((ch, cw), dtype=bool)
+    if valid_x.any() and valid_y.any():
+        hitzone_for_cells[np.ix_(valid_y, valid_x)] = (
+            coarse_hitzone[np.ix_(ys[valid_y], xs[valid_x])] != 0)
+    sampleable &= hitzone_for_cells
+    sampleable_bits = np.packbits(
+        sampleable.reshape(-1), bitorder="little").astype("<u1", copy=False)
+    hitzone_bits = np.packbits(
+        (coarse_hitzone != 0).reshape(-1), bitorder="little").astype("<u1", copy=False)
+
+    # v6 flags: bit 0 = uint32 coordinates, bit 1 = uint32 node indices.
+    flags = (1 if node32 else 0) | (2 if index32 else 0)
     with open(bin_path, "wb") as f:
         f.write(NAVGRAPH_MAGIC)
         f.write(np.array([artifact["version"]], dtype="<u4").tobytes())
         f.write(np.array([H, W], dtype="<i4").tobytes())
         f.write(np.array([float(artifact["min_cost_per_px"])], dtype="<f4").tobytes())
         f.write(np.array([N, E], dtype="<u4").tobytes())
-        f.write(np.array([int(artifact["coarse_scale"]), ch, cw], dtype="<i4").tobytes())
-        f.write(np.array([int(artifact["hitzone_scale"]), hh_, hw_], dtype="<i4").tobytes())
-        f.write(np.array([base_node_count, P, len(rev_bytes)], dtype="<u4").tobytes())
+        f.write(np.array([coarse_scale, ch, cw], dtype="<i4").tobytes())
+        f.write(np.array([hitzone_scale, hh_, hw_], dtype="<i4").tobytes())
+        f.write(np.array(
+            [base_node_count, P, len(rev_bytes)], dtype="<u4").tobytes())
         f.write(coarse_origin.tobytes())
+        f.write(np.array([len(region_rev_bytes), flags], dtype="<u4").tobytes())
         f.write(rev_bytes)
+        f.write(region_rev_bytes)
         f.write(nodes.tobytes())
         f.write(edges.tobytes())
         f.write(weights.tobytes())
-        f.write(components.tobytes())
         f.write(edge_kinds.tobytes())
         f.write(edge_passage.tobytes())
         f.write(passage_node_start.tobytes())
         f.write(passage_node_count.tobytes())
-        f.write(coarse_minval.tobytes())
-        f.write(coarse_clear.tobytes())
-        f.write(coarse_labels.tobytes())
-        f.write(coarse_hitzone.tobytes())
+        f.write(sampleable_bits.tobytes())
+        f.write(hitzone_bits.tobytes())
 
 
 if __name__ == "__main__":  # pragma: no cover - manual smoke test

@@ -143,7 +143,6 @@ class EditorSettings(models.Model):
     )
     auto_jump = models.BooleanField(default=True)
     auto_obstacle = models.BooleanField(default=True)
-    autosave = models.BooleanField(default=False)
 
     def __str__(self):
         return f"{self.profile.user.username} - Editor Settings"

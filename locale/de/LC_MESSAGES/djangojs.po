@@ -792,6 +792,9 @@ msgstr "Diese Karte hat keinen aktuellen Navgraph. Baue ihn vor dem Routentest i
 msgid "This passage geometry is not valid."
 msgstr "Diese Passagengeometrie ist ungültig."
 
+msgid "This shared file is read-only"
+msgstr "Diese geteilte Datei ist schreibgeschützt"
+
 msgid "Time"
 msgstr "Zeit"
 

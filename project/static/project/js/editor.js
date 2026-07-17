@@ -196,7 +196,9 @@ function setReadOnly(isReadOnly, lockedByName, reason) {
         `;
         const msg = reason === 'published'
             ? gettext('This file is published')
-            : `${lockedByName || gettext('someone else')} ${gettext('is editing this file')}`;
+            : reason === 'shared'
+                ? gettext('This shared file is read-only')
+                : `${lockedByName || gettext('someone else')} ${gettext('is editing this file')}`;
         bar.innerHTML = `<x-icon name="lock" size="13px"></x-icon><span>${gettext('Read-only:')} ${msg}</span>`;
         document.body.appendChild(bar);
     }
@@ -2703,6 +2705,7 @@ const InfinityMaskPreview = (() => {
         img.onload = () => {
             if (token !== loadToken) return;
             setMaskDisplaySize(img);
+            window.RegionEditor?.onMapDimensionsChanged?.();
         };
         img.onerror = () => {
             if (token !== loadToken) return;
@@ -5274,7 +5277,7 @@ function initTouchInput() {
     aren't woken per frame. Vertices are stored in world coords internally.
 ========================================================= */
 const RegionEditor = (() => {
-    const HANDLE_R = 6;                 // vertex handle radius (screen px via non-scaling)
+    const HANDLE_R = 6;                 // vertex handle radius in world units
     const EDGE_INSERT_DIST = 10;        // world-unit tolerance to hit an edge
     let editing = false;
     let verts = [];                     // [{x,y}, ...] in WORLD coords, closed ring
@@ -5287,7 +5290,7 @@ const RegionEditor = (() => {
     // (or its infinity flags) after the editor has already switched projects.
     let projectGeneration = 0;
     // Persistent SVG nodes.
-    let gRoot = null, outline = null, draftLine = null, startCloseRing = null;
+    let gRoot = null, outsideShade = null, outline = null, draftLine = null, startCloseRing = null;
     const handlePool = [];              // reusable <circle> handles
 
     function m2w(p) { return { x: p[0] * PATHING_MASK_TRAIN_SCALE, y: p[1] * PATHING_MASK_TRAIN_SCALE }; }
@@ -5304,6 +5307,28 @@ const RegionEditor = (() => {
         return m2w([x, y]);
     }
 
+    function mapWorldBounds() {
+        const dimensions = MaskLayer.dimensions?.();
+        const maskImg = document.getElementById("infinity-mask-img");
+        const width = Number(dimensions?.width || maskImg?.naturalWidth);
+        const height = Number(dimensions?.height || maskImg?.naturalHeight);
+        if (!(width > 0) || !(height > 0)) return null;
+        return {
+            width: width * PATHING_MASK_TRAIN_SCALE,
+            height: height * PATHING_MASK_TRAIN_SCALE,
+        };
+    }
+
+    function outsidePath(points, bounds) {
+        if (!points.every(point => Number.isFinite(point.x) && Number.isFinite(point.y))) {
+            return null;
+        }
+        const hole = points.map((point, index) =>
+            `${index === 0 ? "M" : "L"}${point.x} ${point.y}`
+        ).join(" ");
+        return `M0 0H${bounds.width}V${bounds.height}H0Z ${hole}Z`;
+    }
+
     function ensureNodes() {
         if (gRoot && gRoot.isConnected) return;
         const layer = document.getElementById("ui-layer");
@@ -5314,12 +5339,19 @@ const RegionEditor = (() => {
         // with its root.
         handlePool.length = 0;
         gRoot = svgNode("g", { class: "region-overlay" });
+        outsideShade = svgNode("path", {
+            fill: "rgba(220,0,0,0.28)",
+            "fill-rule": "evenodd",
+            "clip-rule": "evenodd",
+            "pointer-events": "none",
+        });
         outline = svgNode("polygon", {
-            fill: "rgba(224,112,32,0.12)", stroke: "#e07020",
+            fill: "none", stroke: "#e07020",
             "stroke-width": "2", "vector-effect": "non-scaling-stroke",
             "stroke-linejoin": "round",
         });
         outline.style.cursor = "copy";      // clicking an edge inserts a vertex
+        gRoot.appendChild(outsideShade);
         gRoot.appendChild(outline);
         draftLine = svgNode("line", {
             stroke: "#e07020", "stroke-width": "2",
@@ -5328,7 +5360,7 @@ const RegionEditor = (() => {
         });
         startCloseRing = svgNode("circle", {
             fill: "none", stroke: "#e07020", "stroke-width": "1",
-            "stroke-dasharray": "3 2", "vector-effect": "non-scaling-stroke",
+            "stroke-dasharray": "3 2",
             "pointer-events": "none",
         });
         gRoot.appendChild(draftLine);
@@ -5340,7 +5372,7 @@ const RegionEditor = (() => {
         while (handlePool.length <= i) {
             const c = svgNode("circle", {
                 r: HANDLE_R, fill: "#fff", stroke: "#e07020",
-                "stroke-width": "2", "vector-effect": "non-scaling-stroke",
+                "stroke-width": "2",
             });
             c.style.cursor = "grab";
             c.dataset.regionHandle = handlePool.length;
@@ -5365,6 +5397,17 @@ const RegionEditor = (() => {
             hideNode(outline);
         }
 
+        const bounds = mapWorldBounds();
+        const shadePath = bounds && outlinePts.length >= 3
+            ? outsidePath(outlinePts, bounds)
+            : null;
+        if (shadePath) {
+            outsideShade.setAttribute("d", shadePath);
+            showNode(outsideShade);
+        } else {
+            hideNode(outsideShade);
+        }
+
         if (drawing && previewPt && verts.length === 1) {
             draftLine.setAttribute("x1", verts[0].x);
             draftLine.setAttribute("y1", verts[0].y);
@@ -5375,13 +5418,11 @@ const RegionEditor = (() => {
             hideNode(draftLine);
         }
 
-        // Adaptive handle size: keep ~HANDLE_R screen px regardless of zoom.
-        const r = HANDLE_R / (camera.zoom || 1);
         for (let i = 0; i < verts.length; i++) {
             const c = handleAt(i);
             c.setAttribute("cx", verts[i].x);
             c.setAttribute("cy", verts[i].y);
-            c.setAttribute("r", r);
+            c.setAttribute("r", HANDLE_R);
             showNode(c);
         }
         for (let i = verts.length; i < handlePool.length; i++) hideNode(handlePool[i]);
@@ -5389,7 +5430,7 @@ const RegionEditor = (() => {
         if (drawing && verts.length) {
             startCloseRing.setAttribute("cx", verts[0].x);
             startCloseRing.setAttribute("cy", verts[0].y);
-            startCloseRing.setAttribute("r", r * 1.8);
+            startCloseRing.setAttribute("r", HANDLE_R * 1.8);
             showNode(startCloseRing);
         } else {
             hideNode(startCloseRing);
@@ -5397,6 +5438,7 @@ const RegionEditor = (() => {
     }
 
     function clearRender() {
+        hideNode(outsideShade);
         hideNode(outline);
         hideNode(draftLine);
         hideNode(startCloseRing);
@@ -5700,11 +5742,13 @@ const RegionEditor = (() => {
     }
 
     function onCameraChanged() { if (editing) render(); }
+    function onMapDimensionsChanged() { if (editing) render(); }
 
     return {
         isActive, enter, exit,
         onMouseDown, onMouseMove, onMouseUp,
         onProjectChanged, onCameraChanged, deleteRegion,
+        onMapDimensionsChanged,
     };
 })();
 window.RegionEditor = RegionEditor;

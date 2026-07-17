@@ -1,10 +1,11 @@
-import traceback
+import logging
 from math import isfinite
 
 from django.contrib.auth.decorators import login_required
 from django.db.models import Count, Q, Prefetch
 from django.http import HttpResponseNotFound, JsonResponse
 from django.shortcuts import get_object_or_404, render
+from django.utils.translation import gettext as _
 from django.views.decorators.http import require_GET, require_POST
 
 from project.models import ControlPair, File, Route
@@ -14,6 +15,12 @@ from .stats_views import _clear_stats_cache_for_team
 
 
 MAX_CHOICE_TIME = 30.0
+logger = logging.getLogger(__name__)
+
+
+def _unexpected_error_response(context):
+    logger.exception("Unexpected error in %s", context)
+    return JsonResponse({'error': _('Error')}, status=500)
 
 
 @login_required
@@ -85,9 +92,8 @@ def tutorial_complete(request):
         profile.save(update_fields=['first_play_desktop', 'first_play_mobile'])
 
         return JsonResponse({'status': 'ok'})
-    except Exception as e:
-        traceback.print_exc()
-        return JsonResponse({'error': str(e)}, status=500)
+    except Exception:
+        return _unexpected_error_response('play view')
 
 
 @login_required
@@ -208,9 +214,8 @@ def submit_infinite_choice(request):
             'status': 'saved',
             'choice_count': _infinite_choice_count_for_user(request.user),
         })
-    except Exception as e:
-        traceback.print_exc()
-        return JsonResponse({'error': str(e)}, status=500)
+    except Exception:
+        return _unexpected_error_response('play view')
 
 
 def _json_obj(value):
@@ -326,9 +331,8 @@ def report_infinite_route(request):
             'id': report.id,
             'choice_count': _infinite_choice_count_for_user(request.user),
         })
-    except Exception as e:
-        traceback.print_exc()
-        return JsonResponse({'error': str(e)}, status=500)
+    except Exception:
+        return _unexpected_error_response('play view')
 
 
 @login_required
@@ -424,9 +428,8 @@ def get_file(request, file_id):
             ],
         })
 
-    except Exception as e:
-        traceback.print_exc()
-        return JsonResponse({'error': str(e)}, status=500)
+    except Exception:
+        return _unexpected_error_response('play view')
 
 
 @login_required
@@ -573,9 +576,8 @@ def submit_result(request):
         if created:
             _clear_stats_cache_for_team(getattr(request.user.profile, 'active_team', None))
         return JsonResponse({'status': 'saved' if created else 'skipped'})
-    except Exception as e:
-        traceback.print_exc()
-        return JsonResponse({'error': str(e)}, status=500)
+    except Exception:
+        return _unexpected_error_response('play view')
 
 
 # ── Results overview ────────────────────────────────────────────────────────

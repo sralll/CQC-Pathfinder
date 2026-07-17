@@ -1,6 +1,6 @@
 import os
 import threading
-import traceback
+import logging
 
 from asgiref.sync import sync_to_async
 from django.conf import settings
@@ -10,12 +10,14 @@ from django.utils.translation import gettext as _
 from django.views.decorators.http import require_POST
 
 from account.decorators import role_required
+from .services.heavy_jobs import HEAVY_JOB_SLOT
 from .services.media_access import safe_media_filename, user_can_access_file
 from .models import File
 
 
 _mask_generation_jobs = {}
 _mask_generation_jobs_lock = threading.Lock()
+logger = logging.getLogger(__name__)
 
 
 MASK_IMPASSABLE = 0
@@ -107,6 +109,11 @@ def _run_mask_generation(*, job, job_key, map_path, scale, mask_filename,
     close_old_connections()
     if language:
         translation.activate(language)
+    # Wait for the process-wide heavy-job slot (services.heavy_jobs) so at most
+    # one mask generation or navgraph build holds large arrays at a time. The
+    # SSE stream is already attached, so subscribers simply see progress start
+    # once the slot frees.
+    HEAVY_JOB_SLOT.acquire()
     try:
         import onnxruntime as ort
 
@@ -197,20 +204,27 @@ def _run_mask_generation(*, job, job_key, map_path, scale, mask_filename,
         print(f"[MASK] DONE {time.time() - t0:.1f}s", flush=True)
         job.publish({'done': True})
 
-    except Exception as e:
-        traceback.print_exc()
-        job.publish({'error': str(e)})
+    except Exception:
+        logger.exception("Mask generation failed for %s", filename)
+        job.publish({'error': _('Error')})
     finally:
-        with _mask_generation_jobs_lock:
-            if _mask_generation_jobs.get(job_key) is job:
-                _mask_generation_jobs.pop(job_key, None)
-        img = None
-        output_img = None
-        ort_session = None
-        if language:
-            translation.deactivate()
-        gc.collect()
-        connection.close()
+        try:
+            with _mask_generation_jobs_lock:
+                if _mask_generation_jobs.get(job_key) is job:
+                    _mask_generation_jobs.pop(job_key, None)
+            img = None
+            output_img = None
+            ort_session = None
+            if language:
+                translation.deactivate()
+            gc.collect()
+            connection.close()
+        finally:
+            # Release only after gc.collect() has freed this run's buffers, so
+            # the next queued heavy job never overlaps with them — but release
+            # unconditionally, or one failed cleanup would starve every later
+            # heavy job in this process.
+            HEAVY_JOB_SLOT.release()
 
 
 @role_required('Trainer')
@@ -266,7 +280,7 @@ async def generate_mask(request):
             deleted=False,
             map_file=filename,
         ).first()
-        if not user_can_access_file(request, file):
+        if not user_can_access_file(request, file, require_own_team=True):
             return None
         return file
 

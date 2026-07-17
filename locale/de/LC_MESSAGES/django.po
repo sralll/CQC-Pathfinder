@@ -84,6 +84,9 @@ msgstr "Am besten auf dichten Stadtkarten"
 msgid "Browse"
 msgstr "Durchsuchen"
 
+msgid "Building the map failed."
+msgstr "Der Kartenaufbau ist fehlgeschlagen."
+
 msgid "Cancel"
 msgstr "Abbrechen"
 
@@ -212,6 +215,9 @@ msgstr "Englisch"
 
 msgid "Enlarge"
 msgstr "Vergrössern"
+
+msgid "Error"
+msgstr "Fehler"
 
 msgid "Error potential detection"
 msgstr "Fehlerpotential-Erkennung"
@@ -393,6 +399,9 @@ msgstr "Keine vorhanden"
 msgid "OCAD analysis failed: %(error)s"
 msgstr "OCAD-Analyse fehlgeschlagen: %(error)s"
 
+msgid "OCAD conversion failed."
+msgstr "OCAD-Konvertierung fehlgeschlagen."
+
 msgid "OCAD conversion failed: %(error)s"
 msgstr "OCAD-Konvertierung fehlgeschlagen: %(error)s"
 
@@ -443,6 +452,9 @@ msgstr "Punkt 2"
 
 msgid "Progress"
 msgstr "Fortschritt"
+
+msgid "Project data is too large to save."
+msgstr "Die Projektdaten sind zu gross zum Speichern."
 
 msgid "Project menu"
 msgstr "Projekt-Menü"
@@ -575,6 +587,9 @@ msgstr "Diese Karte hat noch keine Maske."
 
 msgid "This map will be ready for infinity mode soon…"
 msgstr "Diese Karte ist bald bereit für den Infinity-Modus…"
+
+msgid "This project has too many control pairs or routes."
+msgstr "Dieses Projekt enthält zu viele Posten oder Routen."
 
 msgid "This region may struggle to generate pairs reliably — consider drawing a tighter or more structured region."
 msgstr "Diese Region könnte Schwierigkeiten haben, zuverlässig Postenpaare zu generieren — erwäge eine engere oder strukturiertere Region."

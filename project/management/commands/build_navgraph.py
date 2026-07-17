@@ -1,8 +1,10 @@
 """Build (or backfill) ``.navgraph`` artifacts for uploaded map masks.
 
 Wraps ``project.navgraph.build_navgraph`` / ``save_navgraph`` with a management
-command so artifacts can be built
-one-off (``--file``) or backfilled for every mask (``--all``).
+command so artifacts can be built one-off (``--file``) or backfilled for every
+mask (``--all``). Normal builds persist only the production ``.navgraph.bin``;
+``--debug`` additionally retains the full ``.navgraph.npz`` and renders an
+overlay.
 
 Usage:
     python manage.py build_navgraph --file media/masks/mask_X.png
@@ -14,7 +16,6 @@ Usage:
     python manage.py build_navgraph --all --force
 """
 
-import json
 import os
 import random
 import time
@@ -138,72 +139,9 @@ def _resolve_file_id_job(file_id):
     return mask_path, row.infinite_region, row.level_passages
 
 
-def _npz_path(mask_path):
-    base, _ = os.path.splitext(mask_path)
-    return base + ".navgraph.npz"
-
-
 def _bin_path(mask_path):
     base, _ = os.path.splitext(mask_path)
     return base + ".navgraph.bin"
-
-
-def _artifact_region(npz_path):
-    """Read the ``region_polygon`` recorded in a prior artifact's stats.
-
-    Returns the stored polygon (list) or ``None`` (auto/none) — used to detect a
-    region change as a rebuild reason."""
-    if not os.path.isfile(npz_path):
-        return None
-    try:
-        import numpy as np
-
-        with np.load(npz_path, allow_pickle=True) as data:
-            stats = json.loads(str(data["stats"]))
-        region = stats.get("region_polygon")
-        if isinstance(region, list) and len(region) >= 3:
-            return [[int(x), int(y)] for (x, y) in region]
-    except Exception:
-        return None
-    return None
-
-
-def _artifact_region_revision(npz_path):
-    """Read the polygon revision from stats, with a legacy-stats fallback."""
-    if not os.path.isfile(npz_path):
-        return None
-    try:
-        import numpy as np
-
-        with np.load(npz_path, allow_pickle=True) as data:
-            stats = json.loads(str(data["stats"]))
-            revision = stats.get("region_revision")
-            if revision:
-                return str(revision)
-            shape = stats.get("mask_shape")
-            region = stats.get("region_polygon")
-        if isinstance(shape, (list, tuple)) and len(shape) == 2:
-            return region_revision(region, int(shape[1]), int(shape[0]))
-    except Exception:
-        return None
-    return None
-
-
-def _artifact_counts(npz_path):
-    """Read prior artifact node/edge counts for deterministic backfill output."""
-    if not os.path.isfile(npz_path):
-        return {}
-    try:
-        import numpy as np
-
-        with np.load(npz_path, allow_pickle=True) as data:
-            stats = json.loads(str(data["stats"]))
-        return {
-            "nodes": int(stats["n_nodes"]),
-            "edges": int(stats["n_edges"]),
-        }
-    except Exception:
-        return {}
 
 
 def _rebuild_reasons(mask_path, region, level_passages):
@@ -217,9 +155,8 @@ def _rebuild_reasons(mask_path, region, level_passages):
     )
     from project.services.passage_validation import normalize_level_passages
 
-    npz_path = _npz_path(mask_path)
     bin_path = _bin_path(mask_path)
-    if not os.path.isfile(npz_path) or not os.path.isfile(bin_path):
+    if not os.path.isfile(bin_path):
         return ["no artifact"]
 
     reasons = []
@@ -227,10 +164,8 @@ def _rebuild_reasons(mask_path, region, level_passages):
         width, height = mask_dimensions(mask_path)
     except Exception:
         return ["unreadable mask"]
-    if os.path.getmtime(npz_path) < os.path.getmtime(mask_path):
+    if os.path.getmtime(bin_path) < os.path.getmtime(mask_path):
         reasons.append("mask changed")
-    if _artifact_region_revision(npz_path) != region_revision(region, width, height):
-        reasons.append("region changed")
 
     header = read_bin_header(bin_path)
     if header is None:
@@ -238,6 +173,9 @@ def _rebuild_reasons(mask_path, region, level_passages):
     if header["version"] != NAVGRAPH_VERSION:
         reasons.append(f"format v{header['version']}->v{NAVGRAPH_VERSION}")
     else:
+        if ((header.get("region_revision") or "")
+                != (region_revision(region, width, height) or "")):
+            reasons.append("region changed")
         try:
             effective, _ignored = filter_level_passages_for_region(
                 normalize_level_passages(level_passages), region, width, height)
@@ -269,9 +207,10 @@ def _iter_all_masks(limit=None, randomize=False, seed=None):
 
 class Command(BaseCommand):
     help = (
-        "Build .navgraph.npz / .navgraph.bin artifacts for mask PNGs "
+        "Build compact .navgraph.bin artifacts for mask PNGs "
         "(project/navgraph.py). Use --file for a single mask (path or File "
-        "id) or --all to backfill every mask in media/masks/."
+        "id) or --all to backfill every mask in media/masks/. Use --debug "
+        "to retain full .navgraph.npz diagnostics and render an overlay."
     )
 
     def add_arguments(self, parser):
@@ -302,8 +241,8 @@ class Command(BaseCommand):
         )
         parser.add_argument(
             '--debug', action='store_true',
-            help="Also write <mask>.navgraph.debug.png overlays showing the "
-                 "connected nodes/edges for each processed mask.",
+            help="Also retain <mask>.navgraph.npz and write a debug PNG "
+                 "showing the connected nodes/edges for each processed mask.",
         )
 
     def handle(self, *args, **opts):
@@ -366,21 +305,17 @@ class Command(BaseCommand):
                 skipped += 1
             else:
                 try:
-                    prior_counts = _artifact_counts(_npz_path(mask_path))
                     t0 = time.time()
                     artifact = build_navgraph(
                         mask_path, region_polygon=region,
                         level_passages=passages,
                         collect_diagnostics=debug)
-                    save_navgraph(artifact, mask_path)
+                    save_navgraph(artifact, mask_path, include_npz=debug)
                     elapsed = time.time() - t0
                     stats = artifact["stats"]
                     bin_bytes = os.path.getsize(_bin_path(mask_path))
                     before_nodes = stats.get(
-                        "nodes_before_region_prune",
-                        prior_counts.get("nodes", stats["n_nodes"]),
-                    )
-                    before_edges = prior_counts.get("edges", stats["n_edges"])
+                        "nodes_before_region_prune", stats["n_nodes"])
                     after_nodes = stats.get("nodes_after_region_prune", stats["n_nodes"])
                     after_edges = stats["n_edges"]
                     why = "forced" if (force and not reasons) else ", ".join(reasons)
@@ -390,7 +325,7 @@ class Command(BaseCommand):
                         if connectivity is not None else "")
                     self.stdout.write(self.style.SUCCESS(
                         f"BUILT {name}: {stats['mpx']} Mpx, ds={stats['downsample']}, "
-                        f"nodes={before_nodes}->{after_nodes}, edges={before_edges}->{after_edges}, "
+                        f"nodes={before_nodes}->{after_nodes}, edges={after_edges}, "
                         f"bin={bin_bytes}B, build={elapsed:.1f}s, "
                         f"passages={stats.get('n_passages', 0)}, "
                         f"hitzone={stats['hitzone_source']}"

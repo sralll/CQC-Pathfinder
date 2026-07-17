@@ -2,7 +2,8 @@
   "name": "cqc-pathfinder",
   "private": true,
   "scripts": {
-    "postinstall": "patch-package"
+    "postinstall": "patch-package",
+    "benchmark:pathfinding": "node scripts/pathfinding_timing_benchmark.mjs"
   },
   "dependencies": {
     "ocad2geojson": "2.1.22",

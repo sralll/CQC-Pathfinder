@@ -69,6 +69,18 @@ function chooseWeighted(candidates, maxRouteIndex, cfg, rng) {
     return candidates[candidates.length - 1] || null;
 }
 
+function chooseClosestToTarget(candidates, cfg) {
+    return candidates.slice().sort((a, b) =>
+        Math.abs(a.relativeGap - cfg.targetRelativeGap)
+            - Math.abs(b.relativeGap - cfg.targetRelativeGap)
+        || a.absGap - b.absGap
+        || a.total - b.total
+        || b.maxRouteIndex - a.maxRouteIndex
+        || a.i - b.i
+        || a.j - b.j
+    )[0] || null;
+}
+
 function rejectionReason(counts) {
     if (!counts.totalPairs) return 'distinct';
     if (counts.runtime === counts.totalPairs) return 'runtime';
@@ -77,10 +89,10 @@ function rejectionReason(counts) {
     return 'side';
 }
 
-export function selectWeightedRoutePair(paths, { start, goal, config = {}, rng = null } = {}) {
+function routePairCandidates(paths, { start, goal, config = {} } = {}) {
     const cfg = { ...DEFAULT_ROUTE_PAIR_SELECTION, ...config };
-    if (!paths || paths.length === 0) return { ok: false, reason: 'timeout', selected: null, candidates: [] };
-    if (paths.length === 1) return { ok: false, reason: 'distinct', selected: null, candidates: [] };
+    if (!paths || paths.length === 0) return { ok: false, reason: 'timeout', candidates: [], cfg, maxRouteIndex: 1 };
+    if (paths.length === 1) return { ok: false, reason: 'distinct', candidates: [], cfg, maxRouteIndex: 1 };
 
     const directLength = ensureRouteSides(paths, start, goal);
     let maxRouteIndex = 1;
@@ -140,42 +152,71 @@ export function selectWeightedRoutePair(paths, { start, goal, config = {}, rng =
                 sideGap,
                 maxRouteIndex: Math.max(a.routeIndex || 1, b.routeIndex || 1),
                 avgRouteIndex: ((a.routeIndex || 1) + (b.routeIndex || 1)) / 2,
+                targetDistance: Math.abs(relativeGap - cfg.targetRelativeGap),
             });
         }
     }
 
     if (!candidates.length) {
-        return { ok: false, reason: rejectionReason(counts), selected: null, candidates, counts };
+        return { ok: false, reason: rejectionReason(counts), candidates, counts, cfg, maxRouteIndex };
     }
 
-    const selectedPair = chooseWeighted(candidates, maxRouteIndex, cfg, rng);
+    return { ok: true, reason: 'ok', candidates, counts, cfg, maxRouteIndex };
+}
+
+function selectionResult(paths, candidateSet, selectedPair) {
+    if (!candidateSet.ok || !selectedPair) {
+        return {
+            ok: false,
+            reason: candidateSet.reason,
+            selected: null,
+            candidates: candidateSet.candidates,
+            counts: candidateSet.counts,
+        };
+    }
     const selected = [paths[selectedPair.i], paths[selectedPair.j]];
     return {
         ok: true,
         reason: 'ok',
         selected,
         pair: selectedPair,
-        candidates,
-        counts,
+        candidates: candidateSet.candidates,
+        counts: candidateSet.counts,
         relativeGap: selectedPair.relativeGap,
         sideGap: selectedPair.sideGap,
+        targetRelativeGap: candidateSet.cfg.targetRelativeGap,
+        targetDistance: selectedPair.targetDistance,
     };
+}
+
+export function selectWeightedRoutePair(paths, { start, goal, config = {}, rng = null } = {}) {
+    const candidateSet = routePairCandidates(paths, { start, goal, config });
+    const selectedPair = candidateSet.ok
+        ? chooseWeighted(candidateSet.candidates, candidateSet.maxRouteIndex, candidateSet.cfg, rng)
+        : null;
+    return selectionResult(paths, candidateSet, selectedPair);
+}
+
+/** Apply the full rejection stack, then choose the pair nearest the target gap. */
+export function selectRoutePairClosestToTarget(paths, { start, goal, config = {} } = {}) {
+    const candidateSet = routePairCandidates(paths, { start, goal, config });
+    const selectedPair = candidateSet.ok
+        ? chooseClosestToTarget(candidateSet.candidates, candidateSet.cfg)
+        : null;
+    return selectionResult(paths, candidateSet, selectedPair);
 }
 
 export function skippedBarriersForSelection(paths, selected) {
     const selectedSet = new Set(selected || []);
-    // A barrier placed after route R was active only while computing routes
-    // with routeIndex > R.  The rendered scene applies each skipped barrier to
-    // BOTH selected routes, so it is safe to draw only barriers that predate
-    // the lower selected index.  Using the former highest-selected bound made
-    // pairs such as routes 1 + 5 render barriers 2..4 across route 1 even though
-    // that route existed before those barriers were placed.
-    const lowestSelectedIndex = Math.min(
-        ...(selected || []).map((p) => p.routeIndex || Infinity),
-        Infinity,
+    // Route R+1 was found with route R blocked. If a selected route has index N,
+    // visibly retain every unselected blocker below N so the player can see why
+    // that higher-index alternative exists. Selected routes themselves are
+    // never crossed out.
+    const highestSelectedIndex = Math.max(
+        ...(selected || []).map((p) => p.routeIndex || 0),
+        0,
     );
-    if (!Number.isFinite(lowestSelectedIndex)) return [];
     return (paths || [])
-        .filter((p) => p.routeIndex < lowestSelectedIndex && !selectedSet.has(p) && p.barrier)
+        .filter((p) => p.routeIndex < highestSelectedIndex && !selectedSet.has(p) && p.barrier)
         .map((p) => p.barrier);
 }

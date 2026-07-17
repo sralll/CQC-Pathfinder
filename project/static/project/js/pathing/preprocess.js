@@ -7,6 +7,26 @@ import { bresenhamPoints } from './bresenham.js';
 const TRAIN_SCALE = 0.710;
 const BLOCKED_LINE_WIDTH = 7;
 
+/** Stamp the exact butt-capped visible blocker geometry into a local grid. */
+export function stampBarrierLine(grid, w, h, x0, y0, x1, y1, width) {
+    const dx = x1 - x0, dy = y1 - y0, lengthSquared = dx * dx + dy * dy;
+    if (lengthSquared < 1e-9) return;
+    const length = Math.sqrt(lengthSquared);
+    const half = Math.max(0, Number(width) / 2);
+    const minX = Math.max(0, Math.floor(Math.min(x0, x1) - half));
+    const maxX = Math.min(w - 1, Math.ceil(Math.max(x0, x1) + half));
+    const minY = Math.max(0, Math.floor(Math.min(y0, y1) - half));
+    const maxY = Math.min(h - 1, Math.ceil(Math.max(y0, y1) + half));
+    for (let y = minY; y <= maxY; y++) {
+        for (let x = minX; x <= maxX; x++) {
+            const t = ((x - x0) * dx + (y - y0) * dy) / lengthSquared;
+            if (t < 0 || t > 1) continue;
+            const cross = Math.abs((x - x0) * dy - (y - y0) * dx);
+            if (cross / length <= half) grid[y * w + x] = 0;
+        }
+    }
+}
+
 // Stamp a horizontal scanline (inclusive) onto a Uint8Array grid at value 0.
 function blackLineH(grid, w, h, y, x0, x1) {
     if (y < 0 || y >= h) return;

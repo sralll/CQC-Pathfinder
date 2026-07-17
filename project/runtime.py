@@ -59,10 +59,6 @@ def _map_scale_factor(map_scale=None):
     return map_scale / REFERENCE_MAP_SCALE if map_scale > 0 else 1.0
 
 
-def noa_distance_window(scale=None):
-    return NOA_CLUSTER_WINDOW_M / (PX_TO_M * _scale_factor(scale))
-
-
 def _scaled_noA_points(points, scale=None, map_scale=None):
     factor = _scale_factor(scale) * _map_scale_factor(map_scale)
     out = []
@@ -95,78 +91,6 @@ def _simplified_noA_points(points):
             out[-1] = {"x": x, "y": y}
     return out
 
-
-def calc_route_noA_old_windowed(rP, scale=None, map_scale=None):
-    """Count corners along a polyline using a windowed cumulative-turn rule.
-
-    Walks the polyline segment-by-segment. At each junction the absolute
-    turn angle is computed (in radians, [0, π]).
-
-    * If a single junction turn is ≥ ``NOA_CORNER_DEG`` it counts as one
-      corner on its own — adjacent sharp turns are counted individually
-      (no skip-ahead suppression).
-    * Smaller turns accumulate into a sliding window of length
-      ``noa_distance_window(scale)`` pixels. When the sum of turns in
-      the window reaches the corner threshold, a corner is counted and
-      the window is cleared.
-    * Turns outside the window (more than ``window`` pixels behind the
-      current position) drop off, so isolated small bends along long
-      straight stretches never sum to a corner.
-
-    `rP` is a list of dicts with `x`/`y` keys (the editor's storage format).
-    """
-    if not rP or len(rP) < 3:
-        return 0
-
-    window     = noa_distance_window(scale) / _map_scale_factor(map_scale)
-    corner_rad = math.radians(NOA_CORNER_DEG)
-    eps_rad    = math.radians(NOA_EPSILON_DEG)
-
-    # Cumulative pixel-distance and per-segment heading
-    cum      = [0.0]
-    headings = []
-    for i in range(1, len(rP)):
-        dx = rP[i]['x'] - rP[i - 1]['x']
-        dy = rP[i]['y'] - rP[i - 1]['y']
-        cum.append(cum[-1] + math.hypot(dx, dy))
-        headings.append(None if dx == 0 and dy == 0 else math.atan2(dy, dx))
-
-    # Collect non-trivial turns (position along polyline, magnitude in rad)
-    turns = []
-    for i in range(1, len(headings)):
-        h1, h2 = headings[i - 1], headings[i]
-        if h1 is None or h2 is None:
-            continue
-        t = abs(h2 - h1)
-        if t > math.pi:
-            t = 2 * math.pi - t
-        if t < eps_rad:
-            continue
-        # `cum[i]` is the cumulative distance to the START of segment i,
-        # which IS the junction point between segment i-1 and segment i.
-        turns.append((cum[i], t))
-
-    noA = 0
-    window_turns = []   # list of (position, magnitude) inside the window
-
-    for pos, t in turns:
-        # Drop turns that have fallen out of the window behind us
-        while window_turns and pos - window_turns[0][0] > window:
-            window_turns.pop(0)
-
-        if t >= corner_rad:
-            # Sharp single-junction corner — count immediately,
-            # clear the window so it doesn't contribute again.
-            noA += 1
-            window_turns = []
-            continue
-
-        window_turns.append((pos, t))
-        if sum(item[1] for item in window_turns) >= corner_rad:
-            noA += 1
-            window_turns = []
-
-    return noA
 
 
 def calc_route_noA(rP, scale=None, map_scale=None):
