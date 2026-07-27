@@ -107,10 +107,11 @@ class CustomUserAdmin(UserAdmin):
             try:
                 trainer_profile = request.user.profile
                 if trainer_profile.active_team:
-                    Profile.objects.update_or_create(
+                    profile, _ = Profile.objects.update_or_create(
                         user=obj,
                         defaults={"active_team": trainer_profile.active_team}
                     )
+                    profile.teams.add(trainer_profile.active_team)
             except Profile.DoesNotExist:
                 pass
 
