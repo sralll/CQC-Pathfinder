@@ -2,7 +2,7 @@ import csv
 
 from django.contrib import admin
 from django.http import HttpResponse
-from django.db.models import Q
+from django.db.models import Max, Q
 from .models import Choice, InfiniteChoice, ReportedInfinity
 from account.models import Profile
 from account.admin_access import StaffHiddenAdmin
@@ -23,7 +23,11 @@ def _format_timestamp(value):
 
 @admin.action(description='Download selected choices as CSV', permissions=['view'])
 def export_choices_csv(modeladmin, request, queryset):
-    queryset = queryset.select_related('user', 'team', 'control_pair__file', 'selected_route')
+    queryset = queryset.select_related(
+        'user', 'team', 'control_pair__file', 'selected_route'
+    ).annotate(
+        longest_route_run_time=Max('control_pair__routes__run_time'),
+    )
     headers = (
         'id',
         'user',
@@ -31,6 +35,8 @@ def export_choices_csv(modeladmin, request, queryset):
         'file',
         'control_pair_id',
         'selected_route_id',
+        'selected_route_run_time',
+        'longest_route_run_time',
         'choice_time',
         'penalty',
         'competition',
@@ -44,6 +50,8 @@ def export_choices_csv(modeladmin, request, queryset):
             choice.control_pair.file.name if choice.control_pair and choice.control_pair.file else '',
             choice.control_pair_id or '',
             choice.selected_route_id or '',
+            choice.selected_route.run_time if choice.selected_route else '',
+            choice.longest_route_run_time,
             choice.choice_time,
             choice.penalty,
             choice.competition,

@@ -1,3 +1,4 @@
+import csv
 import json
 from datetime import timedelta
 from importlib import import_module
@@ -956,6 +957,11 @@ class ResultsAdminTests(TestCase):
 
     def test_staff_can_download_filtered_choices_csv(self):
         choice = self.make_choice(self.athlete, self.team)
+        Route.objects.create(
+            control_pair=choice.control_pair,
+            order=2,
+            run_time=18,
+        )
         self.make_choice(self.other_athlete, self.other_team)
 
         response = self.client.post(
@@ -969,8 +975,14 @@ class ResultsAdminTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response['Content-Type'], 'text/csv')
         content = response.content.decode()
-        self.assertIn('id,user,team,file,control_pair_id,selected_route_id', content)
-        self.assertIn('athlete,Team A', content)
+        rows = list(csv.DictReader(content.splitlines()))
+        self.assertEqual(
+            rows[0]['selected_route_run_time'],
+            '10.0',
+        )
+        self.assertEqual(rows[0]['longest_route_run_time'], '18.0')
+        self.assertEqual(rows[0]['user'], 'athlete')
+        self.assertEqual(rows[0]['team'], 'Team A')
         self.assertNotIn('other-athlete', content)
 
     def test_staff_can_download_filtered_infinite_choices_csv(self):
