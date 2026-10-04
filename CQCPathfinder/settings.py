@@ -143,7 +143,7 @@ LANGUAGES = [
     ("it", _("Italiano")),
 ]
 LOCALE_PATHS = [BASE_DIR / "locale"]
-TIME_ZONE = "CET"
+TIME_ZONE = "Europe/Zurich"
 USE_I18N = True
 USE_TZ = True
 
