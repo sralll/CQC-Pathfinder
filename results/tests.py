@@ -917,7 +917,10 @@ class ResultsAdminTests(TestCase):
         self.client.force_login(self.staff)
 
     def make_choice(self, user, team):
-        file = File.objects.create(name=f'{team.name} course', team=team)
+        file = File.objects.create(
+            name=f'{team.name} course {File.objects.filter(team=team).count()}',
+            team=team,
+        )
         cp = ControlPair.objects.create(file=file, order=1)
         route = Route.objects.create(control_pair=cp, order=1, run_time=10)
         return Choice.objects.create(
@@ -984,6 +987,19 @@ class ResultsAdminTests(TestCase):
         self.assertEqual(rows[0]['user'], 'athlete')
         self.assertEqual(rows[0]['team'], 'Team A')
         self.assertNotIn('other-athlete', content)
+
+    def test_staff_can_filter_choices_by_file_with_active_team_scope(self):
+        choice = self.make_choice(self.athlete, self.team)
+        other_choice = self.make_choice(self.athlete, self.team)
+
+        response = self.client.get(
+            reverse('admin:results_choice_changelist'),
+            {'control_pair__file__id__exact': choice.control_pair.file_id},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, f'value="{choice.id}"')
+        self.assertNotContains(response, f'value="{other_choice.id}"')
 
     def test_staff_can_download_filtered_infinite_choices_csv(self):
         choice = InfiniteChoice.objects.create(
